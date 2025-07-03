@@ -1,9 +1,9 @@
 use crate::config::*;
 use core::time::Duration;
+use embassy_rp::Peri;
 use embassy_rp::peripherals::{PIN_10, PIN_11, PIN_16, PIN_17, PIO0};
 use embassy_rp::pio::{Common, StateMachine};
 use embassy_rp::pio_programs::pwm::{PioPwm, PioPwmProgram};
-use embassy_rp::Peri;
 
 pub struct PwmOutputs<'a> {
     pub elevon_left: PioPwm<'a, PIO0, 0>,
@@ -20,8 +20,7 @@ impl<'a> PwmOutputs<'a> {
         sm2: StateMachine<'a, PIO0, 2>,
         sm3: StateMachine<'a, PIO0, 3>,
         pins: &'a mut PwmPins,
-    ) -> Self
-    {
+    ) -> Self {
         let prg = PioPwmProgram::new(common);
 
         let mut elevon_left = PioPwm::new(common, sm0, pins.elevon_left.reborrow(), &prg);
@@ -51,22 +50,29 @@ impl<'a> PwmOutputs<'a> {
     }
 
     pub fn set_safe_positions(&mut self) {
-        self.elevon_left.write(Duration::from_micros(SERVO_CENTER_US.into()));
-        cortex_m::asm::delay(400);
-        self.elevon_right.write(Duration::from_micros(SERVO_CENTER_US.into()));
-        cortex_m::asm::delay(400);
-        self.engine_left.write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
-        self.engine_right.write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
+        self.elevon_left
+            .write(Duration::from_micros(SERVO_CENTER_US.into()));
+        self.elevon_right
+            .write(Duration::from_micros(SERVO_CENTER_US.into()));
+        self.engine_left
+            .write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
+        self.engine_right
+            .write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
     }
 
     pub fn set_elevons(&mut self, left_us: u32, right_us: u32) {
-        self.elevon_left.write(Duration::from_micros(left_us.into()));
-        self.elevon_right.write(Duration::from_micros(right_us.into()));
+        self.elevon_left
+            .write(Duration::from_micros(left_us.into()));
+        self.elevon_right
+            .write(Duration::from_micros(right_us.into()));
     }
 
     pub fn set_engines(&mut self, left_us: u32, right_us: u32) {
-        self.engine_left.write(Duration::from_micros(left_us.into()));
-        self.engine_right.write(Duration::from_micros((right_us + ENGINE_RIGHT_OFFSET_US).into()));
+        self.engine_left
+            .write(Duration::from_micros(left_us.into()));
+        self.engine_right.write(Duration::from_micros(
+            (right_us + ENGINE_RIGHT_OFFSET_US).into(),
+        ));
     }
 }
 

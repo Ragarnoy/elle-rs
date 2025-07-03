@@ -7,13 +7,17 @@ edition = "2024"
 sbus-rs = { path = "../sbus-rs", features = ["blocking"] }
 embassy-executor = { version = "0.7.0", git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 embassy-time = { version = "0.4.0",     git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-sync = { version = "*",     git = "https://github.com/embassy-rs/embassy.git" }
 embassy-rp = { version = "0.4.0", git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa"] }
 embassy-futures = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git" }
 defmt = "1.0.1"
 defmt-rtt = "1.0.0"
 cortex-m-rt = "0.7.0"
-cortex-m = "0.7.7"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+libm = "0.2.15"
+mint = "0.5.9"
+bno055 = "0.4.0"
+static_cell = "2.1.1"
 
 [profile.release]
 debug = 2

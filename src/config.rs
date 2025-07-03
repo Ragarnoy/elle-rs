@@ -9,18 +9,18 @@ pub const SERVO_MAX_PULSE_US: u32 = 2_000;
 pub const SERVO_CENTER_US: u32 = 1_500;
 
 // ESC range
-pub const ENGINE_MIN_PULSE_US: u32 = 1_000;      // Absolute minimum (motors off)
-pub const ENGINE_START_PULSE_US: u32 = 1_150;    // Actual point where motors start spinning
-pub const ENGINE_MAX_PULSE_US: u32 = 1_600;      // Maximum throttle
-pub const ENGINE_IDLE_PULSE_US: u32 = 1_100;     // Idle throttle for init sequence
+pub const ENGINE_MIN_PULSE_US: u32 = 1_000; // Absolute minimum (motors off)
+pub const ENGINE_START_PULSE_US: u32 = 1_150; // Actual point where motors start spinning
+pub const ENGINE_MAX_PULSE_US: u32 = 1_600; // Maximum throttle
+pub const ENGINE_IDLE_PULSE_US: u32 = 1_100; // Idle throttle for init sequence
 
 // Throttle curve
-pub const THROTTLE_DEADZONE: u32 = 200;          // SBUS values 0-200 = motors off
-pub const THROTTLE_START_POINT: u32 = 300;       // SBUS value where motors start
+pub const THROTTLE_DEADZONE: u32 = 200; // SBUS values 0-200 = motors off
+pub const THROTTLE_START_POINT: u32 = 300; // SBUS value where motors start
 
 // Arming parameters
-pub const ENGINE_ARM_THRESHOLD: u32 = 1_100;      // Must have low throttle to arm
-pub const ARM_DURATION_MS: u32 = 2_000;          // Hold at min for 2 seconds during init
+pub const ENGINE_ARM_THRESHOLD: u32 = 1_100; // Must have low throttle to arm
+pub const ARM_DURATION_MS: u32 = 2_000; // Hold at min for 2 seconds during init
 
 // Differential thrust parameters
 pub const DIFF_NEUTRAL_MIN: u16 = 1_000;
@@ -46,3 +46,10 @@ pub const PIN_ELEVON_RIGHT: u8 = 17;
 pub const PIN_ENGINE_LEFT: u8 = 10;
 pub const PIN_ENGINE_RIGHT: u8 = 11;
 pub const PIN_SBUS_RX: u8 = 5;
+
+// IMU parameters
+pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C
+pub const PIN_IMU_SDA: u8 = 6; // GPIO6
+pub const PIN_IMU_SCL: u8 = 7; // GPIO7
+pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
+pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 90; // Calibration timeout

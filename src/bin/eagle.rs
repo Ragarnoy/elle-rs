@@ -5,15 +5,24 @@
 
 use defmt::info;
 use defmt_rtt as _;
-use panic_probe as _;
-use embassy_executor::Spawner;
-use embassy_rp::bind_interrupts;
-use embassy_rp::peripherals::{PIO0, UART1};
+use elle::config::{IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS};
+use elle::hardware::imu::{ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, is_attitude_valid};
+use elle::hardware::{
+    pwm::{PwmOutputs, PwmPins},
+    sbus::SbusReceiver,
+};
+use elle::system::FlightController;
+use embassy_executor::{Executor, Spawner};
+use embassy_rp::adc::Blocking;
+use embassy_rp::i2c::{Config, I2c};
+use embassy_rp::multicore::{Stack, spawn_core1};
+use embassy_rp::peripherals::{I2C1, PIN_6, PIN_7, PIN_25, PIO0, UART1};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
-
-use elle::hardware::{pwm::{PwmOutputs, PwmPins}, sbus::SbusReceiver};
-use elle::system::FlightController;
+use embassy_rp::{Peri, bind_interrupts};
+use embassy_time::{Duration, Timer};
+use panic_probe as _;
+use static_cell::StaticCell;
 
 bind_interrupts!(
     struct Irqs {
@@ -22,39 +31,82 @@ bind_interrupts!(
     }
 );
 
+static mut CORE1_STACK: Stack<8192> = Stack::new();
+static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
+    // Spawn IMU task on core1
+    spawn_core1(
+        p.CORE1,
+        unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
+        move || {
+            let executor1 = EXECUTOR1.init(Executor::new());
+            executor1.run(|spawner| {
+                spawner
+                    .spawn(imu_task(spawner, p.I2C1, p.PIN_6, p.PIN_7, p.PIN_25))
+                    .unwrap();
+            });
+        },
+    );
+
+    // Core0: Setup flight control hardware
     let mut pwm_pins = PwmPins {
         elevon_left: p.PIN_16,
         elevon_right: p.PIN_17,
         engine_left: p.PIN_10,
         engine_right: p.PIN_11,
     };
-    
-    // Initialize hardware
-    let Pio { mut common, sm0, sm1, sm2, sm3, .. } = Pio::new(p.PIO0, Irqs);
 
-
+    let Pio {
+        mut common,
+        sm0,
+        sm1,
+        sm2,
+        sm3,
+        ..
+    } = Pio::new(p.PIO0, Irqs);
     let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, sm2, sm3, &mut pwm_pins);
     pwm.set_safe_positions();
 
-    // Initialize SBUS receiver
     let mut sbus = SbusReceiver::new(p.UART1, p.PIN_5, Irqs, p.DMA_CH0);
-
-    // Create flight controller
     let mut fc = FlightController::new(pwm);
 
-    // Initialize ESCs
+    // Wait for IMU to be ready
+    info!("Waiting for IMU initialization...");
+    loop {
+        let status = IMU_STATUS.lock().await;
+        if status.initialized {
+            info!("IMU ready! Calibrated: {}", status.calibrated);
+            break;
+        }
+        drop(status);
+        Timer::after(Duration::from_millis(100)).await;
+    }
+
     fc.initialize_escs().await;
 
-    // Main control loop
+    // Main control loop with IMU integration
     let mut loop_counter = 0u32;
 
     loop {
+        // Get latest attitude data (non-blocking)
+        let attitude = ATTITUDE_SIGNAL.try_take();
+
         if let Some(packet) = sbus.read_packet().await {
-            fc.update(&packet);
+            // Pass attitude data to flight controller if available and valid
+            if let Some(att) = attitude {
+                if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {
+                    fc.update_with_attitude(&packet, Some(&att));
+                } else {
+                    defmt::warn!("Stale attitude data, using manual control only");
+                    fc.update(&packet);
+                }
+            } else {
+                fc.update(&packet);
+            }
         }
 
         fc.check_failsafe();
@@ -63,13 +115,64 @@ async fn main(_spawner: Spawner) {
         loop_counter += 1;
         if loop_counter >= 10000 {
             loop_counter = 0;
+
+            // Get IMU status
+            let imu_status = IMU_STATUS.lock().await;
+
             if fc.is_armed() {
-                info!("Status: ARMED");
+                info!(
+                    "ARMED | IMU Cal: S{} G{} A{} M{}",
+                    imu_status.calibration_status.sys,
+                    imu_status.calibration_status.gyro,
+                    imu_status.calibration_status.accel,
+                    imu_status.calibration_status.mag
+                );
             } else if fc.is_failsafe() {
-                info!("Status: FAILSAFE");
+                info!("FAILSAFE | IMU Errors: {}", imu_status.error_count);
             } else {
-                info!("Status: DISARMED");
+                info!(
+                    "DISARMED | IMU: {}",
+                    if imu_status.calibrated {
+                        "Ready"
+                    } else {
+                        "Not calibrated"
+                    }
+                );
             }
         }
     }
+}
+
+#[embassy_executor::task]
+async fn imu_task(
+    _spawner: Spawner,
+    i2c: Peri<'static, I2C1>,
+    sda: Peri<'static, PIN_6>,
+    scl: Peri<'static, PIN_7>,
+    led: Peri<'static, PIN_25>,
+) {
+    info!("Core1: IMU task starting");
+
+    // Configure I2C for IMU
+    let mut i2c_config = Config::default();
+    i2c_config.frequency = IMU_I2C_FREQ;
+
+    let i2c_bus = embassy_rp::i2c::I2c::new_blocking(i2c, scl, sda, i2c_config);
+    let mut imu = BnoImu::new(i2c_bus, led);
+
+    // Initialize IMU
+    match imu.initialize().await {
+        Ok(_) => info!("Core1: IMU initialized"),
+        Err(e) => {
+            defmt::panic!("Core1: IMU init failed: {}", e);
+        }
+    }
+
+    // Wait for calibration (with timeout)
+    if let Err(e) = imu.wait_for_calibration(IMU_CALIBRATION_TIMEOUT_S).await {
+        defmt::warn!("Core1: IMU calibration incomplete: {}", e);
+    }
+
+    // Run continuous IMU reading
+    imu.run().await;
 }
