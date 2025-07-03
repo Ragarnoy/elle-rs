@@ -1,5 +1,5 @@
 [package]
-name = "sbus-rcv"
+name = "elle"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,17 +12,15 @@ embassy-futures = { version = "0.1.0", git = "https://github.com/embassy-rs/emba
 defmt = "1.0.1"
 defmt-rtt = "1.0.0"
 cortex-m-rt = "0.7.0"
+cortex-m = "0.7.7"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 
 [profile.release]
 debug = 2
+lto = true
+codegen-units = 1
 
 [lib]
-test = false
-bench = false
-
-[[bin]]
-name = "printer"
 test = false
 bench = false
 
