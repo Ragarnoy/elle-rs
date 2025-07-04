@@ -1,3 +1,4 @@
+// src/config.rs - Updated channel mapping
 #![allow(dead_code)]
 
 // PWM timing parameters
@@ -34,11 +35,26 @@ pub const ENGINE_RIGHT_OFFSET_US: u32 = 2;
 pub const SBUS_BAUD: u32 = 100_000;
 pub const SBUS_TIMEOUT_MS: u64 = 100;
 
-// Channel mapping (0-indexed)
+// NEW: Flight control channel mapping (0-indexed)
+pub const PITCH_CH: usize = 0; // Elevator/pitch input
+pub const ROLL_CH: usize = 1; // Aileron/roll input
+pub const THROTTLE_CH: usize = 2; // Engine throttle
+pub const YAW_CH: usize = 3; // Rudder/yaw input
+
+// Legacy direct elevon channels (if needed for fallback)
 pub const ELEVON_LEFT_CH: usize = 0;
 pub const ELEVON_RIGHT_CH: usize = 1;
 pub const ENGINE_CH: usize = 2;
 pub const DIFFERENTIAL_CH: usize = 3;
+
+// Elevon mixing parameters
+pub const ELEVON_PITCH_GAIN: f32 = 1.0; // How much pitch affects elevons
+pub const ELEVON_ROLL_GAIN: f32 = 1.0; // How much roll affects elevons
+pub const YAW_TO_DIFF_GAIN: f32 = 1.0; // How much yaw affects differential thrust
+pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons for coordination
+
+// Control mode selection
+pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon control
 
 // Pin assignments
 pub const PIN_ELEVON_LEFT: u8 = 16;
@@ -52,4 +68,4 @@ pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C
 pub const PIN_IMU_SDA: u8 = 6; // GPIO6
 pub const PIN_IMU_SCL: u8 = 7; // GPIO7
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
-pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 90; // Calibration timeout
+pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
