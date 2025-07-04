@@ -75,7 +75,7 @@ pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
 pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
-pub const ELEVON_RIGHT_TRIM_US: i32 = 0;
+pub const ELEVON_RIGHT_TRIM_US: i32 = -50;
 
 // Individual servo center positions after trim
 pub const ELEVON_LEFT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_LEFT_TRIM_US) as u32;
