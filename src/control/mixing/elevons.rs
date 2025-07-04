@@ -1,9 +1,17 @@
 use crate::config::*;
 
-/// Convert SBUS values to normalized control inputs (-1.0 to 1.0)
+/// Convert SBUS values to normalized control inputs (-1.0 to 1.0) with calibrated centers
 pub fn sbus_to_normalized(sbus_value: u16) -> f32 {
-    // SBUS range is 0-2047, center at ~1023
+    // SBUS range is 0-2047, center at ~1023 (but varies by transmitter)
     let normalized = (sbus_value as f32 - 1023.5) / 1023.5;
+    normalized.clamp(-1.0, 1.0)
+}
+
+/// Convert SBUS value to normalized with specific center point
+fn sbus_to_normalized_with_center(sbus_value: u16, center: u16) -> f32 {
+    // Validate center point is reasonable
+    let safe_center = center.clamp(1023 - SBUS_CENTER_TOLERANCE, 1023 + SBUS_CENTER_TOLERANCE);
+    let normalized = (sbus_value as f32 - safe_center as f32) / 1023.5;
     normalized.clamp(-1.0, 1.0)
 }
 
@@ -32,12 +40,12 @@ pub struct ElevonOutputs {
 }
 
 impl ControlInputs {
-    /// Create control inputs from SBUS packet channels
+    /// Create control inputs from SBUS packet channels with calibrated centers
     pub fn from_sbus_channels(channels: &[u16]) -> Self {
         Self {
-            pitch: sbus_to_normalized(channels[PITCH_CH]),
-            roll: sbus_to_normalized(channels[ROLL_CH]),
-            yaw: sbus_to_normalized(channels[YAW_CH]),
+            pitch: sbus_to_normalized_with_center(channels[PITCH_CH], SBUS_PITCH_CENTER),
+            roll: sbus_to_normalized_with_center(channels[ROLL_CH], SBUS_ROLL_CENTER),
+            yaw: sbus_to_normalized_with_center(channels[YAW_CH], SBUS_YAW_CENTER),
             throttle: (channels[THROTTLE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
         }
     }
@@ -47,7 +55,7 @@ impl ControlInputs {
         Self {
             pitch: 0.0, // No pitch input in direct mode
             roll: 0.0,  // No roll input in direct mode
-            yaw: sbus_to_normalized(channels[DIFFERENTIAL_CH]),
+            yaw: sbus_to_normalized_with_center(channels[DIFFERENTIAL_CH], SBUS_YAW_CENTER),
             throttle: (channels[ENGINE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
         }
     }
@@ -67,14 +75,14 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
         - (inputs.roll * ELEVON_ROLL_GAIN)
         - (inputs.yaw * YAW_TO_ELEVON_GAIN);
 
-    // Convert to servo pulse widths
+    // Convert to servo pulse widths (trim applied in PWM layer)
     let left_us = normalized_to_servo_us(left_elevon_normalized);
     let right_us = normalized_to_servo_us(right_elevon_normalized);
 
     ElevonOutputs { left_us, right_us }
 }
 
-/// Get direct elevon control (legacy mode)
+/// Get direct elevon control (legacy mode, trim applied in PWM layer)
 pub fn direct_elevon_control(channels: &[u16]) -> ElevonOutputs {
     use crate::control::throttle::sbus_to_pulse_us;
 

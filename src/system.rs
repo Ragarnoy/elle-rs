@@ -8,7 +8,7 @@ use sbus_rs::SbusPacket;
 
 #[cfg(feature = "mixing")]
 use crate::control::mixing::{
-    elevons::{ControlInputs, ElevonOutputs, mix_elevons},
+    elevons::{ControlInputs, mix_elevons},
     yaw::{apply_differential_thrust, calculate_yaw_differential},
 };
 
@@ -121,7 +121,7 @@ impl<'a> FlightController<'a> {
 
         // Set elevon positions
         self.pwm
-            .set_elevons(elevon_outputs.left_us, elevon_outputs.right_us);
+            .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
         // Calculate engine thrust with differential
         let base_thrust = throttle_curve((final_inputs.throttle * 2047.0) as u16);

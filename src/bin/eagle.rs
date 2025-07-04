@@ -5,7 +5,10 @@
 
 use defmt::info;
 use defmt_rtt as _;
-use elle::config::{IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS};
+use elle::config::{
+    IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
+};
+use elle::control::mixing::elevons::ControlInputs;
 use elle::hardware::imu::{ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, is_attitude_valid};
 use elle::hardware::{
     pwm::{PwmOutputs, PwmPins},
@@ -13,8 +16,7 @@ use elle::hardware::{
 };
 use elle::system::FlightController;
 use embassy_executor::{Executor, Spawner};
-use embassy_rp::adc::Blocking;
-use embassy_rp::i2c::{Config, I2c};
+use embassy_rp::i2c::Config;
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{I2C1, PIN_6, PIN_7, PIN_25, PIO0, UART1};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
@@ -96,6 +98,49 @@ async fn main(spawner: Spawner) {
         let attitude = ATTITUDE_SIGNAL.try_take();
 
         if let Some(packet) = sbus.read_packet().await {
+            if loop_counter % 3000 == 0 {
+                // Every ~3 seconds
+
+                #[cfg(feature = "mixing")]
+                {
+                    use elle::control::mixing::elevons::ControlInputs;
+                    let inputs = ControlInputs::from_sbus_channels(&packet.channels);
+
+                    info!("=== TRIM DEBUG ===");
+                    info!(
+                        "Raw SBUS: P:{} R:{} Y:{}",
+                        packet.channels[PITCH_CH],
+                        packet.channels[ROLL_CH],
+                        packet.channels[YAW_CH]
+                    );
+                    info!(
+                        "Normalized: P:{} R:{} Y:{}",
+                        (inputs.pitch * 1000.0) as i16, // x1000 for more precision
+                        (inputs.roll * 1000.0) as i16,
+                        (inputs.yaw * 1000.0) as i16
+                    );
+                    info!(
+                        "Trim values: L:{}μs R:{}μs",
+                        elle::config::ELEVON_LEFT_TRIM_US,
+                        elle::config::ELEVON_RIGHT_TRIM_US
+                    );
+
+                    // Check if yaw is affecting elevons
+                    if inputs.yaw.abs() > 0.05 {
+                        defmt::warn!(
+                            "⚠️  Yaw input detected: {} - this affects elevons!",
+                            (inputs.yaw * 1000.0) as i16
+                        );
+                    }
+
+                    // Check which code path we're using
+                    if fc.is_armed() {
+                        info!("Status: ARMED - using flight mixing");
+                    } else {
+                        info!("Status: DISARMED - using safe positions");
+                    }
+                }
+            }
             // Pass attitude data to flight controller if available and valid
             if let Some(att) = attitude {
                 if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {

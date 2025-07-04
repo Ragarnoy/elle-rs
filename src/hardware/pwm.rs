@@ -50,21 +50,46 @@ impl<'a> PwmOutputs<'a> {
     }
 
     pub fn set_safe_positions(&mut self) {
+        // Use individual trim-adjusted center positions
         self.elevon_left
-            .write(Duration::from_micros(SERVO_CENTER_US.into()));
+            .write(Duration::from_micros(ELEVON_LEFT_CENTER_US.into()));
         self.elevon_right
-            .write(Duration::from_micros(SERVO_CENTER_US.into()));
+            .write(Duration::from_micros(ELEVON_RIGHT_CENTER_US.into()));
         self.engine_left
             .write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
         self.engine_right
             .write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
     }
 
+    /// Set elevons without trim applied (legacy)
     pub fn set_elevons(&mut self, left_us: u32, right_us: u32) {
         self.elevon_left
             .write(Duration::from_micros(left_us.into()));
         self.elevon_right
             .write(Duration::from_micros(right_us.into()));
+    }
+
+    /// Set elevons with trim applied (recommended method)
+    pub fn set_elevons_with_trim(&mut self, left_us: u32, right_us: u32) {
+        // Apply trim adjustments
+        let left_trimmed = apply_elevon_trim(left_us, ELEVON_LEFT_TRIM_US);
+        let right_trimmed = apply_elevon_trim(right_us, ELEVON_RIGHT_TRIM_US);
+
+        self.elevon_left
+            .write(Duration::from_micros(left_trimmed.into()));
+        self.elevon_right
+            .write(Duration::from_micros(right_trimmed.into()));
+
+        // Debug output for trim monitoring
+        if ELEVON_LEFT_TRIM_US != 0 || ELEVON_RIGHT_TRIM_US != 0 {
+            defmt::trace!(
+                "Elevon trim: L:{}μs→{}μs R:{}μs→{}μs",
+                left_us,
+                left_trimmed,
+                right_us,
+                right_trimmed
+            );
+        }
     }
 
     pub fn set_engines(&mut self, left_us: u32, right_us: u32) {
@@ -74,6 +99,16 @@ impl<'a> PwmOutputs<'a> {
             (right_us + ENGINE_RIGHT_OFFSET_US).into(),
         ));
     }
+}
+
+/// Apply trim adjustment to elevon position
+fn apply_elevon_trim(base_us: u32, trim_us: i32) -> u32 {
+    // Clamp trim to safe bounds
+    let clamped_trim = trim_us.clamp(-MAX_TRIM_US, MAX_TRIM_US);
+
+    // Apply trim and ensure result stays within servo bounds
+    let trimmed = (base_us as i32 + clamped_trim) as u32;
+    trimmed.clamp(SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US)
 }
 
 pub struct PwmPins<'a> {

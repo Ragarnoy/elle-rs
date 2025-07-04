@@ -34,6 +34,10 @@ pub const ENGINE_RIGHT_OFFSET_US: u32 = 2;
 // SBUS parameters
 pub const SBUS_BAUD: u32 = 100_000;
 pub const SBUS_TIMEOUT_MS: u64 = 100;
+pub const SBUS_CENTER_TOLERANCE: u16 = 10; // Max deviation
+pub const SBUS_ROLL_CENTER: u16 = 999;
+pub const SBUS_PITCH_CENTER: u16 = 999; // Adjust if needed
+pub const SBUS_YAW_CENTER: u16 = 1005; // Adjust if needed
 
 // NEW: Flight control channel mapping (0-indexed)
 pub const PITCH_CH: usize = 0; // Elevator/pitch input
@@ -69,3 +73,13 @@ pub const PIN_IMU_SDA: u8 = 6; // GPIO6
 pub const PIN_IMU_SCL: u8 = 7; // GPIO7
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
+
+pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
+pub const ELEVON_RIGHT_TRIM_US: i32 = 0;
+
+// Individual servo center positions after trim
+pub const ELEVON_LEFT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_LEFT_TRIM_US) as u32;
+pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_TRIM_US) as u32;
+
+// Safety bounds for trim values
+pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
