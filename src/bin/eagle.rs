@@ -98,49 +98,6 @@ async fn main(spawner: Spawner) {
         let attitude = ATTITUDE_SIGNAL.try_take();
 
         if let Some(packet) = sbus.read_packet().await {
-            if loop_counter % 3000 == 0 {
-                // Every ~3 seconds
-
-                #[cfg(feature = "mixing")]
-                {
-                    use elle::control::mixing::elevons::ControlInputs;
-                    let inputs = ControlInputs::from_sbus_channels(&packet.channels);
-
-                    info!("=== TRIM DEBUG ===");
-                    info!(
-                        "Raw SBUS: P:{} R:{} Y:{}",
-                        packet.channels[PITCH_CH],
-                        packet.channels[ROLL_CH],
-                        packet.channels[YAW_CH]
-                    );
-                    info!(
-                        "Normalized: P:{} R:{} Y:{}",
-                        (inputs.pitch * 1000.0) as i16, // x1000 for more precision
-                        (inputs.roll * 1000.0) as i16,
-                        (inputs.yaw * 1000.0) as i16
-                    );
-                    info!(
-                        "Trim values: L:{}μs R:{}μs",
-                        elle::config::ELEVON_LEFT_TRIM_US,
-                        elle::config::ELEVON_RIGHT_TRIM_US
-                    );
-
-                    // Check if yaw is affecting elevons
-                    if inputs.yaw.abs() > 0.05 {
-                        defmt::warn!(
-                            "⚠️  Yaw input detected: {} - this affects elevons!",
-                            (inputs.yaw * 1000.0) as i16
-                        );
-                    }
-
-                    // Check which code path we're using
-                    if fc.is_armed() {
-                        info!("Status: ARMED - using flight mixing");
-                    } else {
-                        info!("Status: DISARMED - using safe positions");
-                    }
-                }
-            }
             // Pass attitude data to flight controller if available and valid
             if let Some(att) = attitude {
                 if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {
