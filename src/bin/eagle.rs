@@ -3,7 +3,7 @@
 
 //! Firmware for the XFly Eagle Testbed
 
-use defmt::info;
+use defmt::{debug, info};
 use defmt_rtt as _;
 use elle::config::{
     IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
@@ -98,6 +98,22 @@ async fn main(spawner: Spawner) {
         let attitude = ATTITUDE_SIGNAL.try_take();
 
         if let Some(packet) = sbus.read_packet().await {
+            // Print all SBUS channels
+            if loop_counter % 1000 == 0 {
+                debug!(
+                    "CH1: {} CH2: {} CH3: {} CH4: {} CH5: {} CH6: {} CH7: {} CH8: {} CH9: {} CH10: {}",
+                    packet.channels[0],
+                    packet.channels[1],
+                    packet.channels[2],
+                    packet.channels[3],
+                    packet.channels[4],
+                    packet.channels[5],
+                    packet.channels[6],
+                    packet.channels[7],
+                    packet.channels[8],
+                    packet.channels[9],
+                );
+            }
             // Pass attitude data to flight controller if available and valid
             if let Some(att) = attitude {
                 if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {

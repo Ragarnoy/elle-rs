@@ -1,5 +1,5 @@
 use crate::config::*;
-use crate::control::{arming::ArmingState, throttle::*};
+use crate::control::{arming::ArmingState, pid::AttitudeController, throttle::*};
 use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
 use defmt::info;
@@ -20,6 +20,7 @@ use crate::control::throttle::sbus_to_pulse_us;
 pub struct FlightController<'a> {
     pwm: PwmOutputs<'a>,
     arming: ArmingState,
+    attitude_controller: AttitudeController,
     last_packet_time: Instant,
 }
 
@@ -28,6 +29,7 @@ impl<'a> FlightController<'a> {
         Self {
             pwm,
             arming: ArmingState::new(),
+            attitude_controller: AttitudeController::new(),
             last_packet_time: Instant::now(),
         }
     }
@@ -90,25 +92,49 @@ impl<'a> FlightController<'a> {
         self.arming
             .update(packet.channels[THROTTLE_CH], packet.flags.failsafe);
 
-        // Get pilot control inputs
-        let pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
+        // Check attitude control enable (CH5)
+        let attitude_enabled = packet.channels[ATTITUDE_ENABLE_CH] > ATTITUDE_ENABLE_THRESHOLD;
+        self.attitude_controller.enabled = attitude_enabled && self.arming.armed;
 
-        // Apply attitude stabilization if available and armed
+        // Get desired pitch from CH6 (map SBUS to angle)
+        let ch6_normalized = (packet.channels[ATTITUDE_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
+        let desired_pitch_deg = ATTITUDE_PITCH_MIN_DEG
+            + (ch6_normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG);
+        let desired_pitch_rad = desired_pitch_deg * core::f32::consts::PI / 180.0;
+
+        // Get pilot control inputs
+        let mut pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
+
+        // Apply attitude stabilization if available and enabled
         let final_inputs = if let Some(att) = attitude {
-            if self.arming.armed {
-                // TODO: Apply PID attitude correction here
-                // For now, just use pilot inputs directly
-                defmt::debug!(
-                    "Attitude - Pitch: {}°, Roll: {}°, Controls - P:{} R:{} Y:{}",
-                    (att.pitch * 180.0 / core::f32::consts::PI) as i16,
-                    (att.roll * 180.0 / core::f32::consts::PI) as i16,
-                    (pilot_inputs.pitch * 100.0) as i16,
-                    (pilot_inputs.roll * 100.0) as i16,
-                    (pilot_inputs.yaw * 100.0) as i16
+            if self.attitude_controller.enabled {
+                // Get attitude corrections
+                let (pitch_correction, roll_correction) = self.attitude_controller.update(
+                    desired_pitch_rad,
+                    0.0, // Desired roll = level
+                    att.pitch,
+                    att.roll,
+                    Instant::now(),
                 );
 
-                pilot_inputs // Will be replaced with stabilized inputs later
+                // Mix pilot inputs with attitude corrections
+                // Pilot inputs override attitude hold (allows manual control)
+                pilot_inputs.pitch = (pilot_inputs.pitch + pitch_correction).clamp(-1.0, 1.0);
+                pilot_inputs.roll = (pilot_inputs.roll + roll_correction).clamp(-1.0, 1.0);
+
+                defmt::info!(
+                    "Attitude Hold - Target: {}° Current: {}° Correction: {}",
+                    desired_pitch_deg as i16,
+                    (att.pitch * 180.0 / core::f32::consts::PI) as i16,
+                    (pitch_correction * 100.0) as i16
+                );
+
+                pilot_inputs
             } else {
+                // Reset PID when disabled
+                if self.attitude_controller.is_active() {
+                    self.attitude_controller.reset();
+                }
                 pilot_inputs
             }
         } else {
@@ -135,17 +161,16 @@ impl<'a> FlightController<'a> {
         self.pwm.set_engines(left_thrust, right_thrust);
 
         // Debug output
-        defmt::debug!(
-            "Controls: P:{} R:{} Y:{} T:{} | Elevons: L:{}μs R:{}μs | Engines: L:{}μs R:{}μs",
-            (final_inputs.pitch * 100.0) as i16,
-            (final_inputs.roll * 100.0) as i16,
-            (final_inputs.yaw * 100.0) as i16,
-            (final_inputs.throttle * 100.0) as i16,
-            elevon_outputs.left_us,
-            elevon_outputs.right_us,
-            left_thrust,
-            right_thrust
-        );
+        // defmt::debug!(
+        //     "Controls: P:{} R:{} Y:{} T:{} | Att:{} | Elevons: L:{}μs R:{}μs",
+        //     (final_inputs.pitch * 100.0) as i16,
+        //     (final_inputs.roll * 100.0) as i16,
+        //     (final_inputs.yaw * 100.0) as i16,
+        //     (final_inputs.throttle * 100.0) as i16,
+        //     if attitude_enabled { "ON" } else { "OFF" },
+        //     elevon_outputs.left_us,
+        //     elevon_outputs.right_us
+        // );
     }
 
     /// Legacy direct elevon control method
@@ -200,6 +225,7 @@ impl<'a> FlightController<'a> {
     pub fn check_failsafe(&mut self) {
         if self.last_packet_time.elapsed() > Duration::from_millis(SBUS_TIMEOUT_MS) {
             self.arming.signal_loss();
+            self.attitude_controller.reset(); // Reset PID on signal loss
             self.apply_failsafe();
         }
     }
@@ -214,5 +240,9 @@ impl<'a> FlightController<'a> {
 
     pub fn is_failsafe(&self) -> bool {
         self.arming.failsafe_active
+    }
+
+    pub fn is_attitude_enabled(&self) -> bool {
+        self.attitude_controller.enabled
     }
 }

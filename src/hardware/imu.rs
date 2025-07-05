@@ -1,7 +1,7 @@
 //! BNO055 IMU integration for attitude sensing with LED status
 //! src/hardware/imu.rs
 
-use bno055::mint;
+use bno055::{AxisRemap, AxisRemapBuilder, BNO055AxisConfig, BNO055AxisSign, mint};
 use defmt::*;
 use embassy_rp::Peri;
 use embassy_rp::gpio::{Level, Output};
@@ -174,6 +174,11 @@ impl<'a> BnoImu<'a> {
                 }
             }
         }
+
+        // BNO is inverted by default, so we need to flip the sign of the Y and Z axes
+        self.bno
+            .set_axis_sign(BNO055AxisSign::Y_NEGATIVE | BNO055AxisSign::Z_NEGATIVE)
+            .map_err(|_| "Failed to set axis sign")?;
 
         // Set to NDOF mode for full sensor fusion
         Timer::after(Duration::from_millis(50)).await;

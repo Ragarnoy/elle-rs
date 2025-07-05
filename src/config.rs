@@ -83,3 +83,26 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
+
+// PID tuning parameters (start conservative!)
+pub const PITCH_KP: f32 = 0.5; // Proportional gain
+pub const PITCH_KI: f32 = 0.05; // Integral gain
+pub const PITCH_KD: f32 = 0.1; // Derivative gain
+pub const PITCH_MAX_RATE: f32 = 45.0; // Max pitch rate in deg/s
+
+pub const ROLL_KP: f32 = 0.4; // Usually lower than pitch for flying wings
+pub const ROLL_KI: f32 = 0.05;
+pub const ROLL_KD: f32 = 0.08;
+pub const ROLL_MAX_RATE: f32 = 90.0; // Flying wings can roll faster
+
+// Control authority limits (0.0 to 1.0)
+pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.5; // Limit attitude controller to 50% of stick authority
+
+// Attitude control channels
+pub const ATTITUDE_ENABLE_CH: usize = 4; // CH5 - Attitude hold enable
+pub const ATTITUDE_SETPOINT_CH: usize = 5; // CH6 - Desired pitch angle
+
+// Attitude control thresholds
+pub const ATTITUDE_ENABLE_THRESHOLD: u16 = 1200; // SBUS value above which attitude hold is enabled
+pub const ATTITUDE_PITCH_MIN_DEG: f32 = -15.0; // Min commandable pitch angle
+pub const ATTITUDE_PITCH_MAX_DEG: f32 = 25.0; // Max commandable pitch angle
