@@ -28,7 +28,7 @@ impl<'a> FlightController<'a> {
     pub fn new(pwm: PwmOutputs<'a>) -> Self {
         Self {
             pwm,
-            arming: ArmingState::new(),
+            arming: ArmingState::default(),
             attitude_controller: AttitudeController::new(),
             last_packet_time: Instant::now(),
         }

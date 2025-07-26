@@ -1,5 +1,4 @@
 //! PID attitude controller for flying wing stabilization
-//! src/control/pid.rs
 use embassy_time::Instant;
 
 /// Generic PID controller with anti-windup
@@ -116,6 +115,12 @@ pub struct AttitudeController {
     pub enabled: bool,
     pub pitch_hold_enabled: bool,
     pub roll_hold_enabled: bool,
+}
+
+impl Default for AttitudeController {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AttitudeController {

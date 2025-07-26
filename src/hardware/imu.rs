@@ -1,14 +1,13 @@
 //! BNO055 IMU integration for attitude sensing with LED status
-//! src/hardware/imu.rs
 
-use bno055::{AxisRemap, AxisRemapBuilder, BNO055AxisConfig, BNO055AxisSign, mint};
+use bno055::{BNO055AxisSign, mint};
 use defmt::*;
 use embassy_rp::Peri;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::i2c::{Blocking, I2c};
 use embassy_rp::peripherals::{I2C1, PIN_25};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::mutex::Mutex;
+use embassy_sync::rwlock::RwLock;
 use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Instant, Timer};
 
@@ -16,7 +15,7 @@ use embassy_time::{Delay, Duration, Instant, Timer};
 pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
 
 /// Mutex-protected IMU status for safe access
-pub static IMU_STATUS: Mutex<CriticalSectionRawMutex, ImuStatus> = Mutex::new(ImuStatus::new());
+pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
 
 #[derive(Clone, Copy, Debug, Format)]
 pub struct AttitudeData {
@@ -197,7 +196,7 @@ impl<'a> BnoImu<'a> {
 
         // Update status
         {
-            let mut status = IMU_STATUS.lock().await;
+            let mut status = IMU_STATUS.write().await;
             status.initialized = true;
             status.last_update = Instant::now();
         }
@@ -269,7 +268,7 @@ impl<'a> BnoImu<'a> {
                 };
 
                 {
-                    let mut imu_status = IMU_STATUS.lock().await;
+                    let mut imu_status = IMU_STATUS.write().await;
                     imu_status.calibration_status = levels;
                     imu_status.calibrated = levels.is_flight_ready();
                 }
@@ -320,7 +319,7 @@ impl<'a> BnoImu<'a> {
 
         // Update status
         {
-            let mut status = IMU_STATUS.lock().await;
+            let mut status = IMU_STATUS.write().await;
             status.last_update = now;
             status.error_count = 0; // Reset on successful read
         }
@@ -376,7 +375,7 @@ impl<'a> BnoImu<'a> {
                     self.set_led_pattern(LedPattern::RapidFlash).await;
 
                     {
-                        let mut status = IMU_STATUS.lock().await;
+                        let mut status = IMU_STATUS.write().await;
                         status.error_count = consecutive_errors;
                     }
 
@@ -395,7 +394,7 @@ impl<'a> BnoImu<'a> {
             }
 
             // Run at 100Hz for smooth control
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after(Duration::from_micros(2500)).await;
         }
     }
 }

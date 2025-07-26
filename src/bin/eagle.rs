@@ -5,10 +5,7 @@
 
 use defmt::{debug, info};
 use defmt_rtt as _;
-use elle::config::{
-    IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
-};
-use elle::control::mixing::elevons::ControlInputs;
+use elle::config::{IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS};
 use elle::hardware::imu::{ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, is_attitude_valid};
 use elle::hardware::{
     pwm::{PwmOutputs, PwmPins},
@@ -79,7 +76,7 @@ async fn main(spawner: Spawner) {
     // Wait for IMU to be ready
     info!("Waiting for IMU initialization...");
     loop {
-        let status = IMU_STATUS.lock().await;
+        let status = IMU_STATUS.read().await;
         if status.initialized {
             info!("IMU ready! Calibrated: {}", status.calibrated);
             break;
@@ -135,7 +132,7 @@ async fn main(spawner: Spawner) {
             loop_counter = 0;
 
             // Get IMU status
-            let imu_status = IMU_STATUS.lock().await;
+            let imu_status = IMU_STATUS.read().await;
 
             if fc.is_armed() {
                 info!(

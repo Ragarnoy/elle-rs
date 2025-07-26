@@ -37,7 +37,7 @@ pub fn calculate_yaw_differential(yaw_input: f32) -> DifferentialFactors {
 
 /// Calculate differential thrust from SBUS channel (legacy)
 pub fn calculate_differential_legacy(ch4_value: u16) -> DifferentialFactors {
-    if ch4_value >= DIFF_NEUTRAL_MIN && ch4_value <= DIFF_NEUTRAL_MAX {
+    if (DIFF_NEUTRAL_MIN..=DIFF_NEUTRAL_MAX).contains(&ch4_value) {
         DifferentialFactors {
             left_mult: 1.0,
             right_mult: 1.0,
