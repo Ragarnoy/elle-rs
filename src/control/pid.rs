@@ -1,115 +1,11 @@
-//! PID attitude controller for flying wing stabilization
+//! Attitude controller for flying wing stabilization using free-flight-stabilization crate
 use embassy_time::Instant;
+use free_flight_stabilization::{AngleStabilizer, FlightStabilizer, FlightStabilizerConfig};
 
-/// Generic PID controller with anti-windup
-#[derive(Debug, Clone)]
-pub struct PidController {
-    // Gains
-    pub kp: f32,
-    pub ki: f32,
-    pub kd: f32,
-
-    // State
-    integral: f32,
-    last_error: f32,
-    last_time: Option<Instant>,
-
-    // Limits
-    pub output_limit: f32,      // Max output magnitude
-    pub integral_limit: f32,    // Anti-windup limit
-    pub derivative_filter: f32, // Low-pass filter coefficient (0-1)
-
-    // Filtered derivative
-    filtered_derivative: f32,
-}
-
-impl PidController {
-    pub fn new(kp: f32, ki: f32, kd: f32) -> Self {
-        Self {
-            kp,
-            ki,
-            kd,
-            integral: 0.0,
-            last_error: 0.0,
-            last_time: None,
-            output_limit: 1.0,      // Default to normalized output
-            integral_limit: 0.5,    // Limit integral to 50% of output
-            derivative_filter: 0.1, // Moderate filtering
-            filtered_derivative: 0.0,
-        }
-    }
-
-    /// Reset the controller state
-    pub fn reset(&mut self) {
-        self.integral = 0.0;
-        self.last_error = 0.0;
-        self.last_time = None;
-        self.filtered_derivative = 0.0;
-    }
-
-    /// Update the PID controller
-    pub fn update(&mut self, setpoint: f32, measurement: f32, now: Instant) -> f32 {
-        let error = setpoint - measurement;
-
-        // Calculate dt
-        let dt = if let Some(last) = self.last_time {
-            let elapsed = now.duration_since(last);
-            elapsed.as_micros() as f32 / 1_000_000.0
-        } else {
-            // First iteration, use a nominal dt
-            0.01 // 10ms
-        };
-
-        // Proportional term
-        let p_term = self.kp * error;
-
-        // Integral term with anti-windup
-        self.integral += error * dt;
-        self.integral = self
-            .integral
-            .clamp(-self.integral_limit, self.integral_limit);
-        let i_term = self.ki * self.integral;
-
-        // Derivative term with filtering
-        let derivative = if dt > 0.0 {
-            (error - self.last_error) / dt
-        } else {
-            0.0
-        };
-
-        // Low-pass filter the derivative to reduce noise
-        self.filtered_derivative = self.derivative_filter * derivative
-            + (1.0 - self.derivative_filter) * self.filtered_derivative;
-        let d_term = self.kd * self.filtered_derivative;
-
-        // Calculate total output
-        let output = p_term + i_term + d_term;
-
-        // Update state
-        self.last_error = error;
-        self.last_time = Some(now);
-
-        // Apply output limits
-        output.clamp(-self.output_limit, self.output_limit)
-    }
-
-    /// Update gains
-    pub fn set_gains(&mut self, kp: f32, ki: f32, kd: f32) {
-        self.kp = kp;
-        self.ki = ki;
-        self.kd = kd;
-    }
-
-    /// Check if controller has been initialized (has received at least one update)
-    pub fn is_active(&self) -> bool {
-        self.last_time.is_some()
-    }
-}
-
-/// Attitude controller combining multiple PID controllers
+/// Attitude controller using free-flight-stabilization crate
 pub struct AttitudeController {
-    pub pitch_pid: PidController,
-    pub roll_pid: PidController,
+    stabilizer: AngleStabilizer<f32>,
+    last_time: Option<Instant>,
 
     // Control flags
     pub enabled: bool,
@@ -125,39 +21,49 @@ impl Default for AttitudeController {
 
 impl AttitudeController {
     pub fn new() -> Self {
-        // Conservative initial gains - tune these based on your aircraft
-        let mut pitch_pid = PidController::new(
-            0.5,  // Kp - start conservative
-            0.05, // Ki - small integral
-            0.1,  // Kd - some damping
-        );
-        pitch_pid.output_limit = 0.5; // Limit to 50% control authority
-        pitch_pid.integral_limit = 0.2; // Limit integral windup
+        Self::with_config(FlightStabilizerConfig::new())
+    }
 
-        let mut roll_pid = PidController::new(
-            0.4,  // Kp
-            0.05, // Ki
-            0.08, // Kd
-        );
-        roll_pid.output_limit = 0.5;
-        roll_pid.integral_limit = 0.2;
+    /// Create with custom configuration (matches free-flight-stabilization pattern)
+    pub fn with_config(config: FlightStabilizerConfig<f32>) -> Self {
+        let stabilizer = AngleStabilizer::with_config(config);
 
         Self {
-            pitch_pid,
-            roll_pid,
+            stabilizer,
+            last_time: None,
             enabled: false,
             pitch_hold_enabled: true,
             roll_hold_enabled: false, // Usually just level wings for flying wings
         }
     }
 
-    /// Reset all controllers
+    /// Reset the controller state
     pub fn reset(&mut self) {
-        self.pitch_pid.reset();
-        self.roll_pid.reset();
+        // Reset by creating a new stabilizer with default config
+        // Since we can't access the current config, use default
+        self.stabilizer = AngleStabilizer::new();
+        self.last_time = None;
     }
 
-    /// Calculate attitude corrections
+    /// Control method compatible with free-flight-stabilization crate interface
+    pub fn control(
+        &mut self,
+        set_point: (f32, f32, f32),    // (roll, pitch, yaw) setpoints
+        imu_attitude: (f32, f32, f32), // (roll, pitch, yaw) current attitude
+        gyro_rate: (f32, f32, f32),    // (roll_rate, pitch_rate, yaw_rate)
+        dt: f32,                       // time step
+        low_throttle: bool,            // low throttle flag
+    ) -> (f32, f32, f32) {
+        if !self.enabled {
+            return (0.0, 0.0, 0.0);
+        }
+
+        // Use free-flight-stabilization crate directly
+        self.stabilizer
+            .control(set_point, imu_attitude, gyro_rate, dt, low_throttle)
+    }
+
+    /// Calculate attitude corrections (existing interface for compatibility)
     pub fn update(
         &mut self,
         desired_pitch: f32,
@@ -170,23 +76,46 @@ impl AttitudeController {
             return (0.0, 0.0);
         }
 
-        let pitch_correction = if self.pitch_hold_enabled {
-            self.pitch_pid.update(desired_pitch, current_pitch, now)
+        // Calculate dt
+        let dt = if let Some(last) = self.last_time {
+            let elapsed = now.duration_since(last);
+            elapsed.as_micros() as f32 / 1_000_000.0
         } else {
-            0.0
+            0.01 // First iteration, use nominal dt
         };
 
-        let roll_correction = if self.roll_hold_enabled {
-            self.roll_pid.update(desired_roll, current_roll, now)
-        } else {
-            0.0
-        };
+        self.last_time = Some(now);
 
-        (pitch_correction, roll_correction)
+        // Use the control interface internally
+        let set_point = (
+            if self.roll_hold_enabled {
+                desired_roll
+            } else {
+                current_roll
+            },
+            if self.pitch_hold_enabled {
+                desired_pitch
+            } else {
+                current_pitch
+            },
+            0.0, // No yaw control for flying wing
+        );
+
+        let current_attitude = (current_roll, current_pitch, 0.0);
+
+        // We don't have gyro rates in this interface, so use zeros
+        let gyro_rates = (0.0, 0.0, 0.0);
+
+        let low_throttle = false;
+
+        let (roll_output, pitch_output, _yaw_output) =
+            self.control(set_point, current_attitude, gyro_rates, dt, low_throttle);
+
+        (pitch_output, roll_output)
     }
 
     /// Check if controller has been initialized
     pub fn is_active(&self) -> bool {
-        self.pitch_pid.is_active() || self.roll_pid.is_active()
+        self.last_time.is_some()
     }
 }
