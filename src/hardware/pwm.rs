@@ -1,7 +1,7 @@
 use crate::config::*;
 use core::time::Duration;
 use embassy_rp::Peri;
-use embassy_rp::peripherals::{PIN_10, PIN_11, PIN_16, PIN_17, PIO0};
+use embassy_rp::peripherals::{PIN_11, PIN_12, PIN_14, PIN_15, PIO0};
 use embassy_rp::pio::{Common, StateMachine};
 use embassy_rp::pio_programs::pwm::{PioPwm, PioPwmProgram};
 
@@ -112,8 +112,8 @@ fn apply_elevon_trim(base_us: u32, trim_us: i32) -> u32 {
 }
 
 pub struct PwmPins<'a> {
-    pub elevon_left: Peri<'a, PIN_16>,
-    pub elevon_right: Peri<'a, PIN_17>,
-    pub engine_left: Peri<'a, PIN_10>,
-    pub engine_right: Peri<'a, PIN_11>,
+    pub elevon_left: Peri<'a, PIN_12>,
+    pub elevon_right: Peri<'a, PIN_14>,
+    pub engine_left: Peri<'a, PIN_11>,
+    pub engine_right: Peri<'a, PIN_15>,
 }

@@ -3,7 +3,7 @@
 
 //! Firmware for the XFly Eagle Testbed
 
-use defmt::{debug, info};
+use defmt::info;
 use defmt_rtt as _;
 use elle::config::{IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS};
 use elle::hardware::imu::{ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, is_attitude_valid};
@@ -15,7 +15,7 @@ use elle::system::FlightController;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::i2c::Config;
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{I2C1, PIN_6, PIN_7, PIN_25, PIO0, UART1};
+use embassy_rp::peripherals::{I2C0, PIN_8, PIN_9, PIN_25, PIO0, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::{Peri, bind_interrupts};
@@ -26,7 +26,7 @@ use static_cell::StaticCell;
 bind_interrupts!(
     struct Irqs {
         PIO0_IRQ_0 => PioIrqHandler<PIO0>;
-        UART1_IRQ => UartIrqHandler<UART1>;
+        UART0_IRQ => UartIrqHandler<UART0>;
     }
 );
 
@@ -45,7 +45,7 @@ async fn main(spawner: Spawner) {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
                 spawner
-                    .spawn(imu_task(spawner, p.I2C1, p.PIN_6, p.PIN_7, p.PIN_25))
+                    .spawn(imu_task(spawner, p.I2C0, p.PIN_8, p.PIN_9, p.PIN_25))
                     .unwrap();
             });
         },
@@ -53,10 +53,10 @@ async fn main(spawner: Spawner) {
 
     // Core0: Setup flight control hardware
     let mut pwm_pins = PwmPins {
-        elevon_left: p.PIN_16,
-        elevon_right: p.PIN_17,
-        engine_left: p.PIN_10,
-        engine_right: p.PIN_11,
+        elevon_left: p.PIN_12,
+        elevon_right: p.PIN_14,
+        engine_left: p.PIN_11,
+        engine_right: p.PIN_15,
     };
 
     let Pio {
@@ -70,7 +70,7 @@ async fn main(spawner: Spawner) {
     let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, sm2, sm3, &mut pwm_pins);
     pwm.set_safe_positions();
 
-    let mut sbus = SbusReceiver::new(p.UART1, p.PIN_5, Irqs, p.DMA_CH0);
+    let mut sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
     let mut fc = FlightController::new(pwm);
 
     // Wait for IMU to be ready
@@ -97,7 +97,7 @@ async fn main(spawner: Spawner) {
         if let Some(packet) = sbus.read_packet().await {
             // Print all SBUS channels
             if loop_counter % 1000 == 0 {
-                debug!(
+                info!(
                     "CH1: {} CH2: {} CH3: {} CH4: {} CH5: {} CH6: {} CH7: {} CH8: {} CH9: {} CH10: {}",
                     packet.channels[0],
                     packet.channels[1],
@@ -161,9 +161,9 @@ async fn main(spawner: Spawner) {
 #[embassy_executor::task]
 async fn imu_task(
     _spawner: Spawner,
-    i2c: Peri<'static, I2C1>,
-    sda: Peri<'static, PIN_6>,
-    scl: Peri<'static, PIN_7>,
+    i2c: Peri<'static, I2C0>,
+    sda: Peri<'static, PIN_8>,
+    scl: Peri<'static, PIN_9>,
     led: Peri<'static, PIN_25>,
 ) {
     info!("Core1: IMU task starting");

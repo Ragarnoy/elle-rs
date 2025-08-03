@@ -4,6 +4,7 @@ use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
 use defmt::info;
 use embassy_time::{Duration, Instant, Timer};
+use free_flight_stabilization::FlightStabilizerConfig;
 use sbus_rs::SbusPacket;
 
 #[cfg(feature = "mixing")]
@@ -26,10 +27,30 @@ pub struct FlightController<'a> {
 
 impl<'a> FlightController<'a> {
     pub fn new(pwm: PwmOutputs<'a>) -> Self {
+        // Use conservative gains similar to free-flight-stabilization example
+        let mut config = FlightStabilizerConfig::<f32>::new();
+
+        // Set the PID gains for roll, pitch, and yaw (from the example you provided)
+        config.kp_roll = 0.2;
+        config.ki_roll = 0.3;
+        config.kd_roll = -0.05;
+        config.kp_pitch = config.kp_roll;
+        config.ki_pitch = config.ki_roll;
+        config.kd_pitch = config.kd_roll;
+        config.kp_yaw = 0.3;
+        config.ki_yaw = 0.05;
+        config.kd_yaw = 0.00015;
+
+        // Set the upper limit for the integral term to prevent windup
+        config.i_limit = 25.0;
+
+        // Set the scale to adjust the PID outputs to the actuator range
+        config.scale = 0.01;
+
         Self {
             pwm,
             arming: ArmingState::default(),
-            attitude_controller: AttitudeController::new(),
+            attitude_controller: AttitudeController::with_config(config),
             last_packet_time: Instant::now(),
         }
     }

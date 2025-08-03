@@ -5,7 +5,7 @@ use defmt::*;
 use embassy_rp::Peri;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::i2c::{Blocking, I2c};
-use embassy_rp::peripherals::{I2C1, PIN_25};
+use embassy_rp::peripherals::{I2C0, PIN_25};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::rwlock::RwLock;
 use embassy_sync::signal::Signal;
@@ -95,7 +95,7 @@ enum LedPattern {
 }
 
 pub struct BnoImu<'a> {
-    bno: bno055::Bno055<I2c<'a, I2C1, Blocking>>,
+    bno: bno055::Bno055<I2c<'a, I2C0, Blocking>>,
     led: Output<'a>,
     last_attitude: AttitudeData,
     error_threshold: u32,
@@ -103,7 +103,7 @@ pub struct BnoImu<'a> {
 }
 
 impl<'a> BnoImu<'a> {
-    pub fn new(i2c: I2c<'a, I2C1, Blocking>, led_pin: Peri<'a, PIN_25>) -> Self {
+    pub fn new(i2c: I2c<'a, I2C0, Blocking>, led_pin: Peri<'a, PIN_25>) -> Self {
         // Use default address (0x29) or alternative (0x28) based on your hardware
         let bno = bno055::Bno055::new(i2c).with_alternative_address();
         let led = Output::new(led_pin, Level::Low);
