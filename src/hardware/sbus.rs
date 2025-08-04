@@ -1,9 +1,10 @@
+use crate::config::SBUS_BAUD;
+use embassy_rp::Peri;
 use embassy_rp::dma::Channel;
 use embassy_rp::interrupt::typelevel::Binding;
 use embassy_rp::uart::{Async, Config, DataBits, InterruptHandler, Parity, StopBits, UartRx};
-use embassy_rp::Peri;
+use embassy_time::Timer;
 use sbus_rs::{SbusPacket, StreamingParser};
-use crate::config::SBUS_BAUD;
 
 pub struct SbusReceiver<'a> {
     uart: UartRx<'a, Async>,
@@ -35,8 +36,10 @@ impl<'a> SbusReceiver<'a> {
 
         match embassy_futures::select::select(
             self.uart.read(&mut byte),
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(10))
-        ).await {
+            Timer::after(embassy_time::Duration::from_millis(10)),
+        )
+        .await
+        {
             embassy_futures::select::Either::First(Ok(())) => {
                 match self.parser.push_byte(byte[0]) {
                     Ok(Some(packet)) => Some(packet),

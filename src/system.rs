@@ -31,12 +31,12 @@ impl<'a> FlightController<'a> {
         let mut config = FlightStabilizerConfig::<f32>::new();
 
         // Set the PID gains for roll, pitch, and yaw (from the example you provided)
-        config.kp_roll = 0.2;
-        config.ki_roll = 0.3;
-        config.kd_roll = -0.05;
-        config.kp_pitch = config.kp_roll;
-        config.ki_pitch = config.ki_roll;
-        config.kd_pitch = config.kd_roll;
+        config.kp_roll = ROLL_KP;
+        config.ki_roll = ROLL_KI;
+        config.kd_roll = ROLL_KD;
+        config.kp_pitch = PITCH_KP;
+        config.ki_pitch = PITCH_KI;
+        config.kd_pitch = PITCH_KD;
         config.kp_yaw = 0.3;
         config.ki_yaw = 0.05;
         config.kd_yaw = 0.00015;
@@ -56,7 +56,7 @@ impl<'a> FlightController<'a> {
     }
 
     pub async fn initialize_escs(&mut self) {
-        defmt::info!("ESC init: Starting");
+        info!("ESC init: Starting");
 
         // Hold at minimum
         for _ in 0..200 {
@@ -66,7 +66,7 @@ impl<'a> FlightController<'a> {
         }
 
         // Brief idle pulse
-        defmt::info!("ESC init: Idle pulse");
+        info!("ESC init: Idle pulse");
         for _ in 0..50 {
             self.pwm
                 .set_engines(ENGINE_IDLE_PULSE_US, ENGINE_IDLE_PULSE_US);
@@ -122,7 +122,6 @@ impl<'a> FlightController<'a> {
         let desired_pitch_deg = ATTITUDE_PITCH_MIN_DEG
             + (ch6_normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG);
         let desired_pitch_rad = desired_pitch_deg * core::f32::consts::PI / 180.0;
-
         // Get pilot control inputs
         let mut pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
 
@@ -138,12 +137,11 @@ impl<'a> FlightController<'a> {
                     Instant::now(),
                 );
 
-                // Mix pilot inputs with attitude corrections
-                // Pilot inputs override attitude hold (allows manual control)
-                pilot_inputs.pitch = (pilot_inputs.pitch + pitch_correction).clamp(-1.0, 1.0);
-                pilot_inputs.roll = (pilot_inputs.roll + roll_correction).clamp(-1.0, 1.0);
+                // Use only attitude corrections when enabled
+                pilot_inputs.pitch = pitch_correction.clamp(-1.0, 1.0);
+                pilot_inputs.roll = roll_correction.clamp(-1.0, 1.0);
 
-                defmt::info!(
+                info!(
                     "Attitude Hold - Target: {}° Current: {}° Correction: {}",
                     desired_pitch_deg as i16,
                     (att.pitch * 180.0 / core::f32::consts::PI) as i16,

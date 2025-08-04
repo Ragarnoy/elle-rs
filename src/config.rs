@@ -1,5 +1,4 @@
-// src/config.rs - Updated channel mapping
-#![allow(dead_code)]
+pub mod profile;
 
 // PWM timing parameters
 pub const REFRESH_INTERVAL_US: u32 = 20_000; // 50Hz servo refresh rate
@@ -33,7 +32,7 @@ pub const ENGINE_RIGHT_OFFSET_US: u32 = 2;
 
 // SBUS parameters
 pub const SBUS_BAUD: u32 = 100_000;
-pub const SBUS_TIMEOUT_MS: u64 = 100;
+pub const SBUS_TIMEOUT_MS: u64 = 300;
 pub const SBUS_CENTER_TOLERANCE: u16 = 10; // Max deviation
 pub const SBUS_ROLL_CENTER: u16 = 999;
 pub const SBUS_PITCH_CENTER: u16 = 999; // Adjust if needed
@@ -60,17 +59,8 @@ pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons fo
 // Control mode selection
 pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon control
 
-// Pin assignments
-pub const PIN_ELEVON_LEFT: u8 = 16;
-pub const PIN_ELEVON_RIGHT: u8 = 17;
-pub const PIN_ENGINE_LEFT: u8 = 10;
-pub const PIN_ENGINE_RIGHT: u8 = 11;
-pub const PIN_SBUS_RX: u8 = 5;
-
 // IMU parameters
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C
-pub const PIN_IMU_SDA: u8 = 6; // GPIO6
-pub const PIN_IMU_SCL: u8 = 7; // GPIO7
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
@@ -85,14 +75,14 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
 // PID tuning parameters (start conservative!)
-pub const PITCH_KP: f32 = 0.5; // Proportional gain
-pub const PITCH_KI: f32 = 0.05; // Integral gain
-pub const PITCH_KD: f32 = 0.1; // Derivative gain
+pub const PITCH_KP: f32 = 5.0; // Proportional gain
+pub const PITCH_KI: f32 = 1.0; // Integral gain
+pub const PITCH_KD: f32 = 0.0; // Derivative gain
 pub const PITCH_MAX_RATE: f32 = 45.0; // Max pitch rate in deg/s
 
-pub const ROLL_KP: f32 = 0.4; // Usually lower than pitch for flying wings
-pub const ROLL_KI: f32 = 0.05;
-pub const ROLL_KD: f32 = 0.08;
+pub const ROLL_KP: f32 = 0.02; // Usually lower than pitch for flying wings
+pub const ROLL_KI: f32 = 0.01;
+pub const ROLL_KD: f32 = 0.02;
 pub const ROLL_MAX_RATE: f32 = 90.0; // Flying wings can roll faster
 
 // Control authority limits (0.0 to 1.0)
