@@ -3,7 +3,7 @@
 
 //! Firmware for the XFly Eagle Testbed
 
-use defmt::info;
+use defmt::{debug, info};
 use defmt_rtt as _;
 use elle::config::{IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS};
 use elle::hardware::imu::{ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, is_attitude_valid};
@@ -53,10 +53,10 @@ async fn main(spawner: Spawner) {
 
     // Core0: Setup flight control hardware
     let mut pwm_pins = PwmPins {
-        elevon_left: p.PIN_12,
+        elevon_left: p.PIN_15,
         elevon_right: p.PIN_14,
-        engine_left: p.PIN_11,
-        engine_right: p.PIN_15,
+        engine_left: p.PIN_12,
+        engine_right: p.PIN_11,
     };
 
     let Pio {
@@ -97,7 +97,7 @@ async fn main(spawner: Spawner) {
         if let Some(packet) = sbus.read_packet().await {
             // Print all SBUS channels
             if loop_counter % 1000 == 0 {
-                info!(
+                debug!(
                     "CH1: {} CH2: {} CH3: {} CH4: {} CH5: {} CH6: {} CH7: {} CH8: {} CH9: {} CH10: {}",
                     packet.channels[0],
                     packet.channels[1],
