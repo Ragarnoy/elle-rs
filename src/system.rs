@@ -48,10 +48,13 @@ impl<'a> FlightController<'a> {
         // Set the scale to adjust the PID outputs to the actuator range
         config.scale = 0.01;
 
+        let mut attitude_controller = AttitudeController::with_config(config);
+        attitude_controller.roll_hold_enabled = true; // Enable roll hold for CH8 control
+
         Self {
             pwm,
             arming: ArmingState::default(),
-            attitude_controller: AttitudeController::with_config(config),
+            attitude_controller,
             last_packet_time: Instant::now(),
             last_attitude: None,
         }
@@ -120,10 +123,16 @@ impl<'a> FlightController<'a> {
         self.attitude_controller.enabled = attitude_enabled && self.arming.armed;
 
         // Get desired pitch from CH6 (map SBUS to angle)
-        let ch6_normalized = (packet.channels[ATTITUDE_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
+        let ch6_normalized = (packet.channels[ATTITUDE_PITCH_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
         let desired_pitch_deg = ATTITUDE_PITCH_MIN_DEG
             + (ch6_normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG);
         let desired_pitch_rad = desired_pitch_deg * core::f32::consts::PI / 180.0;
+
+        // Get desired roll from CH8 (map SBUS to angle)
+        let ch8_normalized = (packet.channels[ATTITUDE_ROLL_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
+        let desired_roll_deg = ATTITUDE_ROLL_MIN_DEG
+            + (ch8_normalized + 1.0) * 0.5 * (ATTITUDE_ROLL_MAX_DEG - ATTITUDE_ROLL_MIN_DEG);
+        let desired_roll_rad = desired_roll_deg * core::f32::consts::PI / 180.0;
         // Get pilot control inputs
         let mut pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
 
@@ -144,7 +153,7 @@ impl<'a> FlightController<'a> {
                     ));
                     let (pitch_correction, roll_correction) = self.attitude_controller.update(
                         desired_pitch_rad,
-                        0.0, // Desired roll = level
+                        desired_roll_rad, // Desired roll from CH8
                         effective_attitude.pitch,
                         effective_attitude.roll,
                         gyro_rates,
@@ -156,10 +165,13 @@ impl<'a> FlightController<'a> {
                     pilot_inputs.roll = roll_correction;
 
                     info!(
-                        "Attitude Hold - Target: {}° Current: {}° Correction: {}",
+                        "Attitude Hold - P: {}°/{}° R: {}°/{}° Corrections: P:{} R:{}",
                         desired_pitch_deg as i16,
                         (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                        (pitch_correction * 100.0) as i16
+                        desired_roll_deg as i16,
+                        (effective_attitude.roll * 180.0 / core::f32::consts::PI) as i16,
+                        (pitch_correction * 100.0) as i16,
+                        (roll_correction * 100.0) as i16
                     );
 
                     pilot_inputs

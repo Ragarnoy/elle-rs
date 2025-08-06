@@ -98,9 +98,12 @@ pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.5; // Limit attitude controller to 50%
 
 // Attitude control channels
 pub const ATTITUDE_ENABLE_CH: usize = 4; // CH5 - Attitude hold enable
-pub const ATTITUDE_SETPOINT_CH: usize = 5; // CH6 - Desired pitch angle
+pub const ATTITUDE_PITCH_SETPOINT_CH: usize = 5; // CH6 - Desired pitch angle
+pub const ATTITUDE_ROLL_SETPOINT_CH: usize = 7; // CH8 - Desired roll angle
 
 // Attitude control thresholds
 pub const ATTITUDE_ENABLE_THRESHOLD: u16 = 1200; // SBUS value above which attitude hold is enabled
 pub const ATTITUDE_PITCH_MIN_DEG: f32 = -15.0; // Min commandable pitch angle
 pub const ATTITUDE_PITCH_MAX_DEG: f32 = 25.0; // Max commandable pitch angle
+pub const ATTITUDE_ROLL_MIN_DEG: f32 = -45.0; // Min commandable roll angle (flying wings can roll more)
+pub const ATTITUDE_ROLL_MAX_DEG: f32 = 45.0; // Max commandable roll angle

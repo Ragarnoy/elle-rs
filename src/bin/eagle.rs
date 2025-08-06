@@ -7,8 +7,9 @@ use defmt::{debug, info};
 use defmt_rtt as _;
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
-    ATTITUDE_ENABLE_CH, ATTITUDE_SETPOINT_CH, CONTROL_LOOP_FREQUENCY_HZ, IMU_CALIBRATION_TIMEOUT_S,
-    IMU_I2C_FREQ, IMU_MAX_AGE_MS, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
+    ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH,
+    CONTROL_LOOP_FREQUENCY_HZ, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS, PITCH_CH,
+    ROLL_CH, THROTTLE_CH, YAW_CH,
 };
 use elle::hardware::imu::{
     ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
@@ -153,13 +154,14 @@ async fn main(spawner: Spawner) {
             if loop_counter % (CONTROL_LOOP_FREQUENCY_HZ / 10) == 0 {
                 // ~8Hz logging
                 debug!(
-                    "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{}",
+                    "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
                     packet.channels[ROLL_CH],
                     packet.channels[PITCH_CH],
                     packet.channels[THROTTLE_CH],
                     packet.channels[YAW_CH],
                     packet.channels[ATTITUDE_ENABLE_CH],
-                    packet.channels[ATTITUDE_SETPOINT_CH]
+                    packet.channels[ATTITUDE_PITCH_SETPOINT_CH],
+                    packet.channels[ATTITUDE_ROLL_SETPOINT_CH]
                 );
             }
 
