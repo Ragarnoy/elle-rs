@@ -28,7 +28,7 @@ pub const DIFF_NEUTRAL_MAX: u16 = 1_010;
 pub const DIFF_MAX_PERCENT: i32 = 20;
 
 // Engine sync tuning
-pub const ENGINE_RIGHT_OFFSET_US: u32 = 2;
+pub const ENGINE_RIGHT_OFFSET_US: u32 = 10;
 
 // SBUS parameters
 pub const SBUS_BAUD: u32 = 100_000;
@@ -39,8 +39,8 @@ pub const SBUS_PITCH_CENTER: u16 = 999; // Adjust if needed
 pub const SBUS_YAW_CENTER: u16 = 1005; // Adjust if needed
 
 // NEW: Flight control channel mapping (0-indexed)
-pub const PITCH_CH: usize = 0; // Elevator/pitch input
-pub const ROLL_CH: usize = 1; // Aileron/roll input
+pub const ROLL_CH: usize = 0; // Aileron/roll input
+pub const PITCH_CH: usize = 1; // Elevator/pitch input
 pub const THROTTLE_CH: usize = 2; // Engine throttle
 pub const YAW_CH: usize = 3; // Rudder/yaw input
 

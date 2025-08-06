@@ -1,4 +1,5 @@
 use crate::config::*;
+use defmt::Format;
 
 /// Convert SBUS values to normalized control inputs (-1.0 to 1.0) with calibrated centers
 pub fn sbus_to_normalized(sbus_value: u16) -> f32 {
@@ -24,7 +25,7 @@ pub fn normalized_to_servo_us(normalized: f32) -> u32 {
 }
 
 /// Flight control inputs in normalized form
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Format)]
 pub struct ControlInputs {
     pub pitch: f32,    // -1.0 = nose down, +1.0 = nose up
     pub roll: f32,     // -1.0 = left roll, +1.0 = right roll
@@ -61,19 +62,29 @@ impl ControlInputs {
     }
 }
 
-/// Mix pitch and roll inputs into elevon positions
+/// Mixes pitch, roll and yaw inputs into elevon control surface positions
+///
+/// # Arguments
+/// * `inputs` - Normalized control inputs (-1.0 to 1.0)
+///
+/// # Returns
+/// * `ElevonOutputs` - Servo pulse widths for left and right elevons
 pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
+    // Clamp input values to valid range
+    let pitch = inputs.pitch.clamp(-1.0, 1.0);
+    let roll = inputs.roll.clamp(-1.0, 1.0);
+    let yaw = inputs.yaw.clamp(-1.0, 1.0);
+
     // Elevon mixing: each elevon responds to both pitch and roll
     // Left elevon: positive pitch (nose up) + positive roll (right roll) = up deflection
     // Right elevon: positive pitch (nose up) - positive roll (right roll) = up deflection
+    let left_elevon_normalized =
+        ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN) + (yaw * YAW_TO_ELEVON_GAIN))
+            .clamp(-1.0, 1.0);
 
-    let left_elevon_normalized = (inputs.pitch * ELEVON_PITCH_GAIN)
-        + (inputs.roll * ELEVON_ROLL_GAIN)
-        + (inputs.yaw * YAW_TO_ELEVON_GAIN);
-
-    let right_elevon_normalized = (inputs.pitch * ELEVON_PITCH_GAIN)
-        - (inputs.roll * ELEVON_ROLL_GAIN)
-        - (inputs.yaw * YAW_TO_ELEVON_GAIN);
+    let right_elevon_normalized =
+        ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN) - (yaw * YAW_TO_ELEVON_GAIN))
+            .clamp(-1.0, 1.0);
 
     // Convert to servo pulse widths (trim applied in PWM layer)
     let left_us = normalized_to_servo_us(left_elevon_normalized);

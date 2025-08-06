@@ -2,7 +2,7 @@ use crate::config::*;
 use crate::control::{arming::ArmingState, pid::AttitudeController, throttle::*};
 use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
-use defmt::info;
+use defmt::{debug, info};
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
 use sbus_rs::SbusPacket;
@@ -146,8 +146,8 @@ impl<'a> FlightController<'a> {
                     );
 
                     // Use only attitude corrections when enabled
-                    pilot_inputs.pitch = pitch_correction.clamp(-1.0, 1.0);
-                    pilot_inputs.roll = roll_correction.clamp(-1.0, 1.0);
+                    pilot_inputs.pitch = pitch_correction;
+                    pilot_inputs.roll = roll_correction;
 
                     info!(
                         "Attitude Hold - Target: {}° Current: {}° Correction: {}",
@@ -185,19 +185,11 @@ impl<'a> FlightController<'a> {
             (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
         };
 
+        debug!(
+            "left_thrust: {}, right_thrust: {}",
+            left_thrust, right_thrust
+        );
         self.pwm.set_engines(left_thrust, right_thrust);
-
-        // Debug output
-        // defmt::debug!(
-        //     "Controls: P:{} R:{} Y:{} T:{} | Att:{} | Elevons: L:{}μs R:{}μs",
-        //     (final_inputs.pitch * 100.0) as i16,
-        //     (final_inputs.roll * 100.0) as i16,
-        //     (final_inputs.yaw * 100.0) as i16,
-        //     (final_inputs.throttle * 100.0) as i16,
-        //     if attitude_enabled { "ON" } else { "OFF" },
-        //     elevon_outputs.left_us,
-        //     elevon_outputs.right_us
-        // );
     }
 
     /// Legacy direct elevon control method

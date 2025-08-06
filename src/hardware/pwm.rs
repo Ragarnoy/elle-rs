@@ -70,24 +70,33 @@ impl<'a> PwmOutputs<'a> {
     }
 
     /// Set elevons with trim applied (recommended method)
-    pub fn set_elevons_with_trim(&mut self, left_us: u32, right_us: u32) {
+    pub fn set_elevons_with_trim(&mut self, mut left_us: u32, mut right_us: u32) {
+        // Store original values for debug output
+        let orig_left = left_us;
+        let orig_right = right_us;
+
         // Apply trim adjustments
-        let left_trimmed = apply_elevon_trim(left_us, ELEVON_LEFT_TRIM_US);
-        let right_trimmed = apply_elevon_trim(right_us, ELEVON_RIGHT_TRIM_US);
+        left_us = apply_elevon_trim(left_us, ELEVON_LEFT_TRIM_US);
+
+        // Invert the right elevon signal to account for opposite servo orientation
+        // This ensures that when the same value is provided to both elevons,
+        // they will move in the same physical direction
+        let inverted_right_us = SERVO_MAX_PULSE_US + SERVO_MIN_PULSE_US - right_us;
+        right_us = apply_elevon_trim(inverted_right_us, ELEVON_RIGHT_TRIM_US);
 
         self.elevon_left
-            .write(Duration::from_micros(left_trimmed.into()));
+            .write(Duration::from_micros(left_us.into()));
         self.elevon_right
-            .write(Duration::from_micros(right_trimmed.into()));
+            .write(Duration::from_micros(right_us.into()));
 
         // Debug output for trim monitoring
         if ELEVON_LEFT_TRIM_US != 0 || ELEVON_RIGHT_TRIM_US != 0 {
             defmt::trace!(
-                "Elevon trim: L:{}μs→{}μs R:{}μs→{}μs",
+                "Elevon trim: L:{}μs→{}μs R:{}μs→{}μs (inverted)",
+                orig_left,
                 left_us,
-                left_trimmed,
-                right_us,
-                right_trimmed
+                orig_right,
+                right_us
             );
         }
     }
@@ -112,8 +121,8 @@ fn apply_elevon_trim(base_us: u32, trim_us: i32) -> u32 {
 }
 
 pub struct PwmPins<'a> {
-    pub elevon_left: Peri<'a, PIN_15>,
-    pub elevon_right: Peri<'a, PIN_14>,
-    pub engine_left: Peri<'a, PIN_12>,
-    pub engine_right: Peri<'a, PIN_11>,
+    pub elevon_left: Peri<'a, PIN_14>,
+    pub elevon_right: Peri<'a, PIN_15>,
+    pub engine_left: Peri<'a, PIN_11>,
+    pub engine_right: Peri<'a, PIN_12>,
 }
