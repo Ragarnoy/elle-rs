@@ -70,6 +70,7 @@ impl AttitudeController {
         desired_roll: f32,
         current_pitch: f32,
         current_roll: f32,
+        gyro_rates: Option<(f32, f32, f32)>, // (roll_rate, pitch_rate, yaw_rate)
         now: Instant,
     ) -> (f32, f32) {
         if !self.enabled {
@@ -103,8 +104,8 @@ impl AttitudeController {
 
         let current_attitude = (current_roll, current_pitch, 0.0);
 
-        // We don't have gyro rates in this interface, so use zeros
-        let gyro_rates = (0.0, 0.0, 0.0);
+        // Use provided gyro rates or fall back to zeros
+        let gyro_rates = gyro_rates.unwrap_or((0.0, 0.0, 0.0));
 
         let low_throttle = false;
 

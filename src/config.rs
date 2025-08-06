@@ -76,15 +76,15 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
 // PID tuning parameters (start conservative!)
-pub const PITCH_KP: f32 = 5.0; // Proportional gain
-pub const PITCH_KI: f32 = 1.0; // Integral gain
-pub const PITCH_KD: f32 = 0.0; // Derivative gain
-pub const PITCH_MAX_RATE: f32 = 45.0; // Max pitch rate in deg/s
+pub const PITCH_KP: f32 = 0.8; // Proportional gain
+pub const PITCH_KI: f32 = 0.2; // Integral gain
+pub const PITCH_KD: f32 = 0.05; // Derivative gain
+pub const PITCH_MAX_RATE: f32 = 40.0; // Max pitch rate in deg/s
 
-pub const ROLL_KP: f32 = 0.02; // Usually lower than pitch for flying wings
-pub const ROLL_KI: f32 = 0.01;
-pub const ROLL_KD: f32 = 0.02;
-pub const ROLL_MAX_RATE: f32 = 90.0; // Flying wings can roll faster
+pub const ROLL_KP: f32 = 0.4; // Usually lower than pitch for flying wings
+pub const ROLL_KI: f32 = 0.1;
+pub const ROLL_KD: f32 = 0.08;
+pub const ROLL_MAX_RATE: f32 = 60.0; // Flying wings can roll faster
 
 // Control authority limits (0.0 to 1.0)
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.5; // Limit attitude controller to 50% of stick authority

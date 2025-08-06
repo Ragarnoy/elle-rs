@@ -136,12 +136,18 @@ impl<'a> FlightController<'a> {
         let final_inputs =
             if let Some(effective_attitude) = attitude.or(self.last_attitude.as_ref()) {
                 if self.attitude_controller.enabled {
-                    // Get attitude corrections
+                    // Get attitude corrections with gyro rates
+                    let gyro_rates = Some((
+                        effective_attitude.roll_rate,
+                        effective_attitude.pitch_rate,
+                        effective_attitude.yaw_rate,
+                    ));
                     let (pitch_correction, roll_correction) = self.attitude_controller.update(
                         desired_pitch_rad,
                         0.0, // Desired roll = level
                         effective_attitude.pitch,
                         effective_attitude.roll,
+                        gyro_rates,
                         Instant::now(),
                     );
 

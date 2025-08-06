@@ -28,7 +28,9 @@ pub struct AttitudeData {
     pub pitch: f32,      // radians
     pub roll: f32,       // radians
     pub yaw: f32,        // radians
-    pub pitch_rate: i16, // rad/s
+    pub pitch_rate: f32, // rad/s
+    pub roll_rate: f32,  // rad/s
+    pub yaw_rate: f32,   // rad/s
     pub timestamp: Instant,
 }
 
@@ -38,7 +40,9 @@ impl AttitudeData {
             pitch: 0.0,
             roll: 0.0,
             yaw: 0.0,
-            pitch_rate: 0,
+            pitch_rate: 0.0,
+            roll_rate: 0.0,
+            yaw_rate: 0.0,
             timestamp: Instant::from_ticks(0),
         }
     }
@@ -418,7 +422,7 @@ impl<'a> BnoImu<'a> {
         // Read gyroscope for rates
         let gyro = self
             .bno
-            .gyro_data_fixed()
+            .gyro_data()
             .map_err(|_| "Failed to read gyroscope")?;
 
         // Convert quaternion to Euler angles
@@ -430,6 +434,8 @@ impl<'a> BnoImu<'a> {
             roll,
             yaw,
             pitch_rate: gyro.y, // Pitch rate around Y axis
+            roll_rate: gyro.x,  // Roll rate around X axis
+            yaw_rate: gyro.z,   // Yaw rate around Z axis
             timestamp: now,
         };
 
