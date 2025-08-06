@@ -1,14 +1,14 @@
-//! BNO055 IMU integration for attitude sensing with LED status
+//! BNO055 IMU integration for attitude sensing with RGB LED status
 
 use crate::config::profile::StoredCalibration;
 use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
+use crate::hardware::led::{LedPattern, colors};
 use bno055::{BNO055_CALIB_SIZE, BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
-use embassy_rp::Peri;
-use embassy_rp::gpio::{Level, Output};
 use embassy_rp::i2c::{Blocking, I2c};
-use embassy_rp::peripherals::{I2C0, PIN_25};
+use embassy_rp::peripherals::I2C0;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::{Channel, Sender};
 use embassy_sync::rwlock::RwLock;
 use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Instant, Timer};
@@ -18,6 +18,9 @@ pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Sign
 
 /// Mutex-protected IMU status for safe access
 pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
+
+/// Channel for LED pattern updates
+pub static LED_COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, LedPattern, 8> = Channel::new();
 
 #[derive(Clone, Copy, Debug, Format)]
 pub struct AttitudeData {
@@ -85,39 +88,35 @@ impl CalibrationLevels {
     }
 }
 
-/// LED blink patterns for different states
-#[derive(Clone, Copy)]
-enum LedPattern {
-    Off,
-    Solid,
-    SlowBlink,   // 1Hz - Initializing
-    FastBlink,   // 4Hz - Calibrating
-    DoubleBlink, // Double flash - Normal operation
-    RapidFlash,  // 10Hz - Error
-}
-
 pub struct BnoImu<'a> {
     bno: bno055::Bno055<I2c<'a, I2C0, Blocking>>,
-    led: Output<'a>,
+    led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
     last_attitude: AttitudeData,
     error_threshold: u32,
     last_cal_log: CalibrationLevels,
-    last_cal_request: Option<Instant>, // Track when we last requested a save
+    last_cal_request: Option<Instant>,
 }
 
 impl<'a> BnoImu<'a> {
-    pub fn new(i2c: I2c<'a, I2C0, Blocking>, led_pin: Peri<'a, PIN_25>) -> Self {
+    pub fn new(
+        i2c: I2c<'a, I2C0, Blocking>,
+        led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
+    ) -> Self {
         let bno = bno055::Bno055::new(i2c).with_alternative_address();
-        let led = Output::new(led_pin, Level::Low);
 
         Self {
             bno,
-            led,
+            led_sender,
             last_attitude: AttitudeData::zero(),
             error_threshold: 10,
             last_cal_log: CalibrationLevels::new(),
             last_cal_request: None,
         }
+    }
+
+    /// Send LED pattern update
+    async fn set_led_pattern(&self, pattern: LedPattern) {
+        let _ = self.led_sender.try_send(pattern);
     }
 
     /// Try to load saved calibration via inter-core communication
@@ -192,10 +191,11 @@ impl<'a> BnoImu<'a> {
         }
     }
 
-    /// Modified initialize method with flash calibration loading
+    /// Initialize IMU with flash calibration loading
     pub async fn initialize(&mut self) -> Result<(), &'static str> {
         info!("Core1: Initializing BNO055 IMU...");
-        self.set_led_pattern(LedPattern::SlowBlink).await;
+        self.set_led_pattern(LedPattern::SlowBlink(colors::BLUE))
+            .await;
 
         // Initialize BNO055 hardware
         let mut delay = Delay;
@@ -212,7 +212,8 @@ impl<'a> BnoImu<'a> {
                         Debug2Format(&e)
                     );
                     if attempt == 2 {
-                        self.set_led_pattern(LedPattern::RapidFlash).await;
+                        self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
+                            .await;
                         return Err("Failed to initialize BNO055 after 3 attempts");
                     }
                     Timer::after(Duration::from_millis(100)).await;
@@ -239,7 +240,7 @@ impl<'a> BnoImu<'a> {
                     status.initialized = true;
                     status.last_update = Instant::now();
                 }
-                self.led.set_high();
+                self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
                 return Ok(());
             }
             Ok(false) => {
@@ -257,17 +258,16 @@ impl<'a> BnoImu<'a> {
             status.last_update = Instant::now();
         }
 
-        self.led.set_high();
+        self.set_led_pattern(LedPattern::Pulse(colors::CYAN)).await;
         Ok(())
     }
 
-    /// Modified calibration wait with auto-save
+    /// Wait for calibration with auto-save
     pub async fn wait_for_calibration(&mut self, timeout_secs: u64) -> Result<(), &'static str> {
         info!("Core1: Waiting for IMU calibration...");
 
         let start = Instant::now();
         let timeout = Duration::from_secs(timeout_secs);
-        let mut blink_counter = 0u8;
         let mut best_quality = CalibrationLevels::new();
 
         loop {
@@ -276,13 +276,18 @@ impl<'a> BnoImu<'a> {
                 break;
             }
 
-            if blink_counter % 2 == 0 {
-                self.set_led_pattern(LedPattern::FastBlink).await;
-            }
-            blink_counter = blink_counter.wrapping_add(1);
-
             match self.update_calibration_status().await {
                 Ok(levels) => {
+                    // Update LED to show calibration progress
+                    self.set_led_pattern(LedPattern::Pulse(if levels.is_flight_ready() {
+                        colors::GREEN
+                    } else if levels.sys >= 2 {
+                        colors::YELLOW
+                    } else {
+                        colors::ORANGE
+                    }))
+                    .await;
+
                     // Check if this is the best calibration we've seen
                     let current_quality = StoredCalibration::hash_quality(&levels);
                     let best_quality_hash = StoredCalibration::hash_quality(&best_quality);
@@ -300,7 +305,7 @@ impl<'a> BnoImu<'a> {
 
                     if levels.is_flight_ready() {
                         info!("Core1: IMU calibration sufficient for flight!");
-                        self.led.set_high();
+                        self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
                         if let Err(e) = self.save_calibration(&levels).await {
                             warn!("Core1: Failed to save calibration: {}", e);
                         }
@@ -322,20 +327,6 @@ impl<'a> BnoImu<'a> {
         }
 
         Ok(())
-    }
-
-    /// Periodic calibration quality check with auto-save
-    pub async fn check_and_save_calibration(&mut self) -> Result<(), &'static str> {
-        match self.update_calibration_status().await {
-            Ok(levels) => {
-                // Auto-save if calibration has improved significantly
-                if levels.is_flight_ready() {
-                    self.save_calibration(&levels).await?;
-                }
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
     }
 
     async fn update_calibration_status(&mut self) -> Result<CalibrationLevels, &'static str> {
@@ -370,33 +361,6 @@ impl<'a> BnoImu<'a> {
                 Ok(levels)
             }
             Err(_) => Err("Failed to read calibration status"),
-        }
-    }
-
-    async fn set_led_pattern(&mut self, pattern: LedPattern) {
-        match pattern {
-            LedPattern::Off => self.led.set_low(),
-            LedPattern::Solid => self.led.set_high(),
-            LedPattern::SlowBlink => {
-                // Spawned as separate task to not block IMU reading
-                self.led.toggle();
-            }
-            LedPattern::FastBlink => {
-                self.led.toggle();
-            }
-            LedPattern::DoubleBlink => {
-                // Quick double flash
-                self.led.set_high();
-                Timer::after(Duration::from_millis(50)).await;
-                self.led.set_low();
-                Timer::after(Duration::from_millis(50)).await;
-                self.led.set_high();
-                Timer::after(Duration::from_millis(50)).await;
-                self.led.set_low();
-            }
-            LedPattern::RapidFlash => {
-                self.led.toggle();
-            }
         }
     }
 
@@ -444,6 +408,10 @@ impl<'a> BnoImu<'a> {
         let mut last_debug = Instant::now();
         let mut last_cal_check = Instant::now();
 
+        // Set normal operation LED pattern
+        self.set_led_pattern(LedPattern::DoubleBlink(colors::GREEN))
+            .await;
+
         loop {
             match self.read_attitude().await {
                 Ok(attitude) => {
@@ -452,9 +420,15 @@ impl<'a> BnoImu<'a> {
                     // Signal new attitude data
                     ATTITUDE_SIGNAL.signal(attitude);
 
-                    // LED pattern: double blink every second during normal operation
-                    if led_cycle % 100 == 0 {
-                        self.set_led_pattern(LedPattern::DoubleBlink).await;
+                    // Update LED pattern based on attitude (optional visual feedback)
+                    if led_cycle % 500 == 0 {
+                        // Check if we're level or tilted
+                        let color = if attitude.roll.abs() > 0.5 || attitude.pitch.abs() > 0.5 {
+                            colors::YELLOW // Significant tilt
+                        } else {
+                            colors::GREEN // Level flight
+                        };
+                        self.set_led_pattern(LedPattern::DoubleBlink(color)).await;
                     }
                     led_cycle = led_cycle.wrapping_add(1);
 
@@ -480,7 +454,8 @@ impl<'a> BnoImu<'a> {
                     error!("Core1: IMU read error ({}): {}", consecutive_errors, e);
 
                     // Rapid flash on errors
-                    self.set_led_pattern(LedPattern::RapidFlash).await;
+                    self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
+                        .await;
 
                     {
                         let mut status = IMU_STATUS.write().await;

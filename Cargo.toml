@@ -19,6 +19,7 @@ mint = "0.5.9"
 bno055 = "0.4.0"
 static_cell = "2.1.1"
 free-flight-stabilization = { git = "https://github.com/AeroRust/free-flight-stabilization.git", branch = "fix/no_std-support-for-f32-f64", default-features = false }
+smart-leds = "0.4.0"
 
 [features]
 default = ["mixing"]

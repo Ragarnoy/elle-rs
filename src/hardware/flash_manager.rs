@@ -221,7 +221,6 @@ impl<'a> FlashManager<'a> {
         let byte_slice = unsafe {
             core::slice::from_raw_parts(data_slice.as_ptr() as *const u8, data_slice.len() * 4)
         };
-
         match self
             .flash
             .blocking_write(CALIBRATION_FLASH_OFFSET, byte_slice)
@@ -229,11 +228,11 @@ impl<'a> FlashManager<'a> {
             Ok(_) => {
                 info!("Core0: Calibration written successfully");
                 self.last_save_time = Some(Instant::now());
-                return Ok(());
+                Ok(())
             }
             Err(e) => {
                 error!("Core0: Failed to write to flash: {:?}", Debug2Format(&e));
-                return Err("Flash write failed");
+                Err("Flash write failed")
             }
         }
     }

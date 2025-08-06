@@ -338,6 +338,7 @@ dependencies = [
  "mint",
  "panic-probe",
  "sbus-rs",
+ "smart-leds",
  "static_cell",
 ]
 

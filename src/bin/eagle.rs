@@ -1,13 +1,16 @@
 #![no_std]
 #![no_main]
 
-//! Firmware for the XFly Eagle Testbed
+//! Firmware for the XFly Eagle Testbed with WS2812B LED
 
 use defmt::{debug, info};
 use defmt_rtt as _;
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS};
-use elle::hardware::imu::{ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, is_attitude_valid};
+use elle::hardware::imu::{
+    ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
+};
+use elle::hardware::led::{LedPattern, StatusLed, colors};
 use elle::hardware::{
     flash_manager::FlashManager,
     pwm::{PwmOutputs, PwmPins},
@@ -19,10 +22,12 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::Config;
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{FLASH, I2C0, PIN_8, PIN_9, PIN_25, PIO0, UART0};
+use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::{Peri, bind_interrupts};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Receiver;
 use embassy_time::{Duration, Timer};
 use panic_probe as _;
 use static_cell::StaticCell;
@@ -30,6 +35,7 @@ use static_cell::StaticCell;
 bind_interrupts!(
     struct Irqs {
         PIO0_IRQ_0 => PioIrqHandler<PIO0>;
+        PIO1_IRQ_0 => PioIrqHandler<PIO1>;
         UART0_IRQ => UartIrqHandler<UART0>;
     }
 );
@@ -52,6 +58,18 @@ async fn main(spawner: Spawner) {
     Timer::after_millis(10).await;
     spawner.spawn(flash_manager_task(flash)).unwrap();
 
+    // Setup WS2812B LED on PIO1 (separate from PWM on PIO0)
+    info!("Core0: Setting up status LED");
+    let Pio {
+        common: led_common,
+        sm0: led_sm0,
+        ..
+    } = Pio::new(p.PIO1, Irqs);
+
+    spawner
+        .spawn(led_task(led_common, led_sm0, p.DMA_CH2, p.PIN_10))
+        .unwrap();
+
     info!("Core0: Spawning Core1 for IMU");
     // Spawn IMU task on core1
     spawn_core1(
@@ -61,14 +79,14 @@ async fn main(spawner: Spawner) {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
                 spawner
-                    .spawn(imu_task(spawner, p.I2C0, p.PIN_8, p.PIN_9, p.PIN_25))
+                    .spawn(imu_task(spawner, p.I2C0, p.PIN_8, p.PIN_9))
                     .unwrap();
             });
         },
     );
 
     info!("Core0: Setting up flight control hardware");
-    // Core0: Setup flight control hardware
+    // Core0: Setup flight control hardware (PWM on PIO0)
     let mut pwm_pins = PwmPins {
         elevon_left: p.PIN_15,
         elevon_right: p.PIN_14,
@@ -97,6 +115,12 @@ async fn main(spawner: Spawner) {
         let status = IMU_STATUS.read().await;
         if status.initialized {
             info!("Core0: IMU ready! Calibrated: {}", status.calibrated);
+            // Signal LED to show system ready
+            let _ = LED_COMMAND_CHANNEL.try_send(if status.calibrated {
+                LedPattern::Solid(colors::GREEN)
+            } else {
+                LedPattern::Pulse(colors::CYAN)
+            });
             break;
         }
         drop(status);
@@ -149,7 +173,7 @@ async fn main(spawner: Spawner) {
 
         fc.check_failsafe();
 
-        // Status output
+        // Status output and LED updates
         loop_counter = loop_counter.saturating_add(1);
         if loop_counter % 20000 == 0 {
             // Every ~100 seconds at 200Hz
@@ -157,6 +181,25 @@ async fn main(spawner: Spawner) {
 
             // Get IMU status
             let imu_status = IMU_STATUS.read().await;
+
+            // Update LED based on system state
+            let led_pattern = if fc.is_armed() {
+                if fc.is_attitude_enabled() {
+                    LedPattern::Pulse(colors::CYAN) // Attitude hold active
+                } else {
+                    LedPattern::DoubleBlink(colors::GREEN) // Armed, manual
+                }
+            } else if fc.is_failsafe() {
+                LedPattern::RapidFlash(colors::ORANGE) // Failsafe
+            } else {
+                if imu_status.calibrated {
+                    LedPattern::Solid(colors::GREEN) // Ready to arm
+                } else {
+                    LedPattern::SlowBlink(colors::YELLOW) // Not calibrated
+                }
+            };
+
+            let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
 
             if fc.is_armed() {
                 info!(
@@ -196,7 +239,6 @@ async fn imu_task(
     i2c: Peri<'static, I2C0>,
     sda: Peri<'static, PIN_8>,
     scl: Peri<'static, PIN_9>,
-    led: Peri<'static, PIN_25>,
 ) {
     info!("Core1: IMU task starting with flash calibration support");
 
@@ -204,7 +246,8 @@ async fn imu_task(
     i2c_config.frequency = IMU_I2C_FREQ;
 
     let i2c_bus = embassy_rp::i2c::I2c::new_blocking(i2c, scl, sda, i2c_config);
-    let mut imu = BnoImu::new(i2c_bus, led);
+    let led_sender = LED_COMMAND_CHANNEL.sender();
+    let mut imu = BnoImu::new(i2c_bus, led_sender);
 
     // Initialize with flash calibration support
     match imu.initialize().await {
@@ -228,4 +271,35 @@ async fn flash_manager_task(flash: Flash<'static, FLASH, Async, { FLASH_SIZE }>)
     info!("Core0: Flash manager task starting");
     let mut manager = FlashManager::new(flash);
     manager.run().await;
+}
+
+#[embassy_executor::task]
+async fn led_task(
+    mut common: embassy_rp::pio::Common<'static, PIO1>,
+    sm0: embassy_rp::pio::StateMachine<'static, PIO1, 0>,
+    dma: Peri<'static, DMA_CH2>,
+    pin: Peri<'static, PIN_10>,
+) {
+    info!("Core0: LED task starting");
+
+    let mut led = StatusLed::new(&mut common, sm0, pin, dma);
+    let receiver: Receiver<'static, CriticalSectionRawMutex, LedPattern, 8> =
+        LED_COMMAND_CHANNEL.receiver();
+
+    // Set initial pattern
+    led.set_pattern(LedPattern::SlowBlink(colors::BLUE)).await;
+
+    // Main LED update loop
+    loop {
+        // Check for new patterns
+        if let Ok(pattern) = receiver.try_receive() {
+            led.set_pattern(pattern).await;
+        }
+
+        // Update LED animation
+        led.update().await;
+
+        // Small delay for animation timing
+        Timer::after(Duration::from_millis(10)).await;
+    }
 }
