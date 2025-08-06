@@ -2,7 +2,7 @@ use crate::config::*;
 use crate::control::{arming::ArmingState, pid::AttitudeController, throttle::*};
 use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
-use defmt::{debug, info};
+use defmt::info;
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
 use sbus_rs::SbusPacket;
@@ -185,10 +185,6 @@ impl<'a> FlightController<'a> {
             (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
         };
 
-        debug!(
-            "left_thrust: {}, right_thrust: {}",
-            left_thrust, right_thrust
-        );
         self.pwm.set_engines(left_thrust, right_thrust);
     }
 

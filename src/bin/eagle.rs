@@ -6,7 +6,10 @@
 use defmt::{debug, info};
 use defmt_rtt as _;
 use elle::config::profile::FLASH_SIZE;
-use elle::config::{IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS};
+use elle::config::{
+    ATTITUDE_ENABLE_CH, ATTITUDE_SETPOINT_CH, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ,
+    IMU_MAX_AGE_MS, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
+};
 use elle::hardware::imu::{
     ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
 };
@@ -145,16 +148,15 @@ async fn main(spawner: Spawner) {
 
         if let Some(packet) = sbus.read_packet().await {
             // Print all SBUS channels (less frequently)
-            if loop_counter % 5000 == 0 {
-                // Every ~25 seconds at 200Hz
+            if loop_counter % 20 == 0 {
                 debug!(
                     "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{}",
-                    packet.channels[0],
-                    packet.channels[1],
-                    packet.channels[2],
-                    packet.channels[3],
-                    packet.channels[4],
-                    packet.channels[5]
+                    packet.channels[ROLL_CH],
+                    packet.channels[PITCH_CH],
+                    packet.channels[THROTTLE_CH],
+                    packet.channels[YAW_CH],
+                    packet.channels[ATTITUDE_ENABLE_CH],
+                    packet.channels[ATTITUDE_SETPOINT_CH]
                 );
             }
 

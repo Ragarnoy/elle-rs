@@ -26,6 +26,7 @@ pub enum FlashResponse {
 }
 
 // Calibration storage structure (must be u32-aligned for flash API)
+// Total size is padded to match PAGE_SIZE (256 bytes) for optimal flash operations
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct StoredCalibration {
@@ -36,6 +37,7 @@ pub struct StoredCalibration {
     pub quality_hash: u32,      // Simple hash of calibration quality levels
     pub profile_data: [u32; 6], // BNO055 calibration profile as u32 words (24 bytes, padded)
     pub checksum: u32,          // Simple checksum for data integrity
+    pub padding: [u32; 52],     // Padding to make the total size 256 bytes (PAGE_SIZE)
 }
 
 impl StoredCalibration {
@@ -62,6 +64,7 @@ impl StoredCalibration {
             quality_hash,
             profile_data,
             checksum: 0,
+            padding: [0u32; 52], // Initialize padding with zeros
         };
 
         cal.checksum = cal.calculate_checksum();
@@ -111,10 +114,7 @@ impl StoredCalibration {
 
     pub fn as_u32_slice(&self) -> &[u32] {
         unsafe {
-            core::slice::from_raw_parts(
-                self as *const Self as *const u32,
-                core::mem::size_of::<Self>() / 4,
-            )
+            core::slice::from_raw_parts(self as *const Self as *const u32, size_of::<Self>() / 4)
         }
     }
 }

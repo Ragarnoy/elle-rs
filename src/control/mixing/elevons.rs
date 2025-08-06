@@ -9,10 +9,22 @@ pub fn sbus_to_normalized(sbus_value: u16) -> f32 {
 }
 
 /// Convert SBUS value to normalized with specific center point
+///
+/// # Arguments
+/// * `sbus_value` - Raw SBUS value (0-2047)
+/// * `center` - Calibrated center point for this channel
+///
+/// # Returns
+/// * Normalized value in range -1.0 to 1.0
 fn sbus_to_normalized_with_center(sbus_value: u16, center: u16) -> f32 {
-    // Validate center point is reasonable
-    let safe_center = center.clamp(1023 - SBUS_CENTER_TOLERANCE, 1023 + SBUS_CENTER_TOLERANCE);
-    let normalized = (sbus_value as f32 - safe_center as f32) / 1023.5;
+    // Validate center point is reasonable based on configured center
+    let safe_center = center.clamp(
+        center.saturating_sub(SBUS_CENTER_TOLERANCE),
+        center.saturating_add(SBUS_CENTER_TOLERANCE),
+    );
+
+    // Normalize to -1.0 to 1.0 range using full SBUS range
+    let normalized = (sbus_value as f32 - safe_center as f32) / 1024.0;
     normalized.clamp(-1.0, 1.0)
 }
 
@@ -52,6 +64,7 @@ impl ControlInputs {
     }
 
     /// Legacy: create from direct elevon channels (for backwards compatibility)
+    #[cfg(not(feature = "mixing"))]
     pub fn from_direct_elevons(channels: &[u16]) -> Self {
         Self {
             pitch: 0.0, // No pitch input in direct mode

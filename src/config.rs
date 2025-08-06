@@ -28,7 +28,7 @@ pub const DIFF_NEUTRAL_MAX: u16 = 1_010;
 pub const DIFF_MAX_PERCENT: i32 = 20;
 
 // Engine sync tuning
-pub const ENGINE_RIGHT_OFFSET_US: u32 = 10;
+pub const ENGINE_RIGHT_OFFSET_US: u32 = 36;
 
 // SBUS parameters
 pub const SBUS_BAUD: u32 = 100_000;
@@ -36,7 +36,7 @@ pub const SBUS_TIMEOUT_MS: u64 = 300;
 pub const SBUS_CENTER_TOLERANCE: u16 = 10; // Max deviation
 pub const SBUS_ROLL_CENTER: u16 = 999;
 pub const SBUS_PITCH_CENTER: u16 = 999; // Adjust if needed
-pub const SBUS_YAW_CENTER: u16 = 1005; // Adjust if needed
+pub const SBUS_YAW_CENTER: u16 = 1003; // Adjust if needed
 
 // NEW: Flight control channel mapping (0-indexed)
 pub const ROLL_CH: usize = 0; // Aileron/roll input
@@ -63,7 +63,7 @@ pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon contro
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
-pub const IMU_SAVE_CALIBRATION: bool = false; // Whether to save calibration to flash
+pub const IMU_SAVE_CALIBRATION: bool = true; // Whether to save calibration to flash
 
 pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
 pub const ELEVON_RIGHT_TRIM_US: i32 = -50;

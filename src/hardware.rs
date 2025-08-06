@@ -1,3 +1,4 @@
+pub mod flash_constants;
 pub mod flash_manager;
 pub mod imu;
 pub mod led;

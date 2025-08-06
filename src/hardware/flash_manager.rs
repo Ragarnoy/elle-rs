@@ -1,11 +1,15 @@
 use crate::config::profile::{
     CALIBRATION_FLASH_OFFSET, FLASH_SIZE, FlashRequest, FlashResponse, StoredCalibration,
 };
+use crate::hardware::flash_constants::{
+    ASYNC_READ_SIZE, ERASE_SIZE, PAGE_SIZE, READ_SIZE, WRITE_SIZE,
+};
 use crate::hardware::imu::CalibrationLevels;
 use bno055::BNO055_CALIB_SIZE;
+use core::mem::size_of;
 use defmt::*;
 use embassy_futures;
-use embassy_rp::flash::{Async, ERASE_SIZE, Flash};
+use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -105,10 +109,20 @@ impl<'a> FlashManager<'a> {
 
         // Read from flash
         info!("Core0: Creating background read future");
-        let read_future = match self
-            .flash
-            .background_read(CALIBRATION_FLASH_OFFSET, &mut buf)
-        {
+
+        // Ensure read address is aligned to READ_SIZE
+        let aligned_offset =
+            CALIBRATION_FLASH_OFFSET - (CALIBRATION_FLASH_OFFSET % READ_SIZE as u32);
+        if aligned_offset != CALIBRATION_FLASH_OFFSET {
+            warn!("Core0: Calibration offset not aligned to READ_SIZE, using aligned address");
+        }
+
+        // Ensure buffer is aligned for optimal DMA performance
+        if (buf.as_ptr() as usize) % ASYNC_READ_SIZE != 0 {
+            warn!("Core0: Buffer not aligned to ASYNC_READ_SIZE for optimal DMA performance");
+        }
+
+        let read_future = match self.flash.background_read(aligned_offset, &mut buf) {
             Ok(future) => {
                 info!("Core0: Background read future created successfully");
                 future
@@ -178,16 +192,26 @@ impl<'a> FlashManager<'a> {
         let mut buf = [0u32; STORAGE_SIZE_U32];
 
         // Separate the read operation from using the data
-        let read_successful = if let Ok(read_future) = self
-            .flash
-            .background_read(CALIBRATION_FLASH_OFFSET, &mut buf)
-        {
-            info!("Core0: Reading existing calibration for comparison");
-            read_future.await;
-            true
-        } else {
-            false
-        };
+        // Ensure read address is aligned to READ_SIZE
+        let aligned_offset =
+            CALIBRATION_FLASH_OFFSET - (CALIBRATION_FLASH_OFFSET % READ_SIZE as u32);
+        if aligned_offset != CALIBRATION_FLASH_OFFSET {
+            warn!("Core0: Calibration offset not aligned to READ_SIZE, using aligned address");
+        }
+
+        // Ensure buffer is aligned for optimal DMA performance
+        if (buf.as_ptr() as usize) % ASYNC_READ_SIZE != 0 {
+            warn!("Core0: Buffer not aligned to ASYNC_READ_SIZE for optimal DMA performance");
+        }
+
+        let read_successful =
+            if let Ok(read_future) = self.flash.background_read(aligned_offset, &mut buf) {
+                info!("Core0: Reading existing calibration for comparison");
+                read_future.await;
+                true
+            } else {
+                false
+            };
 
         if read_successful {
             let stored_cal = unsafe { &*(buf.as_ptr() as *const StoredCalibration) };
@@ -203,11 +227,15 @@ impl<'a> FlashManager<'a> {
 
         info!("Core0: Erasing flash sector");
         // Erase flash sector (Core 0 only operation)
+        // Ensure erase address is aligned to ERASE_SIZE
         let erase_start = CALIBRATION_FLASH_OFFSET & !(ERASE_SIZE as u32 - 1);
-        match self
-            .flash
-            .blocking_erase(erase_start, erase_start + ERASE_SIZE as u32)
-        {
+        let erase_end = erase_start + ERASE_SIZE as u32;
+
+        info!(
+            "Core0: Erasing flash from 0x{:X} to 0x{:X}",
+            erase_start, erase_end
+        );
+        match self.flash.blocking_erase(erase_start, erase_end) {
             Ok(_) => info!("Core0: Flash sector erased successfully"),
             Err(e) => {
                 error!("Core0: Failed to erase flash: {:?}", Debug2Format(&e));
@@ -221,10 +249,35 @@ impl<'a> FlashManager<'a> {
         let byte_slice = unsafe {
             core::slice::from_raw_parts(data_slice.as_ptr() as *const u8, data_slice.len() * 4)
         };
-        match self
-            .flash
-            .blocking_write(CALIBRATION_FLASH_OFFSET, byte_slice)
-        {
+
+        // Ensure write address is aligned to WRITE_SIZE
+        let write_offset = CALIBRATION_FLASH_OFFSET;
+        if write_offset % WRITE_SIZE as u32 != 0 {
+            error!("Core0: Calibration offset not aligned to WRITE_SIZE");
+            return Err("Flash write alignment error");
+        }
+
+        // Ensure data size is a multiple of PAGE_SIZE for optimal writing
+        let data_size = byte_slice.len();
+        info!(
+            "Core0: Writing {} bytes to flash at 0x{:X}",
+            data_size, write_offset
+        );
+
+        if data_size % PAGE_SIZE != 0 {
+            warn!(
+                "Core0: Data size {} is not a multiple of PAGE_SIZE {}",
+                data_size, PAGE_SIZE
+            );
+            // This is not a critical error, just a warning for optimization
+        } else {
+            info!(
+                "Core0: Data size is properly padded to match PAGE_SIZE ({})",
+                PAGE_SIZE
+            );
+        }
+
+        match self.flash.blocking_write(write_offset, byte_slice) {
             Ok(_) => {
                 info!("Core0: Calibration written successfully");
                 self.last_save_time = Some(Instant::now());

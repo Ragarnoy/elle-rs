@@ -96,6 +96,7 @@ pub struct BnoImu<'a> {
     error_threshold: u32,
     last_cal_log: CalibrationLevels,
     last_cal_request: Option<Instant>,
+    calibration_loaded: bool,
 }
 
 impl<'a> BnoImu<'a> {
@@ -112,6 +113,7 @@ impl<'a> BnoImu<'a> {
             error_threshold: 10,
             last_cal_log: CalibrationLevels::new(),
             last_cal_request: None,
+            calibration_loaded: false,
         }
     }
 
@@ -131,6 +133,7 @@ impl<'a> BnoImu<'a> {
             match self.bno.set_calibration_profile(calib, &mut delay) {
                 Ok(_) => {
                     info!("Core1: Successfully applied saved calibration");
+                    self.calibration_loaded = true;
                     return Ok(true);
                 }
                 Err(e) => {
@@ -312,11 +315,16 @@ impl<'a> BnoImu<'a> {
                         best_quality = levels;
 
                         // Auto-save improved calibration if enabled
-                        if levels.is_flight_ready() {
+                        if levels.is_flight_ready() && !self.calibration_loaded {
+                            // Don't save if we just loaded calibration from flash
                             // save_calibration will check IMU_SAVE_CALIBRATION internally
                             if let Err(e) = self.save_calibration(&levels).await {
                                 warn!("Core1: Failed to save calibration: {}", e);
                             }
+                        } else if levels.is_flight_ready() && self.calibration_loaded {
+                            info!(
+                                "Core1: Skipping immediate save after loading calibration from flash"
+                            );
                         }
                     }
 
@@ -324,10 +332,16 @@ impl<'a> BnoImu<'a> {
                         info!("Core1: IMU calibration sufficient for flight!");
                         self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
 
-                        // Try to save final calibration if enabled
+                        // Try to save final calibration if enabled, but not if we just loaded it
                         // save_calibration will check IMU_SAVE_CALIBRATION internally
-                        if let Err(e) = self.save_calibration(&levels).await {
-                            warn!("Core1: Failed to save calibration: {}", e);
+                        if !self.calibration_loaded {
+                            if let Err(e) = self.save_calibration(&levels).await {
+                                warn!("Core1: Failed to save calibration: {}", e);
+                            }
+                        } else {
+                            info!(
+                                "Core1: Skipping immediate save after loading calibration from flash"
+                            );
                         }
                         return Ok(());
                     }
@@ -338,17 +352,21 @@ impl<'a> BnoImu<'a> {
             Timer::after(Duration::from_millis(250)).await;
         }
 
-        // Save best calibration achieved even if timeout
+        // Save best calibration achieved even if timeout, but not if we just loaded it
         if best_quality.is_flight_ready() {
-            // save_calibration will check IMU_SAVE_CALIBRATION internally
-            if let Err(e) = self.save_calibration(&best_quality).await {
-                warn!("Core1: Failed to save final calibration: {}", e);
-            }
+            if !self.calibration_loaded {
+                // save_calibration will check IMU_SAVE_CALIBRATION internally
+                if let Err(e) = self.save_calibration(&best_quality).await {
+                    warn!("Core1: Failed to save final calibration: {}", e);
+                }
 
-            if IMU_SAVE_CALIBRATION {
-                info!("Core1: Final calibration saved to flash");
+                if IMU_SAVE_CALIBRATION {
+                    info!("Core1: Final calibration saved to flash");
+                } else {
+                    info!("Core1: Final calibration achieved but not saved (saving disabled)");
+                }
             } else {
-                info!("Core1: Final calibration achieved but not saved (saving disabled)");
+                info!("Core1: Skipping immediate save after loading calibration from flash");
             }
         }
 
@@ -473,6 +491,16 @@ impl<'a> BnoImu<'a> {
                     if last_cal_check.elapsed() > Duration::from_secs(60) {
                         info!("Core1: Checking IMU calibration status...");
                         let _ = self.update_calibration_status().await;
+
+                        // Reset calibration_loaded flag after 60 seconds
+                        // This allows saving calibration during periodic checks
+                        if self.calibration_loaded {
+                            info!(
+                                "Core1: Resetting calibration_loaded flag to allow periodic saves"
+                            );
+                            self.calibration_loaded = false;
+                        }
+
                         last_cal_check = Instant::now();
                     }
                 }
