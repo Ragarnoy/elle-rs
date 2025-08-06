@@ -23,6 +23,7 @@ pub struct FlightController<'a> {
     arming: ArmingState,
     attitude_controller: AttitudeController,
     last_packet_time: Instant,
+    last_attitude: Option<AttitudeData>,
 }
 
 impl<'a> FlightController<'a> {
@@ -52,6 +53,7 @@ impl<'a> FlightController<'a> {
             arming: ArmingState::default(),
             attitude_controller: AttitudeController::with_config(config),
             last_packet_time: Instant::now(),
+            last_attitude: None,
         }
     }
 
@@ -125,40 +127,46 @@ impl<'a> FlightController<'a> {
         // Get pilot control inputs
         let mut pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
 
-        // Apply attitude stabilization if available and enabled
-        let final_inputs = if let Some(att) = attitude {
-            if self.attitude_controller.enabled {
-                // Get attitude corrections
-                let (pitch_correction, roll_correction) = self.attitude_controller.update(
-                    desired_pitch_rad,
-                    0.0, // Desired roll = level
-                    att.pitch,
-                    att.roll,
-                    Instant::now(),
-                );
+        // Store new attitude if provided
+        if let Some(att) = attitude {
+            self.last_attitude = Some(*att);
+        }
 
-                // Use only attitude corrections when enabled
-                pilot_inputs.pitch = pitch_correction.clamp(-1.0, 1.0);
-                pilot_inputs.roll = roll_correction.clamp(-1.0, 1.0);
+        // Use the last known attitude if available, otherwise use direct pilot inputs
+        let final_inputs =
+            if let Some(effective_attitude) = attitude.or(self.last_attitude.as_ref()) {
+                if self.attitude_controller.enabled {
+                    // Get attitude corrections
+                    let (pitch_correction, roll_correction) = self.attitude_controller.update(
+                        desired_pitch_rad,
+                        0.0, // Desired roll = level
+                        effective_attitude.pitch,
+                        effective_attitude.roll,
+                        Instant::now(),
+                    );
 
-                info!(
-                    "Attitude Hold - Target: {}° Current: {}° Correction: {}",
-                    desired_pitch_deg as i16,
-                    (att.pitch * 180.0 / core::f32::consts::PI) as i16,
-                    (pitch_correction * 100.0) as i16
-                );
+                    // Use only attitude corrections when enabled
+                    pilot_inputs.pitch = pitch_correction.clamp(-1.0, 1.0);
+                    pilot_inputs.roll = roll_correction.clamp(-1.0, 1.0);
 
-                pilot_inputs
-            } else {
-                // Reset PID when disabled
-                if self.attitude_controller.is_active() {
-                    self.attitude_controller.reset();
+                    info!(
+                        "Attitude Hold - Target: {}° Current: {}° Correction: {}",
+                        desired_pitch_deg as i16,
+                        (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
+                        (pitch_correction * 100.0) as i16
+                    );
+
+                    pilot_inputs
+                } else {
+                    // Reset PID when disabled
+                    if self.attitude_controller.is_active() {
+                        self.attitude_controller.reset();
+                    }
+                    pilot_inputs
                 }
+            } else {
                 pilot_inputs
-            }
-        } else {
-            pilot_inputs
-        };
+            };
 
         // Mix controls to get surface positions
         let elevon_outputs = mix_elevons(&final_inputs);

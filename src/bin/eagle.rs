@@ -20,7 +20,7 @@ use elle::system::FlightController;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
-use embassy_rp::i2c::Config;
+use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
@@ -191,12 +191,10 @@ async fn main(spawner: Spawner) {
                 }
             } else if fc.is_failsafe() {
                 LedPattern::RapidFlash(colors::ORANGE) // Failsafe
+            } else if imu_status.calibrated {
+                LedPattern::Solid(colors::GREEN) // Ready to arm
             } else {
-                if imu_status.calibrated {
-                    LedPattern::Solid(colors::GREEN) // Ready to arm
-                } else {
-                    LedPattern::SlowBlink(colors::YELLOW) // Not calibrated
-                }
+                LedPattern::SlowBlink(colors::YELLOW) // Not calibrated
             };
 
             let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
@@ -229,7 +227,6 @@ async fn main(spawner: Spawner) {
         }
 
         // Yield control frequently for good responsiveness
-        Timer::after(Duration::from_millis(5)).await;
     }
 }
 
@@ -245,7 +242,7 @@ async fn imu_task(
     let mut i2c_config = Config::default();
     i2c_config.frequency = IMU_I2C_FREQ;
 
-    let i2c_bus = embassy_rp::i2c::I2c::new_blocking(i2c, scl, sda, i2c_config);
+    let i2c_bus = I2c::new_blocking(i2c, scl, sda, i2c_config);
     let led_sender = LED_COMMAND_CHANNEL.sender();
     let mut imu = BnoImu::new(i2c_bus, led_sender);
 

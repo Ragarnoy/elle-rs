@@ -1,5 +1,6 @@
 //! BNO055 IMU integration for attitude sensing with RGB LED status
 
+use crate::config::IMU_SAVE_CALIBRATION;
 use crate::config::profile::StoredCalibration;
 use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
 use crate::hardware::led::{LedPattern, colors};
@@ -27,7 +28,7 @@ pub struct AttitudeData {
     pub pitch: f32,      // radians
     pub roll: f32,       // radians
     pub yaw: f32,        // radians
-    pub pitch_rate: f32, // rad/s
+    pub pitch_rate: i16, // rad/s
     pub timestamp: Instant,
 }
 
@@ -37,7 +38,7 @@ impl AttitudeData {
             pitch: 0.0,
             roll: 0.0,
             yaw: 0.0,
-            pitch_rate: 0.0,
+            pitch_rate: 0,
             timestamp: Instant::from_ticks(0),
         }
     }
@@ -147,7 +148,14 @@ impl<'a> BnoImu<'a> {
     }
 
     /// Request calibration save via inter-core communication
+    /// Only saves calibration if IMU_SAVE_CALIBRATION is enabled
     async fn save_calibration(&mut self, levels: &CalibrationLevels) -> Result<(), &'static str> {
+        // Check if saving calibration is enabled
+        if !IMU_SAVE_CALIBRATION {
+            info!("Core1: Calibration saving is disabled, skipping save");
+            return Ok(());
+        }
+
         // Rate limiting - only request save once per 10 minutes
         if let Some(last_request) = self.last_cal_request {
             if last_request.elapsed() < Duration::from_secs(600) {
@@ -192,6 +200,7 @@ impl<'a> BnoImu<'a> {
     }
 
     /// Initialize IMU with flash calibration loading
+    /// Attempts to load calibration from flash first, and only proceeds with full calibration if no saved calibration is found
     pub async fn initialize(&mut self) -> Result<(), &'static str> {
         info!("Core1: Initializing BNO055 IMU...");
         self.set_led_pattern(LedPattern::SlowBlink(colors::BLUE))
@@ -262,9 +271,16 @@ impl<'a> BnoImu<'a> {
         Ok(())
     }
 
-    /// Wait for calibration with auto-save
+    /// Wait for calibration with optional auto-save based on configuration
+    /// Always performs calibration, but only saves to flash if IMU_SAVE_CALIBRATION is enabled
     pub async fn wait_for_calibration(&mut self, timeout_secs: u64) -> Result<(), &'static str> {
         info!("Core1: Waiting for IMU calibration...");
+
+        if IMU_SAVE_CALIBRATION {
+            info!("Core1: Calibration saving is enabled");
+        } else {
+            info!("Core1: Calibration saving is disabled");
+        }
 
         let start = Instant::now();
         let timeout = Duration::from_secs(timeout_secs);
@@ -295,8 +311,9 @@ impl<'a> BnoImu<'a> {
                     if current_quality > best_quality_hash {
                         best_quality = levels;
 
-                        // Auto-save improved calibration
+                        // Auto-save improved calibration if enabled
                         if levels.is_flight_ready() {
+                            // save_calibration will check IMU_SAVE_CALIBRATION internally
                             if let Err(e) = self.save_calibration(&levels).await {
                                 warn!("Core1: Failed to save calibration: {}", e);
                             }
@@ -306,6 +323,9 @@ impl<'a> BnoImu<'a> {
                     if levels.is_flight_ready() {
                         info!("Core1: IMU calibration sufficient for flight!");
                         self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
+
+                        // Try to save final calibration if enabled
+                        // save_calibration will check IMU_SAVE_CALIBRATION internally
                         if let Err(e) = self.save_calibration(&levels).await {
                             warn!("Core1: Failed to save calibration: {}", e);
                         }
@@ -320,10 +340,16 @@ impl<'a> BnoImu<'a> {
 
         // Save best calibration achieved even if timeout
         if best_quality.is_flight_ready() {
+            // save_calibration will check IMU_SAVE_CALIBRATION internally
             if let Err(e) = self.save_calibration(&best_quality).await {
                 warn!("Core1: Failed to save final calibration: {}", e);
             }
-            info!("Core1: Final calibration saved to flash");
+
+            if IMU_SAVE_CALIBRATION {
+                info!("Core1: Final calibration saved to flash");
+            } else {
+                info!("Core1: Final calibration achieved but not saved (saving disabled)");
+            }
         }
 
         Ok(())
@@ -374,7 +400,7 @@ impl<'a> BnoImu<'a> {
         // Read gyroscope for rates
         let gyro = self
             .bno
-            .gyro_data()
+            .gyro_data_fixed()
             .map_err(|_| "Failed to read gyroscope")?;
 
         // Convert quaternion to Euler angles
@@ -382,7 +408,7 @@ impl<'a> BnoImu<'a> {
 
         let now = Instant::now();
         let attitude = AttitudeData {
-            pitch,
+            pitch: -pitch,
             roll,
             yaw,
             pitch_rate: gyro.y, // Pitch rate around Y axis
@@ -433,18 +459,19 @@ impl<'a> BnoImu<'a> {
                     led_cycle = led_cycle.wrapping_add(1);
 
                     // Debug output every 100ms (10Hz)
-                    if last_debug.elapsed() > Duration::from_millis(100) {
+                    if last_debug.elapsed() > Duration::from_millis(300) {
                         debug!(
                             "Core1: Pitch: {}°, Roll: {}°, Rate: {}°/s",
                             (attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
                             (attitude.roll * 180.0 / core::f32::consts::PI) as i16,
-                            (attitude.pitch_rate * 180.0 / core::f32::consts::PI) as i16
+                            attitude.pitch_rate
                         );
                         last_debug = Instant::now();
                     }
 
                     // Check calibration periodically
-                    if last_cal_check.elapsed() > Duration::from_secs(5) {
+                    if last_cal_check.elapsed() > Duration::from_secs(60) {
+                        info!("Core1: Checking IMU calibration status...");
                         let _ = self.update_calibration_status().await;
                         last_cal_check = Instant::now();
                     }
@@ -476,7 +503,7 @@ impl<'a> BnoImu<'a> {
                 }
             }
 
-            // Run at 100Hz for smooth control
+            // Run at 4000Hz for smooth control
             Timer::after(Duration::from_micros(250)).await;
         }
     }
