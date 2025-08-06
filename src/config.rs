@@ -38,6 +38,13 @@ pub const SBUS_ROLL_CENTER: u16 = 999;
 pub const SBUS_PITCH_CENTER: u16 = 999; // Adjust if needed
 pub const SBUS_YAW_CENTER: u16 = 1003; // Adjust if needed
 
+// Control loop timing parameters - adjusted for SBUS-limited rate
+pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = 77; // Actual measured rate (~13ms)
+pub const CONTROL_LOOP_PERIOD_MS: u64 = 1000 / CONTROL_LOOP_FREQUENCY_HZ as u64; // 13ms
+pub const CONTROL_LOOP_DT: f32 = 0.013; // 13ms actual timing for PID stability
+pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
+pub const SBUS_MAX_LATENCY_MS: u64 = 100; // Max acceptable SBUS packet age
+
 // NEW: Flight control channel mapping (0-indexed)
 pub const ROLL_CH: usize = 0; // Aileron/roll input
 pub const PITCH_CH: usize = 1; // Elevator/pitch input
@@ -75,15 +82,15 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
-// PID tuning parameters (start conservative!)
-pub const PITCH_KP: f32 = 0.8; // Proportional gain
-pub const PITCH_KI: f32 = 0.2; // Integral gain
-pub const PITCH_KD: f32 = 0.05; // Derivative gain
+// PID tuning parameters (adjusted for 77Hz update rate)
+pub const PITCH_KP: f32 = 1.2; // Increased for lower update rate
+pub const PITCH_KI: f32 = 0.3; // Increased integral gain
+pub const PITCH_KD: f32 = 0.08; // Increased derivative gain
 pub const PITCH_MAX_RATE: f32 = 40.0; // Max pitch rate in deg/s
 
-pub const ROLL_KP: f32 = 0.4; // Usually lower than pitch for flying wings
-pub const ROLL_KI: f32 = 0.1;
-pub const ROLL_KD: f32 = 0.08;
+pub const ROLL_KP: f32 = 0.6; // Increased for lower update rate
+pub const ROLL_KI: f32 = 0.15; // Increased integral gain
+pub const ROLL_KD: f32 = 0.12; // Increased derivative gain
 pub const ROLL_MAX_RATE: f32 = 60.0; // Flying wings can roll faster
 
 // Control authority limits (0.0 to 1.0)

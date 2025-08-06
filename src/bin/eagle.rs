@@ -7,8 +7,8 @@ use defmt::{debug, info};
 use defmt_rtt as _;
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
-    ATTITUDE_ENABLE_CH, ATTITUDE_SETPOINT_CH, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ,
-    IMU_MAX_AGE_MS, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
+    ATTITUDE_ENABLE_CH, ATTITUDE_SETPOINT_CH, CONTROL_LOOP_FREQUENCY_HZ, IMU_CALIBRATION_TIMEOUT_S,
+    IMU_I2C_FREQ, IMU_MAX_AGE_MS, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
 };
 use elle::hardware::imu::{
     ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
@@ -139,16 +139,19 @@ async fn main(spawner: Spawner) {
     fc.initialize_escs().await;
 
     info!("Core0: Starting main control loop");
-    // Main control loop with IMU integration
+
+    // State for control loop
     let mut loop_counter = 0u32;
 
     loop {
         // Get latest attitude data (non-blocking)
         let attitude = ATTITUDE_SIGNAL.try_take();
 
+        // Read SBUS packet with timeout appropriate for ~77Hz rate
         if let Some(packet) = sbus.read_packet().await {
-            // Print all SBUS channels (less frequently)
-            if loop_counter % 20 == 0 {
+            // Print debug info less frequently
+            if loop_counter % (CONTROL_LOOP_FREQUENCY_HZ / 10) == 0 {
+                // ~8Hz logging
                 debug!(
                     "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{}",
                     packet.channels[ROLL_CH],
@@ -160,7 +163,7 @@ async fn main(spawner: Spawner) {
                 );
             }
 
-            // Pass attitude data to flight controller if available and valid
+            // Pass attitude data to flight controller
             if let Some(att) = attitude {
                 if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {
                     fc.update_with_attitude(&packet, Some(&att));
@@ -173,10 +176,21 @@ async fn main(spawner: Spawner) {
             }
         }
 
+        // Always check failsafe
         fc.check_failsafe();
 
         // Status output and LED updates
         loop_counter = loop_counter.saturating_add(1);
+
+        // Periodic status updates
+        if loop_counter % (CONTROL_LOOP_FREQUENCY_HZ * 10) == 0 {
+            // Every 10 seconds
+            debug!(
+                "Control loop running at target ~{}Hz",
+                CONTROL_LOOP_FREQUENCY_HZ
+            );
+        }
+
         if loop_counter % 20000 == 0 {
             // Every ~100 seconds at 200Hz
             loop_counter = 0;

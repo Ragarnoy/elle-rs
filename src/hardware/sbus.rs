@@ -36,7 +36,7 @@ impl<'a> SbusReceiver<'a> {
 
         match embassy_futures::select::select(
             self.uart.read(&mut byte),
-            Timer::after(embassy_time::Duration::from_millis(10)),
+            Timer::after(embassy_time::Duration::from_millis(15)), // Reasonable timeout for SBUS (~14ms interval)
         )
         .await
         {

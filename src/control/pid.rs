@@ -1,4 +1,6 @@
 //! Attitude controller for flying wing stabilization using free-flight-stabilization crate
+use crate::config::CONTROL_LOOP_DT;
+use defmt::warn;
 use embassy_time::Instant;
 use free_flight_stabilization::{AngleStabilizer, FlightStabilizer, FlightStabilizerConfig};
 
@@ -77,13 +79,22 @@ impl AttitudeController {
             return (0.0, 0.0);
         }
 
-        // Calculate dt
-        let dt = if let Some(last) = self.last_time {
-            let elapsed = now.duration_since(last);
-            elapsed.as_micros() as f32 / 1_000_000.0
-        } else {
-            0.01 // First iteration, use nominal dt
-        };
+        // Use fixed dt for consistent control performance
+        let dt = CONTROL_LOOP_DT;
+
+        // Update timing for diagnostics (optional)
+        if let Some(last) = self.last_time {
+            let actual_dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
+
+            // Warn if timing is significantly off (>30% deviation)
+            if (actual_dt - dt).abs() / dt > 0.3 {
+                warn!(
+                    "Timing deviation: expected {}ms, got {}ms",
+                    (dt * 1000.0) as u32,
+                    (actual_dt * 1000.0) as u32
+                );
+            }
+        }
 
         self.last_time = Some(now);
 
