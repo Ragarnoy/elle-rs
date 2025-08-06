@@ -82,28 +82,37 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
-// PID tuning parameters (adjusted for 77Hz update rate)
-pub const PITCH_KP: f32 = 1.2; // Increased for lower update rate
-pub const PITCH_KI: f32 = 0.3; // Increased integral gain
-pub const PITCH_KD: f32 = 0.08; // Increased derivative gain
-pub const PITCH_MAX_RATE: f32 = 40.0; // Max pitch rate in deg/s
+// PID tuning parameters (optimized for smooth, responsive attitude hold)
+pub const PITCH_KP: f32 = 2.0; // Increased for faster response
+pub const PITCH_KI: f32 = 0.4; // Strong integral for steady-state accuracy
+pub const PITCH_KD: f32 = 0.12; // Higher D for damping but smooth
+pub const PITCH_MAX_RATE: f32 = 50.0; // Increased rate limit
 
-pub const ROLL_KP: f32 = 0.6; // Increased for lower update rate
-pub const ROLL_KI: f32 = 0.15; // Increased integral gain
-pub const ROLL_KD: f32 = 0.12; // Increased derivative gain
-pub const ROLL_MAX_RATE: f32 = 60.0; // Flying wings can roll faster
+pub const ROLL_KP: f32 = 1.5; // Increased for faster roll response
+pub const ROLL_KI: f32 = 0.25; // Balanced integral gain
+pub const ROLL_KD: f32 = 0.15; // Higher D for roll damping
+pub const ROLL_MAX_RATE: f32 = 90.0; // Flying wings can roll faster
 
 // Control authority limits (0.0 to 1.0)
-pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.5; // Limit attitude controller to 50% of stick authority
+pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
 
 // Attitude control channels
 pub const ATTITUDE_ENABLE_CH: usize = 4; // CH5 - Attitude hold enable
 pub const ATTITUDE_PITCH_SETPOINT_CH: usize = 5; // CH6 - Desired pitch angle
 pub const ATTITUDE_ROLL_SETPOINT_CH: usize = 7; // CH8 - Desired roll angle
 
-// Attitude control thresholds
-pub const ATTITUDE_ENABLE_THRESHOLD: u16 = 1200; // SBUS value above which attitude hold is enabled
+// Control mode switch thresholds (3-state switch on CH5)
+pub const MANUAL_MODE_THRESHOLD: u16 = 500; // Below this = Full Manual (~306)
+pub const MIXED_MODE_THRESHOLD: u16 = 1300; // Above this but below AUTOPILOT = Mixed (~1000) 
+pub const AUTOPILOT_MODE_THRESHOLD: u16 = 1500; // Above this = Full Autopilot (~1694)
 pub const ATTITUDE_PITCH_MIN_DEG: f32 = -15.0; // Min commandable pitch angle
 pub const ATTITUDE_PITCH_MAX_DEG: f32 = 25.0; // Max commandable pitch angle
 pub const ATTITUDE_ROLL_MIN_DEG: f32 = -45.0; // Min commandable roll angle (flying wings can roll more)
 pub const ATTITUDE_ROLL_MAX_DEG: f32 = 45.0; // Max commandable roll angle
+
+// Setpoint smoothing parameters
+pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
+pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)
+
+// Mixed mode control blending
+pub const MIXED_MODE_AUTOPILOT_WEIGHT: f32 = 0.6; // 60% autopilot, 40% pilot in mixed mode

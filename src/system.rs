@@ -18,12 +18,25 @@ use crate::control::mixing::{apply_differential, calculate_differential};
 #[cfg(not(feature = "mixing"))]
 use crate::control::throttle::sbus_to_pulse_us;
 
+#[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
+pub enum ControlMode {
+    Manual,    // Full manual control (~306)
+    Mixed,     // Pilot + Autopilot blend (~1000)
+    Autopilot, // Full autopilot control (~1694)
+}
+
 pub struct FlightController<'a> {
     pwm: PwmOutputs<'a>,
     arming: ArmingState,
     attitude_controller: AttitudeController,
     last_packet_time: Instant,
     last_attitude: Option<AttitudeData>,
+    // Smoothed setpoints for attitude hold
+    filtered_pitch_setpoint: f32,
+    filtered_roll_setpoint: f32,
+    last_setpoint_update: Option<Instant>,
+    // Control mode tracking
+    current_control_mode: ControlMode,
 }
 
 impl<'a> FlightController<'a> {
@@ -46,7 +59,7 @@ impl<'a> FlightController<'a> {
         config.i_limit = 25.0;
 
         // Set the scale to adjust the PID outputs to the actuator range
-        config.scale = 0.01;
+        config.scale = 0.015; // Increased for more responsive but still smooth control
 
         let mut attitude_controller = AttitudeController::with_config(config);
         attitude_controller.roll_hold_enabled = true; // Enable roll hold for CH8 control
@@ -57,6 +70,10 @@ impl<'a> FlightController<'a> {
             attitude_controller,
             last_packet_time: Instant::now(),
             last_attitude: None,
+            filtered_pitch_setpoint: 0.0,
+            filtered_roll_setpoint: 0.0,
+            last_setpoint_update: None,
+            current_control_mode: ControlMode::Manual,
         }
     }
 
@@ -86,6 +103,17 @@ impl<'a> FlightController<'a> {
         }
 
         info!("ESC init: Complete");
+    }
+
+    /// Determine control mode from CH5 3-state switch
+    fn determine_control_mode(&self, ch5_value: u16) -> ControlMode {
+        if ch5_value < MANUAL_MODE_THRESHOLD {
+            ControlMode::Manual
+        } else if ch5_value < MIXED_MODE_THRESHOLD {
+            ControlMode::Mixed
+        } else {
+            ControlMode::Autopilot
+        }
     }
 
     /// Update method with feature flag support
@@ -118,34 +146,81 @@ impl<'a> FlightController<'a> {
         self.arming
             .update(packet.channels[THROTTLE_CH], packet.flags.failsafe);
 
-        // Check attitude control enable (CH5)
-        let attitude_enabled = packet.channels[ATTITUDE_ENABLE_CH] > ATTITUDE_ENABLE_THRESHOLD;
-        self.attitude_controller.enabled = attitude_enabled && self.arming.armed;
+        // Determine control mode from CH5 3-state switch
+        let new_control_mode = self.determine_control_mode(packet.channels[ATTITUDE_ENABLE_CH]);
+        if new_control_mode != self.current_control_mode {
+            info!(
+                "Control mode changed: {:?} -> {:?}",
+                self.current_control_mode, new_control_mode
+            );
+            self.current_control_mode = new_control_mode;
+        }
 
-        // Get desired pitch from CH6 (map SBUS to angle)
+        // Enable attitude controller for Mixed and Autopilot modes
+        self.attitude_controller.enabled = (self.current_control_mode == ControlMode::Mixed
+            || self.current_control_mode == ControlMode::Autopilot)
+            && self.arming.armed;
+
+        // Get raw desired angles from SBUS channels
         let ch6_normalized = (packet.channels[ATTITUDE_PITCH_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
-        let desired_pitch_deg = ATTITUDE_PITCH_MIN_DEG
+        let raw_pitch_deg = ATTITUDE_PITCH_MIN_DEG
             + (ch6_normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG);
-        let desired_pitch_rad = desired_pitch_deg * core::f32::consts::PI / 180.0;
 
-        // Get desired roll from CH8 (map SBUS to angle)
         let ch8_normalized = (packet.channels[ATTITUDE_ROLL_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
-        let desired_roll_deg = ATTITUDE_ROLL_MIN_DEG
+        let raw_roll_deg = ATTITUDE_ROLL_MIN_DEG
             + (ch8_normalized + 1.0) * 0.5 * (ATTITUDE_ROLL_MAX_DEG - ATTITUDE_ROLL_MIN_DEG);
-        let desired_roll_rad = desired_roll_deg * core::f32::consts::PI / 180.0;
+
+        // Apply setpoint smoothing and rate limiting
+        let now = Instant::now();
+        let dt = if let Some(last_update) = self.last_setpoint_update {
+            now.duration_since(last_update).as_micros() as f32 / 1_000_000.0
+        } else {
+            CONTROL_LOOP_DT // First update, use nominal dt
+        };
+        self.last_setpoint_update = Some(now);
+
+        // Low-pass filter for smooth setpoint transitions
+        self.filtered_pitch_setpoint +=
+            SETPOINT_FILTER_ALPHA * (raw_pitch_deg - self.filtered_pitch_setpoint);
+        self.filtered_roll_setpoint +=
+            SETPOINT_FILTER_ALPHA * (raw_roll_deg - self.filtered_roll_setpoint);
+
+        // Rate limiting for setpoint changes (secondary smoothing)
+        let max_change_deg = MAX_SETPOINT_RATE_DEG_S * dt;
+        let pitch_change =
+            (raw_pitch_deg - self.filtered_pitch_setpoint).clamp(-max_change_deg, max_change_deg);
+        let roll_change =
+            (raw_roll_deg - self.filtered_roll_setpoint).clamp(-max_change_deg, max_change_deg);
+
+        self.filtered_pitch_setpoint += pitch_change;
+        self.filtered_roll_setpoint += roll_change;
+
+        // Convert smoothed setpoints to radians
+        let desired_pitch_rad = self.filtered_pitch_setpoint * core::f32::consts::PI / 180.0;
+        let desired_roll_rad = self.filtered_roll_setpoint * core::f32::consts::PI / 180.0;
         // Get pilot control inputs
-        let mut pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
+        let pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
 
         // Store new attitude if provided
         if let Some(att) = attitude {
             self.last_attitude = Some(*att);
         }
 
-        // Use the last known attitude if available, otherwise use direct pilot inputs
-        let final_inputs =
-            if let Some(effective_attitude) = attitude.or(self.last_attitude.as_ref()) {
-                if self.attitude_controller.enabled {
-                    // Get attitude corrections with gyro rates
+        // Apply control mode logic
+        let final_inputs = match self.current_control_mode {
+            ControlMode::Manual => {
+                // Full manual control - use pilot inputs directly
+                info!("Manual Mode - Direct pilot control");
+                // Reset PID when in manual mode
+                if self.attitude_controller.is_active() {
+                    self.attitude_controller.reset();
+                }
+                pilot_inputs
+            }
+
+            ControlMode::Mixed => {
+                // Mixed mode - blend pilot and autopilot
+                if let Some(effective_attitude) = attitude.or(self.last_attitude.as_ref()) {
                     let gyro_rates = Some((
                         effective_attitude.roll_rate,
                         effective_attitude.pitch_rate,
@@ -153,38 +228,76 @@ impl<'a> FlightController<'a> {
                     ));
                     let (pitch_correction, roll_correction) = self.attitude_controller.update(
                         desired_pitch_rad,
-                        desired_roll_rad, // Desired roll from CH8
+                        desired_roll_rad,
                         effective_attitude.pitch,
                         effective_attitude.roll,
                         gyro_rates,
                         Instant::now(),
                     );
 
-                    // Use only attitude corrections when enabled
-                    pilot_inputs.pitch = pitch_correction;
-                    pilot_inputs.roll = roll_correction;
+                    // Blend pilot inputs with autopilot corrections
+                    let mut mixed_inputs = pilot_inputs;
+                    mixed_inputs.pitch = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT) * pilot_inputs.pitch
+                        + MIXED_MODE_AUTOPILOT_WEIGHT * pitch_correction;
+                    mixed_inputs.roll = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT) * pilot_inputs.roll
+                        + MIXED_MODE_AUTOPILOT_WEIGHT * roll_correction;
 
                     info!(
-                        "Attitude Hold - P: {}°/{}° R: {}°/{}° Corrections: P:{} R:{}",
-                        desired_pitch_deg as i16,
+                        "Mixed Mode ({}% Auto) - P: {}°/{}° R: {}°/{}°",
+                        (MIXED_MODE_AUTOPILOT_WEIGHT * 100.0) as i16,
+                        self.filtered_pitch_setpoint as i16,
                         (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                        desired_roll_deg as i16,
+                        self.filtered_roll_setpoint as i16,
+                        (effective_attitude.roll * 180.0 / core::f32::consts::PI) as i16
+                    );
+
+                    mixed_inputs
+                } else {
+                    // No attitude data - use pilot inputs only
+                    pilot_inputs
+                }
+            }
+
+            ControlMode::Autopilot => {
+                // Full autopilot control - use attitude corrections only
+                if let Some(effective_attitude) = attitude.or(self.last_attitude.as_ref()) {
+                    let gyro_rates = Some((
+                        effective_attitude.roll_rate,
+                        effective_attitude.pitch_rate,
+                        effective_attitude.yaw_rate,
+                    ));
+                    let (pitch_correction, roll_correction) = self.attitude_controller.update(
+                        desired_pitch_rad,
+                        desired_roll_rad,
+                        effective_attitude.pitch,
+                        effective_attitude.roll,
+                        gyro_rates,
+                        Instant::now(),
+                    );
+
+                    // Use autopilot corrections only, keep pilot throttle and yaw
+                    let mut auto_inputs = pilot_inputs;
+                    auto_inputs.pitch = pitch_correction;
+                    auto_inputs.roll = roll_correction;
+
+                    info!(
+                        "Autopilot Mode - P: {}°/{}° R: {}°/{}° Corrections: P:{} R:{}",
+                        self.filtered_pitch_setpoint as i16,
+                        (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
+                        self.filtered_roll_setpoint as i16,
                         (effective_attitude.roll * 180.0 / core::f32::consts::PI) as i16,
                         (pitch_correction * 100.0) as i16,
                         (roll_correction * 100.0) as i16
                     );
 
-                    pilot_inputs
+                    auto_inputs
                 } else {
-                    // Reset PID when disabled
-                    if self.attitude_controller.is_active() {
-                        self.attitude_controller.reset();
-                    }
+                    // No attitude data - fallback to manual
+                    info!("Autopilot Mode - No attitude data, using manual control");
                     pilot_inputs
                 }
-            } else {
-                pilot_inputs
-            };
+            }
+        };
 
         // Mix controls to get surface positions
         let elevon_outputs = mix_elevons(&final_inputs);
@@ -277,5 +390,9 @@ impl<'a> FlightController<'a> {
 
     pub fn is_attitude_enabled(&self) -> bool {
         self.attitude_controller.enabled
+    }
+
+    pub fn current_control_mode(&self) -> ControlMode {
+        self.current_control_mode
     }
 }
