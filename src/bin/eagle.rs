@@ -92,10 +92,10 @@ async fn main(spawner: Spawner) {
     info!("Core0: Setting up flight control hardware");
     // Core0: Setup flight control hardware (PWM on PIO0)
     let mut pwm_pins = PwmPins {
-        elevon_left: p.PIN_14,
-        elevon_right: p.PIN_15,
+        elevon_left: p.PIN_12,
+        elevon_right: p.PIN_14,
         engine_left: p.PIN_11,
-        engine_right: p.PIN_12,
+        engine_right: p.PIN_15,
     };
 
     let Pio {

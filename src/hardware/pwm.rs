@@ -121,8 +121,8 @@ fn apply_elevon_trim(base_us: u32, trim_us: i32) -> u32 {
 }
 
 pub struct PwmPins<'a> {
-    pub elevon_left: Peri<'a, PIN_14>,
-    pub elevon_right: Peri<'a, PIN_15>,
+    pub elevon_left: Peri<'a, PIN_12>,
+    pub elevon_right: Peri<'a, PIN_14>,
     pub engine_left: Peri<'a, PIN_11>,
-    pub engine_right: Peri<'a, PIN_12>,
+    pub engine_right: Peri<'a, PIN_15>,
 }

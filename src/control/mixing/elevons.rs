@@ -107,6 +107,7 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
 }
 
 /// Get direct elevon control (legacy mode, trim applied in PWM layer)
+#[cfg(not(feature = "mixing"))]
 pub fn direct_elevon_control(channels: &[u16]) -> ElevonOutputs {
     use crate::control::throttle::sbus_to_pulse_us;
 
