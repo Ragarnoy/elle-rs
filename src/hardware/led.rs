@@ -119,7 +119,7 @@ where
             LedPattern::DoubleBlink(color) => {
                 // Double flash every second
                 let phase = self.pattern_counter % 100;
-                if phase < 5 || (phase >= 10 && phase < 15) {
+                if phase < 5 || (10..15).contains(&phase) {
                     self.scale_brightness(color)
                 } else {
                     colors::OFF

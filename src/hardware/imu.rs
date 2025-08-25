@@ -164,10 +164,10 @@ impl<'a> BnoImu<'a> {
         }
 
         // Rate limiting - only request save once per 10 minutes
-        if let Some(last_request) = self.last_cal_request {
-            if last_request.elapsed() < Duration::from_secs(600) {
-                return Ok(());
-            }
+        if let Some(last_request) = self.last_cal_request
+            && last_request.elapsed() < Duration::from_secs(600)
+        {
+            return Ok(());
         }
 
         if !levels.is_flight_ready() {

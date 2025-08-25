@@ -1,7 +1,7 @@
-/// Constants for flash memory operations
-///
-/// These constants define the characteristics of the flash memory used in the system.
-/// Using these values correctly helps ensure reliable flash operations and reduces the chance of errors.
+//! Constants for flash memory operations
+//!
+//! These constants define the characteristics of the flash memory used in the system.
+//! Using these values correctly helps ensure reliable flash operations and reduces the chance of errors.
 
 /// Flash page size.
 /// This is the smallest unit that can be programmed at once.

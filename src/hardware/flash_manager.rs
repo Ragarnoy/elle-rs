@@ -172,11 +172,11 @@ impl<'a> FlashManager<'a> {
         info!("Core0: Starting save operation");
 
         // Rate limiting - only save once per 10 minutes
-        if let Some(last_save) = self.last_save_time {
-            if last_save.elapsed() < Duration::from_secs(600) {
-                info!("Core0: Rate limiting - skipping save");
-                return Ok(());
-            }
+        if let Some(last_save) = self.last_save_time
+            && last_save.elapsed() < Duration::from_secs(600)
+        {
+            info!("Core0: Rate limiting - skipping save");
+            return Ok(());
         }
 
         // Only save flight-ready calibrations
