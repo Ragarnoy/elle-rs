@@ -87,15 +87,13 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
 // PID tuning parameters (optimized for smooth, responsive attitude hold)
-pub const PITCH_KP: f32 = 3.0; // Increased for faster response
-pub const PITCH_KI: f32 = 0.4; // Strong integral for steady-state accuracy
-pub const PITCH_KD: f32 = 0.12; // Higher D for damping but smooth
-pub const PITCH_MAX_RATE: f32 = 50.0; // Increased rate limit
+pub const PITCH_KP: f32 = 0.4;
+pub const PITCH_KI: f32 = 0.14;
+pub const PITCH_KD: f32 = 0.14;
 
-pub const ROLL_KP: f32 = 2.0; // Increased for faster roll response
-pub const ROLL_KI: f32 = 0.25; // Balanced integral gain
-pub const ROLL_KD: f32 = 0.15; // Higher D for roll damping
-pub const ROLL_MAX_RATE: f32 = 90.0; // Flying wings can roll faster
+pub const ROLL_KP: f32 = 0.32;
+pub const ROLL_KI: f32 = 0.14;
+pub const ROLL_KD: f32 = 0.11;
 
 // Control authority limits (0.0 to 1.0)
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
