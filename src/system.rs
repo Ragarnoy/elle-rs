@@ -1,5 +1,5 @@
 use crate::config::*;
-use crate::control::{arming::ArmingState, pid::AttitudeController, throttle::*};
+use crate::control::{arming::ArmingState, pid::AttitudeController};
 use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
 use defmt::info;
@@ -9,14 +9,12 @@ use sbus_rs::SbusPacket;
 
 #[cfg(feature = "mixing")]
 use crate::control::mixing::{
-    elevons::{ControlInputs, mix_elevons},
-    yaw::{apply_differential_thrust, calculate_yaw_differential},
+    elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
+    yaw::{apply_differential_thrust_direct, throttle_with_differential_lut},
 };
 
 #[cfg(not(feature = "mixing"))]
-use crate::control::mixing::{apply_differential, calculate_differential};
-#[cfg(not(feature = "mixing"))]
-use crate::control::throttle::sbus_to_pulse_us;
+use crate::control::mixing::apply_differential_complete;
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
 pub enum ControlMode {
@@ -137,7 +135,7 @@ impl<'a> FlightController<'a> {
         }
     }
 
-    /// New update method with flight control mixing
+    /// Ultra-fast mixing update method using LUTs
     #[cfg(feature = "mixing")]
     pub fn update_with_mixing(&mut self, packet: &SbusPacket, attitude: Option<&AttitudeData>) {
         self.last_packet_time = Instant::now();
@@ -161,12 +159,12 @@ impl<'a> FlightController<'a> {
             || self.current_control_mode == ControlMode::Autopilot)
             && self.arming.armed;
 
-        // Get raw desired angles from SBUS channels
-        let ch6_normalized = (packet.channels[ATTITUDE_PITCH_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
+        // Get raw desired angles from SBUS channels using LUTs
+        let ch6_normalized = sbus_to_normalized_lut(packet.channels[ATTITUDE_PITCH_SETPOINT_CH]);
         let raw_pitch_deg = ATTITUDE_PITCH_MIN_DEG
             + (ch6_normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG);
 
-        let ch8_normalized = (packet.channels[ATTITUDE_ROLL_SETPOINT_CH] as f32 - 1023.5) / 1023.5;
+        let ch8_normalized = sbus_to_normalized_lut(packet.channels[ATTITUDE_ROLL_SETPOINT_CH]);
         let raw_roll_deg = ATTITUDE_ROLL_MIN_DEG
             + (ch8_normalized + 1.0) * 0.5 * (ATTITUDE_ROLL_MAX_DEG - ATTITUDE_ROLL_MIN_DEG);
 
@@ -198,8 +196,9 @@ impl<'a> FlightController<'a> {
         // Convert smoothed setpoints to radians
         let desired_pitch_rad = self.filtered_pitch_setpoint * core::f32::consts::PI / 180.0;
         let desired_roll_rad = self.filtered_roll_setpoint * core::f32::consts::PI / 180.0;
-        // Get pilot control inputs
-        let pilot_inputs = ControlInputs::from_sbus_channels(&packet.channels);
+
+        // Get pilot control inputs using ultra-fast LUT
+        let pilot_inputs = ControlInputs::from_sbus_channels_fast(&packet.channels);
 
         // Store new attitude if provided
         if let Some(att) = attitude {
@@ -299,49 +298,60 @@ impl<'a> FlightController<'a> {
             }
         };
 
-        // Mix controls to get surface positions
-        let elevon_outputs = mix_elevons(&final_inputs);
-        let yaw_factors = calculate_yaw_differential(final_inputs.yaw);
+        // ULTRA-FAST PATH: Use direct LUT mixing for maximum performance
+        if self.current_control_mode == ControlMode::Manual {
+            // For manual mode, use direct SBUS to PWM conversion - fastest possible path
+            let elevon_outputs = mix_elevons_direct_lut(&packet.channels);
+            self.pwm
+                .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
-        // Set elevon positions
-        self.pwm
-            .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
+            // Combined throttle + differential calculation in single LUT call
+            let (left_thrust, right_thrust) = if self.arming.armed {
+                throttle_with_differential_lut(
+                    packet.channels[THROTTLE_CH],
+                    packet.channels[YAW_CH],
+                )
+            } else {
+                (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+            };
 
-        // Calculate engine thrust with differential
-        let base_thrust = throttle_curve((final_inputs.throttle * 2047.0) as u16);
-
-        let (left_thrust, right_thrust) = if self.arming.armed {
-            apply_differential_thrust(base_thrust, &yaw_factors)
+            self.pwm.set_engines(left_thrust, right_thrust);
         } else {
-            (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
-        };
+            // For mixed/autopilot modes, use the corrected inputs
+            let elevon_outputs = mix_elevons(&final_inputs);
+            self.pwm
+                .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
-        self.pwm.set_engines(left_thrust, right_thrust);
+            // Calculate engine thrust with differential using LUT
+            let base_thrust = throttle_curve_lut((final_inputs.throttle * 2047.0) as u16);
+            let yaw_sbus = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+
+            let (left_thrust, right_thrust) = if self.arming.armed {
+                apply_differential_thrust_direct(base_thrust, yaw_sbus)
+            } else {
+                (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+            };
+
+            self.pwm.set_engines(left_thrust, right_thrust);
+        }
     }
 
-    /// Legacy direct elevon control method
+    /// Ultra-fast direct elevon control method using LUTs
     #[cfg(not(feature = "mixing"))]
     fn update_direct_elevons(&mut self, packet: &SbusPacket) {
-        let elevon_left_us = sbus_to_pulse_us(
-            packet.channels[ELEVON_LEFT_CH],
-            SERVO_MIN_PULSE_US,
-            SERVO_MAX_PULSE_US,
-        );
-        let elevon_right_us = sbus_to_pulse_us(
-            packet.channels[ELEVON_RIGHT_CH],
-            SERVO_MIN_PULSE_US,
-            SERVO_MAX_PULSE_US,
-        );
+        // Ultra-fast LUT lookups
+        let elevon_left_us = sbus_to_pulse_lut(packet.channels[ELEVON_LEFT_CH]);
+        let elevon_right_us = sbus_to_pulse_lut(packet.channels[ELEVON_RIGHT_CH]);
 
         // Set elevon positions
         self.pwm.set_elevons(elevon_left_us, elevon_right_us);
 
-        // Calculate engine thrust
-        let base_thrust = throttle_curve(packet.channels[ENGINE_CH]);
-        let (left_mult, right_mult) = calculate_differential(packet.channels[DIFFERENTIAL_CH]);
-
+        // Combined throttle + differential in single LUT operation
         let (left_thrust, right_thrust) = if self.arming.armed {
-            apply_differential(base_thrust, left_mult, right_mult)
+            apply_differential_complete(
+                throttle_curve_lut(packet.channels[ENGINE_CH]),
+                packet.channels[DIFFERENTIAL_CH],
+            )
         } else {
             (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
         };
@@ -395,4 +405,11 @@ impl<'a> FlightController<'a> {
     pub fn current_control_mode(&self) -> ControlMode {
         self.current_control_mode
     }
+}
+
+// Helper function for LUT conversion (used in setpoint calculations)
+#[inline(always)]
+fn sbus_to_normalized_lut(sbus_value: u16) -> f32 {
+    // Use roll center as default - can be optimized further with specific LUTs
+    sbus_to_normalized_roll_lut(sbus_value)
 }

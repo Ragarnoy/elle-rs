@@ -7,61 +7,43 @@ pub struct DifferentialFactors {
     pub right_mult: f32, // Multiplier for right engine (0.0 to 1.0)
 }
 
-/// Calculate differential thrust from normalized yaw input
+/// Calculate differential thrust from normalized yaw input using LUT
+#[inline(always)]
 pub fn calculate_yaw_differential(yaw_input: f32) -> DifferentialFactors {
-    // Yaw control through differential thrust
-    // Positive yaw (right turn) = reduce left engine, maintain right engine
-    // Negative yaw (left turn) = reduce right engine, maintain left engine
-
-    let yaw_factor = yaw_input * YAW_TO_DIFF_GAIN;
-
-    let left_mult = if yaw_factor > 0.0 {
-        // Right turn: reduce left engine
-        1.0 - (yaw_factor * 0.2).min(0.2)
-    } else {
-        1.0 // Full power for left turn
-    };
-
-    let right_mult = if yaw_factor < 0.0 {
-        // Left turn: reduce right engine
-        1.0 - (yaw_factor.abs() * 0.2).min(0.2)
-    } else {
-        1.0 // Full power for right turn
-    };
+    // Convert normalized yaw input back to SBUS value for LUT lookup
+    let sbus_equiv = ((yaw_input * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+    let (left_mult, right_mult) = calculate_yaw_differential_lut(sbus_equiv);
 
     DifferentialFactors {
-        left_mult: left_mult.clamp(0.8, 1.0), // Don't reduce below 80%
-        right_mult: right_mult.clamp(0.8, 1.0),
+        left_mult,
+        right_mult,
     }
 }
 
-/// Calculate differential thrust from SBUS channel (legacy)
+/// Calculate differential thrust directly from SBUS channel (ultra-fast)
+#[inline(always)]
+pub fn calculate_yaw_differential_from_sbus(yaw_sbus: u16) -> DifferentialFactors {
+    let (left_mult, right_mult) = calculate_yaw_differential_lut(yaw_sbus);
+
+    DifferentialFactors {
+        left_mult,
+        right_mult,
+    }
+}
+
+/// Calculate differential thrust from SBUS channel (legacy) using LUT
+#[inline(always)]
 pub fn calculate_differential_legacy(ch4_value: u16) -> DifferentialFactors {
-    if (DIFF_NEUTRAL_MIN..=DIFF_NEUTRAL_MAX).contains(&ch4_value) {
-        DifferentialFactors {
-            left_mult: 1.0,
-            right_mult: 1.0,
-        }
-    } else if ch4_value < DIFF_NEUTRAL_MIN {
-        let amount = (DIFF_NEUTRAL_MIN - ch4_value) as i32;
-        let max_range = (DIFF_NEUTRAL_MIN - 300) as i32;
-        let reduction = (amount * DIFF_MAX_PERCENT / max_range).min(DIFF_MAX_PERCENT);
-        DifferentialFactors {
-            left_mult: (100 - reduction) as f32 / 100.0,
-            right_mult: 1.0,
-        }
-    } else {
-        let amount = (ch4_value - DIFF_NEUTRAL_MAX) as i32;
-        let max_range = (1700 - DIFF_NEUTRAL_MAX) as i32;
-        let reduction = (amount * DIFF_MAX_PERCENT / max_range).min(DIFF_MAX_PERCENT);
-        DifferentialFactors {
-            left_mult: 1.0,
-            right_mult: (100 - reduction) as f32 / 100.0,
-        }
+    let (left_mult_percent, right_mult_percent) = calculate_differential_lut(ch4_value);
+
+    DifferentialFactors {
+        left_mult: left_mult_percent as f32 / 100.0,
+        right_mult: right_mult_percent as f32 / 100.0,
     }
 }
 
 /// Apply differential factors to base engine thrust
+#[inline(always)]
 pub fn apply_differential_thrust(base_thrust: u32, factors: &DifferentialFactors) -> (u32, u32) {
     if base_thrust > ENGINE_MIN_PULSE_US {
         let thrust_range = base_thrust - ENGINE_MIN_PULSE_US;
@@ -75,4 +57,17 @@ pub fn apply_differential_thrust(base_thrust: u32, factors: &DifferentialFactors
     } else {
         (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
     }
+}
+
+/// Ultra-fast differential thrust calculation directly from SBUS to thrust values
+#[inline(always)]
+pub fn apply_differential_thrust_direct(base_thrust: u32, yaw_sbus: u16) -> (u32, u32) {
+    apply_differential_thrust_lut(base_thrust, yaw_sbus)
+}
+
+/// Combined throttle curve + differential thrust calculation (maximum performance)
+#[inline(always)]
+pub fn throttle_with_differential_lut(throttle_sbus: u16, yaw_sbus: u16) -> (u32, u32) {
+    let base_thrust = throttle_curve_lut(throttle_sbus);
+    apply_differential_thrust_lut(base_thrust, yaw_sbus)
 }

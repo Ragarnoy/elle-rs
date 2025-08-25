@@ -1,39 +1,28 @@
 use crate::config::*;
 use defmt::Format;
 
-/// Convert SBUS values to normalized control inputs (-1.0 to 1.0) with calibrated centers
+/// Convert SBUS values to normalized control inputs using ultra-fast LUT
+#[inline(always)]
 pub fn sbus_to_normalized(sbus_value: u16) -> f32 {
-    // SBUS range is 0-2047, center at ~1023 (but varies by transmitter)
-    let normalized = (sbus_value as f32 - 1023.5) / 1023.5;
-    normalized.clamp(-1.0, 1.0)
+    // Default to roll normalization - this maintains backward compatibility
+    sbus_to_normalized_roll_lut(sbus_value)
 }
 
-/// Convert SBUS value to normalized with specific center point
-///
-/// # Arguments
-/// * `sbus_value` - Raw SBUS value (0-2047)
-/// * `center` - Calibrated center point for this channel
-///
-/// # Returns
-/// * Normalized value in range -1.0 to 1.0
-fn sbus_to_normalized_with_center(sbus_value: u16, center: u16) -> f32 {
-    // Validate center point is reasonable based on configured center
-    let safe_center = center.clamp(
-        center.saturating_sub(SBUS_CENTER_TOLERANCE),
-        center.saturating_add(SBUS_CENTER_TOLERANCE),
-    );
-
-    // Normalize to -1.0 to 1.0 range using full SBUS range
-    let normalized = (sbus_value as f32 - safe_center as f32) / 1024.0;
-    normalized.clamp(-1.0, 1.0)
+/// Convert SBUS value to normalized with specific center point using LUT
+#[inline(always)]
+pub fn sbus_to_normalized_with_center(sbus_value: u16, _center: u16) -> f32 {
+    // Note: center is ignored since LUT uses pre-configured centers
+    // Use specific channel LUT functions for best performance
+    sbus_to_normalized_roll_lut(sbus_value) // Default to roll
 }
 
-/// Convert normalized control input to servo pulse width
+/// Convert normalized control input to servo pulse width using LUT
+/// For values outside -1.0 to 1.0, falls back to calculation
+#[inline(always)]
 pub fn normalized_to_servo_us(normalized: f32) -> u32 {
-    let center = SERVO_CENTER_US as f32;
-    let range = (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US) as f32 / 2.0;
-    let pulse_us = center + (normalized * range);
-    pulse_us.clamp(SERVO_MIN_PULSE_US as f32, SERVO_MAX_PULSE_US as f32) as u32
+    // Convert normalized to SBUS equivalent for LUT lookup
+    let sbus_equiv = ((normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+    sbus_to_pulse_lut(sbus_equiv)
 }
 
 /// Flight control inputs in normalized form
@@ -53,13 +42,26 @@ pub struct ElevonOutputs {
 }
 
 impl ControlInputs {
-    /// Create control inputs from SBUS packet channels with calibrated centers
+    /// Create control inputs from SBUS packet channels using ultra-fast LUTs
+    #[inline(always)]
     pub fn from_sbus_channels(channels: &[u16]) -> Self {
         Self {
-            pitch: sbus_to_normalized_with_center(channels[PITCH_CH], SBUS_PITCH_CENTER),
-            roll: sbus_to_normalized_with_center(channels[ROLL_CH], SBUS_ROLL_CENTER),
-            yaw: sbus_to_normalized_with_center(channels[YAW_CH], SBUS_YAW_CENTER),
+            pitch: sbus_to_normalized_pitch_lut(channels[PITCH_CH]),
+            roll: sbus_to_normalized_roll_lut(channels[ROLL_CH]),
+            yaw: sbus_to_normalized_yaw_lut(channels[YAW_CH]),
             throttle: (channels[THROTTLE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
+        }
+    }
+
+    /// Ultra-fast batch conversion using single LUT call
+    #[inline(always)]
+    pub fn from_sbus_channels_fast(channels: &[u16]) -> Self {
+        let (roll, pitch, yaw, throttle) = channels_to_normalized_lut(channels);
+        Self {
+            pitch,
+            roll,
+            yaw,
+            throttle,
         }
     }
 
@@ -69,28 +71,22 @@ impl ControlInputs {
         Self {
             pitch: 0.0, // No pitch input in direct mode
             roll: 0.0,  // No roll input in direct mode
-            yaw: sbus_to_normalized_with_center(channels[DIFFERENTIAL_CH], SBUS_YAW_CENTER),
+            yaw: sbus_to_normalized_yaw_lut(channels[DIFFERENTIAL_CH]),
             throttle: (channels[ENGINE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
         }
     }
 }
 
 /// Mixes pitch, roll and yaw inputs into elevon control surface positions
-///
-/// # Arguments
-/// * `inputs` - Normalized control inputs (-1.0 to 1.0)
-///
-/// # Returns
-/// * `ElevonOutputs` - Servo pulse widths for left and right elevons
+/// Optimized version using fast normalization
+#[inline(always)]
 pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
-    // Clamp input values to valid range
+    // Inputs are already clamped from LUT lookups, but clamp again for safety
     let pitch = inputs.pitch.clamp(-1.0, 1.0);
     let roll = inputs.roll.clamp(-1.0, 1.0);
     let yaw = inputs.yaw.clamp(-1.0, 1.0);
 
     // Elevon mixing: each elevon responds to both pitch and roll
-    // Left elevon: positive pitch (nose up) + positive roll (right roll) = up deflection
-    // Right elevon: positive pitch (nose up) - positive roll (right roll) = up deflection
     let left_elevon_normalized =
         ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN) + (yaw * YAW_TO_ELEVON_GAIN))
             .clamp(-1.0, 1.0);
@@ -99,28 +95,43 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
         ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN) - (yaw * YAW_TO_ELEVON_GAIN))
             .clamp(-1.0, 1.0);
 
-    // Convert to servo pulse widths (trim applied in PWM layer)
+    // Convert to servo pulse widths using LUT
     let left_us = normalized_to_servo_us(left_elevon_normalized);
     let right_us = normalized_to_servo_us(right_elevon_normalized);
 
     ElevonOutputs { left_us, right_us }
 }
 
-/// Get direct elevon control (legacy mode, trim applied in PWM layer)
-#[cfg(not(feature = "mixing"))]
+/// Ultra-fast elevon mixing using direct SBUS values
+/// This version skips the ControlInputs struct for maximum performance
+#[inline(always)]
+pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
+    let (roll, pitch, yaw, _throttle) = channels_to_normalized_lut(channels);
+
+    // Direct mixing calculations
+    let left_elevon_normalized =
+        ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN) + (yaw * YAW_TO_ELEVON_GAIN))
+            .clamp(-1.0, 1.0);
+
+    let right_elevon_normalized =
+        ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN) - (yaw * YAW_TO_ELEVON_GAIN))
+            .clamp(-1.0, 1.0);
+
+    // Convert back to SBUS equivalent and use LUT
+    let left_sbus = ((left_elevon_normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+    let right_sbus = ((right_elevon_normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+
+    ElevonOutputs {
+        left_us: sbus_to_pulse_lut(left_sbus),
+        right_us: sbus_to_pulse_lut(right_sbus),
+    }
+}
+
+/// Get direct elevon control using LUT (legacy mode, trim applied in PWM layer)
+#[inline(always)]
 pub fn direct_elevon_control(channels: &[u16]) -> ElevonOutputs {
-    use crate::control::throttle::sbus_to_pulse_us;
-
-    let left_us = sbus_to_pulse_us(
-        channels[ELEVON_LEFT_CH],
-        SERVO_MIN_PULSE_US,
-        SERVO_MAX_PULSE_US,
-    );
-    let right_us = sbus_to_pulse_us(
-        channels[ELEVON_RIGHT_CH],
-        SERVO_MIN_PULSE_US,
-        SERVO_MAX_PULSE_US,
-    );
-
-    ElevonOutputs { left_us, right_us }
+    ElevonOutputs {
+        left_us: sbus_to_pulse_lut(channels[ELEVON_LEFT_CH]),
+        right_us: sbus_to_pulse_lut(channels[ELEVON_RIGHT_CH]),
+    }
 }

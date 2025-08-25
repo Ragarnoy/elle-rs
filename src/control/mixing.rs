@@ -9,26 +9,17 @@ pub use crate::control::mixing::legacy::*;
 
 #[cfg(not(feature = "mixing"))]
 mod legacy {
+    use crate::config::lut::*;
     use crate::config::*;
 
-    /// Calculate differential thrust from rudder input (legacy)
+    /// Calculate differential thrust from rudder input using ultra-fast LUT (legacy)
+    #[inline(always)]
     pub fn calculate_differential(ch4_value: u16) -> (u32, u32) {
-        if ch4_value >= DIFF_NEUTRAL_MIN && ch4_value <= DIFF_NEUTRAL_MAX {
-            (100, 100)
-        } else if ch4_value < DIFF_NEUTRAL_MIN {
-            let amount = (DIFF_NEUTRAL_MIN - ch4_value) as i32;
-            let max_range = (DIFF_NEUTRAL_MIN - 300) as i32;
-            let reduction = (amount * DIFF_MAX_PERCENT / max_range).min(DIFF_MAX_PERCENT);
-            ((100 - reduction) as u32, 100)
-        } else {
-            let amount = (ch4_value - DIFF_NEUTRAL_MAX) as i32;
-            let max_range = (1700 - DIFF_NEUTRAL_MAX) as i32;
-            let reduction = (amount * DIFF_MAX_PERCENT / max_range).min(DIFF_MAX_PERCENT);
-            (100, (100 - reduction) as u32)
-        }
+        calculate_differential_lut(ch4_value)
     }
 
-    /// Apply differential to engine thrust (legacy)
+    /// Apply differential to engine thrust using ultra-fast LUT (legacy)
+    #[inline(always)]
     pub fn apply_differential(base_thrust: u32, left_mult: u32, right_mult: u32) -> (u32, u32) {
         if base_thrust > ENGINE_MIN_PULSE_US {
             let thrust_range = base_thrust - ENGINE_MIN_PULSE_US;
@@ -42,5 +33,11 @@ mod legacy {
         } else {
             (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
         }
+    }
+
+    /// Combined legacy differential calculation and application (maximum performance)
+    #[inline(always)]
+    pub fn apply_differential_complete(base_thrust: u32, ch4_value: u16) -> (u32, u32) {
+        apply_differential_lut(base_thrust, ch4_value)
     }
 }

@@ -1,4 +1,8 @@
+pub mod lut;
 pub mod profile;
+
+// Re-export LUT functions for easy access
+pub use lut::*;
 
 // PWM timing parameters
 pub const REFRESH_INTERVAL_US: u32 = 20_000; // 50Hz servo refresh rate
@@ -103,7 +107,7 @@ pub const ATTITUDE_ROLL_SETPOINT_CH: usize = 7; // CH8 - Desired roll angle
 
 // Control mode switch thresholds (3-state switch on CH5)
 pub const MANUAL_MODE_THRESHOLD: u16 = 500; // Below this = Full Manual (~306)
-pub const MIXED_MODE_THRESHOLD: u16 = 1300; // Above this but below AUTOPILOT = Mixed (~1000) 
+pub const MIXED_MODE_THRESHOLD: u16 = 1300; // Above this but below AUTOPILOT = Mixed (~1000)
 pub const AUTOPILOT_MODE_THRESHOLD: u16 = 1500; // Above this = Full Autopilot (~1694)
 pub const ATTITUDE_PITCH_MIN_DEG: f32 = -15.0; // Min commandable pitch angle
 pub const ATTITUDE_PITCH_MAX_DEG: f32 = 25.0; // Max commandable pitch angle
