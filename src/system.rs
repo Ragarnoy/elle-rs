@@ -29,10 +29,9 @@ pub struct FlightController<'a> {
     attitude_controller: AttitudeController,
     last_packet_time: Instant,
     last_attitude: Option<AttitudeData>,
-    // Smoothed setpoints for attitude hold
-    filtered_pitch_setpoint: f32,
-    filtered_roll_setpoint: f32,
-    last_setpoint_update: Option<Instant>,
+    // Smoothed setpoints for attitude hold (in radians for consistency)
+    filtered_pitch_setpoint_rad: f32,
+    filtered_roll_setpoint_rad: f32,
     // Control mode tracking
     current_control_mode: ControlMode,
 }
@@ -68,9 +67,8 @@ impl<'a> FlightController<'a> {
             attitude_controller,
             last_packet_time: Instant::now(),
             last_attitude: None,
-            filtered_pitch_setpoint: 0.0,
-            filtered_roll_setpoint: 0.0,
-            last_setpoint_update: None,
+            filtered_pitch_setpoint_rad: 0.0,
+            filtered_roll_setpoint_rad: 0.0,
             current_control_mode: ControlMode::Manual,
         }
     }
@@ -159,43 +157,23 @@ impl<'a> FlightController<'a> {
             || self.current_control_mode == ControlMode::Autopilot)
             && self.arming.armed;
 
-        // Get raw desired angles from SBUS channels using LUTs
+        // Get raw desired angles from SBUS channels using LUTs and convert to radians immediately
         let ch6_normalized = sbus_to_normalized_lut(packet.channels[ATTITUDE_PITCH_SETPOINT_CH]);
         let raw_pitch_deg = ATTITUDE_PITCH_MIN_DEG
             + (ch6_normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG);
+        let raw_pitch_setpoint_rad = raw_pitch_deg * core::f32::consts::PI / 180.0;
 
         let ch8_normalized = sbus_to_normalized_lut(packet.channels[ATTITUDE_ROLL_SETPOINT_CH]);
         let raw_roll_deg = ATTITUDE_ROLL_MIN_DEG
             + (ch8_normalized + 1.0) * 0.5 * (ATTITUDE_ROLL_MAX_DEG - ATTITUDE_ROLL_MIN_DEG);
+        let raw_roll_setpoint_rad = raw_roll_deg * core::f32::consts::PI / 180.0;
 
-        // Apply setpoint smoothing and rate limiting
-        let now = Instant::now();
-        let dt = if let Some(last_update) = self.last_setpoint_update {
-            now.duration_since(last_update).as_micros() as f32 / 1_000_000.0
-        } else {
-            CONTROL_LOOP_DT // First update, use nominal dt
-        };
-        self.last_setpoint_update = Some(now);
-
-        // Low-pass filter for smooth setpoint transitions
-        self.filtered_pitch_setpoint +=
-            SETPOINT_FILTER_ALPHA * (raw_pitch_deg - self.filtered_pitch_setpoint);
-        self.filtered_roll_setpoint +=
-            SETPOINT_FILTER_ALPHA * (raw_roll_deg - self.filtered_roll_setpoint);
-
-        // Rate limiting for setpoint changes (secondary smoothing)
-        let max_change_deg = MAX_SETPOINT_RATE_DEG_S * dt;
-        let pitch_change =
-            (raw_pitch_deg - self.filtered_pitch_setpoint).clamp(-max_change_deg, max_change_deg);
-        let roll_change =
-            (raw_roll_deg - self.filtered_roll_setpoint).clamp(-max_change_deg, max_change_deg);
-
-        self.filtered_pitch_setpoint += pitch_change;
-        self.filtered_roll_setpoint += roll_change;
-
-        // Convert smoothed setpoints to radians
-        let desired_pitch_rad = self.filtered_pitch_setpoint * core::f32::consts::PI / 180.0;
-        let desired_roll_rad = self.filtered_roll_setpoint * core::f32::consts::PI / 180.0;
+        // Apply low-pass filter directly to raw setpoint (in radians)
+        // This provides smooth transitions without double-damping
+        self.filtered_pitch_setpoint_rad +=
+            SETPOINT_FILTER_ALPHA * (raw_pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
+        self.filtered_roll_setpoint_rad +=
+            SETPOINT_FILTER_ALPHA * (raw_roll_setpoint_rad - self.filtered_roll_setpoint_rad);
 
         // Get pilot control inputs using ultra-fast LUT
         let pilot_inputs = ControlInputs::from_sbus_channels_fast(&packet.channels);
@@ -226,8 +204,8 @@ impl<'a> FlightController<'a> {
                         effective_attitude.yaw_rate,
                     ));
                     let (pitch_correction, roll_correction) = self.attitude_controller.update(
-                        desired_pitch_rad,
-                        desired_roll_rad,
+                        self.filtered_pitch_setpoint_rad,
+                        self.filtered_roll_setpoint_rad,
                         effective_attitude.pitch,
                         effective_attitude.roll,
                         gyro_rates,
@@ -244,9 +222,9 @@ impl<'a> FlightController<'a> {
                     info!(
                         "Mixed Mode ({}% Auto) - P: {}°/{}° R: {}°/{}°",
                         (MIXED_MODE_AUTOPILOT_WEIGHT * 100.0) as i16,
-                        self.filtered_pitch_setpoint as i16,
+                        (self.filtered_pitch_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
                         (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                        self.filtered_roll_setpoint as i16,
+                        (self.filtered_roll_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
                         (effective_attitude.roll * 180.0 / core::f32::consts::PI) as i16
                     );
 
@@ -266,8 +244,8 @@ impl<'a> FlightController<'a> {
                         effective_attitude.yaw_rate,
                     ));
                     let (pitch_correction, roll_correction) = self.attitude_controller.update(
-                        desired_pitch_rad,
-                        desired_roll_rad,
+                        self.filtered_pitch_setpoint_rad,
+                        self.filtered_roll_setpoint_rad,
                         effective_attitude.pitch,
                         effective_attitude.roll,
                         gyro_rates,
@@ -281,9 +259,9 @@ impl<'a> FlightController<'a> {
 
                     info!(
                         "Autopilot Mode - P: {}°/{}° R: {}°/{}° Corrections: P:{} R:{}",
-                        self.filtered_pitch_setpoint as i16,
+                        (self.filtered_pitch_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
                         (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                        self.filtered_roll_setpoint as i16,
+                        (self.filtered_roll_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
                         (effective_attitude.roll * 180.0 / core::f32::consts::PI) as i16,
                         (pitch_correction * 100.0) as i16,
                         (roll_correction * 100.0) as i16
