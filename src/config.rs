@@ -86,14 +86,13 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
-// PID tuning parameters (optimized for smooth, responsive attitude hold)
-pub const PITCH_KP: f32 = 0.4;
-pub const PITCH_KI: f32 = 0.14;
-pub const PITCH_KD: f32 = 0.14;
+pub const ROLL_KP: f32 = 0.15;
+pub const ROLL_KI: f32 = 0.02;
+pub const ROLL_KD: f32 = 0.08;
 
-pub const ROLL_KP: f32 = 0.32;
-pub const ROLL_KI: f32 = 0.14;
-pub const ROLL_KD: f32 = 0.11;
+pub const PITCH_KP: f32 = 0.2;
+pub const PITCH_KI: f32 = 0.03;
+pub const PITCH_KD: f32 = 0.1;
 
 // Control authority limits (0.0 to 1.0)
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
