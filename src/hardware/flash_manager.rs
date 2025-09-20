@@ -118,7 +118,7 @@ impl<'a> FlashManager<'a> {
         }
 
         // Ensure buffer is aligned for optimal DMA performance
-        if (buf.as_ptr() as usize) % ASYNC_READ_SIZE != 0 {
+        if !(buf.as_ptr() as usize).is_multiple_of(ASYNC_READ_SIZE) {
             warn!("Core0: Buffer not aligned to ASYNC_READ_SIZE for optimal DMA performance");
         }
 
@@ -200,7 +200,7 @@ impl<'a> FlashManager<'a> {
         }
 
         // Ensure buffer is aligned for optimal DMA performance
-        if (buf.as_ptr() as usize) % ASYNC_READ_SIZE != 0 {
+        if !(buf.as_ptr() as usize).is_multiple_of(ASYNC_READ_SIZE) {
             warn!("Core0: Buffer not aligned to ASYNC_READ_SIZE for optimal DMA performance");
         }
 
@@ -252,7 +252,7 @@ impl<'a> FlashManager<'a> {
 
         // Ensure write address is aligned to WRITE_SIZE
         let write_offset = CALIBRATION_FLASH_OFFSET;
-        if write_offset % WRITE_SIZE as u32 != 0 {
+        if !write_offset.is_multiple_of(WRITE_SIZE as u32) {
             error!("Core0: Calibration offset not aligned to WRITE_SIZE");
             return Err("Flash write alignment error");
         }

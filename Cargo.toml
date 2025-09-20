@@ -8,7 +8,7 @@ sbus-rs = { version = "0.1.3" }
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git" }
-embassy-rp = { version = "0.7.0", git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa"] }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa"] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git" }
 defmt = "1.0.1"
 defmt-rtt = "1.0.0"
@@ -22,8 +22,9 @@ free-flight-stabilization = { git = "https://github.com/AeroRust/free-flight-sta
 smart-leds = "0.4.0"
 
 [features]
-default = ["mixing"]
+default = ["mixing", "imu-save-calibration"]
 mixing = []  # Enable flight control mixing mode
+imu-save-calibration = []  # Enable saving IMU calibration to flash
 
 [profile.release]
 debug = 2

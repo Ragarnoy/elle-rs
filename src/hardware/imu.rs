@@ -1,6 +1,5 @@
 //! BNO055 IMU integration for attitude sensing with RGB LED status
 
-use crate::config::IMU_SAVE_CALIBRATION;
 use crate::config::profile::StoredCalibration;
 use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
 use crate::hardware::led::{LedPattern, colors};
@@ -155,10 +154,11 @@ impl<'a> BnoImu<'a> {
     }
 
     /// Request calibration save via inter-core communication
-    /// Only saves calibration if IMU_SAVE_CALIBRATION is enabled
+    /// Only saves calibration if imu-save-calibration feature is enabled
     async fn save_calibration(&mut self, levels: &CalibrationLevels) -> Result<(), &'static str> {
         // Check if saving calibration is enabled
-        if !IMU_SAVE_CALIBRATION {
+        #[cfg(not(feature = "imu-save-calibration"))]
+        {
             info!("Core1: Calibration saving is disabled, skipping save");
             return Ok(());
         }
@@ -279,15 +279,14 @@ impl<'a> BnoImu<'a> {
     }
 
     /// Wait for calibration with optional auto-save based on configuration
-    /// Always performs calibration, but only saves to flash if IMU_SAVE_CALIBRATION is enabled
+    /// Always performs calibration, but only saves to flash if imu-save-calibration feature is enabled
     pub async fn wait_for_calibration(&mut self, timeout_secs: u64) -> Result<(), &'static str> {
         info!("Core1: Waiting for IMU calibration...");
 
-        if IMU_SAVE_CALIBRATION {
-            info!("Core1: Calibration saving is enabled");
-        } else {
-            info!("Core1: Calibration saving is disabled");
-        }
+        #[cfg(feature = "imu-save-calibration")]
+        info!("Core1: Calibration saving is enabled");
+        #[cfg(not(feature = "imu-save-calibration"))]
+        info!("Core1: Calibration saving is disabled");
 
         let start = Instant::now();
         let timeout = Duration::from_secs(timeout_secs);
@@ -321,7 +320,7 @@ impl<'a> BnoImu<'a> {
                         // Auto-save improved calibration if enabled
                         if levels.is_flight_ready() && !self.calibration_loaded {
                             // Don't save if we just loaded calibration from flash
-                            // save_calibration will check IMU_SAVE_CALIBRATION internally
+                            // save_calibration will check imu-save-calibration feature internally
                             if let Err(e) = self.save_calibration(&levels).await {
                                 warn!("Core1: Failed to save calibration: {}", e);
                             }
@@ -337,7 +336,7 @@ impl<'a> BnoImu<'a> {
                         self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
 
                         // Try to save final calibration if enabled, but not if we just loaded it
-                        // save_calibration will check IMU_SAVE_CALIBRATION internally
+                        // save_calibration will check imu-save-calibration feature internally
                         if !self.calibration_loaded {
                             if let Err(e) = self.save_calibration(&levels).await {
                                 warn!("Core1: Failed to save calibration: {}", e);
@@ -359,16 +358,15 @@ impl<'a> BnoImu<'a> {
         // Save best calibration achieved even if timeout, but not if we just loaded it
         if best_quality.is_flight_ready() {
             if !self.calibration_loaded {
-                // save_calibration will check IMU_SAVE_CALIBRATION internally
+                // save_calibration will check imu-save-calibration feature internally
                 if let Err(e) = self.save_calibration(&best_quality).await {
                     warn!("Core1: Failed to save final calibration: {}", e);
                 }
 
-                if IMU_SAVE_CALIBRATION {
-                    info!("Core1: Final calibration saved to flash");
-                } else {
-                    info!("Core1: Final calibration achieved but not saved (saving disabled)");
-                }
+                #[cfg(feature = "imu-save-calibration")]
+                info!("Core1: Final calibration saved to flash");
+                #[cfg(not(feature = "imu-save-calibration"))]
+                info!("Core1: Final calibration achieved but not saved (saving disabled)");
             } else {
                 info!("Core1: Skipping immediate save after loading calibration from flash");
             }
@@ -471,7 +469,7 @@ impl<'a> BnoImu<'a> {
                     ATTITUDE_SIGNAL.signal(attitude);
 
                     // Update LED pattern based on attitude (optional visual feedback)
-                    if led_cycle % 500 == 0 {
+                    if led_cycle.is_multiple_of(500) {
                         // Check if we're level or tilted
                         let color = if attitude.roll.abs() > 0.5 || attitude.pitch.abs() > 0.5 {
                             colors::YELLOW // Significant tilt

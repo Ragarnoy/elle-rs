@@ -100,7 +100,7 @@ where
 
             LedPattern::SlowBlink(color) => {
                 // 1Hz blink
-                if (self.pattern_counter / 50) % 2 == 0 {
+                if (self.pattern_counter / 50).is_multiple_of(2) {
                     self.scale_brightness(color)
                 } else {
                     colors::OFF
@@ -109,7 +109,7 @@ where
 
             LedPattern::FastBlink(color) => {
                 // 4Hz blink
-                if (self.pattern_counter / 12) % 2 == 0 {
+                if (self.pattern_counter / 12).is_multiple_of(2) {
                     self.scale_brightness(color)
                 } else {
                     colors::OFF
@@ -128,7 +128,7 @@ where
 
             LedPattern::RapidFlash(color) => {
                 // 10Hz flash
-                if (self.pattern_counter / 5) % 2 == 0 {
+                if (self.pattern_counter / 5).is_multiple_of(2) {
                     self.scale_brightness(color)
                 } else {
                     colors::OFF

@@ -129,7 +129,7 @@ async fn main(spawner: Spawner) {
         }
         drop(status);
         wait_counter += 1;
-        if wait_counter % 50 == 0 {
+        if wait_counter.is_multiple_of(50) {
             // Log every 5 seconds
             info!("Core0: Still waiting for IMU... ({}s)", wait_counter / 10);
         }
@@ -151,7 +151,7 @@ async fn main(spawner: Spawner) {
         // Read SBUS packet with timeout appropriate for ~77Hz rate
         if let Some(packet) = sbus.read_packet().await {
             // Print debug info less frequently
-            if loop_counter % (CONTROL_LOOP_FREQUENCY_HZ / 10) == 0 {
+            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10) {
                 // ~8Hz logging
                 debug!(
                     "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
@@ -185,7 +185,7 @@ async fn main(spawner: Spawner) {
         loop_counter = loop_counter.saturating_add(1);
 
         // Periodic status updates
-        if loop_counter % (CONTROL_LOOP_FREQUENCY_HZ * 10) == 0 {
+        if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
             // Every 10 seconds
             debug!(
                 "Control loop running at target ~{}Hz",
@@ -193,7 +193,7 @@ async fn main(spawner: Spawner) {
             );
         }
 
-        if loop_counter % 20000 == 0 {
+        if loop_counter.is_multiple_of(20000) {
             // Every ~100 seconds at 200Hz
             loop_counter = 0;
 

@@ -74,7 +74,6 @@ pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon contro
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
-pub const IMU_SAVE_CALIBRATION: bool = true; // Whether to save calibration to flash
 
 pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
 pub const ELEVON_RIGHT_TRIM_US: i32 = -50;
