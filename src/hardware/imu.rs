@@ -22,6 +22,7 @@ impl TimingMeasurement {
 
 #[cfg(not(feature = "performance-monitoring"))]
 fn update_imu_timing(_elapsed_us: u32) {}
+use crate::system::SUP_IMU_READY;
 use bno055::{BNO055_CALIB_SIZE, BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
 use embassy_rp::i2c::{Blocking, I2c};
@@ -141,7 +142,7 @@ impl<'a> BnoImu<'a> {
 
     /// Send LED pattern update
     async fn set_led_pattern(&self, pattern: LedPattern) {
-        let _ = self.led_sender.try_send(pattern);
+        self.led_sender.try_send(pattern).unwrap();
     }
 
     /// Try to load saved calibration via inter-core communication
@@ -264,6 +265,8 @@ impl<'a> BnoImu<'a> {
         self.bno
             .set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)
             .map_err(|_| "Failed to set NDOF mode")?;
+
+        SUP_IMU_READY.signal(());
 
         // Try to load saved calibration
         match self.load_calibration().await {

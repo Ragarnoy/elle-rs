@@ -6,7 +6,7 @@
 #[cfg(feature = "defmt-logging")]
 use defmt_rtt as _;
 
-use defmt::{debug, info, warn};
+use defmt::{debug, info};
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
     ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH,
@@ -24,12 +24,17 @@ use elle::hardware::{
 };
 #[cfg(feature = "rtt-control")]
 use elle::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttControl};
+#[cfg(feature = "rtt-control")]
+use elle::system::{SUP_RTT_READY, SUP_START_RTT};
 #[cfg(feature = "performance-monitoring")]
 use elle::system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
 };
 
-use elle::system::FlightController;
+use elle::system::{
+    FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
+    supervisor_task,
+};
 
 // Dummy timing when performance monitoring is disabled
 #[cfg(not(feature = "performance-monitoring"))]
@@ -113,6 +118,10 @@ async fn main(spawner: Spawner) {
         spawner.spawn(rtt_control_task()).unwrap();
     }
 
+    // Start supervisor to coordinate task startup
+    info!("Core0: Spawning Supervisor");
+    spawner.spawn(supervisor_task()).unwrap();
+
     info!("Core0: Spawning Core1 for IMU");
     // Spawn IMU task on core1
     spawn_core1(
@@ -151,32 +160,23 @@ async fn main(spawner: Spawner) {
     let mut sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
     let mut fc = FlightController::new(pwm);
 
-    // Wait for IMU to be ready
-    info!("Core0: Waiting for IMU initialization...");
-    let mut wait_counter = 0u32;
-    loop {
-        let status = IMU_STATUS.read().await;
-        if status.initialized {
-            info!("Core0: IMU ready! Calibrated: {}", status.calibrated);
-            // Signal LED to show system ready
-            let _ = LED_COMMAND_CHANNEL.try_send(if status.calibrated {
-                LedPattern::Solid(colors::GREEN)
-            } else {
-                LedPattern::Pulse(colors::CYAN)
-            });
-            break;
-        }
-        drop(status);
-        wait_counter += 1;
-        if wait_counter.is_multiple_of(50) {
-            // Log every 5 seconds
-            warn!("Core0: Still waiting for IMU... ({}s)", wait_counter / 10);
-        }
-        Timer::after(Duration::from_millis(100)).await;
-    }
-
+    // Initialize ESCs before entering synchronized start
     info!("Core0: Initializing ESCs");
     fc.initialize_escs().await;
+
+    // Signal supervisor that Flight Controller is ready and wait for start
+    SUP_FC_READY.signal(());
+    info!("Core0: Waiting for Supervisor start barrier");
+    SUP_START_FC.wait().await;
+
+    // Update LED based on IMU calibration status at start
+    let status = IMU_STATUS.read().await;
+    let _ = LED_COMMAND_CHANNEL.try_send(if status.calibrated {
+        LedPattern::Solid(colors::GREEN)
+    } else {
+        LedPattern::Pulse(colors::CYAN)
+    });
+    drop(status);
 
     // Initialize supervisor components
     info!("Core0: Initializing supervisor (watchdog + health monitoring)");
@@ -291,7 +291,7 @@ async fn main(spawner: Spawner) {
 
             // Get supervisor status for reporting
             let (supervisor_enabled, core1_healthy, heartbeat_count) = fc.supervisor_status();
-            
+
             if fc.is_armed() {
                 info!(
                     "ARMED | IMU Cal: S{} G{} A{} M{} | Att:{} | Supervisor: {} Core1:{} HB:{}",
@@ -311,7 +311,7 @@ async fn main(spawner: Spawner) {
             } else if fc.is_failsafe() {
                 #[cfg(not(feature = "rtt-control"))]
                 info!(
-                    "FAILSAFE | IMU Errors: {} | Supervisor: {} Core1:{}", 
+                    "FAILSAFE | IMU Errors: {} | Supervisor: {} Core1:{}",
                     imu_status.error_count,
                     if supervisor_enabled { "ON" } else { "OFF" },
                     if core1_healthy { "OK" } else { "FAIL" }
@@ -360,10 +360,17 @@ async fn imu_task(
         }
     }
 
+    // Notify supervisor that IMU is initialized
+    SUP_IMU_READY.signal(());
+
     // Calibration wait (may be shorter if loaded from flash)
     if let Err(e) = imu.wait_for_calibration(IMU_CALIBRATION_TIMEOUT_S).await {
         defmt::warn!("Core1: IMU calibration incomplete: {}", e);
     }
+
+    // Wait for supervisor start before entering main IMU run loop
+    info!("Core1: Waiting for Supervisor start barrier");
+    SUP_START_IMU.wait().await;
 
     // Run continuous IMU reading
     imu.run().await;
@@ -392,6 +399,9 @@ async fn led_task(
     // Set initial pattern
     led.set_pattern(LedPattern::SlowBlink(colors::BLUE)).await;
 
+    // Notify supervisor that LED task is initialized
+    SUP_LED_READY.signal(());
+
     // Main LED update loop
     loop {
         let led_timer = TimingMeasurement::start();
@@ -417,6 +427,12 @@ async fn led_task(
 async fn rtt_control_task() {
     info!("Core0: RTT control task starting");
     let mut rtt_control = RttControl::init();
+
+    // Notify supervisor that RTT control is ready, then wait for start
+    SUP_RTT_READY.signal(());
+    info!("Core0: RTT control waiting for Supervisor start barrier");
+    SUP_START_RTT.wait().await;
+
     rtt_control.run().await;
 }
 
