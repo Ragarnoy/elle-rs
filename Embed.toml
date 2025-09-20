@@ -1,0 +1,101 @@
+# Default profile - normal development with RTT
+[default.general]
+chip = "RP235x"
+connect_under_reset = false
+
+[default.flashing]
+enabled = true
+restore_unwritten_bytes = false
+
+[default.reset]
+enabled = true
+halt_afterwards = false
+
+[default.rtt]
+enabled = true
+timeout = 3000
+up_channels = [
+    { channel = 0, mode = "NoBlockSkip", format = "Defmt", show_location = true },
+    { channel = 1, mode = "NoBlockSkip", format = "String" },
+]
+down_channels = [
+    { channel = 0, mode = "NoBlockSkip" }
+]
+tabs = [
+    { up_channel = 0, name = "Defmt Logs" },
+    { up_channel = 1, down_channel = 0, name = "Commands" },
+]
+
+[default.gdb]
+enabled = false
+
+# Debug profile - with logging enabled and extended timeout
+[debug.general]
+chip = "RP235x"
+connect_under_reset = false
+
+[debug.flashing]
+enabled = true
+restore_unwritten_bytes = false
+
+[debug.reset]
+enabled = true
+halt_afterwards = false
+
+[debug.rtt]
+enabled = true
+timeout = 5000
+up_channels = [
+    { channel = 0, mode = "NoBlockSkip", format = "Defmt", show_location = true },
+    { channel = 1, mode = "NoBlockSkip", format = "String" },
+]
+down_channels = [
+    { channel = 0, mode = "NoBlockSkip" }
+]
+tabs = [
+    { up_channel = 0, name = "Defmt Logs" },
+    { up_channel = 1, down_channel = 0, name = "Commands" },
+]
+
+[debug.gdb]
+enabled = false
+
+# GDB profile - for debugging with GDB instead of RTT
+[gdb.general]
+chip = "RP235x"
+connect_under_reset = false
+
+[gdb.flashing]
+enabled = true
+halt_afterwards = true
+restore_unwritten_bytes = false
+
+[gdb.reset]
+enabled = true
+halt_afterwards = true
+
+[gdb.rtt]
+enabled = false
+
+[gdb.gdb]
+enabled = true
+gdb_connection_string = "127.0.0.1:1337"
+
+# Release profile - just flash without RTT/GDB
+[release.general]
+chip = "RP235x"
+connect_under_reset = false
+
+[release.flashing]
+enabled = true
+restore_unwritten_bytes = false
+
+[release.reset]
+enabled = true
+halt_afterwards = false
+
+[release.rtt]
+enabled = false
+
+[release.gdb]
+enabled = false

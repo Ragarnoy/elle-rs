@@ -11,7 +11,7 @@ embassy-sync = { git = "https://github.com/embassy-rs/embassy.git" }
 embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa"] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git" }
 defmt = "1.0.1"
-defmt-rtt = "1.0.0"
+defmt-rtt = { version = "1.0.0", optional = true }
 cortex-m-rt = "0.7.5"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 libm = "0.2.15"
@@ -20,12 +20,15 @@ bno055 = "0.4.0"
 static_cell = "2.1.1"
 free-flight-stabilization = { git = "https://github.com/AeroRust/free-flight-stabilization.git", branch = "fix/no_std-support-for-f32-f64", default-features = false }
 smart-leds = "0.4.0"
+rtt-target = { version = "0.6.1", optional = true, features = ["defmt"] }
 
 [features]
-default = ["mixing", "imu-save-calibration", "performance-monitoring"]
-mixing = []  # Enable flight control mixing mode
+default = ["imu-save-calibration", "performance-monitoring", "defmt-logging"]
+legacy-ctrl = []  # Enable legacy (non-mixed) control path
 imu-save-calibration = []  # Enable saving IMU calibration to flash
 performance-monitoring = []  # Enable detailed performance monitoring and telemetry
+defmt-logging = ["defmt-rtt"]  # Use defmt-rtt for simple logging (mutually exclusive with rtt-control)
+rtt-control = ["rtt-target"]  # Use rtt-target for interactive RTT control (mutually exclusive with defmt-logging)
 
 [profile.release]
 debug = 2

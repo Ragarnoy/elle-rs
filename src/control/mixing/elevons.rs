@@ -66,7 +66,7 @@ impl ControlInputs {
     }
 
     /// Legacy: create from direct elevon channels (for backwards compatibility)
-    #[cfg(not(feature = "mixing"))]
+    #[cfg(feature = "legacy-ctrl")]
     pub fn from_direct_elevons(channels: &[u16]) -> Self {
         Self {
             pitch: 0.0, // No pitch input in direct mode

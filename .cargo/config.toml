@@ -1,5 +1,6 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-runner = "probe-rs run --chip RP235x"
+runner = "cargo embed"
+#runner = "probe-rs run --chip RP235x"
 #runner = "elf2uf2-rs -d --term --family 0xe48bff59"
 #runner = "picotool load -u -v -x -t elf"
 
@@ -7,4 +8,4 @@ runner = "probe-rs run --chip RP235x"
 target = "thumbv8m.main-none-eabihf"
 
 [env]
-DEFMT_LOG = "debug"
+DEFMT_LOG = "info"

@@ -7,13 +7,13 @@ use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
 use sbus_rs::SbusPacket;
 
-#[cfg(feature = "mixing")]
+#[cfg(not(feature = "legacy-ctrl"))]
 use crate::control::mixing::{
     elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
     yaw::{apply_differential_thrust_direct, throttle_with_differential_lut},
 };
 
-#[cfg(not(feature = "mixing"))]
+#[cfg(feature = "legacy-ctrl")]
 use crate::control::mixing::apply_differential_complete;
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
@@ -116,7 +116,7 @@ impl<'a> FlightController<'a> {
     pub fn update(&mut self, packet: &SbusPacket) {
         self.last_packet_time = Instant::now();
 
-        #[cfg(feature = "mixing")]
+        #[cfg(not(feature = "legacy-ctrl"))]
         {
             // Update arming state using throttle channel
             self.arming
@@ -124,7 +124,7 @@ impl<'a> FlightController<'a> {
             self.update_with_mixing(packet, None);
         }
 
-        #[cfg(not(feature = "mixing"))]
+        #[cfg(feature = "legacy-ctrl")]
         {
             // Update arming state using legacy engine channel
             self.arming
@@ -134,7 +134,7 @@ impl<'a> FlightController<'a> {
     }
 
     /// Ultra-fast mixing update method using LUTs
-    #[cfg(feature = "mixing")]
+    #[cfg(not(feature = "legacy-ctrl"))]
     pub fn update_with_mixing(&mut self, packet: &SbusPacket, attitude: Option<&AttitudeData>) {
         self.last_packet_time = Instant::now();
 
@@ -270,7 +270,7 @@ impl<'a> FlightController<'a> {
                     auto_inputs
                 } else {
                     // No attitude data - fallback to manual
-                    info!("Autopilot Mode - No attitude data, using manual control");
+                    debug!("Autopilot Mode - No attitude data, using manual control");
                     pilot_inputs
                 }
             }
@@ -315,7 +315,7 @@ impl<'a> FlightController<'a> {
     }
 
     /// Ultra-fast direct elevon control method using LUTs
-    #[cfg(not(feature = "mixing"))]
+    #[cfg(feature = "legacy-ctrl")]
     fn update_direct_elevons(&mut self, packet: &SbusPacket) {
         // Ultra-fast LUT lookups
         let elevon_left_us = sbus_to_pulse_lut(packet.channels[ELEVON_LEFT_CH]);
@@ -342,14 +342,14 @@ impl<'a> FlightController<'a> {
         );
     }
 
-    /// Updated method that uses mixing by default when feature is enabled
+    /// Updated method that uses mixing by default (legacy-ctrl disables it)
     pub fn update_with_attitude(&mut self, packet: &SbusPacket, attitude: Option<&AttitudeData>) {
-        #[cfg(feature = "mixing")]
+        #[cfg(not(feature = "legacy-ctrl"))]
         {
             self.update_with_mixing(packet, attitude);
         }
 
-        #[cfg(not(feature = "mixing"))]
+        #[cfg(feature = "legacy-ctrl")]
         {
             // Legacy behavior - attitude is ignored in direct mode
             self.update(packet);

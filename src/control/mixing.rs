@@ -1,13 +1,13 @@
-#[cfg(feature = "mixing")]
+#[cfg(not(feature = "legacy-ctrl"))]
 pub mod elevons;
 
-#[cfg(feature = "mixing")]
+#[cfg(not(feature = "legacy-ctrl"))]
 pub mod yaw;
 
-#[cfg(not(feature = "mixing"))]
+#[cfg(feature = "legacy-ctrl")]
 pub use crate::control::mixing::legacy::*;
 
-#[cfg(not(feature = "mixing"))]
+#[cfg(feature = "legacy-ctrl")]
 mod legacy {
     use crate::config::lut::*;
     use crate::config::*;

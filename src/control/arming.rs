@@ -15,7 +15,6 @@ impl ArmingState {
                 sbus_to_pulse_us(throttle_sbus, ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US);
             if throttle_us < ENGINE_ARM_THRESHOLD {
                 self.armed = true;
-                defmt::info!("ARMED - Throttle at {}μs", throttle_us);
             }
         }
 

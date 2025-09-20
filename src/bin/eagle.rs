@@ -3,8 +3,10 @@
 
 //! Firmware for the XFly Eagle Testbed with WS2812B LED
 
-use defmt::{debug, info};
+#[cfg(feature = "defmt-logging")]
 use defmt_rtt as _;
+
+use defmt::{debug, info, warn};
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
     ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH,
@@ -20,6 +22,8 @@ use elle::hardware::{
     pwm::{PwmOutputs, PwmPins},
     sbus::SbusReceiver,
 };
+#[cfg(feature = "rtt-control")]
+use elle::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttControl};
 #[cfg(feature = "performance-monitoring")]
 use elle::system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
@@ -102,6 +106,12 @@ async fn main(spawner: Spawner) {
         .spawn(led_task(led_common, led_sm0, p.DMA_CH2, p.PIN_10))
         .unwrap();
 
+    #[cfg(feature = "rtt-control")]
+    {
+        info!("Core0: Starting RTT control interface");
+        spawner.spawn(rtt_control_task()).unwrap();
+    }
+
     info!("Core0: Spawning Core1 for IMU");
     // Spawn IMU task on core1
     spawn_core1(
@@ -159,7 +169,7 @@ async fn main(spawner: Spawner) {
         wait_counter += 1;
         if wait_counter.is_multiple_of(50) {
             // Log every 5 seconds
-            info!("Core0: Still waiting for IMU... ({}s)", wait_counter / 10);
+            warn!("Core0: Still waiting for IMU... ({}s)", wait_counter / 10);
         }
         Timer::after(Duration::from_millis(100)).await;
     }
@@ -189,6 +199,12 @@ async fn main(spawner: Spawner) {
 
     loop {
         let loop_timer = TimingMeasurement::start();
+
+        // Process RTT debug commands (non-blocking)
+        #[cfg(feature = "rtt-control")]
+        if let Ok(command) = COMMAND_CHANNEL.try_receive() {
+            process_debug_command(&mut fc, command).await;
+        }
 
         // Get latest attitude data (non-blocking)
         let attitude = ATTITUDE_SIGNAL.try_take();
@@ -278,8 +294,10 @@ async fn main(spawner: Spawner) {
                     }
                 );
             } else if fc.is_failsafe() {
+                #[cfg(not(feature = "rtt-control"))]
                 info!("FAILSAFE | IMU Errors: {}", imu_status.error_count);
             } else {
+                #[cfg(not(feature = "rtt-control"))]
                 info!(
                     "DISARMED | IMU: {}",
                     if imu_status.calibrated {
@@ -368,5 +386,109 @@ async fn led_task(
 
         // Small delay for animation timing
         Timer::after(Duration::from_millis(10)).await;
+    }
+}
+
+#[cfg(feature = "rtt-control")]
+#[embassy_executor::task]
+async fn rtt_control_task() {
+    info!("Core0: RTT control task starting");
+    let mut rtt_control = RttControl::init();
+    rtt_control.run().await;
+}
+
+/// Process debug commands from RTT
+#[cfg(feature = "rtt-control")]
+async fn process_debug_command(fc: &mut FlightController<'_>, command: DebugCommand) {
+    use elle::hardware::imu::IMU_STATUS;
+
+    match command {
+        DebugCommand::SetThrottle(value) => {
+            info!("RTT: Set throttle to {}", value);
+            // Note: This would require extending FlightController to accept direct throttle commands
+            // For now, just log the command
+        }
+
+        DebugCommand::SetElevons { left, right } => {
+            info!("RTT: Set elevons L={} R={}", left, right);
+            // Note: This would require extending FlightController for direct elevon control
+        }
+
+        DebugCommand::SetControlMode(mode) => {
+            info!("RTT: Set control mode to {:?}", mode);
+            // Note: This would require extending FlightController to accept mode changes
+        }
+
+        DebugCommand::Arm => {
+            info!("RTT: Arm command received");
+            // Note: This would require extending FlightController for direct arming
+        }
+
+        DebugCommand::Disarm => {
+            info!("RTT: Disarm command received");
+            // Note: This would require extending FlightController for direct disarming
+        }
+
+        DebugCommand::EmergencyStop => {
+            info!("RTT: EMERGENCY STOP");
+            fc.apply_failsafe();
+        }
+
+        DebugCommand::AdjustTrim { left, right } => {
+            info!("RTT: Adjust trim L={} R={}", left, right);
+            // Note: This would require extending FlightController for trim adjustment
+        }
+
+        DebugCommand::SaveCalibration => {
+            info!("RTT: Save calibration requested");
+            // Note: This would require triggering calibration save
+        }
+
+        DebugCommand::ClearCalibration => {
+            info!("RTT: Clear calibration requested");
+            // Note: This would require implementing calibration clearing
+        }
+
+        DebugCommand::GetStatus => {
+            let status = IMU_STATUS.read().await;
+            info!(
+                "RTT Status - Armed: {}, Failsafe: {}, IMU Cal: {}, IMU Errors: {}",
+                fc.is_armed(),
+                fc.is_failsafe(),
+                status.calibrated,
+                status.error_count
+            );
+        }
+
+        DebugCommand::GetAttitude => {
+            if let Some(attitude) = ATTITUDE_SIGNAL.try_take() {
+                info!(
+                    "RTT Attitude - P:{}° R:{}° Y:{}°",
+                    (attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
+                    (attitude.roll * 180.0 / core::f32::consts::PI) as i16,
+                    (attitude.yaw * 180.0 / core::f32::consts::PI) as i16
+                );
+                // Put it back for normal processing
+                ATTITUDE_SIGNAL.signal(attitude);
+            } else {
+                info!("RTT: No attitude data available");
+            }
+        }
+
+        #[cfg(feature = "performance-monitoring")]
+        DebugCommand::GetPerformance => {
+            use elle::system::log_performance_summary;
+            info!("RTT: Performance summary requested");
+            log_performance_summary();
+        }
+
+        #[cfg(feature = "performance-monitoring")]
+        DebugCommand::ResetPerformance => {
+            use elle::system::PERFORMANCE_MONITOR;
+            info!("RTT: Resetting performance counters");
+            unsafe {
+                (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR)).reset_all();
+            }
+        }
     }
 }
