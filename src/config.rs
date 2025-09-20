@@ -75,6 +75,11 @@ pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
+// Supervisor parameters
+pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
+pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
+pub const SUPERVISOR_CHECK_INTERVAL_MS: u64 = 50; // How often to check supervisor health
+
 pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
 pub const ELEVON_RIGHT_TRIM_US: i32 = -50;
 

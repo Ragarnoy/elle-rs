@@ -5,6 +5,7 @@ use crate::hardware::flash_manager::{request_load_calibration, request_save_cali
 use crate::hardware::led::{LedPattern, colors};
 #[cfg(feature = "performance-monitoring")]
 use crate::system::{TimingMeasurement, update_imu_timing};
+use crate::system::CORE1_HEARTBEAT;
 
 #[cfg(not(feature = "performance-monitoring"))]
 struct TimingMeasurement;
@@ -486,6 +487,9 @@ impl<'a> BnoImu<'a> {
                     let process_timer = TimingMeasurement::start();
                     // Signal new attitude data
                     ATTITUDE_SIGNAL.signal(attitude);
+                    
+                    // Send heartbeat signal to Core 0 for health monitoring
+                    CORE1_HEARTBEAT.signal(());
 
                     // Update LED pattern based on attitude (optional visual feedback)
                     if led_cycle.is_multiple_of(500) {

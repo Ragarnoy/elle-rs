@@ -58,9 +58,10 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
+use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0, WATCHDOG};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
+use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
@@ -177,6 +178,11 @@ async fn main(spawner: Spawner) {
     info!("Core0: Initializing ESCs");
     fc.initialize_escs().await;
 
+    // Initialize supervisor components
+    info!("Core0: Initializing supervisor (watchdog + health monitoring)");
+    let watchdog = Watchdog::new(p.WATCHDOG);
+    fc.initialize_supervisor(watchdog);
+
     info!("Core0: Starting main control loop");
 
     // Test timing precision (only when performance monitoring is enabled)
@@ -205,6 +211,9 @@ async fn main(spawner: Spawner) {
         if let Ok(command) = COMMAND_CHANNEL.try_receive() {
             process_debug_command(&mut fc, command).await;
         }
+
+        // Supervisor check - monitor core health and kick watchdog
+        let _supervisor_healthy = fc.supervisor_check();
 
         // Get latest attitude data (non-blocking)
         let attitude = ATTITUDE_SIGNAL.try_take();
@@ -280,9 +289,12 @@ async fn main(spawner: Spawner) {
 
             let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
 
+            // Get supervisor status for reporting
+            let (supervisor_enabled, core1_healthy, heartbeat_count) = fc.supervisor_status();
+            
             if fc.is_armed() {
                 info!(
-                    "ARMED | IMU Cal: S{} G{} A{} M{} | Att:{}",
+                    "ARMED | IMU Cal: S{} G{} A{} M{} | Att:{} | Supervisor: {} Core1:{} HB:{}",
                     imu_status.calibration_status.sys,
                     imu_status.calibration_status.gyro,
                     imu_status.calibration_status.accel,
@@ -291,20 +303,31 @@ async fn main(spawner: Spawner) {
                         "ON"
                     } else {
                         "OFF"
-                    }
+                    },
+                    if supervisor_enabled { "ON" } else { "OFF" },
+                    if core1_healthy { "OK" } else { "FAIL" },
+                    heartbeat_count
                 );
             } else if fc.is_failsafe() {
                 #[cfg(not(feature = "rtt-control"))]
-                info!("FAILSAFE | IMU Errors: {}", imu_status.error_count);
+                info!(
+                    "FAILSAFE | IMU Errors: {} | Supervisor: {} Core1:{}", 
+                    imu_status.error_count,
+                    if supervisor_enabled { "ON" } else { "OFF" },
+                    if core1_healthy { "OK" } else { "FAIL" }
+                );
             } else {
                 #[cfg(not(feature = "rtt-control"))]
                 info!(
-                    "DISARMED | IMU: {}",
+                    "DISARMED | IMU: {} | Supervisor: {} Core1:{} HB:{}",
                     if imu_status.calibrated {
                         "Ready"
                     } else {
                         "Not calibrated"
-                    }
+                    },
+                    if supervisor_enabled { "ON" } else { "OFF" },
+                    if core1_healthy { "OK" } else { "FAIL" },
+                    heartbeat_count
                 );
             }
         }

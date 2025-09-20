@@ -2,7 +2,10 @@ use crate::config::*;
 use crate::control::{arming::ArmingState, pid::AttitudeController};
 use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
-use defmt::{debug, info};
+use defmt::{debug, info, warn};
+use embassy_rp::watchdog::Watchdog;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
 use sbus_rs::SbusPacket;
@@ -23,6 +26,44 @@ pub enum ControlMode {
     Autopilot, // Full autopilot control (~1694)
 }
 
+/// Core health monitoring structure
+#[derive(Debug, Clone, Copy, defmt::Format)]
+pub struct CoreHealth {
+    pub last_heartbeat: Instant,
+    pub heartbeat_count: u32,
+    pub is_healthy: bool,
+}
+
+impl Default for CoreHealth {
+    fn default() -> Self {
+        Self {
+            last_heartbeat: Instant::now(),
+            heartbeat_count: 0,
+            is_healthy: true,
+        }
+    }
+}
+
+impl CoreHealth {
+    pub fn update_heartbeat(&mut self) {
+        self.last_heartbeat = Instant::now();
+        self.heartbeat_count = self.heartbeat_count.wrapping_add(1);
+        self.is_healthy = true;
+    }
+
+    pub fn check_health(&mut self, timeout: Duration) -> bool {
+        if self.last_heartbeat.elapsed() > timeout {
+            self.is_healthy = false;
+            false
+        } else {
+            true
+        }
+    }
+}
+
+/// Global signal for Core 1 (IMU) heartbeat
+pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
 pub struct FlightController<'a> {
     pwm: PwmOutputs<'a>,
     arming: ArmingState,
@@ -34,6 +75,11 @@ pub struct FlightController<'a> {
     filtered_roll_setpoint_rad: f32,
     // Control mode tracking
     current_control_mode: ControlMode,
+    // Supervisor components
+    watchdog: Option<Watchdog>,
+    core1_health: CoreHealth,
+    last_watchdog_kick: Instant,
+    supervisor_enabled: bool,
 }
 
 impl<'a> FlightController<'a> {
@@ -70,6 +116,10 @@ impl<'a> FlightController<'a> {
             filtered_pitch_setpoint_rad: 0.0,
             filtered_roll_setpoint_rad: 0.0,
             current_control_mode: ControlMode::Manual,
+            watchdog: None,
+            core1_health: CoreHealth::default(),
+            last_watchdog_kick: Instant::now(),
+            supervisor_enabled: false,
         }
     }
 
@@ -99,6 +149,77 @@ impl<'a> FlightController<'a> {
         }
 
         info!("ESC init: Complete");
+    }
+
+    /// Initialize supervisor components (watchdog and health monitoring)
+    pub fn initialize_supervisor(&mut self, mut watchdog: Watchdog) {
+        // Configure watchdog for critical flight safety timeout
+        watchdog.start(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
+        self.watchdog = Some(watchdog);
+        self.supervisor_enabled = true;
+        self.last_watchdog_kick = Instant::now();
+        info!("Supervisor: Watchdog initialized with {}ms timeout", WATCHDOG_TIMEOUT_MS);
+    }
+
+    /// Feed the watchdog timer to prevent system reset
+    pub fn kick_watchdog(&mut self) {
+        if let Some(ref mut wd) = self.watchdog {
+            wd.feed();
+            self.last_watchdog_kick = Instant::now();
+        }
+    }
+
+    /// Check and update Core 1 health based on heartbeat signal
+    pub fn check_core1_health(&mut self) -> bool {
+        if !self.supervisor_enabled {
+            return true;
+        }
+
+        // Check for heartbeat signal from Core 1
+        if CORE1_HEARTBEAT.try_take().is_some() {
+            self.core1_health.update_heartbeat();
+        }
+
+        // Check if Core 1 is healthy using configured timeout
+        let is_healthy = self.core1_health.check_health(Duration::from_millis(CORE1_HEALTH_TIMEOUT_MS));
+        
+        if !is_healthy {
+            warn!(
+                "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago", 
+                self.core1_health.last_heartbeat.elapsed().as_millis()
+            );
+            // Disable attitude control if Core 1 is unhealthy
+            self.attitude_controller.enabled = false;
+        }
+
+        is_healthy
+    }
+
+    /// Main supervisor check - should be called in the main control loop
+    pub fn supervisor_check(&mut self) -> bool {
+        if !self.supervisor_enabled {
+            return true;
+        }
+
+        let core1_healthy = self.check_core1_health();
+        
+        // Kick watchdog if both cores are healthy
+        if core1_healthy {
+            self.kick_watchdog();
+        } else {
+            warn!("Supervisor: Skipping watchdog kick due to Core 1 health issues");
+        }
+
+        core1_healthy
+    }
+
+    /// Get supervisor status for monitoring
+    pub fn supervisor_status(&self) -> (bool, bool, u32) {
+        (
+            self.supervisor_enabled,
+            self.core1_health.is_healthy,
+            self.core1_health.heartbeat_count,
+        )
     }
 
     /// Determine control mode from CH5 3-state switch
