@@ -658,3 +658,68 @@ impl TimingMeasurement {
         0
     }
 }
+
+pub static SUP_LED_READY: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+pub static SUP_IMU_READY: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+pub static SUP_FC_READY: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+#[cfg(feature = "rtt-control")]
+pub static SUP_RTT_READY: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+
+// Start signals to release tasks from the barrier
+pub static SUP_START_IMU: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+pub static SUP_START_FC: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+#[cfg(feature = "rtt-control")]
+pub static SUP_START_RTT: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+
+/// Supervisor task that waits for all participants to be ready, then releases them simultaneously
+#[embassy_executor::task]
+pub async fn supervisor_task() {
+    info!("Supervisor: waiting for tasks to initialize");
+
+    // Prepare futures for all participants and wait for them concurrently
+    let led_ready = SUP_LED_READY.wait();
+    let imu_ready = SUP_IMU_READY.wait();
+    let fc_ready = SUP_FC_READY.wait();
+
+    #[cfg(not(feature = "rtt-control"))]
+    {
+        let _ = embassy_futures::join::join3(led_ready, imu_ready, fc_ready).await;
+    }
+
+    #[cfg(feature = "rtt-control")]
+    {
+        let rtt_ready = SUP_RTT_READY.wait();
+        let _ = embassy_futures::join::join4(led_ready, imu_ready, fc_ready, rtt_ready).await;
+    }
+
+    info!("Supervisor: all tasks initialized, releasing start barrier");
+
+    // Release participants. Use per-task start signals instead of broadcast.
+    SUP_START_IMU.signal(());
+    SUP_START_FC.signal(());
+    #[cfg(feature = "rtt-control")]
+    {
+        SUP_START_RTT.signal(());
+    }
+}
