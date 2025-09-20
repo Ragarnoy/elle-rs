@@ -2,7 +2,7 @@ use crate::config::*;
 use crate::control::{arming::ArmingState, pid::AttitudeController};
 use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
-use defmt::info;
+use defmt::{debug, info};
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
 use sbus_rs::SbusPacket;
@@ -187,7 +187,7 @@ impl<'a> FlightController<'a> {
         let final_inputs = match self.current_control_mode {
             ControlMode::Manual => {
                 // Full manual control - use pilot inputs directly
-                info!("Manual Mode - Direct pilot control");
+                debug!("Manual Mode - Direct pilot control");
                 // Reset PID when in manual mode
                 if self.attitude_controller.is_active() {
                     self.attitude_controller.reset();
@@ -219,7 +219,7 @@ impl<'a> FlightController<'a> {
                     mixed_inputs.roll = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT) * pilot_inputs.roll
                         + MIXED_MODE_AUTOPILOT_WEIGHT * roll_correction;
 
-                    info!(
+                    debug!(
                         "Mixed Mode ({}% Auto) - P: {}°/{}° R: {}°/{}°",
                         (MIXED_MODE_AUTOPILOT_WEIGHT * 100.0) as i16,
                         (self.filtered_pitch_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
@@ -257,7 +257,7 @@ impl<'a> FlightController<'a> {
                     auto_inputs.pitch = pitch_correction;
                     auto_inputs.roll = roll_correction;
 
-                    info!(
+                    debug!(
                         "Autopilot Mode - P: {}°/{}° R: {}°/{}° Corrections: P:{} R:{}",
                         (self.filtered_pitch_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
                         (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
@@ -390,4 +390,271 @@ impl<'a> FlightController<'a> {
 fn sbus_to_normalized_lut(sbus_value: u16) -> f32 {
     // Use roll center as default - can be optimized further with specific LUTs
     sbus_to_normalized_roll_lut(sbus_value)
+}
+
+/// Performance monitoring utilities for tracking task execution times
+#[cfg(feature = "performance-monitoring")]
+#[derive(Debug, Clone, Copy, defmt::Format)]
+pub struct TaskTiming {
+    pub min_us: u32,
+    pub max_us: u32,
+    pub avg_us: u32,
+    pub samples: u32,
+}
+
+#[cfg(feature = "performance-monitoring")]
+impl Default for TaskTiming {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
+impl TaskTiming {
+    pub const fn new() -> Self {
+        Self {
+            min_us: u32::MAX,
+            max_us: 0,
+            avg_us: 0,
+            samples: 0,
+        }
+    }
+
+    pub fn update(&mut self, execution_time_us: u32) {
+        self.min_us = self.min_us.min(execution_time_us);
+        self.max_us = self.max_us.max(execution_time_us);
+
+        // Running average calculation to avoid overflow
+        if self.samples == 0 {
+            self.avg_us = execution_time_us;
+        } else {
+            // Weighted average with more recent samples having slightly more weight
+            let weight = if self.samples < 100 {
+                self.samples + 1
+            } else {
+                100
+            };
+            self.avg_us = (self.avg_us * (weight - 1) + execution_time_us) / weight;
+        }
+
+        self.samples = self.samples.saturating_add(1);
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Get CPU utilization as percentage for a given target frequency
+    pub fn cpu_utilization_percent(&self, target_frequency_hz: u32) -> f32 {
+        let target_period_us = 1_000_000 / target_frequency_hz;
+        (self.avg_us as f32 / target_period_us as f32) * 100.0
+    }
+}
+
+/// Performance monitor for tracking multiple tasks
+#[cfg(feature = "performance-monitoring")]
+#[derive(Debug, defmt::Format)]
+pub struct PerformanceMonitor {
+    pub control_loop: TaskTiming,
+    pub imu_update: TaskTiming,
+    pub led_update: TaskTiming,
+    pub flash_operation: TaskTiming,
+}
+
+#[cfg(feature = "performance-monitoring")]
+impl Default for PerformanceMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
+impl PerformanceMonitor {
+    pub const fn new() -> Self {
+        Self {
+            control_loop: TaskTiming::new(),
+            imu_update: TaskTiming::new(),
+            led_update: TaskTiming::new(),
+            flash_operation: TaskTiming::new(),
+        }
+    }
+
+    pub fn log_performance_summary(&self) {
+        info!("=== DUAL-CORE PERFORMANCE SUMMARY ===");
+
+        // Core 0 tasks (Control, LED, Flash)
+        let core0_control_cpu = self
+            .control_loop
+            .cpu_utilization_percent(CONTROL_LOOP_FREQUENCY_HZ);
+        let core0_led_cpu = self.led_update.cpu_utilization_percent(100);
+        let core0_total_cpu = core0_control_cpu + core0_led_cpu;
+
+        info!(
+            "CORE 0 (Control + LED + Flash): {}% total load",
+            core0_total_cpu as u8
+        );
+        info!(
+            "  Control: min={} avg={} max={}μs ({}% @ {}Hz)",
+            self.control_loop.min_us,
+            self.control_loop.avg_us,
+            self.control_loop.max_us,
+            core0_control_cpu as u8,
+            CONTROL_LOOP_FREQUENCY_HZ
+        );
+        info!(
+            "  LED: min={} avg={} max={}μs ({}% @ 100Hz)",
+            self.led_update.min_us,
+            self.led_update.avg_us,
+            self.led_update.max_us,
+            core0_led_cpu as u8
+        );
+
+        // Core 1 tasks (IMU only)
+        let core1_imu_cpu = self.imu_update.cpu_utilization_percent(4000); // 4kHz actual rate
+        info!("CORE 1 (IMU only): {}% total load", core1_imu_cpu as u8);
+        info!(
+            "  IMU: min={} avg={} max={}μs ({}% @ 4000Hz)",
+            self.imu_update.min_us,
+            self.imu_update.avg_us,
+            self.imu_update.max_us,
+            core1_imu_cpu as u8
+        );
+
+        // Flash operations (on-demand, Core 0)
+        if self.flash_operation.samples > 0 {
+            info!(
+                "Flash Operations: min={} avg={} max={}μs | {} operations completed",
+                self.flash_operation.min_us,
+                self.flash_operation.avg_us,
+                self.flash_operation.max_us,
+                self.flash_operation.samples
+            );
+        }
+    }
+
+    pub fn reset_all(&mut self) {
+        self.control_loop.reset();
+        self.imu_update.reset();
+        self.led_update.reset();
+        self.flash_operation.reset();
+    }
+}
+
+/// Simple timing helper for measuring execution time
+#[cfg(feature = "performance-monitoring")]
+pub struct TimingMeasurement {
+    start: Instant,
+}
+
+#[cfg(feature = "performance-monitoring")]
+impl TimingMeasurement {
+    pub fn start() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+
+    pub fn elapsed_us(&self) -> u32 {
+        let elapsed = self.start.elapsed();
+        // Use embassy-time methods - get as microseconds directly
+        elapsed.as_micros() as u32
+    }
+}
+
+/// Global performance monitor instance
+#[cfg(feature = "performance-monitoring")]
+pub static mut PERFORMANCE_MONITOR: PerformanceMonitor = PerformanceMonitor::new();
+
+/// Helper function to safely update performance monitor
+#[cfg(feature = "performance-monitoring")]
+pub fn update_control_loop_timing(elapsed_us: u32) {
+    unsafe {
+        (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
+            .control_loop
+            .update(elapsed_us);
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
+pub fn update_imu_timing(elapsed_us: u32) {
+    unsafe {
+        (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
+            .imu_update
+            .update(elapsed_us);
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
+pub fn update_led_timing(elapsed_us: u32) {
+    unsafe {
+        (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
+            .led_update
+            .update(elapsed_us);
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
+pub fn update_flash_timing(elapsed_us: u32) {
+    unsafe {
+        (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
+            .flash_operation
+            .update(elapsed_us);
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
+pub fn log_performance_summary() {
+    unsafe {
+        (*core::ptr::addr_of!(PERFORMANCE_MONITOR)).log_performance_summary();
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
+pub fn debug_timing_test() {
+    let timer = TimingMeasurement::start();
+    // Do a tiny bit of work to test timing precision
+    let mut x = 0u32;
+    for _ in 0..100 {
+        x = x.wrapping_add(1);
+    }
+    let elapsed = timer.elapsed_us();
+    info!("DEBUG: Timing test took {}μs (x={})", elapsed, x);
+}
+
+// No-op stubs when performance monitoring is disabled
+#[cfg(not(feature = "performance-monitoring"))]
+#[inline(always)]
+pub fn update_control_loop_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "performance-monitoring"))]
+#[inline(always)]
+pub fn update_imu_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "performance-monitoring"))]
+#[inline(always)]
+pub fn update_led_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "performance-monitoring"))]
+#[inline(always)]
+pub fn update_flash_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "performance-monitoring"))]
+#[inline(always)]
+pub fn log_performance_summary() {}
+
+// Dummy timing measurement when feature is disabled
+#[cfg(not(feature = "performance-monitoring"))]
+pub struct TimingMeasurement;
+
+#[cfg(not(feature = "performance-monitoring"))]
+impl TimingMeasurement {
+    #[inline(always)]
+    pub fn start() -> Self {
+        Self
+    }
+
+    #[inline(always)]
+    pub fn elapsed_us(&self) -> u32 {
+        0
+    }
 }

@@ -3,6 +3,24 @@
 use crate::config::profile::StoredCalibration;
 use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
 use crate::hardware::led::{LedPattern, colors};
+#[cfg(feature = "performance-monitoring")]
+use crate::system::{TimingMeasurement, update_imu_timing};
+
+#[cfg(not(feature = "performance-monitoring"))]
+struct TimingMeasurement;
+
+#[cfg(not(feature = "performance-monitoring"))]
+impl TimingMeasurement {
+    fn start() -> Self {
+        Self
+    }
+    fn elapsed_us(&self) -> u32 {
+        0
+    }
+}
+
+#[cfg(not(feature = "performance-monitoring"))]
+fn update_imu_timing(_elapsed_us: u32) {}
 use bno055::{BNO055_CALIB_SIZE, BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
 use embassy_rp::i2c::{Blocking, I2c};
@@ -465,6 +483,7 @@ impl<'a> BnoImu<'a> {
                 Ok(attitude) => {
                     consecutive_errors = 0;
 
+                    let process_timer = TimingMeasurement::start();
                     // Signal new attitude data
                     ATTITUDE_SIGNAL.signal(attitude);
 
@@ -482,7 +501,7 @@ impl<'a> BnoImu<'a> {
 
                     // Debug output every 100ms (10Hz)
                     if last_debug.elapsed() > Duration::from_millis(300) {
-                        debug!(
+                        trace!(
                             "Core1: Pitch: {}°, Roll: {}°, Rate: {}°/s",
                             (attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
                             (attitude.roll * 180.0 / core::f32::consts::PI) as i16,
@@ -507,6 +526,9 @@ impl<'a> BnoImu<'a> {
 
                         last_cal_check = Instant::now();
                     }
+
+                    // Update performance metrics (only processing time, not sleep)
+                    update_imu_timing(process_timer.elapsed_us());
                 }
                 Err(e) => {
                     consecutive_errors += 1;

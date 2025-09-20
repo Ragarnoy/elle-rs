@@ -20,7 +20,35 @@ use elle::hardware::{
     pwm::{PwmOutputs, PwmPins},
     sbus::SbusReceiver,
 };
+#[cfg(feature = "performance-monitoring")]
+use elle::system::{
+    TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
+};
+
 use elle::system::FlightController;
+
+// Dummy timing when performance monitoring is disabled
+#[cfg(not(feature = "performance-monitoring"))]
+struct TimingMeasurement;
+
+#[cfg(not(feature = "performance-monitoring"))]
+impl TimingMeasurement {
+    fn start() -> Self {
+        Self
+    }
+    fn elapsed_us(&self) -> u32 {
+        0
+    }
+}
+
+#[cfg(not(feature = "performance-monitoring"))]
+fn update_control_loop_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "performance-monitoring"))]
+fn update_led_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "performance-monitoring"))]
+fn log_performance_summary() {}
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
@@ -141,10 +169,27 @@ async fn main(spawner: Spawner) {
 
     info!("Core0: Starting main control loop");
 
+    // Test timing precision (only when performance monitoring is enabled)
+    #[cfg(feature = "performance-monitoring")]
+    {
+        let test_timer = TimingMeasurement::start();
+        let mut test_var = 0u32;
+        for _ in 0..1000 {
+            test_var = test_var.wrapping_add(1);
+        }
+        info!(
+            "Timing test: {}μs for 1000 additions (result: {})",
+            test_timer.elapsed_us(),
+            test_var
+        );
+    }
+
     // State for control loop
     let mut loop_counter = 0u32;
 
     loop {
+        let loop_timer = TimingMeasurement::start();
+
         // Get latest attitude data (non-blocking)
         let attitude = ATTITUDE_SIGNAL.try_take();
 
@@ -176,21 +221,23 @@ async fn main(spawner: Spawner) {
             } else {
                 fc.update(&packet);
             }
+            // Always check failsafe
+            fc.check_failsafe();
+        } else {
+            // No SBUS packet - still do failsafe check
+            fc.check_failsafe();
         }
 
-        // Always check failsafe
-        fc.check_failsafe();
+        // Update performance metrics for this loop iteration
+        update_control_loop_timing(loop_timer.elapsed_us());
 
         // Status output and LED updates
         loop_counter = loop_counter.saturating_add(1);
 
         // Periodic status updates
         if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
-            // Every 10 seconds
-            debug!(
-                "Control loop running at target ~{}Hz",
-                CONTROL_LOOP_FREQUENCY_HZ
-            );
+            // Every 10 seconds - show performance summary
+            log_performance_summary();
         }
 
         if loop_counter.is_multiple_of(20000) {
@@ -306,6 +353,8 @@ async fn led_task(
 
     // Main LED update loop
     loop {
+        let led_timer = TimingMeasurement::start();
+
         // Check for new patterns
         if let Ok(pattern) = receiver.try_receive() {
             led.set_pattern(pattern).await;
@@ -313,6 +362,9 @@ async fn led_task(
 
         // Update LED animation
         led.update().await;
+
+        // Update performance metrics
+        update_led_timing(led_timer.elapsed_us());
 
         // Small delay for animation timing
         Timer::after(Duration::from_millis(10)).await;

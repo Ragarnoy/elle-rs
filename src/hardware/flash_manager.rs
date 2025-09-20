@@ -5,6 +5,24 @@ use crate::hardware::flash_constants::{
     ASYNC_READ_SIZE, ERASE_SIZE, PAGE_SIZE, READ_SIZE, WRITE_SIZE,
 };
 use crate::hardware::imu::CalibrationLevels;
+#[cfg(feature = "performance-monitoring")]
+use crate::system::{TimingMeasurement, update_flash_timing};
+
+#[cfg(not(feature = "performance-monitoring"))]
+struct TimingMeasurement;
+
+#[cfg(not(feature = "performance-monitoring"))]
+impl TimingMeasurement {
+    fn start() -> Self {
+        Self
+    }
+    fn elapsed_us(&self) -> u32 {
+        0
+    }
+}
+
+#[cfg(not(feature = "performance-monitoring"))]
+fn update_flash_timing(_elapsed_us: u32) {}
 use bno055::BNO055_CALIB_SIZE;
 use core::mem::size_of;
 use defmt::*;
@@ -45,6 +63,8 @@ impl<'a> FlashManager<'a> {
                 "Core0: Received flash request: {:?}",
                 Debug2Format(&request)
             );
+
+            let operation_timer = TimingMeasurement::start();
 
             match request {
                 FlashRequest::LoadCalibration => {
@@ -92,6 +112,9 @@ impl<'a> FlashManager<'a> {
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
             }
+
+            // Update performance metrics
+            update_flash_timing(operation_timer.elapsed_us());
 
             // Small yield to ensure other tasks can run
             Timer::after(Duration::from_millis(1)).await;
