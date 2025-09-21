@@ -6,7 +6,7 @@
 #[cfg(feature = "defmt-logging")]
 use defmt_rtt as _;
 
-use defmt::{debug, info};
+use defmt::{debug, info, warn};
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
     ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH,
@@ -63,7 +63,7 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0, WATCHDOG};
+use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
@@ -188,10 +188,18 @@ async fn main(spawner: Spawner) {
     info!("Core0: Initializing ESCs");
     fc.initialize_escs().await;
 
+    // Initialize supervisor components (but keep health monitoring disabled)
+    info!("Core0: Initializing supervisor (watchdog only)");
+    let watchdog = Watchdog::new(p.WATCHDOG);
+    fc.initialize_supervisor(watchdog);
+
     // Signal supervisor that Flight Controller is ready and wait for start
     SUP_FC_READY.signal(());
     info!("Core0: Waiting for Supervisor start barrier");
     SUP_START_FC.wait().await;
+
+    // Now enable health monitoring after all tasks are ready
+    fc.enable_supervisor_monitoring();
 
     // Update LED based on IMU calibration status at start
     let status = IMU_STATUS.read().await;
@@ -201,11 +209,6 @@ async fn main(spawner: Spawner) {
         LedPattern::Pulse(colors::CYAN)
     });
     drop(status);
-
-    // Initialize supervisor components
-    info!("Core0: Initializing supervisor (watchdog + health monitoring)");
-    let watchdog = Watchdog::new(p.WATCHDOG);
-    fc.initialize_supervisor(watchdog);
 
     info!("Core0: Starting main control loop");
 

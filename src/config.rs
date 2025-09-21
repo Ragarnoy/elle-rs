@@ -71,7 +71,7 @@ pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons fo
 pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon control
 
 // IMU parameters
-pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C
+pub const IMU_I2C_FREQ: u32 = 200_000; // 400kHz I2C
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
@@ -90,8 +90,8 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
-pub const ROLL_KP: f32 = 0.15;
-pub const ROLL_KI: f32 = 0.02;
+pub const ROLL_KP: f32 = 0.2;
+pub const ROLL_KI: f32 = 0.05;
 pub const ROLL_KD: f32 = 0.08;
 
 pub const PITCH_KP: f32 = 0.2;

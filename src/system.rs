@@ -156,9 +156,18 @@ impl<'a> FlightController<'a> {
         // Configure watchdog for critical flight safety timeout
         watchdog.start(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
         self.watchdog = Some(watchdog);
-        self.supervisor_enabled = true;
+        // Keep supervisor health monitoring disabled until explicitly enabled
         self.last_watchdog_kick = Instant::now();
-        info!("Supervisor: Watchdog initialized with {}ms timeout", WATCHDOG_TIMEOUT_MS);
+        info!(
+            "Supervisor: Watchdog initialized with {}ms timeout",
+            WATCHDOG_TIMEOUT_MS
+        );
+    }
+
+    /// Enable supervisor health monitoring after all tasks are ready
+    pub fn enable_supervisor_monitoring(&mut self) {
+        self.supervisor_enabled = true;
+        info!("Supervisor: Health monitoring enabled");
     }
 
     /// Feed the watchdog timer to prevent system reset
@@ -181,11 +190,13 @@ impl<'a> FlightController<'a> {
         }
 
         // Check if Core 1 is healthy using configured timeout
-        let is_healthy = self.core1_health.check_health(Duration::from_millis(CORE1_HEALTH_TIMEOUT_MS));
-        
+        let is_healthy = self
+            .core1_health
+            .check_health(Duration::from_millis(CORE1_HEALTH_TIMEOUT_MS));
+
         if !is_healthy {
             warn!(
-                "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago", 
+                "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago",
                 self.core1_health.last_heartbeat.elapsed().as_millis()
             );
             // Disable attitude control if Core 1 is unhealthy
@@ -202,7 +213,7 @@ impl<'a> FlightController<'a> {
         }
 
         let core1_healthy = self.check_core1_health();
-        
+
         // Kick watchdog if both cores are healthy
         if core1_healthy {
             self.kick_watchdog();

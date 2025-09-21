@@ -3,9 +3,9 @@
 use crate::config::profile::StoredCalibration;
 use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
 use crate::hardware::led::{LedPattern, colors};
+use crate::system::CORE1_HEARTBEAT;
 #[cfg(feature = "performance-monitoring")]
 use crate::system::{TimingMeasurement, update_imu_timing};
-use crate::system::CORE1_HEARTBEAT;
 
 #[cfg(not(feature = "performance-monitoring"))]
 struct TimingMeasurement;
@@ -248,6 +248,10 @@ impl<'a> BnoImu<'a> {
                         Debug2Format(&e)
                     );
                     if attempt == 2 {
+                        error!(
+                            "Core1: BNO055 failed to initialize after {} attempts",
+                            attempt + 1
+                        );
                         self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
                             .await;
                         return Err("Failed to initialize BNO055 after 3 attempts");
@@ -315,6 +319,9 @@ impl<'a> BnoImu<'a> {
         let mut best_quality = CalibrationLevels::new();
 
         loop {
+            // Send heartbeat to supervisor during calibration
+            CORE1_HEARTBEAT.signal(());
+
             if start.elapsed() > timeout {
                 warn!("Core1: Calibration timeout - proceeding with partial calibration");
                 break;
@@ -490,7 +497,7 @@ impl<'a> BnoImu<'a> {
                     let process_timer = TimingMeasurement::start();
                     // Signal new attitude data
                     ATTITUDE_SIGNAL.signal(attitude);
-                    
+
                     // Send heartbeat signal to Core 0 for health monitoring
                     CORE1_HEARTBEAT.signal(());
 
