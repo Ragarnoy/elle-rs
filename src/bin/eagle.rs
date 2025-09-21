@@ -160,6 +160,30 @@ async fn main(spawner: Spawner) {
     let mut sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
     let mut fc = FlightController::new(pwm);
 
+    // Wait for IMU to be ready
+    info!("Core0: Waiting for IMU initialization...");
+    let mut wait_counter = 0u32;
+    loop {
+        let status = IMU_STATUS.read().await;
+        if status.initialized {
+            info!("Core0: IMU ready! Calibrated: {}", status.calibrated);
+            // Signal LED to show system ready
+            let _ = LED_COMMAND_CHANNEL.try_send(if status.calibrated {
+                LedPattern::Solid(colors::GREEN)
+            } else {
+                LedPattern::Pulse(colors::CYAN)
+            });
+            break;
+        }
+        drop(status);
+        wait_counter += 1;
+        if wait_counter.is_multiple_of(50) {
+            // Log every 5 seconds
+            warn!("Core0: Still waiting for IMU... ({}s)", wait_counter / 10);
+        }
+        Timer::after(Duration::from_millis(100)).await;
+    }
+
     // Initialize ESCs before entering synchronized start
     info!("Core0: Initializing ESCs");
     fc.initialize_escs().await;
