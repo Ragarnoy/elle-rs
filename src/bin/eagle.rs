@@ -267,7 +267,7 @@ async fn main(spawner: Spawner) {
                 if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {
                     fc.update_with_attitude(&packet, Some(&att));
                 } else {
-                    defmt::warn!("Stale attitude data, using manual control only");
+                    warn!("Stale attitude data, using manual control only");
                     fc.update(&packet);
                 }
             } else {
@@ -392,7 +392,7 @@ async fn imu_task(
 
     // Calibration wait (may be shorter if loaded from flash)
     if let Err(e) = imu.wait_for_calibration(IMU_CALIBRATION_TIMEOUT_S).await {
-        defmt::warn!("Core1: IMU calibration incomplete: {}", e);
+        warn!("Core1: IMU calibration incomplete: {}", e);
     }
 
     // Wait for supervisor start before entering main IMU run loop

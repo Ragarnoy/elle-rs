@@ -71,7 +71,7 @@ pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons fo
 pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon control
 
 // IMU parameters
-pub const IMU_I2C_FREQ: u32 = 200_000; // 400kHz I2C
+pub const IMU_I2C_FREQ: u32 = 200_000; // 200kHz I2C
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 

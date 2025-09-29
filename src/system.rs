@@ -32,6 +32,7 @@ pub struct CoreHealth {
     pub last_heartbeat: Instant,
     pub heartbeat_count: u32,
     pub is_healthy: bool,
+    pub last_logged_healthy: bool,
 }
 
 impl Default for CoreHealth {
@@ -40,6 +41,7 @@ impl Default for CoreHealth {
             last_heartbeat: Instant::now(),
             heartbeat_count: 0,
             is_healthy: true,
+            last_logged_healthy: true,
         }
     }
 }
@@ -194,12 +196,21 @@ impl<'a> FlightController<'a> {
             .core1_health
             .check_health(Duration::from_millis(CORE1_HEALTH_TIMEOUT_MS));
 
-        if !is_healthy {
-            warn!(
-                "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago",
-                self.core1_health.last_heartbeat.elapsed().as_millis()
-            );
-            // Disable attitude control if Core 1 is unhealthy
+        // Only log on state transitions to prevent spam
+        if is_healthy != self.core1_health.last_logged_healthy {
+            if !is_healthy {
+                warn!(
+                    "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago",
+                    self.core1_health.last_heartbeat.elapsed().as_millis()
+                );
+                // Disable attitude control if Core 1 is unhealthy
+                self.attitude_controller.enabled = false;
+            } else {
+                info!("Supervisor: Core 1 (IMU) healthy - heartbeat restored");
+            }
+            self.core1_health.last_logged_healthy = is_healthy;
+        } else if !is_healthy {
+            // Still disable attitude control even if we don't log
             self.attitude_controller.enabled = false;
         }
 
@@ -791,38 +802,17 @@ impl TimingMeasurement {
     }
 }
 
-pub static SUP_LED_READY: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
-pub static SUP_IMU_READY: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
-pub static SUP_FC_READY: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
+pub static SUP_LED_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static SUP_IMU_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static SUP_FC_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 #[cfg(feature = "rtt-control")]
-pub static SUP_RTT_READY: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
+pub static SUP_RTT_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 // Start signals to release tasks from the barrier
-pub static SUP_START_IMU: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
-pub static SUP_START_FC: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
+pub static SUP_START_IMU: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static SUP_START_FC: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 #[cfg(feature = "rtt-control")]
-pub static SUP_START_RTT: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
+pub static SUP_START_RTT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Supervisor task that waits for all participants to be ready, then releases them simultaneously
 #[embassy_executor::task]

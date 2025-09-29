@@ -22,13 +22,12 @@ impl TimingMeasurement {
 
 #[cfg(not(feature = "performance-monitoring"))]
 fn update_imu_timing(_elapsed_us: u32) {}
-use crate::system::SUP_IMU_READY;
 use bno055::{BNO055_CALIB_SIZE, BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
 use embassy_rp::i2c::{Blocking, I2c};
 use embassy_rp::peripherals::I2C0;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Sender};
+use embassy_sync::channel::{Channel, Sender, TrySendError};
 use embassy_sync::rwlock::RwLock;
 use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Instant, Timer};
@@ -142,7 +141,11 @@ impl<'a> BnoImu<'a> {
 
     /// Send LED pattern update
     async fn set_led_pattern(&self, pattern: LedPattern) {
-        self.led_sender.try_send(pattern).unwrap();
+        if let Err(TrySendError::Full(_)) = self.led_sender.try_send(pattern) {
+            // Fall back to an awaited send; ignore errors from closed channel.
+            warn!("Core1: LED channel full, falling back to awaited send");
+            let _ = self.led_sender.send(pattern).await;
+        }
     }
 
     /// Try to load saved calibration via inter-core communication
@@ -269,8 +272,6 @@ impl<'a> BnoImu<'a> {
         self.bno
             .set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)
             .map_err(|_| "Failed to set NDOF mode")?;
-
-        SUP_IMU_READY.signal(());
 
         // Try to load saved calibration
         match self.load_calibration().await {
