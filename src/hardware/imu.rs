@@ -22,6 +22,7 @@ impl TimingMeasurement {
 
 #[cfg(not(feature = "performance-monitoring"))]
 fn update_imu_timing(_elapsed_us: u32) {}
+use crate::error::{ElleError, ElleResult, IntoElleError};
 use bno055::{BNO055_CALIB_SIZE, BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
 use embassy_rp::i2c::{Blocking, I2c};
@@ -149,7 +150,7 @@ impl<'a> BnoImu<'a> {
     }
 
     /// Try to load saved calibration via inter-core communication
-    async fn load_calibration(&mut self) -> Result<bool, &'static str> {
+    async fn load_calibration(&mut self) -> ElleResult<bool> {
         info!("Core1: Requesting calibration load from Core0");
 
         if let Some(profile_data) = request_load_calibration().await {
@@ -167,6 +168,7 @@ impl<'a> BnoImu<'a> {
                         "Core1: Failed to apply saved calibration: {:?}",
                         Debug2Format(&e)
                     );
+                    return Err(ElleError::CalibrationLoadFailed);
                 }
             }
         } else {
@@ -178,7 +180,7 @@ impl<'a> BnoImu<'a> {
 
     /// Request calibration save via inter-core communication
     /// Only saves calibration if imu-save-calibration feature is enabled
-    async fn save_calibration(&mut self, levels: &CalibrationLevels) -> Result<(), &'static str> {
+    async fn save_calibration(&mut self, levels: &CalibrationLevels) -> ElleResult<()> {
         // Check if saving calibration is enabled
         #[cfg(not(feature = "imu-save-calibration"))]
         {
@@ -208,7 +210,7 @@ impl<'a> BnoImu<'a> {
                     "Core1: Failed to get calibration profile: {:?}",
                     Debug2Format(&e)
                 );
-                return Err("Failed to get calibration profile");
+                return Err(ElleError::CalibrationProfileFailed);
             }
         };
 
@@ -225,13 +227,13 @@ impl<'a> BnoImu<'a> {
             Ok(())
         } else {
             warn!("Core1: Calibration save request failed");
-            Err("Save request failed")
+            Err(ElleError::CalibrationSaveFailed)
         }
     }
 
     /// Initialize IMU with flash calibration loading
     /// Attempts to load calibration from flash first, and only proceeds with full calibration if no saved calibration is found
-    pub async fn initialize(&mut self) -> Result<(), &'static str> {
+    pub async fn initialize(&mut self) -> ElleResult<()> {
         info!("Core1: Initializing BNO055 IMU...");
         self.set_led_pattern(LedPattern::SlowBlink(colors::BLUE))
             .await;
@@ -257,7 +259,7 @@ impl<'a> BnoImu<'a> {
                         );
                         self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
                             .await;
-                        return Err("Failed to initialize BNO055 after 3 attempts");
+                        return Err(ElleError::ImuInitFailed);
                     }
                     Timer::after(Duration::from_millis(100)).await;
                 }
@@ -267,11 +269,11 @@ impl<'a> BnoImu<'a> {
         // Configure BNO055
         self.bno
             .set_axis_sign(BNO055AxisSign::Y_NEGATIVE | BNO055AxisSign::Z_NEGATIVE)
-            .map_err(|_| "Failed to set axis sign")?;
+            .to_imu_axis_err()?;
 
         self.bno
             .set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)
-            .map_err(|_| "Failed to set NDOF mode")?;
+            .to_imu_mode_err()?;
 
         // Try to load saved calibration
         match self.load_calibration().await {
@@ -307,7 +309,7 @@ impl<'a> BnoImu<'a> {
 
     /// Wait for calibration with optional auto-save based on configuration
     /// Always performs calibration, but only saves to flash if imu-save-calibration feature is enabled
-    pub async fn wait_for_calibration(&mut self, timeout_secs: u64) -> Result<(), &'static str> {
+    pub async fn wait_for_calibration(&mut self, timeout_secs: u64) -> ElleResult<()> {
         info!("Core1: Waiting for IMU calibration...");
 
         #[cfg(feature = "imu-save-calibration")]
@@ -405,7 +407,7 @@ impl<'a> BnoImu<'a> {
         Ok(())
     }
 
-    async fn update_calibration_status(&mut self) -> Result<CalibrationLevels, &'static str> {
+    async fn update_calibration_status(&mut self) -> ElleResult<CalibrationLevels> {
         match self.bno.get_calibration_status() {
             Ok(status) => {
                 let levels = CalibrationLevels {
@@ -436,22 +438,16 @@ impl<'a> BnoImu<'a> {
 
                 Ok(levels)
             }
-            Err(_) => Err("Failed to read calibration status"),
+            Err(_) => Err(ElleError::ImuCalibrationReadFailed),
         }
     }
 
-    pub async fn read_attitude(&mut self) -> Result<AttitudeData, &'static str> {
+    pub async fn read_attitude(&mut self) -> ElleResult<AttitudeData> {
         // Read quaternion (more reliable than Euler angles)
-        let quat = self
-            .bno
-            .quaternion()
-            .map_err(|_| "Failed to read quaternion")?;
+        let quat = self.bno.quaternion().to_imu_quat_err()?;
 
         // Read gyroscope for rates
-        let gyro = self
-            .bno
-            .gyro_data()
-            .map_err(|_| "Failed to read gyroscope")?;
+        let gyro = self.bno.gyro_data().to_imu_gyro_err()?;
 
         // Convert quaternion to Euler angles
         let (yaw, pitch, roll) = quaternion_to_euler(&quat);

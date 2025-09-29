@@ -29,6 +29,7 @@ imu-save-calibration = []  # Enable saving IMU calibration to flash
 performance-monitoring = []  # Enable detailed performance monitoring and telemetry
 defmt-logging = ["defmt-rtt"]  # Use defmt-rtt for simple logging (mutually exclusive with rtt-control)
 rtt-control = ["rtt-target"]  # Use rtt-target for interactive RTT control (mutually exclusive with defmt-logging)
+error-strings = []  # Include human-readable error descriptions (for development only)
 
 [profile.release]
 debug = 2
