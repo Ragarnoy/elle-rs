@@ -24,12 +24,17 @@ use elle::hardware::{
 };
 #[cfg(feature = "rtt-control")]
 use elle::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttControl};
+#[cfg(feature = "rtt-control")]
+use elle::system::{SUP_RTT_READY, SUP_START_RTT};
 #[cfg(feature = "performance-monitoring")]
 use elle::system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
 };
 
-use elle::system::FlightController;
+use elle::system::{
+    FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
+    supervisor_task,
+};
 
 // Dummy timing when performance monitoring is disabled
 #[cfg(not(feature = "performance-monitoring"))]
@@ -58,7 +63,7 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0, WATCHDOG};
+use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
@@ -112,6 +117,10 @@ async fn main(spawner: Spawner) {
         info!("Core0: Starting RTT control interface");
         spawner.spawn(rtt_control_task()).unwrap();
     }
+
+    // Start supervisor to coordinate task startup
+    info!("Core0: Spawning Supervisor");
+    spawner.spawn(supervisor_task()).unwrap();
 
     info!("Core0: Spawning Core1 for IMU");
     // Spawn IMU task on core1
@@ -175,13 +184,31 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_millis(100)).await;
     }
 
+    // Initialize ESCs before entering synchronized start
     info!("Core0: Initializing ESCs");
     fc.initialize_escs().await;
 
-    // Initialize supervisor components
-    info!("Core0: Initializing supervisor (watchdog + health monitoring)");
+    // Initialize supervisor components (but keep health monitoring disabled)
+    info!("Core0: Initializing supervisor (watchdog only)");
     let watchdog = Watchdog::new(p.WATCHDOG);
     fc.initialize_supervisor(watchdog);
+
+    // Signal supervisor that Flight Controller is ready and wait for start
+    SUP_FC_READY.signal(());
+    info!("Core0: Waiting for Supervisor start barrier");
+    SUP_START_FC.wait().await;
+
+    // Now enable health monitoring after all tasks are ready
+    fc.enable_supervisor_monitoring();
+
+    // Update LED based on IMU calibration status at start
+    let status = IMU_STATUS.read().await;
+    let _ = LED_COMMAND_CHANNEL.try_send(if status.calibrated {
+        LedPattern::Solid(colors::GREEN)
+    } else {
+        LedPattern::Pulse(colors::CYAN)
+    });
+    drop(status);
 
     info!("Core0: Starting main control loop");
 
@@ -240,7 +267,7 @@ async fn main(spawner: Spawner) {
                 if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {
                     fc.update_with_attitude(&packet, Some(&att));
                 } else {
-                    defmt::warn!("Stale attitude data, using manual control only");
+                    warn!("Stale attitude data, using manual control only");
                     fc.update(&packet);
                 }
             } else {
@@ -291,7 +318,7 @@ async fn main(spawner: Spawner) {
 
             // Get supervisor status for reporting
             let (supervisor_enabled, core1_healthy, heartbeat_count) = fc.supervisor_status();
-            
+
             if fc.is_armed() {
                 info!(
                     "ARMED | IMU Cal: S{} G{} A{} M{} | Att:{} | Supervisor: {} Core1:{} HB:{}",
@@ -311,7 +338,7 @@ async fn main(spawner: Spawner) {
             } else if fc.is_failsafe() {
                 #[cfg(not(feature = "rtt-control"))]
                 info!(
-                    "FAILSAFE | IMU Errors: {} | Supervisor: {} Core1:{}", 
+                    "FAILSAFE | IMU Errors: {} | Supervisor: {} Core1:{}",
                     imu_status.error_count,
                     if supervisor_enabled { "ON" } else { "OFF" },
                     if core1_healthy { "OK" } else { "FAIL" }
@@ -360,10 +387,17 @@ async fn imu_task(
         }
     }
 
+    // Notify supervisor that IMU is initialized
+    SUP_IMU_READY.signal(());
+
     // Calibration wait (may be shorter if loaded from flash)
     if let Err(e) = imu.wait_for_calibration(IMU_CALIBRATION_TIMEOUT_S).await {
-        defmt::warn!("Core1: IMU calibration incomplete: {}", e);
+        warn!("Core1: IMU calibration incomplete: {}", e);
     }
+
+    // Wait for supervisor start before entering main IMU run loop
+    info!("Core1: Waiting for Supervisor start barrier");
+    SUP_START_IMU.wait().await;
 
     // Run continuous IMU reading
     imu.run().await;
@@ -392,6 +426,9 @@ async fn led_task(
     // Set initial pattern
     led.set_pattern(LedPattern::SlowBlink(colors::BLUE)).await;
 
+    // Notify supervisor that LED task is initialized
+    SUP_LED_READY.signal(());
+
     // Main LED update loop
     loop {
         let led_timer = TimingMeasurement::start();
@@ -417,6 +454,12 @@ async fn led_task(
 async fn rtt_control_task() {
     info!("Core0: RTT control task starting");
     let mut rtt_control = RttControl::init();
+
+    // Notify supervisor that RTT control is ready, then wait for start
+    SUP_RTT_READY.signal(());
+    info!("Core0: RTT control waiting for Supervisor start barrier");
+    SUP_START_RTT.wait().await;
+
     rtt_control.run().await;
 }
 

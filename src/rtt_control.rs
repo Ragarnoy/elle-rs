@@ -16,7 +16,7 @@ use embassy_sync::channel::Sender;
 #[cfg(feature = "rtt-control")]
 use rtt_target::ChannelMode::NoBlockSkip;
 #[cfg(feature = "rtt-control")]
-use rtt_target::{DownChannel, UpChannel, rprintln, rtt_init, set_defmt_channel};
+use rtt_target::{DownChannel, UpChannel, rtt_init, set_defmt_channel};
 
 #[cfg(feature = "rtt-control")]
 use rtt_target as _;

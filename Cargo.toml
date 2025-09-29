@@ -23,7 +23,7 @@ smart-leds = "0.4.0"
 rtt-target = { version = "0.6.1", optional = true, features = ["defmt"] }
 
 [features]
-default = ["imu-save-calibration", "performance-monitoring", "defmt-logging"]
+default = ["imu-save-calibration", "defmt-logging"]
 legacy-ctrl = []  # Enable legacy (non-mixed) control path
 imu-save-calibration = []  # Enable saving IMU calibration to flash
 performance-monitoring = []  # Enable detailed performance monitoring and telemetry

@@ -1,5 +1,3 @@
-// src/config/lut.rs - Complete LUT implementation with all functions
-
 use super::*;
 
 /// SBUS value range (0-2047, so we need 2048 entries)

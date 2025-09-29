@@ -3,9 +3,9 @@
 use crate::config::profile::StoredCalibration;
 use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
 use crate::hardware::led::{LedPattern, colors};
+use crate::system::CORE1_HEARTBEAT;
 #[cfg(feature = "performance-monitoring")]
 use crate::system::{TimingMeasurement, update_imu_timing};
-use crate::system::CORE1_HEARTBEAT;
 
 #[cfg(not(feature = "performance-monitoring"))]
 struct TimingMeasurement;
@@ -27,7 +27,7 @@ use defmt::*;
 use embassy_rp::i2c::{Blocking, I2c};
 use embassy_rp::peripherals::I2C0;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Sender};
+use embassy_sync::channel::{Channel, Sender, TrySendError};
 use embassy_sync::rwlock::RwLock;
 use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Instant, Timer};
@@ -141,7 +141,11 @@ impl<'a> BnoImu<'a> {
 
     /// Send LED pattern update
     async fn set_led_pattern(&self, pattern: LedPattern) {
-        let _ = self.led_sender.try_send(pattern);
+        if let Err(TrySendError::Full(_)) = self.led_sender.try_send(pattern) {
+            // Fall back to an awaited send; ignore errors from closed channel.
+            warn!("Core1: LED channel full, falling back to awaited send");
+            let _ = self.led_sender.send(pattern).await;
+        }
     }
 
     /// Try to load saved calibration via inter-core communication
@@ -247,6 +251,10 @@ impl<'a> BnoImu<'a> {
                         Debug2Format(&e)
                     );
                     if attempt == 2 {
+                        error!(
+                            "Core1: BNO055 failed to initialize after {} attempts",
+                            attempt + 1
+                        );
                         self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
                             .await;
                         return Err("Failed to initialize BNO055 after 3 attempts");
@@ -312,6 +320,9 @@ impl<'a> BnoImu<'a> {
         let mut best_quality = CalibrationLevels::new();
 
         loop {
+            // Send heartbeat to supervisor during calibration
+            CORE1_HEARTBEAT.signal(());
+
             if start.elapsed() > timeout {
                 warn!("Core1: Calibration timeout - proceeding with partial calibration");
                 break;
@@ -487,7 +498,7 @@ impl<'a> BnoImu<'a> {
                     let process_timer = TimingMeasurement::start();
                     // Signal new attitude data
                     ATTITUDE_SIGNAL.signal(attitude);
-                    
+
                     // Send heartbeat signal to Core 0 for health monitoring
                     CORE1_HEARTBEAT.signal(());
 

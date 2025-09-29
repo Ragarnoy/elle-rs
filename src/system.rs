@@ -32,6 +32,7 @@ pub struct CoreHealth {
     pub last_heartbeat: Instant,
     pub heartbeat_count: u32,
     pub is_healthy: bool,
+    pub last_logged_healthy: bool,
 }
 
 impl Default for CoreHealth {
@@ -40,6 +41,7 @@ impl Default for CoreHealth {
             last_heartbeat: Instant::now(),
             heartbeat_count: 0,
             is_healthy: true,
+            last_logged_healthy: true,
         }
     }
 }
@@ -156,9 +158,18 @@ impl<'a> FlightController<'a> {
         // Configure watchdog for critical flight safety timeout
         watchdog.start(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
         self.watchdog = Some(watchdog);
-        self.supervisor_enabled = true;
+        // Keep supervisor health monitoring disabled until explicitly enabled
         self.last_watchdog_kick = Instant::now();
-        info!("Supervisor: Watchdog initialized with {}ms timeout", WATCHDOG_TIMEOUT_MS);
+        info!(
+            "Supervisor: Watchdog initialized with {}ms timeout",
+            WATCHDOG_TIMEOUT_MS
+        );
+    }
+
+    /// Enable supervisor health monitoring after all tasks are ready
+    pub fn enable_supervisor_monitoring(&mut self) {
+        self.supervisor_enabled = true;
+        info!("Supervisor: Health monitoring enabled");
     }
 
     /// Feed the watchdog timer to prevent system reset
@@ -181,14 +192,25 @@ impl<'a> FlightController<'a> {
         }
 
         // Check if Core 1 is healthy using configured timeout
-        let is_healthy = self.core1_health.check_health(Duration::from_millis(CORE1_HEALTH_TIMEOUT_MS));
-        
-        if !is_healthy {
-            warn!(
-                "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago", 
-                self.core1_health.last_heartbeat.elapsed().as_millis()
-            );
-            // Disable attitude control if Core 1 is unhealthy
+        let is_healthy = self
+            .core1_health
+            .check_health(Duration::from_millis(CORE1_HEALTH_TIMEOUT_MS));
+
+        // Only log on state transitions to prevent spam
+        if is_healthy != self.core1_health.last_logged_healthy {
+            if !is_healthy {
+                warn!(
+                    "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago",
+                    self.core1_health.last_heartbeat.elapsed().as_millis()
+                );
+                // Disable attitude control if Core 1 is unhealthy
+                self.attitude_controller.enabled = false;
+            } else {
+                info!("Supervisor: Core 1 (IMU) healthy - heartbeat restored");
+            }
+            self.core1_health.last_logged_healthy = is_healthy;
+        } else if !is_healthy {
+            // Still disable attitude control even if we don't log
             self.attitude_controller.enabled = false;
         }
 
@@ -202,7 +224,7 @@ impl<'a> FlightController<'a> {
         }
 
         let core1_healthy = self.check_core1_health();
-        
+
         // Kick watchdog if both cores are healthy
         if core1_healthy {
             self.kick_watchdog();
@@ -777,5 +799,49 @@ impl TimingMeasurement {
     #[inline(always)]
     pub fn elapsed_us(&self) -> u32 {
         0
+    }
+}
+
+pub static SUP_LED_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static SUP_IMU_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static SUP_FC_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+#[cfg(feature = "rtt-control")]
+pub static SUP_RTT_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+// Start signals to release tasks from the barrier
+pub static SUP_START_IMU: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static SUP_START_FC: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+#[cfg(feature = "rtt-control")]
+pub static SUP_START_RTT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Supervisor task that waits for all participants to be ready, then releases them simultaneously
+#[embassy_executor::task]
+pub async fn supervisor_task() {
+    info!("Supervisor: waiting for tasks to initialize");
+
+    // Prepare futures for all participants and wait for them concurrently
+    let led_ready = SUP_LED_READY.wait();
+    let imu_ready = SUP_IMU_READY.wait();
+    let fc_ready = SUP_FC_READY.wait();
+
+    #[cfg(not(feature = "rtt-control"))]
+    {
+        let _ = embassy_futures::join::join3(led_ready, imu_ready, fc_ready).await;
+    }
+
+    #[cfg(feature = "rtt-control")]
+    {
+        let rtt_ready = SUP_RTT_READY.wait();
+        let _ = embassy_futures::join::join4(led_ready, imu_ready, fc_ready, rtt_ready).await;
+    }
+
+    info!("Supervisor: all tasks initialized, releasing start barrier");
+
+    // Release participants. Use per-task start signals instead of broadcast.
+    SUP_START_IMU.signal(());
+    SUP_START_FC.signal(());
+    #[cfg(feature = "rtt-control")]
+    {
+        SUP_START_RTT.signal(());
     }
 }
