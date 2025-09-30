@@ -22,6 +22,7 @@ free-flight-stabilization = { git = "https://github.com/AeroRust/free-flight-sta
 smart-leds = "0.4.0"
 rtt-target = { version = "0.6.1", optional = true, features = ["defmt"] }
 thiserror = { version = "2.0.17", default-features = false }
+sequential-storage = { version = "5.0.*", default-features = false }
 
 [features]
 default = ["imu-save-calibration", "defmt-logging"]

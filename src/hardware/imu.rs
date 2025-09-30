@@ -1,8 +1,9 @@
 //! BNO055 IMU integration for attitude sensing with RGB LED status
 
-use crate::config::profile::StoredCalibration;
-use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
 use crate::hardware::led::{LedPattern, colors};
+use crate::hardware::sequential_flash_manager::{
+    request_load_calibration, request_save_calibration,
+};
 use crate::system::CORE1_HEARTBEAT;
 #[cfg(feature = "performance-monitoring")]
 use crate::system::{TimingMeasurement, update_imu_timing};
@@ -109,6 +110,14 @@ impl CalibrationLevels {
     pub(crate) fn is_flight_ready(&self) -> bool {
         // Relaxed requirements for flight - magnetometer not critical
         self.sys >= 2 && self.gyro >= 3 && self.accel >= 2
+    }
+
+    pub(crate) fn hash_quality(&self) -> u32 {
+        // Simple quality metric: prioritize sys and gyro, accel important, mag less so
+        (self.sys as u32 * 100)
+            + (self.gyro as u32 * 50)
+            + (self.accel as u32 * 25)
+            + (self.mag as u32 * 10)
     }
 }
 
@@ -343,8 +352,8 @@ impl<'a> BnoImu<'a> {
                     .await;
 
                     // Check if this is the best calibration we've seen
-                    let current_quality = StoredCalibration::hash_quality(&levels);
-                    let best_quality_hash = StoredCalibration::hash_quality(&best_quality);
+                    let current_quality = levels.hash_quality();
+                    let best_quality_hash = best_quality.hash_quality();
 
                     if current_quality > best_quality_hash {
                         best_quality = levels;
