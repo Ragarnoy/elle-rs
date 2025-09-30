@@ -1,6 +1,7 @@
 use crate::config::profile::{
     CALIBRATION_FLASH_OFFSET, FLASH_SIZE, FlashRequest, FlashResponse, StoredCalibration,
 };
+use crate::error::{ElleResult, FlashError};
 use crate::hardware::flash_constants::{
     ASYNC_READ_SIZE, ERASE_SIZE, PAGE_SIZE, READ_SIZE, WRITE_SIZE,
 };
@@ -122,9 +123,7 @@ impl<'a> FlashManager<'a> {
     }
 
     /// Load calibration from flash (internal method)
-    async fn load_calibration_internal(
-        &mut self,
-    ) -> Result<Option<[u8; BNO055_CALIB_SIZE]>, &'static str> {
+    async fn load_calibration_internal(&mut self) -> ElleResult<Option<[u8; BNO055_CALIB_SIZE]>> {
         info!("Core0: Starting flash read operation");
 
         const STORAGE_SIZE_U32: usize = size_of::<StoredCalibration>() / 4;
@@ -152,7 +151,7 @@ impl<'a> FlashManager<'a> {
             }
             Err(e) => {
                 warn!("Core0: Failed to start flash read: {:?}", Debug2Format(&e));
-                return Err("Flash read failed");
+                return Err(FlashError::ReadFailed.into());
             }
         };
 
@@ -191,7 +190,7 @@ impl<'a> FlashManager<'a> {
         profile_data: &[u8; BNO055_CALIB_SIZE],
         quality: &CalibrationLevels,
         timestamp: u64,
-    ) -> Result<(), &'static str> {
+    ) -> ElleResult<()> {
         info!("Core0: Starting save operation");
 
         // Rate limiting - only save once per 10 minutes
@@ -262,7 +261,7 @@ impl<'a> FlashManager<'a> {
             Ok(_) => info!("Core0: Flash sector erased successfully"),
             Err(e) => {
                 error!("Core0: Failed to erase flash: {:?}", Debug2Format(&e));
-                return Err("Flash erase failed");
+                return Err(FlashError::EraseFailed.into());
             }
         }
 
@@ -277,7 +276,7 @@ impl<'a> FlashManager<'a> {
         let write_offset = CALIBRATION_FLASH_OFFSET;
         if !write_offset.is_multiple_of(WRITE_SIZE as u32) {
             error!("Core0: Calibration offset not aligned to WRITE_SIZE");
-            return Err("Flash write alignment error");
+            return Err(FlashError::AlignmentError.into());
         }
 
         // Ensure data size is a multiple of PAGE_SIZE for optimal writing
@@ -308,7 +307,7 @@ impl<'a> FlashManager<'a> {
             }
             Err(e) => {
                 error!("Core0: Failed to write to flash: {:?}", Debug2Format(&e));
-                Err("Flash write failed")
+                Err(FlashError::WriteFailed.into())
             }
         }
     }
