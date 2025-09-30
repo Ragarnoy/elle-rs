@@ -11,8 +11,6 @@ pub fn sbus_to_normalized(sbus_value: u16) -> f32 {
 /// Convert SBUS value to normalized with specific center point using LUT
 #[inline(always)]
 pub fn sbus_to_normalized_with_center(sbus_value: u16, _center: u16) -> f32 {
-    // Note: center is ignored since LUT uses pre-configured centers
-    // Use specific channel LUT functions for best performance
     sbus_to_normalized_roll_lut(sbus_value) // Default to roll
 }
 

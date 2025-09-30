@@ -471,28 +471,22 @@ async fn process_debug_command(fc: &mut FlightController<'_>, command: DebugComm
     match command {
         DebugCommand::SetThrottle(value) => {
             info!("RTT: Set throttle to {}", value);
-            // Note: This would require extending FlightController to accept direct throttle commands
-            // For now, just log the command
         }
 
         DebugCommand::SetElevons { left, right } => {
             info!("RTT: Set elevons L={} R={}", left, right);
-            // Note: This would require extending FlightController for direct elevon control
         }
 
         DebugCommand::SetControlMode(mode) => {
             info!("RTT: Set control mode to {:?}", mode);
-            // Note: This would require extending FlightController to accept mode changes
         }
 
         DebugCommand::Arm => {
             info!("RTT: Arm command received");
-            // Note: This would require extending FlightController for direct arming
         }
 
         DebugCommand::Disarm => {
             info!("RTT: Disarm command received");
-            // Note: This would require extending FlightController for direct disarming
         }
 
         DebugCommand::EmergencyStop => {
@@ -502,17 +496,14 @@ async fn process_debug_command(fc: &mut FlightController<'_>, command: DebugComm
 
         DebugCommand::AdjustTrim { left, right } => {
             info!("RTT: Adjust trim L={} R={}", left, right);
-            // Note: This would require extending FlightController for trim adjustment
         }
 
         DebugCommand::SaveCalibration => {
             info!("RTT: Save calibration requested");
-            // Note: This would require triggering calibration save
         }
 
         DebugCommand::ClearCalibration => {
             info!("RTT: Clear calibration requested");
-            // Note: This would require implementing calibration clearing
         }
 
         DebugCommand::GetStatus => {

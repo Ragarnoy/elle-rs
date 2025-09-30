@@ -1,5 +1,3 @@
-//! Flash-efficient error handling using thiserror 2.0
-
 use defmt::Format;
 use thiserror::Error;
 
