@@ -22,7 +22,7 @@ impl TimingMeasurement {
 
 #[cfg(not(feature = "performance-monitoring"))]
 fn update_imu_timing(_elapsed_us: u32) {}
-use crate::error::{ElleError, ElleResult, IntoElleError};
+use crate::error::{CalibrationError, ElleResult, ImuError};
 use bno055::{BNO055_CALIB_SIZE, BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
 use embassy_rp::i2c::{Blocking, I2c};
@@ -168,7 +168,7 @@ impl<'a> BnoImu<'a> {
                         "Core1: Failed to apply saved calibration: {:?}",
                         Debug2Format(&e)
                     );
-                    return Err(ElleError::CalibrationLoadFailed);
+                    return Err(CalibrationError::LoadFailed.into());
                 }
             }
         } else {
@@ -210,7 +210,7 @@ impl<'a> BnoImu<'a> {
                     "Core1: Failed to get calibration profile: {:?}",
                     Debug2Format(&e)
                 );
-                return Err(ElleError::CalibrationProfileFailed);
+                return Err(CalibrationError::ProfileFailed.into());
             }
         };
 
@@ -227,7 +227,7 @@ impl<'a> BnoImu<'a> {
             Ok(())
         } else {
             warn!("Core1: Calibration save request failed");
-            Err(ElleError::CalibrationSaveFailed)
+            Err(CalibrationError::SaveFailed.into())
         }
     }
 
@@ -259,7 +259,7 @@ impl<'a> BnoImu<'a> {
                         );
                         self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
                             .await;
-                        return Err(ElleError::ImuInitFailed);
+                        return Err(ImuError::InitializationFailed.into());
                     }
                     Timer::after(Duration::from_millis(100)).await;
                 }
@@ -269,11 +269,11 @@ impl<'a> BnoImu<'a> {
         // Configure BNO055
         self.bno
             .set_axis_sign(BNO055AxisSign::Y_NEGATIVE | BNO055AxisSign::Z_NEGATIVE)
-            .to_imu_axis_err()?;
+            .map_err(|_| ImuError::AxisConfigFailed)?;
 
         self.bno
             .set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)
-            .to_imu_mode_err()?;
+            .map_err(|_| ImuError::ModeConfigFailed)?;
 
         // Try to load saved calibration
         match self.load_calibration().await {
@@ -438,16 +438,22 @@ impl<'a> BnoImu<'a> {
 
                 Ok(levels)
             }
-            Err(_) => Err(ElleError::ImuCalibrationReadFailed),
+            Err(_) => Err(ImuError::CalibrationReadFailed.into()),
         }
     }
 
     pub async fn read_attitude(&mut self) -> ElleResult<AttitudeData> {
         // Read quaternion (more reliable than Euler angles)
-        let quat = self.bno.quaternion().to_imu_quat_err()?;
+        let quat = self
+            .bno
+            .quaternion()
+            .map_err(|_| ImuError::QuaternionReadFailed)?;
 
         // Read gyroscope for rates
-        let gyro = self.bno.gyro_data().to_imu_gyro_err()?;
+        let gyro = self
+            .bno
+            .gyro_data()
+            .map_err(|_| ImuError::GyroscopeReadFailed)?;
 
         // Convert quaternion to Euler angles
         let (yaw, pitch, roll) = quaternion_to_euler(&quat);

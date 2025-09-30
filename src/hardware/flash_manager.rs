@@ -1,7 +1,7 @@
 use crate::config::profile::{
     CALIBRATION_FLASH_OFFSET, FLASH_SIZE, FlashRequest, FlashResponse, StoredCalibration,
 };
-use crate::error::{ElleError, ElleResult};
+use crate::error::{ElleResult, FlashError};
 use crate::hardware::flash_constants::{
     ASYNC_READ_SIZE, ERASE_SIZE, PAGE_SIZE, READ_SIZE, WRITE_SIZE,
 };
@@ -151,7 +151,7 @@ impl<'a> FlashManager<'a> {
             }
             Err(e) => {
                 warn!("Core0: Failed to start flash read: {:?}", Debug2Format(&e));
-                return Err(ElleError::FlashReadFailed);
+                return Err(FlashError::ReadFailed.into());
             }
         };
 
@@ -261,7 +261,7 @@ impl<'a> FlashManager<'a> {
             Ok(_) => info!("Core0: Flash sector erased successfully"),
             Err(e) => {
                 error!("Core0: Failed to erase flash: {:?}", Debug2Format(&e));
-                return Err(ElleError::FlashEraseFailed);
+                return Err(FlashError::EraseFailed.into());
             }
         }
 
@@ -276,7 +276,7 @@ impl<'a> FlashManager<'a> {
         let write_offset = CALIBRATION_FLASH_OFFSET;
         if !write_offset.is_multiple_of(WRITE_SIZE as u32) {
             error!("Core0: Calibration offset not aligned to WRITE_SIZE");
-            return Err(ElleError::FlashAlignmentError);
+            return Err(FlashError::AlignmentError.into());
         }
 
         // Ensure data size is a multiple of PAGE_SIZE for optimal writing
@@ -307,7 +307,7 @@ impl<'a> FlashManager<'a> {
             }
             Err(e) => {
                 error!("Core0: Failed to write to flash: {:?}", Debug2Format(&e));
-                Err(ElleError::FlashWriteFailed)
+                Err(FlashError::WriteFailed.into())
             }
         }
     }
