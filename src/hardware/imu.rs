@@ -1,8 +1,9 @@
 //! BNO055 IMU integration for attitude sensing with RGB LED status
 
-use crate::config::profile::StoredCalibration;
-use crate::hardware::flash_manager::{request_load_calibration, request_save_calibration};
 use crate::hardware::led::{LedPattern, colors};
+use crate::hardware::sequential_flash_manager::{
+    request_load_calibration, request_save_calibration,
+};
 use crate::system::CORE1_HEARTBEAT;
 #[cfg(feature = "performance-monitoring")]
 use crate::system::{TimingMeasurement, update_imu_timing};
@@ -110,6 +111,14 @@ impl CalibrationLevels {
         // Relaxed requirements for flight - magnetometer not critical
         self.sys >= 2 && self.gyro >= 3 && self.accel >= 2
     }
+
+    pub(crate) fn hash_quality(&self) -> u32 {
+        // Simple quality metric: prioritize sys and gyro, accel important, mag less so
+        (self.sys as u32 * 100)
+            + (self.gyro as u32 * 50)
+            + (self.accel as u32 * 25)
+            + (self.mag as u32 * 10)
+    }
 }
 
 pub struct BnoImu<'a> {
@@ -157,20 +166,20 @@ impl<'a> BnoImu<'a> {
             let calib = BNO055Calibration::from_buf(&profile_data);
 
             let mut delay = Delay;
-            match self.bno.set_calibration_profile(calib, &mut delay) {
+            return match self.bno.set_calibration_profile(calib, &mut delay) {
                 Ok(_) => {
                     info!("Core1: Successfully applied saved calibration");
                     self.calibration_loaded = true;
-                    return Ok(true);
+                    Ok(true)
                 }
                 Err(e) => {
                     warn!(
                         "Core1: Failed to apply saved calibration: {:?}",
                         Debug2Format(&e)
                     );
-                    return Err(CalibrationError::LoadFailed.into());
+                    Err(CalibrationError::LoadFailed.into())
                 }
-            }
+            };
         } else {
             info!("Core1: No saved calibration available");
         }
@@ -343,8 +352,8 @@ impl<'a> BnoImu<'a> {
                     .await;
 
                     // Check if this is the best calibration we've seen
-                    let current_quality = StoredCalibration::hash_quality(&levels);
-                    let best_quality_hash = StoredCalibration::hash_quality(&best_quality);
+                    let current_quality = levels.hash_quality();
+                    let best_quality_hash = best_quality.hash_quality();
 
                     if current_quality > best_quality_hash {
                         best_quality = levels;

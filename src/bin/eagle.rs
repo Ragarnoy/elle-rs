@@ -18,9 +18,9 @@ use elle::hardware::imu::{
 };
 use elle::hardware::led::{LedPattern, StatusLed, colors};
 use elle::hardware::{
-    flash_manager::FlashManager,
     pwm::{PwmOutputs, PwmPins},
     sbus::SbusReceiver,
+    sequential_flash_manager::SequentialFlashManager,
 };
 #[cfg(feature = "rtt-control")]
 use elle::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttControl};
@@ -406,7 +406,7 @@ async fn imu_task(
 #[embassy_executor::task]
 async fn flash_manager_task(flash: Flash<'static, FLASH, Async, { FLASH_SIZE }>) {
     info!("Core0: Flash manager task starting");
-    let mut manager = FlashManager::new(flash);
+    let mut manager = SequentialFlashManager::new(flash);
     manager.run().await;
 }
 
