@@ -55,7 +55,7 @@ impl StoredCalibration {
         let copy_len = profile_bytes.len().min(22);
         profile_u8_slice[..copy_len].copy_from_slice(&profile_bytes[..copy_len]);
 
-        let quality_hash = CalibrationLevels::hash_quality(quality);
+        let quality_hash = quality.hash_quality();
         let mut cal = Self {
             magic: CALIBRATION_MAGIC,
             version: CALIBRATION_VERSION,
@@ -90,7 +90,7 @@ impl StoredCalibration {
     }
 
     pub fn is_better_than(&self, current_quality: &CalibrationLevels) -> bool {
-        let current_hash = CalibrationLevels::hash_quality(current_quality);
+        let current_hash = current_quality.hash_quality();
         self.quality_hash >= current_hash // Only replace if stored is same or better
     }
 
