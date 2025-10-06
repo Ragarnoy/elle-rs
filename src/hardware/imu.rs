@@ -166,20 +166,20 @@ impl<'a> BnoImu<'a> {
             let calib = BNO055Calibration::from_buf(&profile_data);
 
             let mut delay = Delay;
-            match self.bno.set_calibration_profile(calib, &mut delay) {
+            return match self.bno.set_calibration_profile(calib, &mut delay) {
                 Ok(_) => {
                     info!("Core1: Successfully applied saved calibration");
                     self.calibration_loaded = true;
-                    return Ok(true);
+                    Ok(true)
                 }
                 Err(e) => {
                     warn!(
                         "Core1: Failed to apply saved calibration: {:?}",
                         Debug2Format(&e)
                     );
-                    return Err(CalibrationError::LoadFailed.into());
+                    Err(CalibrationError::LoadFailed.into())
                 }
-            }
+            };
         } else {
             info!("Core1: No saved calibration available");
         }
