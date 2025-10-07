@@ -360,7 +360,10 @@ async fn main(spawner: Spawner) {
 
             // Apply pilot commands or failsafe
             if let Some(commands) = pilot_commands {
-                info!("RTT commands active");
+                // Log at ~1Hz to avoid spam
+                if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ) {
+                    info!("RTT commands active");
+                }
                 fc.update(&commands, validate_attitude(attitude).as_ref());
             } else {
                 // RTT timed out - apply failsafe
