@@ -84,14 +84,20 @@ impl RttCommander {
         }
     }
 
-    pub async fn read_commands(&mut self) -> Option<PilotCommands> {
+    pub async fn read_commands<F>(&mut self, mut debug_callback: F) -> Option<PilotCommands>
+    where
+        F: FnMut(DebugCommand),
+    {
         // Process all pending RTT commands
         while let Ok(cmd) = self.command_rx.try_receive() {
-            self.apply_debug_command(cmd);
+            if self.is_flight_command(cmd) {
+                self.apply_debug_command(cmd);
+                self.commands.timestamp = Instant::now();
+            } else {
+                // Route non-flight commands to callback
+                debug_callback(cmd);
+            }
         }
-
-        // Update timestamp
-        self.commands.timestamp = Instant::now();
 
         // Only return if fresh (2 second timeout)
         if self.commands.timestamp.elapsed() < Duration::from_secs(2) {
@@ -99,6 +105,17 @@ impl RttCommander {
         } else {
             None
         }
+    }
+
+    fn is_flight_command(&self, cmd: DebugCommand) -> bool {
+        matches!(
+            cmd,
+            DebugCommand::SetThrottle(_)
+                | DebugCommand::SetElevons { .. }
+                | DebugCommand::SetControlMode(_)
+                | DebugCommand::EmergencyStop
+                | DebugCommand::Disarm
+        )
     }
 
     fn apply_debug_command(&mut self, cmd: DebugCommand) {

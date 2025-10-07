@@ -326,16 +326,10 @@ async fn main(spawner: Spawner) {
         info!("GROUND TEST MODE - RTT Control");
         info!("WARNING: This mode requires programmer connection");
 
-        spawner.spawn(rtt_control_task()).unwrap();
         let mut rtt_commander = RttCommander::new(COMMAND_CHANNEL.receiver());
 
         loop {
             let loop_timer = TimingMeasurement::start();
-
-            // Process RTT debug commands (status, calibration, etc.)
-            if let Ok(command) = COMMAND_CHANNEL.try_receive() {
-                process_debug_command(&mut fc, command).await;
-            }
 
             // Supervisor check
             let _supervisor_healthy = fc.supervisor_check();
@@ -343,8 +337,29 @@ async fn main(spawner: Spawner) {
             // Get latest attitude data
             let attitude = ATTITUDE_SIGNAL.try_take();
 
-            // Read commands from RTT
-            if let Some(commands) = rtt_commander.read_commands().await {
+            // Collect debug commands (up to 16 per loop iteration)
+            let mut debug_commands: [Option<DebugCommand>; 16] = [None; 16];
+            let mut debug_count = 0;
+
+            // Read commands from RTT (processes both flight and debug commands)
+            let pilot_commands = rtt_commander
+                .read_commands(|cmd| {
+                    if debug_count < debug_commands.len() {
+                        debug_commands[debug_count] = Some(cmd);
+                        debug_count += 1;
+                    }
+                })
+                .await;
+
+            // Process collected debug commands
+            for cmd_opt in &debug_commands[..debug_count] {
+                if let Some(cmd) = cmd_opt {
+                    process_debug_command(&mut fc, *cmd).await;
+                }
+            }
+
+            // Apply pilot commands or failsafe
+            if let Some(commands) = pilot_commands {
                 info!("RTT commands active");
                 fc.update(&commands, validate_attitude(attitude).as_ref());
             } else {
