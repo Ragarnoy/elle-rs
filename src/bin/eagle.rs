@@ -388,6 +388,8 @@ async fn main(spawner: Spawner) {
                 let imu_status = IMU_STATUS.read().await;
                 let led_pattern = if fc.is_armed() {
                     LedPattern::DoubleBlink(colors::CYAN)
+                } else if fc.is_failsafe() {
+                    LedPattern::RapidFlash(colors::ORANGE)
                 } else if imu_status.calibrated {
                     LedPattern::Solid(colors::BLUE)
                 } else {
