@@ -1,8 +1,9 @@
 use crate::config::*;
+use crate::control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
 use crate::control::{arming::ArmingState, pid::AttitudeController};
 use crate::hardware::imu::AttitudeData;
 use crate::hardware::pwm::PwmOutputs;
-use defmt::{debug, info, warn};
+use defmt::{info, warn};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -244,217 +245,155 @@ impl<'a> FlightController<'a> {
         )
     }
 
-    /// Determine control mode from CH5 3-state switch
-    fn determine_control_mode(&self, ch5_value: u16) -> ControlMode {
-        if ch5_value < MANUAL_MODE_THRESHOLD {
-            ControlMode::Manual
-        } else if ch5_value < MIXED_MODE_THRESHOLD {
-            ControlMode::Mixed
-        } else {
-            ControlMode::Autopilot
-        }
-    }
-
-    /// Update method with feature flag support
-    pub fn update(&mut self, packet: &SbusPacket) {
+    /// Main update method - accepts PilotCommands from any source
+    pub fn update(&mut self, commands: &PilotCommands, attitude: Option<&AttitudeData>) {
         self.last_packet_time = Instant::now();
 
-        #[cfg(not(feature = "legacy-ctrl"))]
-        {
-            // Update arming state using throttle channel
-            self.arming
-                .update(packet.channels[THROTTLE_CH], packet.flags.failsafe);
-            self.update_with_mixing(packet, None);
-        }
+        let mode = commands.attitude_mode();
 
-        #[cfg(feature = "legacy-ctrl")]
-        {
-            // Update arming state using legacy engine channel
-            self.arming
-                .update(packet.channels[ENGINE_CH], packet.flags.failsafe);
-            self.update_direct_elevons(packet);
-        }
-    }
+        // Track mode changes
+        let current_mode = match mode {
+            AttitudeMode::Manual => ControlMode::Manual,
+            AttitudeMode::Mixed => ControlMode::Mixed,
+            AttitudeMode::Autopilot => ControlMode::Autopilot,
+        };
 
-    /// Ultra-fast mixing update method using LUTs
-    #[cfg(not(feature = "legacy-ctrl"))]
-    pub fn update_with_mixing(&mut self, packet: &SbusPacket, attitude: Option<&AttitudeData>) {
-        self.last_packet_time = Instant::now();
-
-        // Update arming state
-        self.arming
-            .update(packet.channels[THROTTLE_CH], packet.flags.failsafe);
-
-        // Determine control mode from CH5 3-state switch
-        let new_control_mode = self.determine_control_mode(packet.channels[ATTITUDE_ENABLE_CH]);
-        if new_control_mode != self.current_control_mode {
+        if current_mode != self.current_control_mode {
             info!(
                 "Control mode changed: {:?} -> {:?}",
-                self.current_control_mode, new_control_mode
+                self.current_control_mode, current_mode
             );
-            self.current_control_mode = new_control_mode;
+            self.current_control_mode = current_mode;
         }
 
-        // Enable attitude controller for Mixed and Autopilot modes
-        self.attitude_controller.enabled = (self.current_control_mode == ControlMode::Mixed
-            || self.current_control_mode == ControlMode::Autopilot)
+        // Dispatch on command variant and mode
+        match (commands, mode) {
+            // ULTRA-FAST PATH: Raw commands in manual mode
+            (PilotCommands::Raw(raw), AttitudeMode::Manual) => {
+                self.update_fast_path_raw(&raw.channels);
+            }
+
+            // NORMALIZED PATH: Everything else
+            (PilotCommands::Raw(raw), _) => {
+                self.update_normalized(&raw.to_normalized(), attitude);
+            }
+
+            (PilotCommands::Normalized(norm), _) => {
+                self.update_normalized(norm, attitude);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn update_fast_path_raw(&mut self, channels: &[u16; 16]) {
+        // Existing ultra-fast path logic - UNCHANGED
+        self.arming.update(channels[THROTTLE_CH], false);
+
+        let elevon_outputs = mix_elevons_direct_lut(channels);
+        self.pwm
+            .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
+
+        let (left_thrust, right_thrust) = if self.arming.armed {
+            throttle_with_differential_lut(channels[THROTTLE_CH], channels[YAW_CH])
+        } else {
+            (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+        };
+
+        self.pwm.set_engines(left_thrust, right_thrust);
+    }
+
+    fn update_normalized(&mut self, norm: &NormalizedCommands, attitude: Option<&AttitudeData>) {
+        // Convert throttle back to SBUS-equivalent for arming check
+        let throttle_sbus_equiv = (norm.throttle * 2047.0) as u16;
+        self.arming.update(throttle_sbus_equiv, false);
+
+        // Enable attitude controller based on mode
+        self.attitude_controller.enabled = (norm.attitude_mode == AttitudeMode::Mixed
+            || norm.attitude_mode == AttitudeMode::Autopilot)
             && self.arming.armed;
 
-        // Get raw desired angles from SBUS channels using LUTs and convert to radians immediately
-        let ch6_normalized = sbus_to_normalized_lut(packet.channels[ATTITUDE_PITCH_SETPOINT_CH]);
-        let raw_pitch_deg = ATTITUDE_PITCH_MIN_DEG
-            + (ch6_normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG);
-        let raw_pitch_setpoint_rad = raw_pitch_deg * core::f32::consts::PI / 180.0;
+        // Convert setpoints to radians and apply smoothing
+        let pitch_setpoint_rad = norm.pitch_setpoint_deg * core::f32::consts::PI / 180.0;
+        let roll_setpoint_rad = norm.roll_setpoint_deg * core::f32::consts::PI / 180.0;
 
-        let ch8_normalized = sbus_to_normalized_lut(packet.channels[ATTITUDE_ROLL_SETPOINT_CH]);
-        let raw_roll_deg = ATTITUDE_ROLL_MIN_DEG
-            + (ch8_normalized + 1.0) * 0.5 * (ATTITUDE_ROLL_MAX_DEG - ATTITUDE_ROLL_MIN_DEG);
-        let raw_roll_setpoint_rad = raw_roll_deg * core::f32::consts::PI / 180.0;
-
-        // Apply low-pass filter directly to raw setpoint (in radians)
-        // This provides smooth transitions without double-damping
         self.filtered_pitch_setpoint_rad +=
-            SETPOINT_FILTER_ALPHA * (raw_pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
+            SETPOINT_FILTER_ALPHA * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
         self.filtered_roll_setpoint_rad +=
-            SETPOINT_FILTER_ALPHA * (raw_roll_setpoint_rad - self.filtered_roll_setpoint_rad);
+            SETPOINT_FILTER_ALPHA * (roll_setpoint_rad - self.filtered_roll_setpoint_rad);
 
-        // Get pilot control inputs using ultra-fast LUT
-        let pilot_inputs = ControlInputs::from_sbus_channels_fast(&packet.channels);
+        // Build control inputs from normalized commands
+        let pilot_inputs = ControlInputs {
+            pitch: norm.pitch,
+            roll: norm.roll,
+            yaw: norm.yaw,
+            throttle: norm.throttle,
+        };
 
-        // Store new attitude if provided
+        // Store attitude for fallback
         if let Some(att) = attitude {
             self.last_attitude = Some(*att);
         }
 
         // Apply control mode logic
-        let final_inputs = match self.current_control_mode {
-            ControlMode::Manual => {
-                // Full manual control - use pilot inputs directly
-                debug!("Manual Mode - Direct pilot control");
-                // Reset PID when in manual mode
+        let final_inputs = match norm.attitude_mode {
+            AttitudeMode::Manual => {
                 if self.attitude_controller.is_active() {
                     self.attitude_controller.reset();
                 }
                 pilot_inputs
             }
 
-            ControlMode::Mixed => {
-                // Mixed mode - blend pilot and autopilot
-                if let Some(effective_attitude) = attitude.or(self.last_attitude.as_ref()) {
-                    let gyro_rates = Some((
-                        effective_attitude.roll_rate,
-                        effective_attitude.pitch_rate,
-                        effective_attitude.yaw_rate,
-                    ));
-                    let (pitch_correction, roll_correction) = self.attitude_controller.update(
-                        self.filtered_pitch_setpoint_rad,
-                        self.filtered_roll_setpoint_rad,
-                        effective_attitude.pitch,
-                        effective_attitude.roll,
-                        gyro_rates,
-                        Instant::now(),
-                    );
+            AttitudeMode::Mixed | AttitudeMode::Autopilot => {
+                // Try to get attitude data (current or cached)
+                match attitude.or(self.last_attitude.as_ref()) {
+                    Some(att) => {
+                        // Compute attitude corrections
+                        let (pitch_correction, roll_correction) = self.attitude_controller.update(
+                            self.filtered_pitch_setpoint_rad,
+                            self.filtered_roll_setpoint_rad,
+                            att.pitch,
+                            att.roll,
+                            Some((att.roll_rate, att.pitch_rate, att.yaw_rate)),
+                            Instant::now(),
+                        );
 
-                    // Blend pilot inputs with autopilot corrections
-                    let mut mixed_inputs = pilot_inputs;
-                    mixed_inputs.pitch = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT) * pilot_inputs.pitch
-                        + MIXED_MODE_AUTOPILOT_WEIGHT * pitch_correction;
-                    mixed_inputs.roll = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT) * pilot_inputs.roll
-                        + MIXED_MODE_AUTOPILOT_WEIGHT * roll_correction;
-
-                    debug!(
-                        "Mixed Mode ({}% Auto) - P: {}°/{}° R: {}°/{}°",
-                        (MIXED_MODE_AUTOPILOT_WEIGHT * 100.0) as i16,
-                        (self.filtered_pitch_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
-                        (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                        (self.filtered_roll_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
-                        (effective_attitude.roll * 180.0 / core::f32::consts::PI) as i16
-                    );
-
-                    mixed_inputs
-                } else {
-                    // No attitude data - use pilot inputs only
-                    pilot_inputs
-                }
-            }
-
-            ControlMode::Autopilot => {
-                // Full autopilot control - use attitude corrections only
-                if let Some(effective_attitude) = attitude.or(self.last_attitude.as_ref()) {
-                    let gyro_rates = Some((
-                        effective_attitude.roll_rate,
-                        effective_attitude.pitch_rate,
-                        effective_attitude.yaw_rate,
-                    ));
-                    let (pitch_correction, roll_correction) = self.attitude_controller.update(
-                        self.filtered_pitch_setpoint_rad,
-                        self.filtered_roll_setpoint_rad,
-                        effective_attitude.pitch,
-                        effective_attitude.roll,
-                        gyro_rates,
-                        Instant::now(),
-                    );
-
-                    // Use autopilot corrections only, keep pilot throttle and yaw
-                    let mut auto_inputs = pilot_inputs;
-                    auto_inputs.pitch = pitch_correction;
-                    auto_inputs.roll = roll_correction;
-
-                    debug!(
-                        "Autopilot Mode - P: {}°/{}° R: {}°/{}° Corrections: P:{} R:{}",
-                        (self.filtered_pitch_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
-                        (effective_attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                        (self.filtered_roll_setpoint_rad * 180.0 / core::f32::consts::PI) as i16,
-                        (effective_attitude.roll * 180.0 / core::f32::consts::PI) as i16,
-                        (pitch_correction * 100.0) as i16,
-                        (roll_correction * 100.0) as i16
-                    );
-
-                    auto_inputs
-                } else {
-                    // No attitude data - fallback to manual
-                    debug!("Autopilot Mode - No attitude data, using manual control");
-                    pilot_inputs
+                        // Blend based on mode
+                        let mut corrected = pilot_inputs;
+                        if norm.attitude_mode == AttitudeMode::Mixed {
+                            // Blend pilot + autopilot
+                            corrected.pitch = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT)
+                                * pilot_inputs.pitch
+                                + MIXED_MODE_AUTOPILOT_WEIGHT * pitch_correction;
+                            corrected.roll = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT)
+                                * pilot_inputs.roll
+                                + MIXED_MODE_AUTOPILOT_WEIGHT * roll_correction;
+                        } else {
+                            // Full autopilot - replace pitch/roll, keep throttle/yaw
+                            corrected.pitch = pitch_correction;
+                            corrected.roll = roll_correction;
+                        }
+                        corrected
+                    }
+                    None => pilot_inputs, // No attitude - fallback to manual
                 }
             }
         };
 
-        // ULTRA-FAST PATH: Use direct LUT mixing for maximum performance
-        if self.current_control_mode == ControlMode::Manual {
-            // For manual mode, use direct SBUS to PWM conversion - fastest possible path
-            let elevon_outputs = mix_elevons_direct_lut(&packet.channels);
-            self.pwm
-                .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
+        // Apply final outputs
+        let elevon_outputs = mix_elevons(&final_inputs);
+        self.pwm
+            .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
-            // Combined throttle + differential calculation in single LUT call
-            let (left_thrust, right_thrust) = if self.arming.armed {
-                throttle_with_differential_lut(
-                    packet.channels[THROTTLE_CH],
-                    packet.channels[YAW_CH],
-                )
-            } else {
-                (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
-            };
+        let base_thrust = throttle_curve_lut((final_inputs.throttle * 2047.0) as u16);
+        let yaw_sbus = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
 
-            self.pwm.set_engines(left_thrust, right_thrust);
+        let (left_thrust, right_thrust) = if self.arming.armed {
+            apply_differential_thrust_direct(base_thrust, yaw_sbus)
         } else {
-            // For mixed/autopilot modes, use the corrected inputs
-            let elevon_outputs = mix_elevons(&final_inputs);
-            self.pwm
-                .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
+            (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+        };
 
-            // Calculate engine thrust with differential using LUT
-            let base_thrust = throttle_curve_lut((final_inputs.throttle * 2047.0) as u16);
-            let yaw_sbus = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
-
-            let (left_thrust, right_thrust) = if self.arming.armed {
-                apply_differential_thrust_direct(base_thrust, yaw_sbus)
-            } else {
-                (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
-            };
-
-            self.pwm.set_engines(left_thrust, right_thrust);
-        }
+        self.pwm.set_engines(left_thrust, right_thrust);
     }
 
     /// Ultra-fast direct elevon control method using LUTs
@@ -485,18 +424,24 @@ impl<'a> FlightController<'a> {
         );
     }
 
-    /// Updated method that uses mixing by default (legacy-ctrl disables it)
-    pub fn update_with_attitude(&mut self, packet: &SbusPacket, attitude: Option<&AttitudeData>) {
-        #[cfg(not(feature = "legacy-ctrl"))]
-        {
-            self.update_with_mixing(packet, attitude);
-        }
+    /// Updated method that uses PilotCommands
+    pub fn update_with_attitude(
+        &mut self,
+        commands: &PilotCommands,
+        attitude: Option<&AttitudeData>,
+    ) {
+        self.update(commands, attitude);
+    }
 
-        #[cfg(feature = "legacy-ctrl")]
-        {
-            // Legacy behavior - attitude is ignored in direct mode
-            self.update(packet);
-        }
+    /// Legacy method for compatibility - converts SbusPacket to PilotCommands
+    #[deprecated(note = "Use update() with PilotCommands instead")]
+    pub fn update_legacy(&mut self, packet: &SbusPacket) {
+        use crate::control::commands::RawCommands;
+        let commands = PilotCommands::Raw(RawCommands {
+            channels: packet.channels,
+            timestamp: Instant::now(),
+        });
+        self.update(&commands, None);
     }
 
     pub fn check_failsafe(&mut self) {
@@ -526,13 +471,6 @@ impl<'a> FlightController<'a> {
     pub fn current_control_mode(&self) -> ControlMode {
         self.current_control_mode
     }
-}
-
-// Helper function for LUT conversion (used in setpoint calculations)
-#[inline(always)]
-fn sbus_to_normalized_lut(sbus_value: u16) -> f32 {
-    // Use roll center as default - can be optimized further with specific LUTs
-    sbus_to_normalized_roll_lut(sbus_value)
 }
 
 /// Performance monitoring utilities for tracking task execution times

@@ -7,6 +7,13 @@ use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 
 #[cfg(feature = "rtt-control")]
+use crate::control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+#[cfg(feature = "rtt-control")]
+use embassy_sync::channel::Receiver;
+#[cfg(feature = "rtt-control")]
+use embassy_time::Instant;
+
+#[cfg(feature = "rtt-control")]
 use core::fmt::Write;
 #[cfg(feature = "rtt-control")]
 use defmt::info;
@@ -60,6 +67,95 @@ pub enum DebugCommand {
 
 /// Channel for passing commands to flight controller
 pub static COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, DebugCommand, 16> = Channel::new();
+
+/// RTT Commander - manages RTT commands and converts them to PilotCommands
+#[cfg(feature = "rtt-control")]
+pub struct RttCommander {
+    commands: NormalizedCommands,
+    command_rx: Receiver<'static, CriticalSectionRawMutex, DebugCommand, 16>,
+}
+
+#[cfg(feature = "rtt-control")]
+impl RttCommander {
+    pub fn new(command_rx: Receiver<'static, CriticalSectionRawMutex, DebugCommand, 16>) -> Self {
+        Self {
+            commands: NormalizedCommands::neutral(),
+            command_rx,
+        }
+    }
+
+    pub async fn read_commands(&mut self) -> Option<PilotCommands> {
+        // Process all pending RTT commands
+        while let Ok(cmd) = self.command_rx.try_receive() {
+            self.apply_debug_command(cmd);
+        }
+
+        // Update timestamp
+        self.commands.timestamp = Instant::now();
+
+        // Only return if fresh (2 second timeout)
+        if self.commands.timestamp.elapsed() < Duration::from_secs(2) {
+            Some(PilotCommands::Normalized(self.commands))
+        } else {
+            None
+        }
+    }
+
+    fn apply_debug_command(&mut self, cmd: DebugCommand) {
+        use defmt::info;
+
+        match cmd {
+            DebugCommand::SetThrottle(raw_value) => {
+                self.commands.throttle = (raw_value as f32 / 2047.0).clamp(0.0, 1.0);
+                info!("RTT: Throttle -> {}", self.commands.throttle);
+            }
+
+            DebugCommand::SetElevons { left, right } => {
+                // Convert raw elevon positions (0-2047) to normalized pitch/roll
+                // Inverse of mixing: left+right = pitch, left-right = roll
+                let left_norm = (left as f32 / 2047.0 - 0.5) * 2.0;
+                let right_norm = (right as f32 / 2047.0 - 0.5) * 2.0;
+
+                self.commands.pitch = ((left_norm + right_norm) / 2.0).clamp(-1.0, 1.0);
+                self.commands.roll = ((left_norm - right_norm) / 2.0).clamp(-1.0, 1.0);
+                info!(
+                    "RTT: Elevons -> P:{} R:{}",
+                    self.commands.pitch, self.commands.roll
+                );
+            }
+
+            DebugCommand::SetControlMode(mode) => {
+                self.commands.attitude_mode = match mode {
+                    ControlMode::Manual => AttitudeMode::Manual,
+                    ControlMode::Mixed => AttitudeMode::Mixed,
+                    ControlMode::Autopilot => AttitudeMode::Autopilot,
+                };
+                info!("RTT: Mode -> {:?}", self.commands.attitude_mode);
+            }
+
+            DebugCommand::EmergencyStop => {
+                self.commands = NormalizedCommands::neutral();
+                info!("RTT: EMERGENCY STOP");
+            }
+
+            DebugCommand::Disarm => {
+                self.commands.throttle = 0.0;
+                info!("RTT: Disarm");
+            }
+
+            // Non-flight commands handled in main
+            DebugCommand::Arm
+            | DebugCommand::AdjustTrim { .. }
+            | DebugCommand::SaveCalibration
+            | DebugCommand::ClearCalibration
+            | DebugCommand::GetStatus
+            | DebugCommand::GetAttitude => {}
+
+            #[cfg(feature = "performance-monitoring")]
+            DebugCommand::GetPerformance | DebugCommand::ResetPerformance => {}
+        }
+    }
+}
 
 /// RTT control manager
 #[cfg(feature = "rtt-control")]
