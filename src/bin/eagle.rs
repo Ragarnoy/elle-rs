@@ -373,6 +373,8 @@ async fn main(spawner: Spawner) {
                 fc.apply_failsafe();
             }
 
+            fc.check_failsafe();
+
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
 
