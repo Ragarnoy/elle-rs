@@ -353,10 +353,8 @@ async fn main(spawner: Spawner) {
                 .await;
 
             // Process collected debug commands
-            for cmd_opt in &debug_commands[..debug_count] {
-                if let Some(cmd) = cmd_opt {
-                    process_debug_command(&mut fc, *cmd).await;
-                }
+            for cmd in debug_commands[..debug_count].iter().flatten() {
+                process_debug_command(&mut fc, *cmd).await;
             }
 
             // Apply pilot commands or failsafe
