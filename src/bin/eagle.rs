@@ -6,24 +6,34 @@
 #[cfg(feature = "defmt-logging")]
 use defmt_rtt as _;
 
-use defmt::{debug, info, warn};
+use defmt::{info, warn};
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
-    ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH,
-    CONTROL_LOOP_FREQUENCY_HZ, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS, PITCH_CH,
-    ROLL_CH, THROTTLE_CH, YAW_CH,
+    CONTROL_LOOP_FREQUENCY_HZ, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS,
 };
+
+#[cfg(not(feature = "rtt-control"))]
+use defmt::debug;
+#[cfg(not(feature = "rtt-control"))]
+use elle::config::{
+    ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH, PITCH_CH, ROLL_CH,
+    THROTTLE_CH, YAW_CH,
+};
+#[cfg(not(feature = "rtt-control"))]
+use elle::control::commands::PilotCommands;
 use elle::hardware::imu::{
-    ATTITUDE_SIGNAL, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
+    ATTITUDE_SIGNAL, AttitudeData, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
 };
 use elle::hardware::led::{LedPattern, StatusLed, colors};
 use elle::hardware::{
     pwm::{PwmOutputs, PwmPins},
-    sbus::SbusReceiver,
     sequential_flash_manager::SequentialFlashManager,
 };
+
+#[cfg(not(feature = "rtt-control"))]
+use elle::hardware::sbus::SbusReceiver;
 #[cfg(feature = "rtt-control")]
-use elle::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttControl};
+use elle::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttCommander, RttControl};
 #[cfg(feature = "rtt-control")]
 use elle::system::{SUP_RTT_READY, SUP_START_RTT};
 #[cfg(feature = "performance-monitoring")]
@@ -73,6 +83,12 @@ use embassy_sync::channel::Receiver;
 use embassy_time::{Duration, Timer};
 use panic_probe as _;
 use static_cell::StaticCell;
+
+/// Helper to validate attitude data and return only if fresh
+#[inline]
+fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
+    attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
+}
 
 bind_interrupts!(
     struct Irqs {
@@ -157,6 +173,7 @@ async fn main(spawner: Spawner) {
     let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, sm2, sm3, &mut pwm_pins);
     pwm.set_safe_positions();
 
+    #[cfg(not(feature = "rtt-control"))]
     let mut sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
     let mut fc = FlightController::new(pwm);
 
@@ -230,136 +247,162 @@ async fn main(spawner: Spawner) {
     // State for control loop
     let mut loop_counter = 0u32;
 
-    loop {
-        let loop_timer = TimingMeasurement::start();
+    #[cfg(not(feature = "rtt-control"))]
+    {
+        info!("FLIGHT MODE - SBUS Control");
 
-        // Process RTT debug commands (non-blocking)
-        #[cfg(feature = "rtt-control")]
-        if let Ok(command) = COMMAND_CHANNEL.try_receive() {
-            process_debug_command(&mut fc, command).await;
-        }
+        loop {
+            let loop_timer = TimingMeasurement::start();
 
-        // Supervisor check - monitor core health and kick watchdog
-        let _supervisor_healthy = fc.supervisor_check();
+            // Supervisor check - monitor core health and kick watchdog
+            let _supervisor_healthy = fc.supervisor_check();
 
-        // Get latest attitude data (non-blocking)
-        let attitude = ATTITUDE_SIGNAL.try_take();
+            // Get latest attitude data (non-blocking)
+            let attitude = ATTITUDE_SIGNAL.try_take();
 
-        // Read SBUS packet with timeout appropriate for ~77Hz rate
-        if let Some(packet) = sbus.read_packet().await {
-            // Print debug info less frequently
-            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10) {
-                // ~8Hz logging
-                debug!(
-                    "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
-                    packet.channels[ROLL_CH],
-                    packet.channels[PITCH_CH],
-                    packet.channels[THROTTLE_CH],
-                    packet.channels[YAW_CH],
-                    packet.channels[ATTITUDE_ENABLE_CH],
-                    packet.channels[ATTITUDE_PITCH_SETPOINT_CH],
-                    packet.channels[ATTITUDE_ROLL_SETPOINT_CH]
-                );
-            }
+            // Read commands from SBUS
+            if let Some(commands) = sbus.read_commands().await {
+                // Debug logging (~8Hz)
+                if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10)
+                    && let PilotCommands::Raw(raw) = &commands
+                {
+                    debug!(
+                        "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
+                        raw.channels[ROLL_CH],
+                        raw.channels[PITCH_CH],
+                        raw.channels[THROTTLE_CH],
+                        raw.channels[YAW_CH],
+                        raw.channels[ATTITUDE_ENABLE_CH],
+                        raw.channels[ATTITUDE_PITCH_SETPOINT_CH],
+                        raw.channels[ATTITUDE_ROLL_SETPOINT_CH]
+                    );
+                }
 
-            // Pass attitude data to flight controller
-            if let Some(att) = attitude {
-                if is_attitude_valid(&att, Duration::from_millis(IMU_MAX_AGE_MS)) {
-                    fc.update_with_attitude(&packet, Some(&att));
-                } else {
+                // Update with validated attitude (warns if stale)
+                let valid_attitude = validate_attitude(attitude);
+                if valid_attitude.is_none() && attitude.is_some() {
                     warn!("Stale attitude data, using manual control only");
-                    fc.update(&packet);
                 }
-            } else {
-                fc.update(&packet);
+                fc.update(&commands, valid_attitude.as_ref());
             }
-            // Always check failsafe
+
             fc.check_failsafe();
-        } else {
-            // No SBUS packet - still do failsafe check
-            fc.check_failsafe();
-        }
 
-        // Update performance metrics for this loop iteration
-        update_control_loop_timing(loop_timer.elapsed_us());
+            update_control_loop_timing(loop_timer.elapsed_us());
+            loop_counter = loop_counter.saturating_add(1);
 
-        // Status output and LED updates
-        loop_counter = loop_counter.saturating_add(1);
+            // Periodic status updates
+            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
+                log_performance_summary();
+            }
 
-        // Periodic status updates
-        if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
-            // Every 10 seconds - show performance summary
-            log_performance_summary();
-        }
+            if loop_counter.is_multiple_of(20000) {
+                loop_counter = 0;
 
-        if loop_counter.is_multiple_of(20000) {
-            // Every ~100 seconds at 200Hz
-            loop_counter = 0;
+                let imu_status = IMU_STATUS.read().await;
 
-            // Get IMU status
-            let imu_status = IMU_STATUS.read().await;
-
-            // Update LED based on system state
-            let led_pattern = if fc.is_armed() {
-                if fc.is_attitude_enabled() {
-                    LedPattern::Pulse(colors::CYAN) // Attitude hold active
-                } else {
-                    LedPattern::DoubleBlink(colors::GREEN) // Armed, manual
-                }
-            } else if fc.is_failsafe() {
-                LedPattern::RapidFlash(colors::ORANGE) // Failsafe
-            } else if imu_status.calibrated {
-                LedPattern::Solid(colors::GREEN) // Ready to arm
-            } else {
-                LedPattern::SlowBlink(colors::YELLOW) // Not calibrated
-            };
-
-            let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
-
-            // Get supervisor status for reporting
-            let (supervisor_enabled, core1_healthy, heartbeat_count) = fc.supervisor_status();
-
-            if fc.is_armed() {
-                info!(
-                    "ARMED | IMU Cal: S{} G{} A{} M{} | Att:{} | Supervisor: {} Core1:{} HB:{}",
-                    imu_status.calibration_status.sys,
-                    imu_status.calibration_status.gyro,
-                    imu_status.calibration_status.accel,
-                    imu_status.calibration_status.mag,
+                let led_pattern = if fc.is_armed() {
                     if fc.is_attitude_enabled() {
-                        "ON"
+                        LedPattern::Pulse(colors::CYAN)
                     } else {
-                        "OFF"
-                    },
-                    if supervisor_enabled { "ON" } else { "OFF" },
-                    if core1_healthy { "OK" } else { "FAIL" },
-                    heartbeat_count
-                );
-            } else if fc.is_failsafe() {
-                #[cfg(not(feature = "rtt-control"))]
-                info!(
-                    "FAILSAFE | IMU Errors: {} | Supervisor: {} Core1:{}",
-                    imu_status.error_count,
-                    if supervisor_enabled { "ON" } else { "OFF" },
-                    if core1_healthy { "OK" } else { "FAIL" }
-                );
-            } else {
-                #[cfg(not(feature = "rtt-control"))]
-                info!(
-                    "DISARMED | IMU: {} | Supervisor: {} Core1:{} HB:{}",
-                    if imu_status.calibrated {
-                        "Ready"
-                    } else {
-                        "Not calibrated"
-                    },
-                    if supervisor_enabled { "ON" } else { "OFF" },
-                    if core1_healthy { "OK" } else { "FAIL" },
-                    heartbeat_count
-                );
+                        LedPattern::DoubleBlink(colors::GREEN)
+                    }
+                } else if fc.is_failsafe() {
+                    LedPattern::RapidFlash(colors::ORANGE)
+                } else if imu_status.calibrated {
+                    LedPattern::Solid(colors::GREEN)
+                } else {
+                    LedPattern::Pulse(colors::CYAN)
+                };
+
+                let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
+                drop(imu_status);
             }
         }
+    }
 
-        // Yield control frequently for good responsiveness
+    #[cfg(feature = "rtt-control")]
+    {
+        info!("GROUND TEST MODE - RTT Control");
+        info!("WARNING: This mode requires programmer connection");
+
+        let mut rtt_commander = RttCommander::new(COMMAND_CHANNEL.receiver());
+        let mut last_had_commands = false;
+
+        loop {
+            let loop_timer = TimingMeasurement::start();
+
+            // Supervisor check
+            let _supervisor_healthy = fc.supervisor_check();
+
+            // Get latest attitude data
+            let attitude = ATTITUDE_SIGNAL.try_take();
+
+            // Collect debug commands (up to 16 per loop iteration)
+            let mut debug_commands: [Option<DebugCommand>; 16] = [None; 16];
+            let mut debug_count = 0;
+
+            // Read commands from RTT (processes both flight and debug commands)
+            let pilot_commands = rtt_commander
+                .read_commands(|cmd| {
+                    if debug_count < debug_commands.len() {
+                        debug_commands[debug_count] = Some(cmd);
+                        debug_count += 1;
+                    }
+                })
+                .await;
+
+            // Process collected debug commands
+            for cmd in debug_commands[..debug_count].iter().flatten() {
+                process_debug_command(&mut fc, *cmd).await;
+            }
+
+            // Apply pilot commands or failsafe
+            let has_commands = pilot_commands.is_some();
+            if let Some(commands) = pilot_commands {
+                if !last_had_commands {
+                    info!("RTT commands active");
+                }
+                fc.update(&commands, validate_attitude(attitude).as_ref());
+            } else {
+                // RTT timed out - apply failsafe
+                if last_had_commands {
+                    warn!("RTT command timeout - applying failsafe");
+                }
+                fc.apply_failsafe();
+            }
+            last_had_commands = has_commands;
+
+            // Don't check SBUS failsafe in RTT mode - RTT has its own timeout logic above
+
+            update_control_loop_timing(loop_timer.elapsed_us());
+            loop_counter = loop_counter.saturating_add(1);
+
+            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
+                log_performance_summary();
+            }
+
+            if loop_counter.is_multiple_of(2000) {
+                loop_counter = 0;
+
+                let imu_status = IMU_STATUS.read().await;
+                let led_pattern = if fc.is_armed() {
+                    LedPattern::DoubleBlink(colors::CYAN)
+                } else if fc.is_failsafe() {
+                    LedPattern::RapidFlash(colors::ORANGE)
+                } else if imu_status.calibrated {
+                    LedPattern::Solid(colors::BLUE)
+                } else {
+                    LedPattern::Pulse(colors::BLUE)
+                };
+
+                let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
+                drop(imu_status);
+            }
+
+            // Small delay for RTT command processing
+            Timer::after(Duration::from_millis(10)).await;
+        }
     }
 }
 
@@ -463,30 +506,28 @@ async fn rtt_control_task() {
     rtt_control.run().await;
 }
 
-/// Process debug commands from RTT
+/// Process debug commands from RTT (non-flight commands only)
+/// Flight commands (throttle, elevons, mode) are handled by RttCommander
 #[cfg(feature = "rtt-control")]
 async fn process_debug_command(fc: &mut FlightController<'_>, command: DebugCommand) {
     use elle::hardware::imu::IMU_STATUS;
 
     match command {
-        DebugCommand::SetThrottle(value) => {
-            info!("RTT: Set throttle to {}", value);
-        }
-
-        DebugCommand::SetElevons { left, right } => {
-            info!("RTT: Set elevons L={} R={}", left, right);
-        }
-
-        DebugCommand::SetControlMode(mode) => {
-            info!("RTT: Set control mode to {:?}", mode);
+        // Flight control commands handled by RttCommander
+        DebugCommand::SetThrottle(_)
+        | DebugCommand::SetElevons { .. }
+        | DebugCommand::SetControlMode(_) => {
+            // No-op - handled by RttCommander
         }
 
         DebugCommand::Arm => {
-            info!("RTT: Arm command received");
+            fc.arm();
+            info!("Motors ARMED via RTT");
         }
 
         DebugCommand::Disarm => {
-            info!("RTT: Disarm command received");
+            fc.disarm();
+            info!("Motors DISARMED via RTT");
         }
 
         DebugCommand::EmergencyStop => {
@@ -495,7 +536,10 @@ async fn process_debug_command(fc: &mut FlightController<'_>, command: DebugComm
         }
 
         DebugCommand::AdjustTrim { left, right } => {
-            info!("RTT: Adjust trim L={} R={}", left, right);
+            info!(
+                "RTT: Trim adjustment requested L={} R={} (not implemented)",
+                left, right
+            );
         }
 
         DebugCommand::SaveCalibration => {

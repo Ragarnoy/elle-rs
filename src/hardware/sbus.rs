@@ -1,9 +1,10 @@
 use crate::config::SBUS_BAUD;
+use crate::control::commands::{PilotCommands, RawCommands};
 use embassy_rp::Peri;
 use embassy_rp::dma::Channel;
 use embassy_rp::interrupt::typelevel::Binding;
 use embassy_rp::uart::{Async, Config, DataBits, InterruptHandler, Parity, StopBits, UartRx};
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use sbus_rs::{SbusPacket, StreamingParser};
 
 pub struct SbusReceiver<'a> {
@@ -48,5 +49,16 @@ impl<'a> SbusReceiver<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Read SBUS packet and return as raw commands (fast path)
+    #[inline(always)]
+    pub async fn read_commands(&mut self) -> Option<PilotCommands> {
+        self.read_packet().await.map(|packet| {
+            PilotCommands::Raw(RawCommands {
+                channels: packet.channels,
+                timestamp: Instant::now(),
+            })
+        })
     }
 }

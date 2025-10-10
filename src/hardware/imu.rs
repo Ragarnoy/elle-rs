@@ -1,9 +1,9 @@
 //! BNO055 IMU integration for attitude sensing with RGB LED status
 
 use crate::hardware::led::{LedPattern, colors};
-use crate::hardware::sequential_flash_manager::{
-    request_load_calibration, request_save_calibration,
-};
+use crate::hardware::sequential_flash_manager::request_load_calibration;
+#[cfg(feature = "imu-save-calibration")]
+use crate::hardware::sequential_flash_manager::request_save_calibration;
 use crate::system::CORE1_HEARTBEAT;
 #[cfg(feature = "performance-monitoring")]
 use crate::system::{TimingMeasurement, update_imu_timing};
@@ -24,7 +24,9 @@ impl TimingMeasurement {
 #[cfg(not(feature = "performance-monitoring"))]
 fn update_imu_timing(_elapsed_us: u32) {}
 use crate::error::{CalibrationError, ElleResult, ImuError};
-use bno055::{BNO055_CALIB_SIZE, BNO055AxisSign, BNO055Calibration, mint};
+#[cfg(feature = "imu-save-calibration")]
+use bno055::BNO055_CALIB_SIZE;
+use bno055::{BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
 use embassy_rp::i2c::{Blocking, I2c};
 use embassy_rp::peripherals::I2C0;
@@ -127,6 +129,7 @@ pub struct BnoImu<'a> {
     last_attitude: AttitudeData,
     error_threshold: u32,
     last_cal_log: CalibrationLevels,
+    #[cfg(feature = "imu-save-calibration")]
     last_cal_request: Option<Instant>,
     calibration_loaded: bool,
 }
@@ -144,6 +147,7 @@ impl<'a> BnoImu<'a> {
             last_attitude: AttitudeData::zero(),
             error_threshold: 10,
             last_cal_log: CalibrationLevels::new(),
+            #[cfg(feature = "imu-save-calibration")]
             last_cal_request: None,
             calibration_loaded: false,
         }
@@ -189,54 +193,58 @@ impl<'a> BnoImu<'a> {
 
     /// Request calibration save via inter-core communication
     /// Only saves calibration if imu-save-calibration feature is enabled
-    async fn save_calibration(&mut self, levels: &CalibrationLevels) -> ElleResult<()> {
+    async fn save_calibration(&mut self, _levels: &CalibrationLevels) -> ElleResult<()> {
         // Check if saving calibration is enabled
         #[cfg(not(feature = "imu-save-calibration"))]
         {
             info!("Core1: Calibration saving is disabled, skipping save");
-            return Ok(());
-        }
-
-        // Rate limiting - only request save once per 10 minutes
-        if let Some(last_request) = self.last_cal_request
-            && last_request.elapsed() < Duration::from_secs(600)
-        {
-            return Ok(());
-        }
-
-        if !levels.is_flight_ready() {
-            return Ok(());
-        }
-
-        info!("Core1: Requesting calibration save to Core0");
-
-        // Get current calibration profile
-        let mut delay = Delay;
-        let profile = match self.bno.calibration_profile(&mut delay) {
-            Ok(profile) => profile,
-            Err(e) => {
-                warn!(
-                    "Core1: Failed to get calibration profile: {:?}",
-                    Debug2Format(&e)
-                );
-                return Err(CalibrationError::ProfileFailed.into());
-            }
-        };
-
-        let profile_bytes = profile.as_bytes();
-        let mut profile_array = [0u8; BNO055_CALIB_SIZE];
-        profile_array.copy_from_slice(&profile_bytes[..BNO055_CALIB_SIZE.min(profile_bytes.len())]);
-
-        let success =
-            request_save_calibration(profile_array, *levels, Instant::now().as_ticks()).await;
-
-        if success {
-            info!("Core1: Calibration save requested successfully");
-            self.last_cal_request = Some(Instant::now());
             Ok(())
-        } else {
-            warn!("Core1: Calibration save request failed");
-            Err(CalibrationError::SaveFailed.into())
+        }
+
+        #[cfg(feature = "imu-save-calibration")]
+        {
+            // Rate limiting - only request save once per 10 minutes
+            if let Some(last_request) = self.last_cal_request
+                && last_request.elapsed() < Duration::from_secs(600)
+            {
+                return Ok(());
+            }
+
+            if !_levels.is_flight_ready() {
+                return Ok(());
+            }
+
+            info!("Core1: Requesting calibration save to Core0");
+
+            // Get current calibration profile
+            let mut delay = Delay;
+            let profile = match self.bno.calibration_profile(&mut delay) {
+                Ok(profile) => profile,
+                Err(e) => {
+                    warn!(
+                        "Core1: Failed to get calibration profile: {:?}",
+                        Debug2Format(&e)
+                    );
+                    return Err(CalibrationError::ProfileFailed.into());
+                }
+            };
+
+            let profile_array: [u8; BNO055_CALIB_SIZE] = profile
+                .as_bytes()
+                .try_into()
+                .map_err(|_| CalibrationError::ProfileFailed)?;
+
+            let success =
+                request_save_calibration(profile_array, *_levels, Instant::now().as_ticks()).await;
+
+            if success {
+                info!("Core1: Calibration save requested successfully");
+                self.last_cal_request = Some(Instant::now());
+                Ok(())
+            } else {
+                warn!("Core1: Calibration save request failed");
+                Err(CalibrationError::SaveFailed.into())
+            }
         }
     }
 
@@ -537,7 +545,7 @@ impl<'a> BnoImu<'a> {
                     }
 
                     // Check calibration periodically
-                    if last_cal_check.elapsed() > Duration::from_secs(60) {
+                    if last_cal_check.elapsed() > Duration::from_secs(90) {
                         info!("Core1: Checking IMU calibration status...");
                         let _ = self.update_calibration_status().await;
 

@@ -14,6 +14,7 @@ halt_afterwards = false
 [default.rtt]
 enabled = true
 timeout = 3000
+log_enabled = true
 log_path = "./logs"
 up_channels = [
     { channel = 0, mode = "NoBlockSkip", format = "Defmt", show_location = true },
@@ -46,6 +47,7 @@ halt_afterwards = false
 [debug.rtt]
 enabled = true
 timeout = 5000
+log_enabled = true
 log_path = "./logs"
 up_channels = [
     { channel = 0, mode = "NoBlockSkip", format = "Defmt", show_location = true },
