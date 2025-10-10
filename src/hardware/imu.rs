@@ -229,10 +229,10 @@ impl<'a> BnoImu<'a> {
                 }
             };
 
-            let profile_bytes = profile.as_bytes();
-            let mut profile_array = [0u8; BNO055_CALIB_SIZE];
-            profile_array
-                .copy_from_slice(&profile_bytes[..BNO055_CALIB_SIZE.min(profile_bytes.len())]);
+            let profile_array: [u8; BNO055_CALIB_SIZE] = profile
+                .as_bytes()
+                .try_into()
+                .map_err(|_| CalibrationError::ProfileFailed)?;
 
             let success =
                 request_save_calibration(profile_array, *_levels, Instant::now().as_ticks()).await;

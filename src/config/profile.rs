@@ -79,7 +79,8 @@ impl StoredCalibration {
         let mut result = [0u8; BNO055_CALIB_SIZE];
         let profile_u8_slice =
             unsafe { core::slice::from_raw_parts(self.profile_data.as_ptr() as *const u8, 24) };
-        result.copy_from_slice(&profile_u8_slice[..BNO055_CALIB_SIZE]);
+        let copy_len = BNO055_CALIB_SIZE.min(profile_u8_slice.len());
+        result[..copy_len].copy_from_slice(&profile_u8_slice[..copy_len]);
         result
     }
 
