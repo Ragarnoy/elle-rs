@@ -327,6 +327,7 @@ async fn main(spawner: Spawner) {
         info!("WARNING: This mode requires programmer connection");
 
         let mut rtt_commander = RttCommander::new(COMMAND_CHANNEL.receiver());
+        let mut last_had_commands = false;
 
         loop {
             let loop_timer = TimingMeasurement::start();
@@ -359,21 +360,22 @@ async fn main(spawner: Spawner) {
             }
 
             // Apply pilot commands or failsafe
+            let has_commands = pilot_commands.is_some();
             if let Some(commands) = pilot_commands {
-                // Log at ~1Hz to avoid spam
-                if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ) {
+                if !last_had_commands {
                     info!("RTT commands active");
                 }
                 fc.update(&commands, validate_attitude(attitude).as_ref());
             } else {
                 // RTT timed out - apply failsafe
-                if loop_counter.is_multiple_of(100) {
-                    warn!("RTT command timeout");
+                if last_had_commands {
+                    warn!("RTT command timeout - applying failsafe");
                 }
                 fc.apply_failsafe();
             }
+            last_had_commands = has_commands;
 
-            fc.check_failsafe();
+            // Don't check SBUS failsafe in RTT mode - RTT has its own timeout logic above
 
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
@@ -516,10 +518,18 @@ async fn process_debug_command(fc: &mut FlightController<'_>, command: DebugComm
         // Flight control commands handled by RttCommander
         DebugCommand::SetThrottle(_)
         | DebugCommand::SetElevons { .. }
-        | DebugCommand::SetControlMode(_)
-        | DebugCommand::Arm
-        | DebugCommand::Disarm => {
+        | DebugCommand::SetControlMode(_) => {
             // No-op - handled by RttCommander
+        }
+
+        DebugCommand::Arm => {
+            fc.arm();
+            info!("Motors ARMED via RTT");
+        }
+
+        DebugCommand::Disarm => {
+            fc.disarm();
+            info!("Motors DISARMED via RTT");
         }
 
         DebugCommand::EmergencyStop => {

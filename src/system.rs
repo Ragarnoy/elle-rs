@@ -471,6 +471,16 @@ impl<'a> FlightController<'a> {
     pub fn current_control_mode(&self) -> ControlMode {
         self.current_control_mode
     }
+
+    /// Manual arm (for RTT/debug control)
+    pub fn arm(&mut self) {
+        self.arming.arm();
+    }
+
+    /// Manual disarm (for RTT/debug control)
+    pub fn disarm(&mut self) {
+        self.arming.disarm();
+    }
 }
 
 /// Performance monitoring utilities for tracking task execution times

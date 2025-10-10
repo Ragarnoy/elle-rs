@@ -33,4 +33,15 @@ impl ArmingState {
     pub fn signal_restored(&mut self) {
         self.failsafe_active = false;
     }
+
+    /// Manual arm (for RTT/debug control)
+    pub fn arm(&mut self) {
+        self.armed = true;
+        self.failsafe_active = false;
+    }
+
+    /// Manual disarm (for RTT/debug control)
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
 }

@@ -85,13 +85,13 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
     let yaw = inputs.yaw.clamp(-1.0, 1.0);
 
     // Elevon mixing: each elevon responds to both pitch and roll
-    let left_elevon_normalized =
-        ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN) + (yaw * YAW_TO_ELEVON_GAIN))
-            .clamp(-1.0, 1.0);
+    let left_elevon_normalized = ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN)
+        + (yaw * YAW_TO_ELEVON_GAIN))
+        .clamp(-1.0, 1.0);
 
-    let right_elevon_normalized =
-        ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN) - (yaw * YAW_TO_ELEVON_GAIN))
-            .clamp(-1.0, 1.0);
+    let right_elevon_normalized = ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN)
+        - (yaw * YAW_TO_ELEVON_GAIN))
+        .clamp(-1.0, 1.0);
 
     // Convert to servo pulse widths using LUT
     let left_us = normalized_to_servo_us(left_elevon_normalized);

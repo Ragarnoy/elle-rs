@@ -32,10 +32,10 @@ use rtt_target as _;
 #[derive(Debug, Clone, Copy, Format)]
 pub enum DebugCommand {
     // Direct control commands
-    SetThrottle(u16), // 0-2047 SBUS value
+    SetThrottle(u8), // 0-100 percentage
     SetElevons {
-        left: u16,
-        right: u16,
+        left: i8,  // -100 to 100
+        right: i8, // -100 to 100
     },
     SetControlMode(ControlMode),
 
@@ -99,8 +99,9 @@ impl RttCommander {
             }
         }
 
-        // Only return if fresh (2 second timeout)
-        if self.commands.timestamp.elapsed() < Duration::from_secs(2) {
+        // Only return if fresh (30 second timeout for manual RTT control)
+        // Longer timeout since RTT commands are manual and don't need continuous updates
+        if self.commands.timestamp.elapsed() < Duration::from_secs(30) {
             Some(PilotCommands::Normalized(self.commands))
         } else {
             None
@@ -114,7 +115,6 @@ impl RttCommander {
                 | DebugCommand::SetElevons { .. }
                 | DebugCommand::SetControlMode(_)
                 | DebugCommand::EmergencyStop
-                | DebugCommand::Disarm
         )
     }
 
@@ -122,22 +122,23 @@ impl RttCommander {
         use defmt::info;
 
         match cmd {
-            DebugCommand::SetThrottle(raw_value) => {
-                self.commands.throttle = (raw_value as f32 / 2047.0).clamp(0.0, 1.0);
-                info!("RTT: Throttle -> {}", self.commands.throttle);
+            DebugCommand::SetThrottle(percentage) => {
+                self.commands.throttle = (percentage.min(100) as f32 / 100.0).clamp(0.0, 1.0);
+                info!("RTT: Throttle -> {}%", percentage);
             }
 
             DebugCommand::SetElevons { left, right } => {
-                // Convert raw elevon positions (0-2047) to normalized pitch/roll
-                // Inverse of mixing: left+right = pitch, left-right = roll
-                let left_norm = (left as f32 / 2047.0 - 0.5) * 2.0;
-                let right_norm = (right as f32 / 2047.0 - 0.5) * 2.0;
+                // Convert elevon positions (-100 to 100) to normalized values
+                // Elevon mixing: left elevon = pitch + roll, right elevon = pitch - roll
+                // So: pitch = (left + right) / 2, roll = (left - right) / 2
+                let left_norm = (left.clamp(-100, 100) as f32 / 100.0).clamp(-1.0, 1.0);
+                let right_norm = (right.clamp(-100, 100) as f32 / 100.0).clamp(-1.0, 1.0);
 
                 self.commands.pitch = ((left_norm + right_norm) / 2.0).clamp(-1.0, 1.0);
                 self.commands.roll = ((left_norm - right_norm) / 2.0).clamp(-1.0, 1.0);
                 info!(
-                    "RTT: Elevons -> P:{} R:{}",
-                    self.commands.pitch, self.commands.roll
+                    "RTT: Elevons L:{} R:{} -> P:{} R:{}",
+                    left, right, self.commands.pitch, self.commands.roll
                 );
             }
 
@@ -155,13 +156,9 @@ impl RttCommander {
                 info!("RTT: EMERGENCY STOP");
             }
 
-            DebugCommand::Disarm => {
-                self.commands.throttle = 0.0;
-                info!("RTT: Disarm");
-            }
-
             // Non-flight commands handled in main
             DebugCommand::Arm
+            | DebugCommand::Disarm
             | DebugCommand::AdjustTrim { .. }
             | DebugCommand::SaveCalibration
             | DebugCommand::ClearCalibration
@@ -226,13 +223,16 @@ impl RttControl {
         match cmd {
             "throttle" | "t" => parts
                 .next()
-                .and_then(|v| v.parse::<u16>().ok())
-                .map(|val| DebugCommand::SetThrottle(val.min(2047))),
+                .and_then(|v| v.parse::<u8>().ok())
+                .map(|val| DebugCommand::SetThrottle(val.min(100))),
 
             "elevon" | "e" => {
-                let left = parts.next().and_then(|v| v.parse().ok())?;
-                let right = parts.next().and_then(|v| v.parse().ok())?;
-                Some(DebugCommand::SetElevons { left, right })
+                let left = parts.next().and_then(|v| v.parse::<i8>().ok())?;
+                let right = parts.next().and_then(|v| v.parse::<i8>().ok())?;
+                Some(DebugCommand::SetElevons {
+                    left: left.clamp(-100, 100),
+                    right: right.clamp(-100, 100),
+                })
             }
 
             "mode" | "m" => parts.next().and_then(|m| match m {
@@ -274,10 +274,13 @@ impl RttControl {
 
     fn print_help(&mut self) {
         let _ = writeln!(self.up_channel, "RTT Debug Commands:");
-        let _ = writeln!(self.up_channel, "  throttle/t <0-2047>     - Set throttle");
         let _ = writeln!(
             self.up_channel,
-            "  elevon/e <l> <r>        - Set elevon positions"
+            "  throttle/t <0-100>      - Set throttle %"
+        );
+        let _ = writeln!(
+            self.up_channel,
+            "  elevon/e <l> <r>        - Set elevons (-100 to 100)"
         );
         let _ = writeln!(
             self.up_channel,
@@ -375,7 +378,7 @@ impl RttControl {
         if let Some(command) = self.parse_command(cmd_str) {
             match self.command_sender.try_send(command) {
                 Ok(()) => {
-                    self.send_status("OK");
+                    let _ = writeln!(self.up_channel, "{} - OK", cmd_str);
                     true
                 }
                 Err(_) => {

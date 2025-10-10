@@ -537,7 +537,7 @@ impl<'a> BnoImu<'a> {
                     }
 
                     // Check calibration periodically
-                    if last_cal_check.elapsed() > Duration::from_secs(60) {
+                    if last_cal_check.elapsed() > Duration::from_secs(90) {
                         info!("Core1: Checking IMU calibration status...");
                         let _ = self.update_calibration_status().await;
 
