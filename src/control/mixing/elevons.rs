@@ -107,13 +107,13 @@ pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
     let (roll, pitch, yaw, _throttle) = channels_to_normalized_lut(channels);
 
     // Direct mixing calculations
-    let left_elevon_normalized =
-        ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN) + (yaw * YAW_TO_ELEVON_GAIN))
-            .clamp(-1.0, 1.0);
+    let left_elevon_normalized = ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN)
+        + (yaw * YAW_TO_ELEVON_GAIN))
+        .clamp(-1.0, 1.0);
 
-    let right_elevon_normalized =
-        ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN) - (yaw * YAW_TO_ELEVON_GAIN))
-            .clamp(-1.0, 1.0);
+    let right_elevon_normalized = ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN)
+        - (yaw * YAW_TO_ELEVON_GAIN))
+        .clamp(-1.0, 1.0);
 
     // Convert back to SBUS equivalent and use LUT
     let left_sbus = ((left_elevon_normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
