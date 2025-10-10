@@ -75,6 +75,7 @@ use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
+#[cfg(not(feature = "rtt-control"))]
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
@@ -94,6 +95,7 @@ bind_interrupts!(
     struct Irqs {
         PIO0_IRQ_0 => PioIrqHandler<PIO0>;
         PIO1_IRQ_0 => PioIrqHandler<PIO1>;
+        #[cfg(not(feature = "rtt-control"))]
         UART0_IRQ => UartIrqHandler<UART0>;
     }
 );
@@ -114,7 +116,7 @@ async fn main(spawner: Spawner) {
     let flash = embassy_rp::flash::Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH1);
     // Small delay to let debug probe settle
     Timer::after_millis(10).await;
-    spawner.spawn(flash_manager_task(flash)).unwrap();
+    spawner.spawn(flash_manager_task(flash).unwrap());
 
     // Setup WS2812B LED on PIO1 (separate from PWM on PIO0)
     info!("Core0: Setting up status LED");
@@ -124,9 +126,7 @@ async fn main(spawner: Spawner) {
         ..
     } = Pio::new(p.PIO1, Irqs);
 
-    spawner
-        .spawn(led_task(led_common, led_sm0, p.DMA_CH2, p.PIN_10))
-        .unwrap();
+    spawner.spawn(led_task(led_common, led_sm0, p.DMA_CH2, p.PIN_10).unwrap());
 
     #[cfg(feature = "rtt-control")]
     {
@@ -136,7 +136,7 @@ async fn main(spawner: Spawner) {
 
     // Start supervisor to coordinate task startup
     info!("Core0: Spawning Supervisor");
-    spawner.spawn(supervisor_task()).unwrap();
+    spawner.spawn(supervisor_task().unwrap());
 
     info!("Core0: Spawning Core1 for IMU");
     // Spawn IMU task on core1
@@ -146,9 +146,7 @@ async fn main(spawner: Spawner) {
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
-                spawner
-                    .spawn(imu_task(spawner, p.I2C0, p.PIN_8, p.PIN_9))
-                    .unwrap();
+                spawner.spawn(imu_task(spawner, p.I2C0, p.PIN_8, p.PIN_9).unwrap());
             });
         },
     );
@@ -260,8 +258,9 @@ async fn main(spawner: Spawner) {
             // Get latest attitude data (non-blocking)
             let attitude = ATTITUDE_SIGNAL.try_take();
 
-            // Read commands from SBUS
-            if let Some(commands) = sbus.read_commands().await {
+            // DMA-based non-blocking read: Returns immediately via 1μs timeout
+            // DMA transfers bytes in hardware with zero CPU overhead
+            if let Some(commands) = sbus.try_read_commands().await {
                 // Debug logging (~8Hz)
                 if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10)
                     && let PilotCommands::Raw(raw) = &commands
@@ -286,6 +285,7 @@ async fn main(spawner: Spawner) {
                 fc.update(&commands, valid_attitude.as_ref());
             }
 
+            // Check for failsafe (triggers after 300ms of no valid packets)
             fc.check_failsafe();
 
             update_control_loop_timing(loop_timer.elapsed_us());
