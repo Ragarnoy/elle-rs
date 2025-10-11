@@ -9,7 +9,8 @@ use defmt_rtt as _;
 use defmt::{info, warn};
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
-    CONTROL_LOOP_FREQUENCY_HZ, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS,
+    CONTROL_LOOP_FREQUENCY_HZ, CONTROL_LOOP_PERIOD_MS, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ,
+    IMU_MAX_AGE_MS,
 };
 
 #[cfg(not(feature = "rtt-control"))]
@@ -31,7 +32,7 @@ use elle::hardware::{
 };
 
 #[cfg(not(feature = "rtt-control"))]
-use elle::hardware::sbus::SbusReceiver;
+use elle::hardware::sbus::{SBUS_COMMANDS, SbusReceiver, sbus_receiver_task};
 #[cfg(feature = "rtt-control")]
 use elle::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttCommander, RttControl};
 #[cfg(feature = "rtt-control")]
@@ -81,7 +82,7 @@ use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Ticker, Timer};
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -131,7 +132,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "rtt-control")]
     {
         info!("Core0: Starting RTT control interface");
-        spawner.spawn(rtt_control_task()).unwrap();
+        spawner.spawn(rtt_control_task().unwrap());
     }
 
     // Start supervisor to coordinate task startup
@@ -172,7 +173,11 @@ async fn main(spawner: Spawner) {
     pwm.set_safe_positions();
 
     #[cfg(not(feature = "rtt-control"))]
-    let mut sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
+    {
+        info!("Core0: Starting SBUS receiver task");
+        let sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
+        spawner.spawn(sbus_receiver_task(sbus).unwrap());
+    }
     let mut fc = FlightController::new(pwm);
 
     // Wait for IMU to be ready
@@ -249,7 +254,14 @@ async fn main(spawner: Spawner) {
     {
         info!("FLIGHT MODE - SBUS Control");
 
+        // Create ticker for precise 13ms periods (77Hz)
+        let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
+
+        // Track last commands for consistent update rate
+        let mut last_commands: Option<PilotCommands> = None;
+
         loop {
+            ticker.next().await; // Wait for next tick BEFORE processing
             let loop_timer = TimingMeasurement::start();
 
             // Supervisor check - monitor core health and kick watchdog
@@ -258,9 +270,9 @@ async fn main(spawner: Spawner) {
             // Get latest attitude data (non-blocking)
             let attitude = ATTITUDE_SIGNAL.try_take();
 
-            // DMA-based non-blocking read: Returns immediately via 1μs timeout
-            // DMA transfers bytes in hardware with zero CPU overhead
-            if let Some(commands) = sbus.try_read_commands().await {
+            // Check for latest SBUS commands from dedicated receiver task (non-blocking)
+            // The SBUS task runs independently and updates this signal when packets arrive
+            if let Some(commands) = SBUS_COMMANDS.try_take() {
                 // Debug logging (~8Hz)
                 if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10)
                     && let PilotCommands::Raw(raw) = &commands
@@ -277,12 +289,18 @@ async fn main(spawner: Spawner) {
                     );
                 }
 
+                last_commands = Some(commands);
+            }
+
+            // Always update flight controller at 13ms intervals for consistent PID timing
+            // Use last known commands if no new packet arrived this iteration
+            if let Some(commands) = &last_commands {
                 // Update with validated attitude (warns if stale)
                 let valid_attitude = validate_attitude(attitude);
                 if valid_attitude.is_none() && attitude.is_some() {
                     warn!("Stale attitude data, using manual control only");
                 }
-                fc.update(&commands, valid_attitude.as_ref());
+                fc.update(commands, valid_attitude.as_ref());
             }
 
             // Check for failsafe (triggers after 300ms of no valid packets)
