@@ -7,23 +7,14 @@ use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 
 #[cfg(feature = "rtt-control")]
-use crate::control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
-#[cfg(feature = "rtt-control")]
-use embassy_sync::channel::Receiver;
-#[cfg(feature = "rtt-control")]
-use embassy_time::Instant;
-
-#[cfg(feature = "rtt-control")]
-use core::fmt::Write;
-#[cfg(feature = "rtt-control")]
-use defmt::info;
-#[cfg(feature = "rtt-control")]
-use embassy_sync::channel::Sender;
-
-#[cfg(feature = "rtt-control")]
-use rtt_target::ChannelMode::NoBlockSkip;
-#[cfg(feature = "rtt-control")]
-use rtt_target::{DownChannel, UpChannel, rtt_init, set_defmt_channel};
+use {
+    crate::control::commands::{AttitudeMode, NormalizedCommands, PilotCommands},
+    core::fmt::Write,
+    defmt::info,
+    embassy_sync::channel::{Receiver, Sender},
+    embassy_time::Instant,
+    rtt_target::{ChannelMode::NoBlockSkip, DownChannel, UpChannel, rtt_init, set_defmt_channel},
+};
 
 #[cfg(feature = "rtt-control")]
 use rtt_target as _;
