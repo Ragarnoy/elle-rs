@@ -9,8 +9,7 @@ use defmt_rtt as _;
 use defmt::{info, warn};
 use elle::config::profile::FLASH_SIZE;
 use elle::config::{
-    CONTROL_LOOP_FREQUENCY_HZ, CONTROL_LOOP_PERIOD_MS, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ,
-    IMU_MAX_AGE_MS,
+    CONTROL_LOOP_FREQUENCY_HZ, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS,
 };
 
 #[cfg(not(feature = "rtt-control"))]
@@ -74,7 +73,7 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
+use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 #[cfg(not(feature = "rtt-control"))]
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
@@ -82,7 +81,7 @@ use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Timer};
 use panic_probe as _;
 use static_cell::StaticCell;
 
