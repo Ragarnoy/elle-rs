@@ -1,0 +1,30 @@
+[package]
+name = "elle-eagle"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+elle-system = { workspace = true }
+
+embassy-executor = { workspace = true }
+embassy-rp = { workspace = true }
+
+defmt = { workspace = true }
+defmt-rtt = { workspace = true, optional = true }
+cortex-m-rt = { workspace = true }
+panic-probe = { workspace = true }
+
+[features]
+default = ["imu-save-calibration", "defmt-logging"]
+legacy-ctrl = ["elle-system/legacy-ctrl"]
+imu-save-calibration = ["elle-system/imu-save-calibration"]
+performance-monitoring = ["elle-system/performance-monitoring"]
+defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
+rtt-control = ["elle-system/rtt-control"]
+error-strings = ["elle-system/error-strings"]
+
+[[bin]]
+name = "eagle"
+path = "src/main.rs"
+test = false
+bench = false

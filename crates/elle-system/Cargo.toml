@@ -1,0 +1,32 @@
+[package]
+name = "elle-system"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+elle-error = { workspace = true }
+elle-config = { workspace = true }
+elle-hardware = { workspace = true }
+elle-control = { workspace = true }
+
+embassy-executor = { workspace = true }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-rp = { workspace = true }
+
+defmt = { workspace = true }
+defmt-rtt = { workspace = true, optional = true }
+rtt-target = { workspace = true, optional = true }
+cortex-m-rt = { workspace = true }
+
+[features]
+imu-save-calibration = ["elle-hardware/imu-save-calibration"]  # Pass through to hardware
+legacy-ctrl = ["elle-control/legacy-ctrl"]  # Pass through to control
+performance-monitoring = []  # Enable detailed performance monitoring
+defmt-logging = ["defmt-rtt"]  # Use defmt-rtt for logging
+rtt-control = ["rtt-target"]  # Interactive RTT control interface
+error-strings = ["elle-error/error-strings"]  # Pass through to error
+
+[lib]
+test = false
+bench = false

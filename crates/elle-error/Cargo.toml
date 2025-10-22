@@ -1,0 +1,15 @@
+[package]
+name = "elle-error"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+defmt = { workspace = true }
+
+[features]
+error-strings = []  # Include human-readable error descriptions
+
+[lib]
+test = false
+bench = false
