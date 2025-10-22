@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 elle-error = { workspace = true }
 elle-config = { workspace = true }
+elle-control = { workspace = true }
 
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
@@ -26,6 +27,7 @@ mint = { workspace = true }
 
 [features]
 imu-save-calibration = []  # Enable saving IMU calibration to flash
+performance-monitoring = []
 
 [lib]
 test = false

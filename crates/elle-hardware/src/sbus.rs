@@ -1,5 +1,5 @@
 use elle_config::SBUS_BAUD;
-use crate::control::commands::{PilotCommands, RawCommands};
+use elle_control::commands::{PilotCommands, RawCommands};
 use embassy_futures::select::{Either, select};
 use embassy_rp::Peri;
 use embassy_rp::dma::Channel;

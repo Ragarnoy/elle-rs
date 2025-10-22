@@ -8,8 +8,8 @@ pub mod sbus;
 pub mod sequential_flash_manager;
 
 // Re-export commonly used types
-pub use imu::{AttitudeData, BnoImu, ImuStatus};
+pub use imu::{AttitudeData, BnoImu, ImuStatus, CORE1_HEARTBEAT};
 pub use led::LedPattern;
-pub use pwm::PwmController;
+pub use pwm::{PwmOutputs, PwmPins};
 pub use sbus::SbusReceiver;
 pub use sequential_flash_manager::SequentialFlashManager;

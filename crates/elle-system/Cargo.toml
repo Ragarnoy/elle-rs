@@ -8,6 +8,7 @@ elle-error = { workspace = true }
 elle-config = { workspace = true }
 elle-hardware = { workspace = true }
 elle-control = { workspace = true }
+free-flight-stabilization = { workspace = true }
 
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
