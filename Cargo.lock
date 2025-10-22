@@ -350,28 +350,93 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
-name = "elle"
+name = "elle-config"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.0.1",
+ "elle-error",
+]
+
+[[package]]
+name = "elle-control"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.0.1",
+ "elle-config",
+ "elle-error",
+ "embassy-time",
+ "free-flight-stabilization",
+ "libm",
+]
+
+[[package]]
+name = "elle-eagle"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+ "defmt 1.0.1",
+ "defmt-rtt",
+ "elle-config",
+ "elle-control",
+ "elle-hardware",
+ "elle-system",
+ "embassy-executor",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "panic-probe",
+ "static_cell",
+]
+
+[[package]]
+name = "elle-error"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.0.1",
+ "thiserror",
+]
+
+[[package]]
+name = "elle-hardware"
 version = "0.1.0"
 dependencies = [
  "bno055",
  "cortex-m-rt",
  "defmt 1.0.1",
+ "elle-config",
+ "elle-control",
+ "elle-error",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "libm",
+ "mint",
+ "sbus-rs",
+ "sequential-storage",
+ "smart-leds",
+ "static_cell",
+]
+
+[[package]]
+name = "elle-system"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.0.1",
  "defmt-rtt",
+ "elle-config",
+ "elle-control",
+ "elle-error",
+ "elle-hardware",
  "embassy-executor",
  "embassy-futures",
  "embassy-rp",
  "embassy-sync",
  "embassy-time",
  "free-flight-stabilization",
- "libm",
- "mint",
- "panic-probe",
  "rtt-target",
  "sbus-rs",
- "sequential-storage",
- "smart-leds",
- "static_cell",
- "thiserror",
 ]
 
 [[package]]

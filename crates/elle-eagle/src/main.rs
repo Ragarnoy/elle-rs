@@ -9,7 +9,8 @@ use defmt_rtt as _;
 use defmt::{info, warn};
 use elle_config::profile::FLASH_SIZE;
 use elle_config::{
-    CONTROL_LOOP_FREQUENCY_HZ, CONTROL_LOOP_PERIOD_MS, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ, IMU_MAX_AGE_MS,
+    CONTROL_LOOP_FREQUENCY_HZ, CONTROL_LOOP_PERIOD_MS, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ,
+    IMU_MAX_AGE_MS,
 };
 
 #[cfg(not(feature = "rtt-control"))]
@@ -73,7 +74,7 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1};
+use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 #[cfg(not(feature = "rtt-control"))]
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
@@ -113,7 +114,7 @@ async fn main(spawner: Spawner) {
 
     info!("Core0: Starting flash manager");
     // Create flash manager on Core 0 before spawning Core 1
-    let flash = embassy_rp::flash::Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH1);
+    let flash = embassy_rp::flash::Flash::<_, Async, { FLASH_SIZE }>::new(p.FLASH, p.DMA_CH1);
     // Small delay to let debug probe settle
     Timer::after_millis(10).await;
     spawner.spawn(flash_manager_task(flash).unwrap());
@@ -147,7 +148,7 @@ async fn main(spawner: Spawner) {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
                 spawner.spawn(imu_task(spawner, p.I2C0, p.PIN_8, p.PIN_9).unwrap());
-            });
+            })
         },
     );
 

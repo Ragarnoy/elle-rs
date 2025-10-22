@@ -4,10 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+elle-config = { workspace = true }
+elle-hardware = { workspace = true }
+elle-control = { workspace = true }
 elle-system = { workspace = true }
 
 embassy-executor = { workspace = true }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
 embassy-rp = { workspace = true }
+
+static_cell = { workspace = true }
 
 defmt = { workspace = true }
 defmt-rtt = { workspace = true, optional = true }
