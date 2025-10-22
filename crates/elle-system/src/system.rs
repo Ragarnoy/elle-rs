@@ -1,7 +1,7 @@
 use elle_config::*;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
 use elle_control::{arming::ArmingState, pid::AttitudeController};
-use elle_hardware::imu::AttitudeData;
+use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT};
 use elle_hardware::pwm::PwmOutputs;
 use defmt::{info, warn};
 use embassy_rp::watchdog::Watchdog;
@@ -63,9 +63,6 @@ impl CoreHealth {
         }
     }
 }
-
-/// Global signal for Core 1 (IMU) heartbeat
-pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub struct FlightController<'a> {
     pwm: PwmOutputs<'a>,

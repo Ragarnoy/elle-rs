@@ -1,17 +1,14 @@
 //! BNO055 IMU integration for attitude sensing with RGB LED status
 
-use crate::hardware::led::{LedPattern, colors};
-use crate::hardware::sequential_flash_manager::request_load_calibration;
+use crate::led::{LedPattern, colors};
+use crate::sequential_flash_manager::request_load_calibration;
 #[cfg(feature = "imu-save-calibration")]
-use crate::hardware::sequential_flash_manager::request_save_calibration;
-use crate::system::CORE1_HEARTBEAT;
-#[cfg(feature = "performance-monitoring")]
-use crate::system::{TimingMeasurement, update_imu_timing};
+use crate::sequential_flash_manager::request_save_calibration;
 
-#[cfg(not(feature = "performance-monitoring"))]
+// Dummy implementations for performance monitoring
+// These are no-ops to avoid circular dependency with system crate
 struct TimingMeasurement;
 
-#[cfg(not(feature = "performance-monitoring"))]
 impl TimingMeasurement {
     fn start() -> Self {
         Self
@@ -21,7 +18,6 @@ impl TimingMeasurement {
     }
 }
 
-#[cfg(not(feature = "performance-monitoring"))]
 fn update_imu_timing(_elapsed_us: u32) {}
 use elle_error::{CalibrationError, ElleResult, ImuError};
 #[cfg(feature = "imu-save-calibration")]
@@ -38,6 +34,9 @@ use embassy_time::{Delay, Duration, Instant, Timer};
 
 /// Shared attitude data between cores/tasks
 pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
+
+/// Global signal for Core 1 (IMU) heartbeat
+pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Mutex-protected IMU status for safe access
 pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
