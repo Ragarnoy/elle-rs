@@ -1,5 +1,5 @@
-use elle_config::*;
 use defmt::Format;
+use elle_config::*;
 use embassy_time::{Duration, Instant};
 
 // Import LUT functions and channel indices for decoding

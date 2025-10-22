@@ -8,9 +8,9 @@ use embassy_time::{Duration, Timer};
 
 #[cfg(feature = "rtt-control")]
 use {
-    elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands},
     core::fmt::Write,
     defmt::info,
+    elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands},
     embassy_sync::channel::{Receiver, Sender},
     embassy_time::Instant,
     rtt_target::{ChannelMode::NoBlockSkip, DownChannel, UpChannel, rtt_init, set_defmt_channel},

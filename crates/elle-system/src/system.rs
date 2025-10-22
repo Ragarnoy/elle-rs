@@ -1,9 +1,9 @@
+use defmt::{info, warn};
 use elle_config::*;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
 use elle_control::{arming::ArmingState, pid::AttitudeController};
 use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT};
 use elle_hardware::pwm::PwmOutputs;
-use defmt::{info, warn};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;

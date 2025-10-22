@@ -1,5 +1,5 @@
-use elle_config::*;
 use defmt::Format;
+use elle_config::*;
 
 /// Convert SBUS values to normalized control inputs using ultra-fast LUT
 #[inline(always)]

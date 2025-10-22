@@ -107,7 +107,10 @@ impl StoredCalibration {
 
     pub fn as_u32_slice(&self) -> &[u32] {
         unsafe {
-            core::slice::from_raw_parts(self as *const Self as *const u32, core::mem::size_of::<Self>() / 4)
+            core::slice::from_raw_parts(
+                self as *const Self as *const u32,
+                core::mem::size_of::<Self>() / 4,
+            )
         }
     }
 }
