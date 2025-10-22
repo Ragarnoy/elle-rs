@@ -7,6 +7,6 @@ pub mod pid;
 pub mod throttle;
 
 // Re-export commonly used types
-pub use arming::ArmingManager;
+pub use arming::ArmingState;
 pub use commands::{NormalizedCommands, RawCommands};
 pub use pid::AttitudeController;
