@@ -1,5 +1,5 @@
-use elle_config::*;
 use crate::throttle::sbus_to_pulse_us;
+use elle_config::*;
 
 #[derive(Debug, Default)]
 pub struct ArmingState {

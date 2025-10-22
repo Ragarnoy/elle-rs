@@ -1,8 +1,8 @@
-use elle_config::profile::{FlashRequest, FlashResponse};
-use elle_config::CalibrationLevels;
-use elle_error::{ElleResult, FlashError};
 use bno055::BNO055_CALIB_SIZE;
 use defmt::*;
+use elle_config::CalibrationLevels;
+use elle_config::profile::{FlashRequest, FlashResponse};
+use elle_error::{ElleResult, FlashError};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;

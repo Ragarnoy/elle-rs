@@ -19,11 +19,11 @@ impl TimingMeasurement {
 }
 
 fn update_imu_timing(_elapsed_us: u32) {}
-use elle_error::{CalibrationError, ElleResult, ImuError};
 #[cfg(feature = "imu-save-calibration")]
 use bno055::BNO055_CALIB_SIZE;
 use bno055::{BNO055AxisSign, BNO055Calibration, mint};
 use defmt::*;
+use elle_error::{CalibrationError, ElleResult, ImuError};
 use embassy_rp::i2c::{Blocking, I2c};
 use embassy_rp::peripherals::I2C0;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -160,7 +160,10 @@ impl<'a> BnoImu<'a> {
 
     /// Request calibration save via inter-core communication
     /// Only saves calibration if imu-save-calibration feature is enabled
-    async fn save_calibration(&mut self, _levels: &elle_config::CalibrationLevels) -> ElleResult<()> {
+    async fn save_calibration(
+        &mut self,
+        _levels: &elle_config::CalibrationLevels,
+    ) -> ElleResult<()> {
         // Check if saving calibration is enabled
         #[cfg(not(feature = "imu-save-calibration"))]
         {

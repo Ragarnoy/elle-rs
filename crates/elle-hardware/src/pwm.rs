@@ -1,5 +1,5 @@
-use elle_config::*;
 use core::time::Duration;
+use elle_config::*;
 use embassy_rp::Peri;
 use embassy_rp::peripherals::{PIN_11, PIN_12, PIN_14, PIN_15, PIO0};
 use embassy_rp::pio::{Common, StateMachine};

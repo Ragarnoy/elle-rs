@@ -1,6 +1,6 @@
 //! Attitude controller for flying wing stabilization using free-flight-stabilization crate
-use elle_config::CONTROL_LOOP_DT;
 use defmt::warn;
+use elle_config::CONTROL_LOOP_DT;
 use embassy_time::Instant;
 use free_flight_stabilization::{AngleStabilizer, FlightStabilizer, FlightStabilizerConfig};
 
