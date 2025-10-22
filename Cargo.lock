@@ -354,7 +354,6 @@ name = "elle-config"
 version = "0.1.0"
 dependencies = [
  "defmt 1.0.1",
- "elle-error",
 ]
 
 [[package]]
@@ -363,10 +362,8 @@ version = "0.1.0"
 dependencies = [
  "defmt 1.0.1",
  "elle-config",
- "elle-error",
  "embassy-time",
  "free-flight-stabilization",
- "libm",
 ]
 
 [[package]]
@@ -401,7 +398,6 @@ name = "elle-hardware"
 version = "0.1.0"
 dependencies = [
  "bno055",
- "cortex-m-rt",
  "defmt 1.0.1",
  "elle-config",
  "elle-control",
@@ -416,7 +412,6 @@ dependencies = [
  "sbus-rs",
  "sequential-storage",
  "smart-leds",
- "static_cell",
 ]
 
 [[package]]

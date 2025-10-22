@@ -20,8 +20,6 @@ smart-leds = { workspace = true }
 sequential-storage = { workspace = true }
 
 defmt = { workspace = true }
-cortex-m-rt = { workspace = true }
-static_cell = { workspace = true }
 libm = { workspace = true }
 mint = { workspace = true }
 

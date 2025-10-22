@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-elle-error = { workspace = true }
 defmt = { workspace = true }
 
 [lib]
