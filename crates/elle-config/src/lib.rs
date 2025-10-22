@@ -136,6 +136,12 @@ pub struct CalibrationLevels {
     pub mag: u8,
 }
 
+impl Default for CalibrationLevels {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CalibrationLevels {
     pub const fn new() -> Self {
         Self {
