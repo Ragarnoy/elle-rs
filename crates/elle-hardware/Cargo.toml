@@ -1,0 +1,32 @@
+[package]
+name = "elle-hardware"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+elle-error = { workspace = true }
+elle-config = { workspace = true }
+elle-control = { workspace = true }
+
+embassy-executor = { workspace = true }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-rp = { workspace = true }
+embassy-futures = { workspace = true }
+
+bno055 = { workspace = true }
+sbus-rs = { workspace = true }
+smart-leds = { workspace = true }
+sequential-storage = { workspace = true }
+
+defmt = { workspace = true }
+libm = { workspace = true }
+mint = { workspace = true }
+
+[features]
+imu-save-calibration = []  # Enable saving IMU calibration to flash
+performance-monitoring = []
+
+[lib]
+test = false
+bench = false

@@ -1,0 +1,18 @@
+[package]
+name = "elle-control"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+elle-config = { workspace = true }
+
+embassy-time = { workspace = true }
+free-flight-stabilization = { workspace = true }
+defmt = { workspace = true }
+
+[features]
+legacy-ctrl = []  # Enable legacy (non-mixed) control path
+
+[lib]
+test = false
+bench = false
