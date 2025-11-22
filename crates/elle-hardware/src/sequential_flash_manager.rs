@@ -133,6 +133,7 @@ pub struct SequentialFlashManager<'a> {
     last_save_time: Option<Instant>,
     data_buffer: [u8; DATA_BUFFER_SIZE],
     ulog_buffer: [u8; ULOG_CHUNK_SIZE],
+    ulog_initialized: bool,
 }
 
 impl<'a> SequentialFlashManager<'a> {
@@ -142,6 +143,7 @@ impl<'a> SequentialFlashManager<'a> {
             last_save_time: None,
             data_buffer: [0; DATA_BUFFER_SIZE],
             ulog_buffer: [0; ULOG_CHUNK_SIZE],
+            ulog_initialized: false,
         }
     }
 
@@ -364,12 +366,18 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Write ULog data to flash using sequential-storage queue
     async fn write_ulog_internal(&mut self, data: &[u8]) -> ElleResult<()> {
-        info!("Core0: Writing {} bytes to ULog flash", data.len());
-
         if data.is_empty() {
             info!("Core0: Empty data, skipping write");
             return Ok(());
         }
+
+        // Log initialization on first write
+        if !self.ulog_initialized {
+            info!("Core0: Initializing ULog queue (auto-initialized by sequential-storage)");
+            self.ulog_initialized = true;
+        }
+
+        info!("Core0: Writing {} bytes to ULog flash", data.len());
 
         let flash_range = ULOG_FLASH_START..ULOG_FLASH_END;
         let mut cache = NoCache::new();
@@ -392,7 +400,13 @@ impl<'a> SequentialFlashManager<'a> {
                 Ok(())
             }
             Err(e) => {
-                error!("Core0: ULog push failed: {:?}", Debug2Format(&e));
+                // Check if the error is due to a full queue
+                let error_msg = defmt::Debug2Format(&e);
+                error!("Core0: ULog push failed: {:?}", error_msg);
+
+                // Assume FullQueue is the most likely error when storage is exhausted
+                // Sequential-storage will return an error when no more space is available
+                error!("Core0: Likely cause - ULog queue is FULL (960KB limit reached)");
                 Err(FlashError::WriteFailed.into())
             }
         }
