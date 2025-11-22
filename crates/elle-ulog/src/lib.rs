@@ -16,7 +16,7 @@ pub mod format;
 pub mod messages;
 pub mod writer;
 
-pub use format::{ULOG_MAGIC, ULogHeader};
+pub use format::{FLAG_BITS_MSG, ULOG_MAGIC, ULogHeader};
 pub use messages::{
     AttitudeMessage, CommandsMessage, LogLevel, MessageDefinition, MessageType, StatusMessage,
 };

@@ -3,7 +3,7 @@
 //! Provides a buffered writer for ULog messages to minimize flash writes.
 
 use crate::format::{
-    FlagBits, FormatMessage, InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader,
+    InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader, FLAG_BITS_MSG,
 };
 use crate::messages::{AttitudeMessage, CommandsMessage, MessageType, StatusMessage};
 use embassy_time::Instant;
@@ -74,15 +74,21 @@ impl ULogWriter {
             return Ok(());
         }
 
-        // Write flag bits (type 'B')
-        let flag_bits = FlagBits::new();
-        let flag_bytes = flag_bits.to_bytes();
-        self.write_message(MessageType::FlagBits, &flag_bytes)?;
+        // Write flag bits (type 'B') - use pre-serialized message
+        self.buffer
+            .extend_from_slice(&FLAG_BITS_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
 
-        // Write format definitions (type 'F')
-        self.write_format_def(AttitudeMessage::FORMAT)?;
-        self.write_format_def(CommandsMessage::FORMAT)?;
-        self.write_format_def(StatusMessage::FORMAT)?;
+        // Write format definitions (type 'F') - use pre-serialized messages
+        self.buffer
+            .extend_from_slice(AttitudeMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(CommandsMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(StatusMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
 
         // Write info messages (type 'I')
         self.write_info("char[] sys_name", sys_name)?;
@@ -136,14 +142,6 @@ impl ULogWriter {
         payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
         payload[2..].copy_from_slice(&data.to_bytes());
         self.write_message(MessageType::Data, &payload)
-    }
-
-    /// Write a format definition
-    fn write_format_def(&mut self, format: &str) -> Result<(), WriteError> {
-        let msg = FormatMessage::new(format);
-        let mut buf = [0u8; 256];
-        let len = msg.to_bytes(&mut buf);
-        self.write_message(MessageType::Format, &buf[..len])
     }
 
     /// Write an info message

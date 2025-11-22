@@ -92,6 +92,9 @@ impl AttitudeMessage {
     /// Message name
     pub const NAME: &'static str = "attitude_data";
 
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] = b"\x71\x00Fattitude_data:uint64_t timestamp;float pitch;float roll;float yaw;float pitch_rate;float roll_rate;float yaw_rate";
+
     /// Create a new attitude message
     pub fn new(
         timestamp: Instant,
@@ -160,6 +163,9 @@ impl CommandsMessage {
 
     /// Message name
     pub const NAME: &'static str = "commands";
+
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] = b"\xa2\x00Fcommands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg";
 
     /// Size of the message in bytes
     pub const SIZE: usize = 37; // 8 + 6*4 + 1 + 4
@@ -230,6 +236,9 @@ impl StatusMessage {
 
     /// Message name
     pub const NAME: &'static str = "system_status";
+
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] = b"\x90\x00Fsystem_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load";
 
     /// Size of the message in bytes
     pub const SIZE: usize = 22; // 8 + 4 + 4 + 1 + 1 + 4

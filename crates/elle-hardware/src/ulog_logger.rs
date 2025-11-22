@@ -11,6 +11,8 @@ use crate::sequential_flash_manager::request_write_ulog;
 
 /// ULog logger state
 pub struct ULogLogger {
+    /// Reusable ULog writer (avoids 4KB allocation per log call)
+    writer: elle_ulog::ULogWriter,
     /// Internal buffer for collecting log data
     buffer: Vec<u8, ULOG_CHUNK_SIZE>,
     /// Whether the logger has been initialized
@@ -25,8 +27,9 @@ pub struct ULogLogger {
 
 impl ULogLogger {
     /// Create a new ULog logger
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
+            writer: elle_ulog::ULogWriter::new(),
             buffer: Vec::new(),
             initialized: false,
             attitude_msg_id: None,
@@ -46,33 +49,32 @@ impl ULogLogger {
         info!("Initializing ULog logger");
 
         // Import ULog types
-        use elle_ulog::{AttitudeMessage, CommandsMessage, StatusMessage, ULogHeader, ULogWriter};
+        use elle_ulog::{AttitudeMessage, CommandsMessage, StatusMessage};
 
         let start_time = Instant::now();
         self.start_time = Some(start_time);
 
-        // Create writer and initialize
-        let mut writer = ULogWriter::new();
-        writer.initialize(start_time).map_err(|_| ())?;
+        // Initialize writer with header
+        self.writer.initialize(start_time).map_err(|_| ())?;
 
         // Write definitions
-        writer
+        self.writer
             .write_definitions("ELLE-RS", "RP2350-XFly-Eagle", env!("CARGO_PKG_VERSION"))
             .map_err(|_| ())?;
 
         // Add subscriptions
         self.attitude_msg_id = Some(
-            writer
+            self.writer
                 .add_subscription(AttitudeMessage::NAME)
                 .map_err(|_| ())?,
         );
         self.commands_msg_id = Some(
-            writer
+            self.writer
                 .add_subscription(CommandsMessage::NAME)
                 .map_err(|_| ())?,
         );
         self.status_msg_id = Some(
-            writer
+            self.writer
                 .add_subscription(StatusMessage::NAME)
                 .map_err(|_| ())?,
         );
@@ -85,7 +87,7 @@ impl ULogLogger {
         );
 
         // Flush header and definitions to flash
-        let data = writer.buffer();
+        let data = self.writer.buffer();
         if !data.is_empty() {
             info!("Flushing {} bytes of ULog header to flash", data.len());
             let success = request_write_ulog(data).await;
@@ -93,6 +95,8 @@ impl ULogLogger {
                 error!("Failed to write ULog header to flash");
                 return Err(());
             }
+            // Clear writer buffer after successful flush
+            self.writer.clear_buffer();
         }
 
         self.initialized = true;
@@ -114,7 +118,7 @@ impl ULogLogger {
             return Err(());
         }
 
-        use elle_ulog::{AttitudeMessage, ULogWriter};
+        use elle_ulog::AttitudeMessage;
 
         let msg = AttitudeMessage::new(
             Instant::now(),
@@ -126,14 +130,15 @@ impl ULogLogger {
             yaw_rate,
         );
 
-        let mut writer = ULogWriter::new();
-        writer
+        // Clear writer and write message
+        self.writer.clear_buffer();
+        self.writer
             .write_attitude(self.attitude_msg_id.unwrap(), &msg)
             .map_err(|_| ())?;
 
         // Add to buffer
         self.buffer
-            .extend_from_slice(writer.buffer())
+            .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
@@ -159,7 +164,7 @@ impl ULogLogger {
             return Err(());
         }
 
-        use elle_ulog::{CommandsMessage, ULogWriter};
+        use elle_ulog::CommandsMessage;
 
         let msg = CommandsMessage::new(
             Instant::now(),
@@ -172,14 +177,15 @@ impl ULogLogger {
             roll_setpoint_deg,
         );
 
-        let mut writer = ULogWriter::new();
-        writer
+        // Clear writer and write message
+        self.writer.clear_buffer();
+        self.writer
             .write_commands(self.commands_msg_id.unwrap(), &msg)
             .map_err(|_| ())?;
 
         // Add to buffer
         self.buffer
-            .extend_from_slice(writer.buffer())
+            .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
@@ -203,7 +209,7 @@ impl ULogLogger {
             return Err(());
         }
 
-        use elle_ulog::{StatusMessage, ULogWriter};
+        use elle_ulog::StatusMessage;
 
         let msg = StatusMessage::new(
             Instant::now(),
@@ -214,14 +220,15 @@ impl ULogLogger {
             cpu_load,
         );
 
-        let mut writer = ULogWriter::new();
-        writer
+        // Clear writer and write message
+        self.writer.clear_buffer();
+        self.writer
             .write_status(self.status_msg_id.unwrap(), &msg)
             .map_err(|_| ())?;
 
         // Add to buffer
         self.buffer
-            .extend_from_slice(writer.buffer())
+            .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full

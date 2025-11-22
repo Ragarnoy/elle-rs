@@ -24,7 +24,7 @@ pub struct ULogHeader {
 
 impl ULogHeader {
     /// Create a new ULog header with the given timestamp
-    pub fn new(timestamp_us: u64) -> Self {
+    pub const fn new(timestamp_us: u64) -> Self {
         Self {
             magic: ULOG_MAGIC,
             version: ULOG_VERSION,
@@ -78,7 +78,7 @@ pub struct MessageHeader {
 
 impl MessageHeader {
     /// Create a new message header
-    pub fn new(msg_size: u16, msg_type: u8) -> Self {
+    pub const fn new(msg_size: u16, msg_type: u8) -> Self {
         Self { msg_size, msg_type }
     }
 
@@ -110,9 +110,21 @@ pub struct FlagBits {
     pub appended_offsets: [u64; 3],
 }
 
+/// Pre-serialized default FlagBits message (header + payload, computed at compile time)
+/// Header: msg_size=40 (0x28), msg_type='B'
+/// Payload: all zeros (compat_flags, incompat_flags, appended_offsets)
+pub const FLAG_BITS_MSG: [u8; 43] = [
+    0x28, 0x00, b'B',  // Header: size=40, type='B'
+    0, 0, 0, 0, 0, 0, 0, 0,  // compat_flags
+    0, 0, 0, 0, 0, 0, 0, 0,  // incompat_flags
+    0, 0, 0, 0, 0, 0, 0, 0,  // appended_offsets[0]
+    0, 0, 0, 0, 0, 0, 0, 0,  // appended_offsets[1]
+    0, 0, 0, 0, 0, 0, 0, 0,  // appended_offsets[2]
+];
+
 impl FlagBits {
     /// Create new flag bits with default values
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             compat_flags: [0; 8],
             incompat_flags: [0; 8],
