@@ -12,14 +12,12 @@ use sequential_storage::cache::NoCache;
 use sequential_storage::map::{Key, SerializationError, Value, fetch_item, store_item};
 use sequential_storage::queue::push;
 
-use crate::flash_constants::{ULOG_FLASH_END, ULOG_FLASH_START};
+use crate::flash_constants::{CALIBRATION_FLASH_END, CALIBRATION_FLASH_START, ULOG_FLASH_START};
 
 /// Inter-core communication signals for flash operations
 pub static FLASH_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, FlashRequest> = Signal::new();
 pub static FLASH_RESPONSE_SIGNAL: Signal<CriticalSectionRawMutex, FlashResponse> = Signal::new();
 
-const FLASH_RANGE_START: u32 = 0xF00000; // 15MB offset
-const FLASH_RANGE_END: u32 = 0xF10000; // 64KB range for calibration storage
 const DATA_BUFFER_SIZE: usize = 512; // Buffer for serialization
 
 /// Key for calibration storage - we only store one calibration
@@ -234,7 +232,7 @@ impl<'a> SequentialFlashManager<'a> {
     async fn load_calibration_internal(&mut self) -> ElleResult<Option<[u8; BNO055_CALIB_SIZE]>> {
         info!("Core0: Starting sequential flash read operation");
 
-        let flash_range = FLASH_RANGE_START..FLASH_RANGE_END;
+        let flash_range = CALIBRATION_FLASH_START..(CALIBRATION_FLASH_END + 1);
         let key = CalibrationKey;
         let mut cache = NoCache::new();
 
@@ -335,7 +333,7 @@ impl<'a> SequentialFlashManager<'a> {
             timestamp,
         };
 
-        let flash_range = FLASH_RANGE_START..FLASH_RANGE_END;
+        let flash_range = CALIBRATION_FLASH_START..(CALIBRATION_FLASH_END + 1);
         let key = CalibrationKey;
         let mut cache = NoCache::new();
 
@@ -379,7 +377,8 @@ impl<'a> SequentialFlashManager<'a> {
 
         info!("Core0: Writing {} bytes to ULog flash", data.len());
 
-        let flash_range = ULOG_FLASH_START..ULOG_FLASH_END;
+        // Use exclusive range up to 0x1000000 to include last byte at 0xFFFFFF
+        let flash_range = ULOG_FLASH_START..0x1000000;
         let mut cache = NoCache::new();
 
         // Copy data to internal buffer to ensure alignment

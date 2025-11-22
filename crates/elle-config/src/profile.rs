@@ -1,7 +1,7 @@
 use crate::CalibrationLevels;
 
 pub const FLASH_SIZE: usize = 16 * 1024 * 1024; // 16MB total flash (128 Mbit)
-pub const CALIBRATION_FLASH_OFFSET: u32 = 0xF00000; // 15MB offset (1MB from end for safety)
+pub const CALIBRATION_FLASH_OFFSET: u32 = 0x200000; // 2MB offset (after program code)
 pub const CALIBRATION_MAGIC: u32 = 0x42CE55CA; // "BNO55CAL" as hex - valid u32
 pub const CALIBRATION_VERSION: u32 = 1; // Version for future compatibility
 pub const BNO055_CALIB_SIZE: usize = 22; // BNO055 calibration data size

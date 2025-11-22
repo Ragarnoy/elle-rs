@@ -11,6 +11,10 @@ pub mod sequential_flash_manager;
 pub mod ulog_logger;
 
 // Re-export commonly used types
+pub use flash_constants::{
+    CALIBRATION_FLASH_END, CALIBRATION_FLASH_SIZE, CALIBRATION_FLASH_START, ULOG_FLASH_END,
+    ULOG_FLASH_SIZE, ULOG_FLASH_START,
+};
 pub use imu::{AttitudeData, BnoImu, CORE1_HEARTBEAT, ImuStatus};
 pub use led::LedPattern;
 pub use pwm::{PwmOutputs, PwmPins};
