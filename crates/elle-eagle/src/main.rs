@@ -45,6 +45,9 @@ use elle_system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
 };
 
+#[cfg(all(feature = "performance-monitoring", feature = "ulog-logging"))]
+use elle_system::update_ulog_timing;
+
 use elle_system::{
     FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
     supervisor_task,
@@ -69,6 +72,10 @@ fn update_control_loop_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 fn update_led_timing(_elapsed_us: u32) {}
+
+#[cfg(not(all(feature = "performance-monitoring", feature = "ulog-logging")))]
+#[allow(dead_code)]
+fn update_ulog_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 fn log_performance_summary() {}
@@ -111,6 +118,9 @@ async fn log_flight_data(
     fc: &FlightController<'_>,
 ) {
     use elle_control::commands::PilotCommands;
+
+    // Measure ULog logging performance
+    let ulog_timer = TimingMeasurement::start();
 
     // Log attitude data at 77Hz
     if let Some(att) = attitude {
@@ -172,6 +182,9 @@ async fn log_flight_data(
             )
             .await;
     }
+
+    // Update performance monitoring
+    update_ulog_timing(ulog_timer.elapsed_us());
 }
 
 bind_interrupts!(
