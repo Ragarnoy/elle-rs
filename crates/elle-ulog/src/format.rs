@@ -47,19 +47,18 @@ impl ULogHeader {
     }
 
     /// Deserialize a header from bytes
-    #[allow(clippy::result_unit_err)]
-    pub fn from_bytes(buf: &[u8; 16]) -> Result<Self, ()> {
+    pub fn from_bytes(buf: &[u8; 16]) -> Option<Self> {
         if buf[0..7] != ULOG_MAGIC {
-            return Err(());
+            return None;
         }
         let version = buf[7];
         if version != ULOG_VERSION {
-            return Err(());
+            return None;
         }
         let timestamp = u64::from_le_bytes([
             buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
         ]);
-        Ok(Self {
+        Some(Self {
             magic: ULOG_MAGIC,
             version,
             timestamp,
