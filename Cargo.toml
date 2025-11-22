@@ -46,7 +46,7 @@ mint = "0.5.9"
 static_cell = "2.1.1"
 rtt-target = { version = "0.6.1", features = ["defmt"] }
 thiserror = { version = "2.0.17", default-features = false }
-sequential-storage = { version = "5.0.*", default-features = false }
+sequential-storage = { version = "6.0.*", default-features = false }
 
 [profile.release]
 debug = 2

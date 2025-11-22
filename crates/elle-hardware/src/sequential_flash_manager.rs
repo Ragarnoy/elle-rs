@@ -85,7 +85,7 @@ impl Value<'_> for CalibrationData {
         Ok(offset)
     }
 
-    fn deserialize_from(buffer: &[u8]) -> Result<Self, SerializationError> {
+    fn deserialize_from(buffer: &[u8]) -> Result<(CalibrationData, usize), SerializationError> {
         const REQUIRED_SIZE: usize = BNO055_CALIB_SIZE + 4 + 8;
 
         if buffer.len() < REQUIRED_SIZE {
@@ -112,12 +112,16 @@ impl Value<'_> for CalibrationData {
         let mut timestamp_bytes = [0u8; 8];
         timestamp_bytes.copy_from_slice(&buffer[offset..offset + 8]);
         let timestamp = u64::from_le_bytes(timestamp_bytes);
+        offset += 8;
 
-        Ok(CalibrationData {
-            profile_data,
-            quality,
-            timestamp,
-        })
+        Ok((
+            CalibrationData {
+                profile_data,
+                quality,
+                timestamp,
+            },
+            offset,
+        ))
     }
 }
 
