@@ -165,6 +165,7 @@ impl CommandsMessage {
     pub const SIZE: usize = 37; // 8 + 6*4 + 1 + 4
 
     /// Create a new commands message
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: Instant,
         throttle: f32,

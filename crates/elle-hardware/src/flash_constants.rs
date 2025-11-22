@@ -24,12 +24,11 @@ pub const ERASE_SIZE: usize = 4096;
 pub const ASYNC_READ_SIZE: usize = 4;
 
 /// Flash memory layout (16MB total = 0x000000 - 0xFFFFFF):
-/// - 0x000000 - 0x1FFFFF: Program code (2MB)
-/// - 0x200000 - 0x20FFFF: Calibration storage (64KB)
-/// - 0x210000 - 0xFFFFFF: ULog storage (14,680,064 bytes ≈ 14MB)
+///     - 0x000000 - 0x1FFFFF: Program code (2MB)
+///     - 0x200000 - 0x20FFFF: Calibration storage (64KB)
+///     - 0x210000 - 0xFFFFFF: ULog storage (14,680,064 bytes ≈ 14MB)
+///     - ULog capacity: ~14MB ÷ 6KB/s = ~2,446 seconds ≈ 40 minutes of flight logging
 ///
-/// ULog capacity: ~14MB ÷ 6KB/s = ~2,446 seconds ≈ 40 minutes of flight logging
-
 /// Calibration flash region start
 pub const CALIBRATION_FLASH_START: u32 = 0x200000;
 

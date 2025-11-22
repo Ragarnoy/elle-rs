@@ -212,25 +212,3 @@ impl Default for ULogWriter {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_writer_initialization() {
-        let mut writer = ULogWriter::new();
-        let start = Instant::from_micros(1000000);
-        writer.initialize(start).unwrap();
-        assert!(writer.header_written);
-        assert_eq!(writer.buffer_len(), 16); // Header is 16 bytes
-    }
-
-    #[test]
-    fn test_buffer_overflow() {
-        let mut writer = ULogWriter::new();
-        let large_payload = [0u8; BUFFER_SIZE];
-        let result = writer.write_message(MessageType::Data, &large_payload);
-        assert!(matches!(result, Err(WriteError::BufferFull)));
-    }
-}

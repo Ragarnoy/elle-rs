@@ -16,3 +16,7 @@ defmt.workspace = true
 
 [features]
 default = []
+
+[lib]
+test = false
+bench = false

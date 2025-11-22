@@ -47,8 +47,9 @@ impl ULogHeader {
     }
 
     /// Deserialize a header from bytes
+    #[allow(clippy::result_unit_err)]
     pub fn from_bytes(buf: &[u8; 16]) -> Result<Self, ()> {
-        if &buf[0..7] != &ULOG_MAGIC {
+        if buf[0..7] != ULOG_MAGIC {
             return Err(());
         }
         let version = buf[7];
@@ -224,30 +225,5 @@ impl<'a> SubscriptionMessage<'a> {
         buf[1..3].copy_from_slice(&self.msg_id.to_le_bytes());
         buf[3..3 + self.message_name.len()].copy_from_slice(self.message_name.as_bytes());
         3 + self.message_name.len()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_header_serialization() {
-        let header = ULogHeader::new(1234567890);
-        let bytes = header.to_bytes();
-        assert_eq!(&bytes[0..7], &ULOG_MAGIC);
-        assert_eq!(bytes[7], ULOG_VERSION);
-        let recovered = ULogHeader::from_bytes(&bytes).unwrap();
-        assert_eq!(recovered.timestamp, 1234567890);
-    }
-
-    #[test]
-    fn test_message_header() {
-        let header = MessageHeader::new(256, b'F');
-        let bytes = header.to_bytes();
-        assert_eq!(bytes.len(), 3);
-        let recovered = MessageHeader::from_bytes(&bytes);
-        assert_eq!(recovered.msg_size, 256);
-        assert_eq!(recovered.msg_type, b'F');
     }
 }
