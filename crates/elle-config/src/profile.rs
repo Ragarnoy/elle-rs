@@ -6,6 +6,9 @@ pub const CALIBRATION_MAGIC: u32 = 0x42CE55CA; // "BNO55CAL" as hex - valid u32
 pub const CALIBRATION_VERSION: u32 = 1; // Version for future compatibility
 pub const BNO055_CALIB_SIZE: usize = 22; // BNO055 calibration data size
 
+/// Maximum ULog chunk size for flash writes
+pub const ULOG_CHUNK_SIZE: usize = 4096;
+
 // Flash operation requests and responses
 #[derive(Clone, Copy, Debug)]
 pub enum FlashRequest {
@@ -15,6 +18,10 @@ pub enum FlashRequest {
         quality: CalibrationLevels,
         timestamp: u64,
     },
+    WriteULog {
+        data: [u8; ULOG_CHUNK_SIZE],
+        len: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -23,6 +30,8 @@ pub enum FlashResponse {
     LoadFailed,
     SaveSuccess,
     SaveFailed,
+    ULogWriteSuccess,
+    ULogWriteFailed,
 }
 
 // Calibration storage structure (must be u32-aligned for flash API)

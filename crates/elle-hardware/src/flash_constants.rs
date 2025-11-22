@@ -22,3 +22,17 @@ pub const ERASE_SIZE: usize = 4096;
 /// Flash DMA read size.
 /// This is the optimal size for DMA read operations.
 pub const ASYNC_READ_SIZE: usize = 4;
+
+/// Flash memory layout:
+/// - 0x000000 - 0xEFFFFF: Program code (~15MB)
+/// - 0xF00000 - 0xF0FFFF: Calibration storage (64KB)
+/// - 0xF10000 - 0xFFFFFF: ULog storage (~960KB)
+
+/// ULog flash region start (after calibration area)
+pub const ULOG_FLASH_START: u32 = 0xF10000;
+
+/// ULog flash region end (end of flash)
+pub const ULOG_FLASH_END: u32 = 0xFFFFFF;
+
+/// ULog flash region size (~960KB)
+pub const ULOG_FLASH_SIZE: usize = (ULOG_FLASH_END - ULOG_FLASH_START) as usize;
