@@ -10,7 +10,7 @@ pub const BNO055_CALIB_SIZE: usize = 22; // BNO055 calibration data size
 pub const ULOG_CHUNK_SIZE: usize = 4096;
 
 // Flash operation requests and responses
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // WriteULog needs 4KB buffer for inter-core transfer
 pub enum FlashRequest {
     LoadCalibration,
