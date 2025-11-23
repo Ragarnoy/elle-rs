@@ -7,6 +7,7 @@ edition.workspace = true
 elle-error = { workspace = true }
 elle-config = { workspace = true }
 elle-control = { workspace = true }
+elle-ulog = { workspace = true, optional = true }
 
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
@@ -22,10 +23,12 @@ sequential-storage = { workspace = true }
 defmt = { workspace = true }
 libm = { workspace = true }
 mint = { workspace = true }
+heapless = { workspace = true }
 
 [features]
 imu-save-calibration = []  # Enable saving IMU calibration to flash
 performance-monitoring = []
+ulog-logging = ["elle-ulog"]  # Enable ULog flash logging
 
 [lib]
 test = false

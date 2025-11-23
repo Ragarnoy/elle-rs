@@ -31,6 +31,9 @@ use elle_hardware::{
     sequential_flash_manager::SequentialFlashManager,
 };
 
+#[cfg(feature = "ulog-logging")]
+use elle_hardware::ULogLogger;
+
 #[cfg(not(feature = "rtt-control"))]
 use elle_hardware::sbus::{SBUS_COMMANDS, SbusReceiver, sbus_receiver_task};
 #[cfg(feature = "rtt-control")]
@@ -41,6 +44,9 @@ use elle_system::{SUP_RTT_READY, SUP_START_RTT};
 use elle_system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
 };
+
+#[cfg(all(feature = "performance-monitoring", feature = "ulog-logging"))]
+use elle_system::update_ulog_timing;
 
 use elle_system::{
     FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
@@ -67,6 +73,10 @@ fn update_control_loop_timing(_elapsed_us: u32) {}
 #[cfg(not(feature = "performance-monitoring"))]
 fn update_led_timing(_elapsed_us: u32) {}
 
+#[cfg(not(all(feature = "performance-monitoring", feature = "ulog-logging")))]
+#[allow(dead_code)]
+fn update_ulog_timing(_elapsed_us: u32) {}
+
 #[cfg(not(feature = "performance-monitoring"))]
 fn log_performance_summary() {}
 use embassy_executor::{Executor, Spawner};
@@ -90,6 +100,91 @@ use static_cell::StaticCell;
 #[inline]
 fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
     attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
+}
+
+/// Log flight data to ULog flash storage
+///
+/// Logs attitude, commands, and periodic status updates at appropriate rates:
+/// - Attitude: 77Hz (every call)
+/// - Commands: 77Hz (every call)
+/// - Status: 7.7Hz (every 10th call)
+#[cfg(feature = "ulog-logging")]
+async fn log_flight_data(
+    logger: &mut ULogLogger,
+    attitude: Option<&AttitudeData>,
+    commands: &elle_control::commands::PilotCommands,
+    loop_counter: u32,
+    loop_timer_us: u32,
+    fc: &FlightController<'_>,
+) {
+    use elle_control::commands::PilotCommands;
+
+    // Measure ULog logging performance
+    let ulog_timer = TimingMeasurement::start();
+
+    // Log attitude data at 77Hz
+    if let Some(att) = attitude {
+        let _ = logger
+            .log_attitude(
+                att.pitch,
+                att.roll,
+                att.yaw,
+                att.pitch_rate,
+                att.roll_rate,
+                att.yaw_rate,
+            )
+            .await;
+    }
+
+    // Log commands at 77Hz
+    // Convert to normalized for consistent logging
+    match commands {
+        PilotCommands::Normalized(norm) => {
+            let _ = logger
+                .log_commands(
+                    norm.throttle,
+                    norm.pitch,
+                    norm.roll,
+                    norm.yaw,
+                    norm.attitude_mode as u8,
+                    norm.pitch_setpoint_deg,
+                    norm.roll_setpoint_deg,
+                )
+                .await;
+        }
+        PilotCommands::Raw(raw) => {
+            // Convert raw to normalized for logging
+            let norm = raw.to_normalized();
+            let _ = logger
+                .log_commands(
+                    norm.throttle,
+                    norm.pitch,
+                    norm.roll,
+                    norm.yaw,
+                    norm.attitude_mode as u8,
+                    norm.pitch_setpoint_deg,
+                    norm.roll_setpoint_deg,
+                )
+                .await;
+        }
+    }
+
+    // Log status at reduced rate (7.7Hz - every 10th iteration)
+    if loop_counter.is_multiple_of(10) {
+        let imu_status = IMU_STATUS.try_read();
+        let _ = logger
+            .log_status(
+                loop_timer_us,
+                imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
+                imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
+                fc.is_armed(),
+                0.0, // CPU load - could calculate from timing data
+            )
+            .await;
+    }
+
+    // Update performance monitoring
+    update_ulog_timing(ulog_timer.elapsed_us());
 }
 
 bind_interrupts!(
@@ -230,6 +325,23 @@ async fn main(spawner: Spawner) {
     });
     drop(status);
 
+    // Initialize ULog logger for flight data recording
+    #[cfg(feature = "ulog-logging")]
+    let mut ulog_logger = {
+        info!("Core0: Initializing ULog logger");
+        let mut logger = ULogLogger::new();
+        match logger.initialize().await {
+            Ok(_) => {
+                info!("Core0: ULog logger ready");
+                logger
+            }
+            Err(_) => {
+                warn!("Core0: ULog logger initialization failed, continuing without logging");
+                logger
+            }
+        }
+    };
+
     info!("Core0: Starting main control loop");
 
     // Test timing precision (only when performance monitoring is enabled)
@@ -301,6 +413,18 @@ async fn main(spawner: Spawner) {
                     warn!("Stale attitude data, using manual control only");
                 }
                 fc.update(commands, valid_attitude.as_ref());
+
+                // Log flight data to ULog flash storage
+                #[cfg(feature = "ulog-logging")]
+                log_flight_data(
+                    &mut ulog_logger,
+                    valid_attitude.as_ref(),
+                    commands,
+                    loop_counter,
+                    loop_timer.elapsed_us(),
+                    &fc,
+                )
+                .await;
             }
 
             // Check for failsafe (triggers after 300ms of no valid packets)
@@ -381,7 +505,20 @@ async fn main(spawner: Spawner) {
                 if !last_had_commands {
                     info!("RTT commands active");
                 }
-                fc.update(&commands, validate_attitude(attitude).as_ref());
+                let valid_attitude = validate_attitude(attitude);
+                fc.update(&commands, valid_attitude.as_ref());
+
+                // Log flight data to ULog flash storage
+                #[cfg(feature = "ulog-logging")]
+                log_flight_data(
+                    &mut ulog_logger,
+                    valid_attitude.as_ref(),
+                    &commands,
+                    loop_counter,
+                    loop_timer.elapsed_us(),
+                    &fc,
+                )
+                .await;
             } else {
                 // RTT timed out - apply failsafe
                 if last_had_commands {

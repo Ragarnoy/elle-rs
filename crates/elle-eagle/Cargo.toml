@@ -29,6 +29,7 @@ performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
 rtt-control = ["elle-system/rtt-control"]
 error-strings = ["elle-system/error-strings"]
+ulog-logging = ["elle-hardware/ulog-logging"]
 
 [[bin]]
 name = "eagle"

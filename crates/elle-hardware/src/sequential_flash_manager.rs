@@ -1,7 +1,7 @@
 use bno055::BNO055_CALIB_SIZE;
 use defmt::*;
 use elle_config::CalibrationLevels;
-use elle_config::profile::{FlashRequest, FlashResponse};
+use elle_config::profile::{FlashRequest, FlashResponse, ULOG_CHUNK_SIZE};
 use elle_error::{ElleResult, FlashError};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
@@ -10,13 +10,14 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::{Key, SerializationError, Value, fetch_item, store_item};
+use sequential_storage::queue::push;
+
+use crate::flash_constants::{CALIBRATION_FLASH_END, CALIBRATION_FLASH_START, ULOG_FLASH_START};
 
 /// Inter-core communication signals for flash operations
 pub static FLASH_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, FlashRequest> = Signal::new();
 pub static FLASH_RESPONSE_SIGNAL: Signal<CriticalSectionRawMutex, FlashResponse> = Signal::new();
 
-const FLASH_RANGE_START: u32 = 0xF00000; // 15MB offset
-const FLASH_RANGE_END: u32 = 0xF10000; // 64KB range for calibration storage
 const DATA_BUFFER_SIZE: usize = 512; // Buffer for serialization
 
 /// Key for calibration storage - we only store one calibration
@@ -129,6 +130,8 @@ pub struct SequentialFlashManager<'a> {
     flash: Flash<'a, FLASH, Async, { elle_config::profile::FLASH_SIZE }>,
     last_save_time: Option<Instant>,
     data_buffer: [u8; DATA_BUFFER_SIZE],
+    ulog_buffer: [u8; ULOG_CHUNK_SIZE],
+    ulog_initialized: bool,
 }
 
 impl<'a> SequentialFlashManager<'a> {
@@ -137,6 +140,8 @@ impl<'a> SequentialFlashManager<'a> {
             flash,
             last_save_time: None,
             data_buffer: [0; DATA_BUFFER_SIZE],
+            ulog_buffer: [0; ULOG_CHUNK_SIZE],
+            ulog_initialized: false,
         }
     }
 
@@ -199,6 +204,23 @@ impl<'a> SequentialFlashManager<'a> {
                     info!("Core0: Sending save response");
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
+
+                FlashRequest::WriteULog { data, len } => {
+                    info!("Core0: Processing ULog write request ({} bytes)", len);
+                    let response = match self.write_ulog_internal(&data[..len]).await {
+                        Ok(_) => {
+                            info!("Core0: ULog write successful");
+                            FlashResponse::ULogWriteSuccess
+                        }
+                        Err(e) => {
+                            warn!("Core0: ULog write failed: {}", e);
+                            FlashResponse::ULogWriteFailed
+                        }
+                    };
+
+                    info!("Core0: Sending ULog write response");
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
             }
 
             // Small yield to ensure other tasks can run
@@ -210,7 +232,7 @@ impl<'a> SequentialFlashManager<'a> {
     async fn load_calibration_internal(&mut self) -> ElleResult<Option<[u8; BNO055_CALIB_SIZE]>> {
         info!("Core0: Starting sequential flash read operation");
 
-        let flash_range = FLASH_RANGE_START..FLASH_RANGE_END;
+        let flash_range = CALIBRATION_FLASH_START..(CALIBRATION_FLASH_END + 1);
         let key = CalibrationKey;
         let mut cache = NoCache::new();
 
@@ -311,7 +333,7 @@ impl<'a> SequentialFlashManager<'a> {
             timestamp,
         };
 
-        let flash_range = FLASH_RANGE_START..FLASH_RANGE_END;
+        let flash_range = CALIBRATION_FLASH_START..(CALIBRATION_FLASH_END + 1);
         let key = CalibrationKey;
         let mut cache = NoCache::new();
 
@@ -335,6 +357,55 @@ impl<'a> SequentialFlashManager<'a> {
                     "Core0: Sequential storage save failed: {:?}",
                     Debug2Format(&e)
                 );
+                Err(FlashError::WriteFailed.into())
+            }
+        }
+    }
+
+    /// Write ULog data to flash using sequential-storage queue
+    async fn write_ulog_internal(&mut self, data: &[u8]) -> ElleResult<()> {
+        if data.is_empty() {
+            info!("Core0: Empty data, skipping write");
+            return Ok(());
+        }
+
+        // Log initialization on first write
+        if !self.ulog_initialized {
+            info!("Core0: Initializing ULog queue (auto-initialized by sequential-storage)");
+            self.ulog_initialized = true;
+        }
+
+        info!("Core0: Writing {} bytes to ULog flash", data.len());
+
+        // Use exclusive range up to 0x1000000 to include last byte at 0xFFFFFF
+        let flash_range = ULOG_FLASH_START..0x1000000;
+        let mut cache = NoCache::new();
+
+        // Copy data to internal buffer to ensure alignment
+        let len = data.len().min(ULOG_CHUNK_SIZE);
+        self.ulog_buffer[..len].copy_from_slice(&data[..len]);
+
+        match push(
+            &mut self.flash,
+            flash_range,
+            &mut cache,
+            &self.ulog_buffer[..len],
+            false,
+        )
+        .await
+        {
+            Ok(_) => {
+                info!("Core0: ULog data pushed to queue successfully");
+                Ok(())
+            }
+            Err(e) => {
+                // Check if the error is due to a full queue
+                let error_msg = defmt::Debug2Format(&e);
+                error!("Core0: ULog push failed: {:?}", error_msg);
+
+                // Assume FullQueue is the most likely error when storage is exhausted
+                // Sequential-storage will return an error when no more space is available
+                error!("Core0: Likely cause - ULog queue is FULL (960KB limit reached)");
                 Err(FlashError::WriteFailed.into())
             }
         }
@@ -413,6 +484,49 @@ pub async fn request_save_calibration(
         },
         embassy_futures::select::Either::Second(_) => {
             error!("Core1: Timeout waiting for save calibration response");
+            false
+        }
+    }
+}
+
+/// Request ULog write from any core
+pub async fn request_write_ulog(data: &[u8]) -> bool {
+    if data.is_empty() || data.len() > ULOG_CHUNK_SIZE {
+        warn!("Invalid ULog data size: {}", data.len());
+        return false;
+    }
+
+    let mut buffer = [0u8; ULOG_CHUNK_SIZE];
+    buffer[..data.len()].copy_from_slice(data);
+
+    info!("Sending ULog write request ({} bytes)", data.len());
+    FLASH_REQUEST_SIGNAL.signal(FlashRequest::WriteULog {
+        data: buffer,
+        len: data.len(),
+    });
+
+    info!("Waiting for ULog write response");
+
+    // Add timeout to prevent infinite blocking
+    let timeout = Timer::after(Duration::from_secs(10));
+
+    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
+        embassy_futures::select::Either::First(response) => match response {
+            FlashResponse::ULogWriteSuccess => {
+                info!("Received successful ULog write response");
+                true
+            }
+            FlashResponse::ULogWriteFailed => {
+                info!("Received failed ULog write response");
+                false
+            }
+            other => {
+                warn!("Received unexpected response: {:?}", Debug2Format(&other));
+                false
+            }
+        },
+        embassy_futures::select::Either::Second(_) => {
+            error!("Timeout waiting for ULog write response");
             false
         }
     }

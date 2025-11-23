@@ -20,4 +20,5 @@ pub use system::{SUP_RTT_READY, SUP_START_RTT};
 #[cfg(feature = "performance-monitoring")]
 pub use system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
+    update_ulog_timing,
 };

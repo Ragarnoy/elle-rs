@@ -547,6 +547,7 @@ pub struct PerformanceMonitor {
     pub imu_update: TaskTiming,
     pub led_update: TaskTiming,
     pub flash_operation: TaskTiming,
+    pub ulog_logging: TaskTiming,
 }
 
 #[cfg(feature = "performance-monitoring")]
@@ -564,6 +565,7 @@ impl PerformanceMonitor {
             imu_update: TaskTiming::new(),
             led_update: TaskTiming::new(),
             flash_operation: TaskTiming::new(),
+            ulog_logging: TaskTiming::new(),
         }
     }
 
@@ -618,6 +620,20 @@ impl PerformanceMonitor {
                 self.flash_operation.samples
             );
         }
+
+        // ULog logging (77Hz, Core 0)
+        if self.ulog_logging.samples > 0 {
+            let ulog_cpu = self.ulog_logging.cpu_utilization_percent(CONTROL_LOOP_FREQUENCY_HZ);
+            info!(
+                "ULog Logging: min={} avg={} max={}μs ({}% @ {}Hz) | {} samples",
+                self.ulog_logging.min_us,
+                self.ulog_logging.avg_us,
+                self.ulog_logging.max_us,
+                ulog_cpu as u8,
+                CONTROL_LOOP_FREQUENCY_HZ,
+                self.ulog_logging.samples
+            );
+        }
     }
 
     pub fn reset_all(&mut self) {
@@ -625,6 +641,7 @@ impl PerformanceMonitor {
         self.imu_update.reset();
         self.led_update.reset();
         self.flash_operation.reset();
+        self.ulog_logging.reset();
     }
 }
 
@@ -691,6 +708,15 @@ pub fn update_flash_timing(elapsed_us: u32) {
 }
 
 #[cfg(feature = "performance-monitoring")]
+pub fn update_ulog_timing(elapsed_us: u32) {
+    unsafe {
+        (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
+            .ulog_logging
+            .update(elapsed_us);
+    }
+}
+
+#[cfg(feature = "performance-monitoring")]
 pub fn log_performance_summary() {
     unsafe {
         (*core::ptr::addr_of!(PERFORMANCE_MONITOR)).log_performance_summary();
@@ -725,6 +751,10 @@ pub fn update_led_timing(_elapsed_us: u32) {}
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
 pub fn update_flash_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "performance-monitoring"))]
+#[inline(always)]
+pub fn update_ulog_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]

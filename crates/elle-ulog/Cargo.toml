@@ -1,0 +1,22 @@
+[package]
+name = "elle-ulog"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Embedded dependencies
+heapless.workspace = true
+embassy-time.workspace = true
+
+# Serialization
+postcard.workspace = true
+
+# Utilities
+defmt.workspace = true
+
+[features]
+default = []
+
+[lib]
+test = false
+bench = false
