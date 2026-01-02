@@ -1,0 +1,24 @@
+[package]
+name = "elle-rpc-host"
+version.workspace = true
+edition.workspace = true
+description = "Host CLI tool for Elle flight controller RPC over RTT"
+
+[[bin]]
+name = "elle"
+path = "src/main.rs"
+
+[dependencies]
+elle-rpc-icd = { workspace = true, features = ["use-std"] }
+serde = { workspace = true, features = ["std", "derive"] }
+postcard = { workspace = true, features = ["use-std"] }
+postcard-rpc = { workspace = true, features = ["use-std"] }
+cobs = { workspace = true }
+
+# Host-specific dependencies
+probe-rs = "0.30"
+clap = { version = "4", features = ["derive"] }
+dialoguer = { version = "0.12", features = ["fuzzy-select"] }
+console = "0.16"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"

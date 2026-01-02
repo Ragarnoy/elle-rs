@@ -18,14 +18,16 @@ log_enabled = true
 log_path = "./logs"
 up_channels = [
     { channel = 0, mode = "NoBlockSkip", format = "Defmt", show_location = true },
-    { channel = 1, mode = "NoBlockSkip", format = "String" },
+    # RPC responses exposed via TCP socket for elle-rpc client
+    { channel = 1, mode = "NoBlockSkip", format = "BinaryLE", socket = "127.0.0.1:19021" },
 ]
 down_channels = [
-    { channel = 0, mode = "NoBlockSkip" }
+    # RPC requests exposed via TCP socket for elle-rpc client
+    { channel = 0, mode = "NoBlockSkip", socket = "127.0.0.1:19022" }
 ]
 tabs = [
     { up_channel = 0, name = "Defmt Logs" },
-    { up_channel = 1, down_channel = 0, name = "Commands" },
+    { up_channel = 1, down_channel = 0, name = "RPC" },
 ]
 
 [default.gdb]
@@ -51,14 +53,16 @@ log_enabled = true
 log_path = "./logs"
 up_channels = [
     { channel = 0, mode = "NoBlockSkip", format = "Defmt", show_location = true },
-    { channel = 1, mode = "NoBlockSkip", format = "String" },
+    # RPC responses exposed via TCP socket for elle-rpc client
+    { channel = 1, mode = "NoBlockSkip", format = "BinaryLE", socket = "127.0.0.1:19021" },
 ]
 down_channels = [
-    { channel = 0, mode = "NoBlockSkip" }
+    # RPC requests exposed via TCP socket for elle-rpc client
+    { channel = 0, mode = "NoBlockSkip", socket = "127.0.0.1:19022" }
 ]
 tabs = [
     { up_channel = 0, name = "Defmt Logs" },
-    { up_channel = 1, down_channel = 0, name = "Commands" },
+    { up_channel = 1, down_channel = 0, name = "RPC" },
 ]
 
 [debug.gdb]

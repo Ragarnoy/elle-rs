@@ -40,6 +40,14 @@ use elle_hardware::sbus::{SBUS_COMMANDS, SbusReceiver, sbus_receiver_task};
 use elle_system::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttCommander, RttControl};
 #[cfg(feature = "rtt-control")]
 use elle_system::{SUP_RTT_READY, SUP_START_RTT};
+
+#[cfg(feature = "rpc-control")]
+use elle_rpc_icd::{
+    AckResp, AdjustTrimReq, AttitudeResp, ControlMode, PerformanceResp, SetControlModeReq,
+    SetElevonsReq, SetThrottleReq, StatusResp, VersionResp,
+};
+#[cfg(feature = "rpc-control")]
+use elle_system::rpc::init_rtt_rpc;
 #[cfg(feature = "performance-monitoring")]
 use elle_system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
@@ -199,6 +207,30 @@ bind_interrupts!(
 static mut CORE1_STACK: Stack<8192> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 
+// RPC command channel for communication between RPC server and main loop
+#[cfg(feature = "rpc-control")]
+mod rpc_handlers {
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::channel::Channel;
+
+    /// Commands sent from RPC handlers to flight controller
+    #[derive(Debug, Clone, Copy)]
+    pub enum RpcCommand {
+        SetThrottle(u8),
+        SetElevons { left: i8, right: i8 },
+        SetMode(super::ControlMode),
+        Arm,
+        Disarm,
+        EmergencyStop,
+        AdjustTrim { left: i8, right: i8 },
+        SaveCalibration,
+        ClearCalibration,
+    }
+
+    /// Channel for RPC commands to flight controller
+    pub static RPC_CMD_CHANNEL: Channel<CriticalSectionRawMutex, RpcCommand, 16> = Channel::new();
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let mut config =
@@ -228,6 +260,12 @@ async fn main(spawner: Spawner) {
     {
         info!("Core0: Starting RTT control interface");
         spawner.spawn(rtt_control_task().unwrap());
+    }
+
+    #[cfg(feature = "rpc-control")]
+    {
+        info!("Core0: Starting RPC server");
+        spawner.spawn(rpc_server_task().unwrap());
     }
 
     // Start supervisor to coordinate task startup
@@ -362,7 +400,7 @@ async fn main(spawner: Spawner) {
     // State for control loop
     let mut loop_counter = 0u32;
 
-    #[cfg(not(feature = "rtt-control"))]
+    #[cfg(not(any(feature = "rtt-control", feature = "rpc-control")))]
     {
         info!("FLIGHT MODE - SBUS Control");
 
@@ -463,7 +501,7 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    #[cfg(feature = "rtt-control")]
+    #[cfg(all(feature = "rtt-control", not(feature = "rpc-control")))]
     {
         info!("GROUND TEST MODE - RTT Control");
         info!("WARNING: This mode requires programmer connection");
@@ -557,6 +595,129 @@ async fn main(spawner: Spawner) {
 
             // Small delay for RTT command processing
             Timer::after(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[cfg(feature = "rpc-control")]
+    {
+        use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+        use embassy_time::Instant;
+        use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
+
+        info!("GROUND TEST MODE - RPC Control (postcard-RPC over RTT)");
+        info!("WARNING: This mode requires programmer connection");
+
+        // Ticker for consistent control loop timing
+        let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
+
+        // RPC commands accumulator (updated by RPC handlers)
+        let mut rpc_throttle: f32 = 0.0;
+        let mut rpc_elevon_left: f32 = 0.0;
+        let mut rpc_elevon_right: f32 = 0.0;
+
+        loop {
+            ticker.next().await;
+            let loop_timer = TimingMeasurement::start();
+
+            // Supervisor check
+            let _supervisor_healthy = fc.supervisor_check();
+
+            // Get latest attitude data
+            let attitude = ATTITUDE_SIGNAL.try_take();
+
+            // Process all pending RPC commands
+            while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
+                match cmd {
+                    RpcCommand::SetThrottle(percent) => {
+                        rpc_throttle = (percent as f32 / 100.0).clamp(0.0, 1.0);
+                    }
+                    RpcCommand::SetElevons { left, right } => {
+                        rpc_elevon_left = (left as f32 / 100.0).clamp(-1.0, 1.0);
+                        rpc_elevon_right = (right as f32 / 100.0).clamp(-1.0, 1.0);
+                    }
+                    RpcCommand::SetMode(_mode) => {
+                        // TODO: implement mode switching
+                    }
+                    RpcCommand::Arm => {
+                        fc.arm();
+                        info!("Motors ARMED via RPC");
+                    }
+                    RpcCommand::Disarm => {
+                        fc.disarm();
+                        info!("Motors DISARMED via RPC");
+                    }
+                    RpcCommand::EmergencyStop => {
+                        info!("RPC: EMERGENCY STOP");
+                        rpc_throttle = 0.0;
+                        rpc_elevon_left = 0.0;
+                        rpc_elevon_right = 0.0;
+                        fc.disarm();
+                        fc.apply_failsafe();
+                    }
+                    RpcCommand::AdjustTrim { left, right } => {
+                        info!("RPC: Trim L={} R={} (not implemented)", left, right);
+                    }
+                    RpcCommand::SaveCalibration => {
+                        info!("RPC: Save calibration requested");
+                    }
+                    RpcCommand::ClearCalibration => {
+                        info!("RPC: Clear calibration requested");
+                    }
+                }
+            }
+
+            // Build pilot commands from RPC state
+            let commands = PilotCommands::Normalized(NormalizedCommands {
+                throttle: rpc_throttle,
+                pitch: (rpc_elevon_left + rpc_elevon_right) / 2.0,  // Mixed
+                roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,   // Mixed
+                yaw: 0.0,
+                attitude_mode: AttitudeMode::Manual,
+                pitch_setpoint_deg: 0.0,
+                roll_setpoint_deg: 0.0,
+                timestamp: Instant::now(),
+            });
+
+            // Update flight controller
+            let valid_attitude = validate_attitude(attitude);
+            fc.update(&commands, valid_attitude.as_ref());
+
+            // Log flight data to ULog flash storage
+            #[cfg(feature = "ulog-logging")]
+            log_flight_data(
+                &mut ulog_logger,
+                valid_attitude.as_ref(),
+                &commands,
+                loop_counter,
+                loop_timer.elapsed_us(),
+                &fc,
+            )
+            .await;
+
+            update_control_loop_timing(loop_timer.elapsed_us());
+            loop_counter = loop_counter.saturating_add(1);
+
+            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
+                log_performance_summary();
+            }
+
+            if loop_counter.is_multiple_of(2000) {
+                loop_counter = 0;
+
+                let imu_status = IMU_STATUS.read().await;
+                let led_pattern = if fc.is_armed() {
+                    LedPattern::DoubleBlink(colors::PURPLE)
+                } else if fc.is_failsafe() {
+                    LedPattern::RapidFlash(colors::ORANGE)
+                } else if imu_status.calibrated {
+                    LedPattern::Solid(colors::PURPLE)
+                } else {
+                    LedPattern::Pulse(colors::PURPLE)
+                };
+
+                let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
+                drop(imu_status);
+            }
         }
     }
 }
@@ -659,6 +820,235 @@ async fn rtt_control_task() {
     SUP_START_RTT.wait().await;
 
     rtt_control.run().await;
+}
+
+/// RPC server task using postcard-RPC over RTT
+#[cfg(feature = "rpc-control")]
+#[embassy_executor::task]
+async fn rpc_server_task() {
+    use postcard_rpc::header::VarHeader;
+    use postcard_rpc::server::WireRx;
+
+    info!("Core0: RPC server task starting");
+
+    // Initialize RTT channels for RPC
+    let mut channels = init_rtt_rpc();
+
+    // RX buffer for incoming messages
+    static RX_BUF: StaticCell<[u8; 1024]> = StaticCell::new();
+    let rx_buf = RX_BUF.init([0u8; 1024]);
+
+    info!("Core0: RPC server ready, waiting for commands");
+
+    loop {
+        // Receive next RPC message (COBS decoded)
+        match channels.rx.receive(rx_buf).await {
+            Ok(data) => {
+                // Parse VarHeader to identify the endpoint
+                if let Some((hdr, body)) = VarHeader::take_from_slice(data) {
+                    // Dispatch based on endpoint key
+                    dispatch_rpc_request(&mut channels.tx, hdr, body).await;
+                } else {
+                    warn!("RPC: Failed to parse header");
+                }
+            }
+            Err(_) => {
+                // Receive error - continue
+            }
+        }
+    }
+}
+
+/// Dispatch an RPC request to the appropriate handler
+#[cfg(feature = "rpc-control")]
+async fn dispatch_rpc_request(
+    tx: &mut elle_system::rpc::RttTx,
+    hdr: postcard_rpc::header::VarHeader,
+    body: &[u8],
+) {
+    use postcard_rpc::Endpoint;
+    use postcard_rpc::header::{VarHeader, VarKey};
+    use postcard_rpc::server::WireTx;
+    use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
+
+    // Helper macro to create response header preserving sequence number
+    macro_rules! resp_hdr {
+        ($endpoint:ty) => {
+            VarHeader {
+                key: VarKey::Key8(<$endpoint>::RESP_KEY),
+                seq_no: hdr.seq_no,
+            }
+        };
+    }
+
+    // Helper macro to check if key matches an endpoint
+    macro_rules! matches_endpoint {
+        ($key:expr, $endpoint:ty) => {
+            *$key == VarKey::Key8(<$endpoint>::REQ_KEY)
+        };
+    }
+
+    let key = &hdr.key;
+
+    // SetThrottle: "elle/ctrl/throttle"
+    if matches_endpoint!(key, elle_rpc_icd::SetThrottleEndpoint) {
+        if let Ok(req) = postcard::from_bytes::<SetThrottleReq>(body) {
+            let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::SetThrottle(req.percent));
+            let resp = AckResp::ok();
+            let _ = tx.send(resp_hdr!(elle_rpc_icd::SetThrottleEndpoint), &resp).await;
+        }
+        return;
+    }
+
+    // SetElevons: "elle/ctrl/elevons"
+    if matches_endpoint!(key, elle_rpc_icd::SetElevonsEndpoint) {
+        if let Ok(req) = postcard::from_bytes::<SetElevonsReq>(body) {
+            let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::SetElevons {
+                left: req.left,
+                right: req.right,
+            });
+            let resp = AckResp::ok();
+            let _ = tx.send(resp_hdr!(elle_rpc_icd::SetElevonsEndpoint), &resp).await;
+        }
+        return;
+    }
+
+    // SetControlMode: "elle/ctrl/mode"
+    if matches_endpoint!(key, elle_rpc_icd::SetControlModeEndpoint) {
+        if let Ok(req) = postcard::from_bytes::<SetControlModeReq>(body) {
+            let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::SetMode(req.mode));
+            let resp = AckResp::ok();
+            let _ = tx.send(resp_hdr!(elle_rpc_icd::SetControlModeEndpoint), &resp).await;
+        }
+        return;
+    }
+
+    // Arm: "elle/safety/arm"
+    if matches_endpoint!(key, elle_rpc_icd::ArmEndpoint) {
+        let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::Arm);
+        let resp = AckResp::ok();
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::ArmEndpoint), &resp).await;
+        return;
+    }
+
+    // Disarm: "elle/safety/disarm"
+    if matches_endpoint!(key, elle_rpc_icd::DisarmEndpoint) {
+        let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::Disarm);
+        let resp = AckResp::ok();
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::DisarmEndpoint), &resp).await;
+        return;
+    }
+
+    // EmergencyStop: "elle/safety/estop"
+    if matches_endpoint!(key, elle_rpc_icd::EmergencyStopEndpoint) {
+        let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::EmergencyStop);
+        let resp = AckResp::ok();
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::EmergencyStopEndpoint), &resp).await;
+        return;
+    }
+
+    // AdjustTrim: "elle/trim/adjust"
+    if matches_endpoint!(key, elle_rpc_icd::AdjustTrimEndpoint) {
+        if let Ok(req) = postcard::from_bytes::<AdjustTrimReq>(body) {
+            let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::AdjustTrim {
+                left: req.left,
+                right: req.right,
+            });
+            let resp = AckResp::ok();
+            let _ = tx.send(resp_hdr!(elle_rpc_icd::AdjustTrimEndpoint), &resp).await;
+        }
+        return;
+    }
+
+    // SaveCalibration: "elle/cal/save"
+    if matches_endpoint!(key, elle_rpc_icd::SaveCalibrationEndpoint) {
+        let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::SaveCalibration);
+        let resp = AckResp::ok();
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::SaveCalibrationEndpoint), &resp).await;
+        return;
+    }
+
+    // ClearCalibration: "elle/cal/clear"
+    if matches_endpoint!(key, elle_rpc_icd::ClearCalibrationEndpoint) {
+        let _ = RPC_CMD_CHANNEL.try_send(RpcCommand::ClearCalibration);
+        let resp = AckResp::ok();
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::ClearCalibrationEndpoint), &resp).await;
+        return;
+    }
+
+    // GetStatus: "elle/query/status"
+    if matches_endpoint!(key, elle_rpc_icd::GetStatusEndpoint) {
+        let imu_status = elle_hardware::imu::IMU_STATUS.try_read();
+        let resp = StatusResp {
+            armed: false,      // TODO: read from shared state
+            failsafe: false,
+            mode: ControlMode::Manual,
+            imu_calibrated: imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
+            imu_error_count: imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
+        };
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::GetStatusEndpoint), &resp).await;
+        return;
+    }
+
+    // GetAttitude: "elle/query/attitude"
+    if matches_endpoint!(key, elle_rpc_icd::GetAttitudeEndpoint) {
+        let resp = if let Some(att) = elle_hardware::imu::ATTITUDE_SIGNAL.try_take() {
+            let resp = AttitudeResp {
+                pitch_cdeg: (att.pitch * 5729.578) as i16,  // rad to centidegrees
+                roll_cdeg: (att.roll * 5729.578) as i16,
+                yaw_cdeg: (att.yaw * 5729.578) as i16,
+                pitch_rate_cdeg: (att.pitch_rate * 5729.578) as i16,
+                roll_rate_cdeg: (att.roll_rate * 5729.578) as i16,
+                yaw_rate_cdeg: (att.yaw_rate * 5729.578) as i16,
+            };
+            // Put attitude back for main loop
+            elle_hardware::imu::ATTITUDE_SIGNAL.signal(att);
+            resp
+        } else {
+            AttitudeResp {
+                pitch_cdeg: 0,
+                roll_cdeg: 0,
+                yaw_cdeg: 0,
+                pitch_rate_cdeg: 0,
+                roll_rate_cdeg: 0,
+                yaw_rate_cdeg: 0,
+            }
+        };
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::GetAttitudeEndpoint), &resp).await;
+        return;
+    }
+
+    // GetPerformance: "elle/query/perf"
+    if matches_endpoint!(key, elle_rpc_icd::GetPerformanceEndpoint) {
+        let resp = PerformanceResp {
+            control_loop_avg_us: 0,  // TODO: read from performance monitor
+            control_loop_max_us: 0,
+            imu_avg_us: 0,
+            imu_max_us: 0,
+        };
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::GetPerformanceEndpoint), &resp).await;
+        return;
+    }
+
+    // Ping: "elle/sys/ping"
+    if matches_endpoint!(key, elle_rpc_icd::PingEndpoint) {
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::PingEndpoint), &()).await;
+        return;
+    }
+
+    // GetVersion: "elle/sys/version"
+    if matches_endpoint!(key, elle_rpc_icd::GetVersionEndpoint) {
+        let resp = VersionResp {
+            major: 0,
+            minor: 1,
+            patch: 0,
+        };
+        let _ = tx.send(resp_hdr!(elle_rpc_icd::GetVersionEndpoint), &resp).await;
+        return;
+    }
+
+    // Unknown endpoint
+    warn!("RPC: Unknown endpoint key");
 }
 
 /// Process debug commands from RTT (non-flight commands only)

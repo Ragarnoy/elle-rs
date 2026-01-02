@@ -22,12 +22,22 @@ defmt = { workspace = true }
 defmt-rtt = { workspace = true, optional = true }
 rtt-target = { workspace = true, optional = true }
 
+# RPC dependencies (optional)
+elle-rpc-icd = { workspace = true, optional = true }
+postcard-rpc = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+cobs = { workspace = true, optional = true }
+static_cell = { workspace = true, optional = true }
+heapless = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
 [features]
 imu-save-calibration = ["elle-hardware/imu-save-calibration"]  # Pass through to hardware
 legacy-ctrl = ["elle-control/legacy-ctrl"]  # Pass through to control
 performance-monitoring = []  # Enable detailed performance monitoring
 defmt-logging = ["defmt-rtt"]  # Use defmt-rtt for logging
-rtt-control = ["rtt-target"]  # Interactive RTT control interface
+rtt-control = ["rtt-target"]  # Interactive RTT control interface (legacy text-based)
+rpc-control = ["rtt-target", "elle-rpc-icd", "postcard-rpc", "postcard", "cobs", "static_cell", "heapless", "serde"]  # postcard-RPC over RTT
 error-strings = ["elle-error/error-strings"]  # Pass through to error
 
 [lib]

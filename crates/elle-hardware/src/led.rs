@@ -3,7 +3,7 @@
 use embassy_rp::Peri;
 use embassy_rp::peripherals::DMA_CH2;
 use embassy_rp::pio::{Common, StateMachine};
-use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
+use embassy_rp::pio_programs::ws2812::{Grb, PioWs2812, PioWs2812Program};
 use embassy_time::{Duration, Timer};
 use smart_leds::RGB8;
 
@@ -43,7 +43,7 @@ pub struct StatusLed<'a, PIO, const SM: usize>
 where
     PIO: embassy_rp::pio::Instance,
 {
-    ws2812: PioWs2812<'a, PIO, SM, 1>,
+    ws2812: PioWs2812<'a, PIO, SM, 1, Grb>,
     current_pattern: LedPattern,
     pattern_counter: u32,
     brightness: u8,

@@ -5,6 +5,9 @@ pub mod system;
 #[cfg(feature = "rtt-control")]
 pub mod rtt_control;
 
+#[cfg(feature = "rpc-control")]
+pub mod rpc;
+
 // Re-export main types
 pub use system::{ControlMode, CoreHealth, FlightController};
 

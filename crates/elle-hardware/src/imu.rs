@@ -1,48 +1,24 @@
 //! BNO055 IMU integration for attitude sensing with RGB LED status
+//!
+//! When the `disable-imu` feature is enabled, this module provides stub implementations
+//! that return zero/neutral attitude data for debugging without hardware.
 
+use defmt::*;
+use elle_error::ElleResult;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
+use embassy_time::Instant;
+
+#[cfg(not(feature = "disable-imu"))]
 use crate::led::{LedPattern, colors};
+#[cfg(not(feature = "disable-imu"))]
 use crate::sequential_flash_manager::request_load_calibration;
-#[cfg(feature = "imu-save-calibration")]
+#[cfg(all(feature = "imu-save-calibration", not(feature = "disable-imu")))]
 use crate::sequential_flash_manager::request_save_calibration;
 
-// Dummy implementations for performance monitoring
-// These are no-ops to avoid circular dependency with system crate
-struct TimingMeasurement;
-
-impl TimingMeasurement {
-    fn start() -> Self {
-        Self
-    }
-    fn elapsed_us(&self) -> u32 {
-        0
-    }
-}
-
-fn update_imu_timing(_elapsed_us: u32) {}
-#[cfg(feature = "imu-save-calibration")]
-use bno055::BNO055_CALIB_SIZE;
-use bno055::{BNO055AxisSign, BNO055Calibration, mint};
-use defmt::*;
-use elle_error::{CalibrationError, ElleResult, ImuError};
-use embassy_rp::i2c::{Blocking, I2c};
-use embassy_rp::peripherals::I2C0;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Sender, TrySendError};
-use embassy_sync::rwlock::RwLock;
-use embassy_sync::signal::Signal;
-use embassy_time::{Delay, Duration, Instant, Timer};
-
-/// Shared attitude data between cores/tasks
-pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
-
-/// Global signal for Core 1 (IMU) heartbeat
-pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
-/// Mutex-protected IMU status for safe access
-pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
-
-/// Channel for LED pattern updates
-pub static LED_COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, LedPattern, 8> = Channel::new();
+// ============================================================================
+// COMMON TYPES AND STATICS (available in both modes)
+// ============================================================================
 
 #[derive(Clone, Copy, Debug, Format)]
 pub struct AttitudeData {
@@ -56,7 +32,7 @@ pub struct AttitudeData {
 }
 
 impl AttitudeData {
-    const fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self {
             pitch: 0.0,
             roll: 0.0,
@@ -79,7 +55,7 @@ pub struct ImuStatus {
 }
 
 impl ImuStatus {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             initialized: false,
             calibrated: false,
@@ -90,6 +66,70 @@ impl ImuStatus {
     }
 }
 
+/// Shared attitude data between cores/tasks
+pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
+
+/// Global signal for Core 1 (IMU) heartbeat
+pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Helper function to check if attitude data is valid and recent
+pub fn is_attitude_valid(attitude: &AttitudeData, max_age: embassy_time::Duration) -> bool {
+    attitude.timestamp != Instant::from_ticks(0) && attitude.timestamp.elapsed() < max_age
+}
+
+/// Channel for LED pattern updates
+pub static LED_COMMAND_CHANNEL: embassy_sync::channel::Channel<
+    CriticalSectionRawMutex,
+    crate::led::LedPattern,
+    8,
+> = embassy_sync::channel::Channel::new();
+
+// ============================================================================
+// REAL IMU IMPLEMENTATION (when disable-imu feature is NOT enabled)
+// ============================================================================
+#[cfg(not(feature = "disable-imu"))]
+use embassy_sync::rwlock::RwLock;
+
+#[cfg(not(feature = "disable-imu"))]
+/// RwLock-protected IMU status for safe access
+pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
+
+#[cfg(not(feature = "disable-imu"))]
+// Dummy implementations for performance monitoring
+// These are no-ops to avoid circular dependency with system crate
+struct TimingMeasurement;
+
+#[cfg(not(feature = "disable-imu"))]
+impl TimingMeasurement {
+    fn start() -> Self {
+        Self
+    }
+    fn elapsed_us(&self) -> u32 {
+        0
+    }
+}
+
+#[cfg(not(feature = "disable-imu"))]
+fn update_imu_timing(_elapsed_us: u32) {}
+
+#[cfg(not(feature = "disable-imu"))]
+#[cfg(feature = "imu-save-calibration")]
+use bno055::BNO055_CALIB_SIZE;
+
+#[cfg(not(feature = "disable-imu"))]
+use bno055::{BNO055AxisSign, BNO055Calibration, mint};
+#[cfg(not(feature = "disable-imu"))]
+use elle_error::{CalibrationError, ImuError};
+#[cfg(not(feature = "disable-imu"))]
+use embassy_rp::i2c::{Blocking, I2c};
+#[cfg(not(feature = "disable-imu"))]
+use embassy_rp::peripherals::I2C0;
+#[cfg(not(feature = "disable-imu"))]
+use embassy_sync::channel::{Sender, TrySendError};
+#[cfg(not(feature = "disable-imu"))]
+use embassy_time::{Delay, Duration, Timer};
+
+#[cfg(not(feature = "disable-imu"))]
 pub struct BnoImu<'a> {
     bno: bno055::Bno055<I2c<'a, I2C0, Blocking>>,
     led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
@@ -101,6 +141,7 @@ pub struct BnoImu<'a> {
     calibration_loaded: bool,
 }
 
+#[cfg(not(feature = "disable-imu"))]
 impl<'a> BnoImu<'a> {
     pub fn new(
         i2c: I2c<'a, I2C0, Blocking>,
@@ -567,6 +608,7 @@ impl<'a> BnoImu<'a> {
     }
 }
 
+#[cfg(not(feature = "disable-imu"))]
 /// Convert quaternion to Euler angles (ZYX convention)
 fn quaternion_to_euler(q: &mint::Quaternion<f32>) -> (f32, f32, f32) {
     let w = q.s;
@@ -595,7 +637,84 @@ fn quaternion_to_euler(q: &mint::Quaternion<f32>) -> (f32, f32, f32) {
     (yaw, pitch, roll)
 }
 
-/// Helper function to check if attitude data is valid and recent
-pub fn is_attitude_valid(attitude: &AttitudeData, max_age: Duration) -> bool {
-    attitude.timestamp != Instant::from_ticks(0) && attitude.timestamp.elapsed() < max_age
+// ============================================================================
+// STUB IMU IMPLEMENTATION (when disable-imu feature IS enabled)
+// ============================================================================
+#[cfg(feature = "disable-imu")]
+use embassy_sync::rwlock::RwLock;
+
+#[cfg(feature = "disable-imu")]
+/// RwLock-protected IMU status for safe access (stub version)
+pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
+
+#[cfg(feature = "disable-imu")]
+pub struct BnoImu<'a> {
+    _phantom: core::marker::PhantomData<&'a ()>,
+}
+
+#[cfg(feature = "disable-imu")]
+impl<'a> BnoImu<'a> {
+    pub fn new<I2C>(
+        _i2c: I2C,
+        _led_sender: embassy_sync::channel::Sender<'a, CriticalSectionRawMutex, crate::led::LedPattern, 8>,
+    ) -> Self {
+        info!("IMU: DISABLED (stub implementation active)");
+        Self {
+            _phantom: core::marker::PhantomData,
+        }
+    }
+
+    /// Initialize IMU (stub - immediately returns success)
+    pub async fn initialize(&mut self) -> ElleResult<()> {
+        info!("IMU: Stub initialization - marking as ready");
+
+        // Mark IMU as initialized and calibrated immediately
+        {
+            let mut status = IMU_STATUS.write().await;
+            status.initialized = true;
+            status.calibrated = true;
+            status.last_update = Instant::now();
+        }
+
+        Ok(())
+    }
+
+    /// Wait for calibration (stub - immediately returns success)
+    pub async fn wait_for_calibration(&mut self, _timeout_secs: u64) -> ElleResult<()> {
+        info!("IMU: Stub calibration - already 'calibrated'");
+        Ok(())
+    }
+
+    /// Run continuous IMU reading (stub - generates neutral attitude data)
+    pub async fn run(&mut self) -> ! {
+        info!("IMU: Starting stub IMU loop (neutral attitude data)");
+
+        loop {
+            // Generate neutral/zero attitude data
+            let attitude = AttitudeData {
+                pitch: 0.0,
+                roll: 0.0,
+                yaw: 0.0,
+                pitch_rate: 0.0,
+                roll_rate: 0.0,
+                yaw_rate: 0.0,
+                timestamp: Instant::now(),
+            };
+
+            // Signal neutral attitude data
+            ATTITUDE_SIGNAL.signal(attitude);
+
+            // Send heartbeat signal
+            CORE1_HEARTBEAT.signal(());
+
+            // Update status
+            {
+                let mut status = IMU_STATUS.write().await;
+                status.last_update = Instant::now();
+            }
+
+            // Run at same rate as real IMU (4kHz)
+            embassy_time::Timer::after(embassy_time::Duration::from_micros(250)).await;
+        }
+    }
 }

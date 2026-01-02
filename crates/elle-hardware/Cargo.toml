@@ -29,6 +29,7 @@ heapless = { workspace = true }
 imu-save-calibration = []  # Enable saving IMU calibration to flash
 performance-monitoring = []
 ulog-logging = ["elle-ulog"]  # Enable ULog flash logging
+disable-imu = []  # Disable IMU for debugging (enabled by default, use this flag to disable)
 
 [lib]
 test = false
