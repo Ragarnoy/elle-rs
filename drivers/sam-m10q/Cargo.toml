@@ -1,0 +1,22 @@
+[package]
+name = "sam-m10q"
+version.workspace = true
+edition.workspace = true
+description = "Driver for the u-blox SAM-M10Q GNSS module"
+
+[dependencies]
+embedded-io = "0.7"
+embedded-hal = "1.0"
+
+[dependencies.nmea]
+version = "0.7"
+default-features = false
+features = ["GNSS", "other"]
+
+[dependencies.defmt]
+version = "1.0"
+optional = true
+
+[features]
+default = []
+defmt = ["dep:defmt"]

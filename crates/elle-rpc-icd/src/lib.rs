@@ -5,7 +5,7 @@
 
 #![cfg_attr(not(feature = "use-std"), no_std)]
 
-use postcard_rpc::{endpoint, topic};
+use postcard_rpc::{endpoints, topics, TopicDirection};
 use postcard_schema::Schema;
 use serde::{Deserialize, Serialize};
 
@@ -119,19 +119,34 @@ pub struct VersionResp {
     pub patch: u8,
 }
 
+/// Magnetometer data response (signed counts from MMC5616WA)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct MagnetometerResp {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+/// GNSS position fix response
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
+pub struct GnssResp {
+    /// Latitude in degrees (positive = North)
+    pub latitude: f32,
+    /// Longitude in degrees (positive = East)
+    pub longitude: f32,
+    /// Altitude above mean sea level in meters
+    pub altitude_m: f32,
+    /// Fix quality: 0=none, 1=GPS, 2=DGPS
+    pub fix_quality: u8,
+    /// Number of satellites used for fix
+    pub num_satellites: u8,
+    /// Horizontal dilution of precision
+    pub hdop: f32,
+}
+
 // ============================================================================
 // Wire Types - Topics (streaming data)
 // ============================================================================
-
-/// Telemetry message for periodic updates
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
-pub struct TelemetryMsg {
-    pub timestamp_ms: u32,
-    pub pitch_cdeg: i16,
-    pub roll_cdeg: i16,
-    pub throttle_percent: u8,
-    pub armed: bool,
-}
 
 /// Log message for device-side logging
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
@@ -146,35 +161,46 @@ pub struct LogMsg {
 // Endpoint Definitions
 // ============================================================================
 
-// Control endpoints
-endpoint!(SetThrottleEndpoint, SetThrottleReq, AckResp, "elle/ctrl/throttle");
-endpoint!(SetElevonsEndpoint, SetElevonsReq, AckResp, "elle/ctrl/elevons");
-endpoint!(SetControlModeEndpoint, SetControlModeReq, AckResp, "elle/ctrl/mode");
-
-// Safety endpoints
-endpoint!(ArmEndpoint, (), AckResp, "elle/safety/arm");
-endpoint!(DisarmEndpoint, (), AckResp, "elle/safety/disarm");
-endpoint!(EmergencyStopEndpoint, (), AckResp, "elle/safety/estop");
-
-// Trim/Calibration endpoints
-endpoint!(AdjustTrimEndpoint, AdjustTrimReq, AckResp, "elle/trim/adjust");
-endpoint!(SaveCalibrationEndpoint, (), AckResp, "elle/cal/save");
-endpoint!(ClearCalibrationEndpoint, (), AckResp, "elle/cal/clear");
-
-// Query endpoints
-endpoint!(GetStatusEndpoint, (), StatusResp, "elle/query/status");
-endpoint!(GetAttitudeEndpoint, (), AttitudeResp, "elle/query/attitude");
-endpoint!(GetPerformanceEndpoint, (), PerformanceResp, "elle/query/perf");
-endpoint!(ResetPerformanceEndpoint, (), AckResp, "elle/perf/reset");
-
-// System endpoints
-endpoint!(PingEndpoint, (), (), "elle/sys/ping");
-endpoint!(GetVersionEndpoint, (), VersionResp, "elle/sys/version");
+endpoints! {
+    list = ENDPOINT_LIST;
+    | EndpointTy                | RequestTy         | ResponseTy        | Path                  |
+    | ----------                | ---------         | ----------        | ----                  |
+    | SetThrottleEndpoint       | SetThrottleReq    | AckResp           | "elle/ctrl/throttle"  |
+    | SetElevonsEndpoint        | SetElevonsReq     | AckResp           | "elle/ctrl/elevons"   |
+    | SetControlModeEndpoint    | SetControlModeReq | AckResp           | "elle/ctrl/mode"      |
+    | ArmEndpoint               | ()                | AckResp           | "elle/safety/arm"     |
+    | DisarmEndpoint            | ()                | AckResp           | "elle/safety/disarm"  |
+    | EmergencyStopEndpoint     | ()                | AckResp           | "elle/safety/estop"   |
+    | AdjustTrimEndpoint        | AdjustTrimReq     | AckResp           | "elle/trim/adjust"    |
+    | SaveCalibrationEndpoint   | ()                | AckResp           | "elle/cal/save"       |
+    | ClearCalibrationEndpoint  | ()                | AckResp           | "elle/cal/clear"      |
+    | GetStatusEndpoint         | ()                | StatusResp        | "elle/query/status"   |
+    | GetAttitudeEndpoint       | ()                | AttitudeResp      | "elle/query/attitude" |
+    | GetPerformanceEndpoint    | ()                | PerformanceResp   | "elle/query/perf"     |
+    | ResetPerformanceEndpoint  | ()                | AckResp           | "elle/perf/reset"     |
+    | PingEndpoint              | ()                | ()                | "elle/sys/ping"       |
+    | GetVersionEndpoint        | ()                | VersionResp       | "elle/sys/version"    |
+    | GetMagnetometerEndpoint   | ()                | MagnetometerResp  | "elle/query/mag"      |
+    | GetGnssEndpoint           | ()                | GnssResp          | "elle/query/gnss"     |
+}
 
 // ============================================================================
 // Topic Definitions
 // ============================================================================
 
-// Device -> Host topics
-topic!(TelemetryTopic, TelemetryMsg, "elle/telem");
-topic!(LogTopic, LogMsg, "elle/log");
+// Incoming topics to server (host -> device) — none
+topics! {
+    list = TOPICS_IN_LIST;
+    direction = TopicDirection::ToServer;
+    | TopicTy                   | MessageTy     | Path              |
+    | -------                   | ---------     | ----              |
+}
+
+// Outgoing topics from server (device -> host)
+topics! {
+    list = TOPICS_OUT_LIST;
+    direction = TopicDirection::ToClient;
+    | TopicTy                   | MessageTy     | Path              | Cfg   |
+    | -------                   | ---------     | ----              | ---   |
+    | LogTopic                  | LogMsg        | "elle/log"        |       |
+}

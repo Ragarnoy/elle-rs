@@ -9,9 +9,7 @@ use core::fmt::Arguments;
 use defmt::info;
 use embassy_sync::blocking_mutex::{raw::CriticalSectionRawMutex, Mutex};
 use postcard_rpc::header::VarHeader;
-use postcard_rpc::server::{
-    AsWireRxErrorKind, AsWireTxErrorKind, WireRx, WireRxErrorKind, WireTx, WireTxErrorKind,
-};
+use postcard_rpc::server::{WireRx, WireRxErrorKind, WireTx, WireTxErrorKind};
 use postcard_rpc::header::VarKeyKind;
 use rtt_target::{ChannelMode, DownChannel, UpChannel, rtt_init, set_defmt_channel};
 use serde::Serialize;
@@ -43,18 +41,8 @@ pub struct RttTx {
     inner: &'static Mutex<CriticalSectionRawMutex, RefCell<RttTxInner>>,
 }
 
-/// RTT TX error type
-#[derive(Debug, Clone, Copy)]
-pub enum RttTxError {}
-
-impl AsWireTxErrorKind for RttTxError {
-    fn as_kind(&self) -> WireTxErrorKind {
-        match *self {}
-    }
-}
-
 impl WireTx for RttTx {
-    type Error = RttTxError;
+    type Error = WireTxErrorKind;
 
     async fn send<T: Serialize + ?Sized>(
         &self,
@@ -137,18 +125,8 @@ impl RttRx {
     }
 }
 
-/// RTT RX error type
-#[derive(Debug, Clone, Copy)]
-pub enum RttRxError {}
-
-impl AsWireRxErrorKind for RttRxError {
-    fn as_kind(&self) -> WireRxErrorKind {
-        match *self {}
-    }
-}
-
 impl WireRx for RttRx {
-    type Error = RttRxError;
+    type Error = WireRxErrorKind;
 
     async fn receive<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a mut [u8], Self::Error> {
         loop {
@@ -203,6 +181,26 @@ impl WireRx for RttRx {
             embassy_time::Timer::after(embassy_time::Duration::from_micros(100)).await;
         }
     }
+}
+
+/// Minimal WireSpawn implementation for define_dispatch! compatibility.
+///
+/// Since all RPC handlers are blocking (no spawn-flavored handlers),
+/// this is never actually used at runtime — it just satisfies the type requirement.
+#[derive(Clone)]
+pub struct ElleWireSpawn;
+
+impl postcard_rpc::server::WireSpawn for ElleWireSpawn {
+    type Error = core::convert::Infallible;
+    type Info = ();
+    fn info(&self) -> &Self::Info {
+        &()
+    }
+}
+
+/// Placeholder spawn function for define_dispatch! (never called with blocking-only handlers)
+pub fn elle_spawn<S>(_sp: &ElleWireSpawn, _tok: S) -> Result<(), core::convert::Infallible> {
+    Ok(())
 }
 
 /// RTT channels for RPC communication

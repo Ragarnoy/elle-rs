@@ -10,6 +10,8 @@ members = [
     "crates/elle-rpc-icd",
     "crates/elle-eagle",
     "tools/elle-rpc-host",
+    "drivers/mmc5616wa",
+    "drivers/sam-m10q",
 ]
 
 [workspace.package]
@@ -25,6 +27,8 @@ elle-control = { path = "crates/elle-control" }
 elle-system = { path = "crates/elle-system" }
 elle-ulog = { path = "crates/elle-ulog" }
 elle-rpc-icd = { path = "crates/elle-rpc-icd" }
+mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt"] }
+sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
 
 # External dependencies - Embassy ecosystem
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
@@ -57,6 +61,7 @@ postcard = { version = "1.1", default-features = false }
 postcard-rpc = { version = "0.12", default-features = false }
 postcard-schema = { version = "0.2", default-features = false, features = ["derive"] }
 cobs = { version = "0.5", default-features = false }
+embedded-io = "0.7"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [profile.release]

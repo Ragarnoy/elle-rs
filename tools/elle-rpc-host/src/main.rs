@@ -1,16 +1,15 @@
 //! Elle RPC Host CLI
 //!
-//! Communicate with the Elle flight controller via postcard-RPC.
+//! Communicate with the Elle flight controller via postcard-RPC over RTT.
 //!
 //! Modes:
-//! - TCP (default): Connects to cargo-embed via TCP sockets
-//! - Direct: Uses probe-rs directly (requires exclusive probe access)
+//! - Default: TUI monitoring dashboard with live telemetry
+//! - Direct: Single commands via debug probe (for scripting)
 
-mod commands;
 mod direct;
-mod protocol;
-mod repl;
-mod transport;
+mod probe;
+mod tui;
+mod wire;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -18,25 +17,13 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "elle", about = "Elle flight controller CLI")]
 struct Cli {
-    /// TCP address for RPC responses (RTT up channel 1)
-    #[arg(long, default_value = "127.0.0.1:19021", global = true)]
-    rx_addr: String,
-
-    /// TCP address for RPC requests (RTT down channel 0)
-    #[arg(long, default_value = "127.0.0.1:19022", global = true)]
-    tx_addr: String,
-
-    /// Dry-run mode: skip connection, use fake responses (for UI testing)
-    #[arg(long, global = true)]
-    dry_run: bool,
-
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Direct probe access mode (single commands, no cargo-embed needed)
+    /// Single command via debug probe (for scripting)
     #[command(subcommand)]
     Direct(direct::DirectCommand),
 }
@@ -46,8 +33,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        None if cli.dry_run => repl::run_dry_run().await,
-        None => repl::run_tcp(&cli.rx_addr, &cli.tx_addr).await,
+        None => tui::run().await,
         Some(Commands::Direct(cmd)) => direct::run(cmd).await,
     }
 }

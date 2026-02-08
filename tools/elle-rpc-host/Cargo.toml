@@ -10,15 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 elle-rpc-icd = { workspace = true, features = ["use-std"] }
-serde = { workspace = true, features = ["std", "derive"] }
-postcard = { workspace = true, features = ["use-std"] }
 postcard-rpc = { workspace = true, features = ["use-std"] }
 cobs = { workspace = true }
 
-# Host-specific dependencies
-probe-rs = "0.30"
+probe-rs = { version = "0.31", default-features = false, features = ["builtin-targets"] }
 clap = { version = "4", features = ["derive"] }
-dialoguer = { version = "0.12", features = ["fuzzy-select"] }
-console = "0.16"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
+ratatui = "0.30"
+crossterm = { version = "0.28", features = ["event-stream"] }
+futures = "0.3"
