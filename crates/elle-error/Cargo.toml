@@ -7,9 +7,6 @@ edition.workspace = true
 thiserror = { workspace = true }
 defmt = { workspace = true }
 
-[features]
-error-strings = []  # Include human-readable error descriptions
-
 [lib]
 test = false
 bench = false

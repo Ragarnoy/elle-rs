@@ -9,6 +9,7 @@ elle-hardware = { workspace = true }
 elle-control = { workspace = true }
 elle-system = { workspace = true }
 elle-rpc-icd = { workspace = true, optional = true }
+sam-m10q = { workspace = true, optional = true }
 
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
@@ -30,11 +31,9 @@ legacy-ctrl = ["elle-system/legacy-ctrl"]
 imu-save-calibration = ["elle-system/imu-save-calibration"]
 performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
-rtt-control = ["elle-system/rtt-control"]
 rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard"]
-error-strings = ["elle-system/error-strings"]
+gnss = ["sam-m10q"]
 ulog-logging = ["elle-hardware/ulog-logging"]
-disable-imu = ["elle-hardware/disable-imu"]
 
 [[bin]]
 name = "eagle"
