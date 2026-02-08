@@ -2,8 +2,8 @@
 
 pub mod system;
 
-#[cfg(feature = "rtt-control")]
-pub mod rtt_control;
+#[cfg(feature = "rpc-control")]
+pub mod rpc;
 
 // Re-export main types
 pub use system::{ControlMode, CoreHealth, FlightController};
@@ -13,12 +13,11 @@ pub use system::{
     SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU, supervisor_task,
 };
 
-#[cfg(feature = "rtt-control")]
-pub use system::{SUP_RTT_READY, SUP_START_RTT};
-
-// Re-export performance monitoring types
-#[cfg(feature = "performance-monitoring")]
+// Re-export performance monitoring types (both real and no-op versions exist in system.rs)
 pub use system::{
     TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
     update_ulog_timing,
 };
+
+#[cfg(feature = "performance-monitoring")]
+pub use system::PERFORMANCE_MONITOR;

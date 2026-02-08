@@ -8,6 +8,8 @@ elle-config = { workspace = true }
 elle-hardware = { workspace = true }
 elle-control = { workspace = true }
 elle-system = { workspace = true }
+elle-rpc-icd = { workspace = true, optional = true }
+sam-m10q = { workspace = true, optional = true }
 
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
@@ -15,6 +17,8 @@ embassy-sync = { workspace = true }
 embassy-rp = { workspace = true }
 
 static_cell = { workspace = true }
+postcard-rpc = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
 
 defmt = { workspace = true }
 defmt-rtt = { workspace = true, optional = true }
@@ -27,8 +31,8 @@ legacy-ctrl = ["elle-system/legacy-ctrl"]
 imu-save-calibration = ["elle-system/imu-save-calibration"]
 performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
-rtt-control = ["elle-system/rtt-control"]
-error-strings = ["elle-system/error-strings"]
+rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard"]
+gnss = ["sam-m10q"]
 ulog-logging = ["elle-hardware/ulog-logging"]
 
 [[bin]]

@@ -13,14 +13,14 @@ use elle_config::{
     IMU_MAX_AGE_MS,
 };
 
-#[cfg(not(feature = "rtt-control"))]
+#[cfg(not(feature = "rpc-control"))]
 use defmt::debug;
-#[cfg(not(feature = "rtt-control"))]
+#[cfg(not(feature = "rpc-control"))]
 use elle_config::{
     ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH, PITCH_CH, ROLL_CH,
     THROTTLE_CH, YAW_CH,
 };
-#[cfg(not(feature = "rtt-control"))]
+#[cfg(not(feature = "rpc-control"))]
 use elle_control::commands::PilotCommands;
 use elle_hardware::imu::{
     ATTITUDE_SIGNAL, AttitudeData, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
@@ -34,51 +34,25 @@ use elle_hardware::{
 #[cfg(feature = "ulog-logging")]
 use elle_hardware::ULogLogger;
 
-#[cfg(not(feature = "rtt-control"))]
+#[cfg(not(feature = "rpc-control"))]
 use elle_hardware::sbus::{SBUS_COMMANDS, SbusReceiver, sbus_receiver_task};
-#[cfg(feature = "rtt-control")]
-use elle_system::rtt_control::{COMMAND_CHANNEL, DebugCommand, RttCommander, RttControl};
-#[cfg(feature = "rtt-control")]
-use elle_system::{SUP_RTT_READY, SUP_START_RTT};
-#[cfg(feature = "performance-monitoring")]
-use elle_system::{
-    TimingMeasurement, log_performance_summary, update_control_loop_timing, update_led_timing,
-};
 
-#[cfg(all(feature = "performance-monitoring", feature = "ulog-logging"))]
-use elle_system::update_ulog_timing;
+#[cfg(feature = "rpc-control")]
+use elle_rpc_icd::ControlMode;
+#[cfg(feature = "rpc-control")]
+use elle_system::rpc::init_rtt_rpc;
+#[cfg(feature = "rpc-control")]
+mod rpc_app;
+#[cfg(feature = "rpc-control")]
+pub mod flight_state;
 
 use elle_system::{
     FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
-    supervisor_task,
+    TimingMeasurement, log_performance_summary, supervisor_task, update_control_loop_timing,
+    update_led_timing,
 };
-
-// Dummy timing when performance monitoring is disabled
-#[cfg(not(feature = "performance-monitoring"))]
-struct TimingMeasurement;
-
-#[cfg(not(feature = "performance-monitoring"))]
-impl TimingMeasurement {
-    fn start() -> Self {
-        Self
-    }
-    fn elapsed_us(&self) -> u32 {
-        0
-    }
-}
-
-#[cfg(not(feature = "performance-monitoring"))]
-fn update_control_loop_timing(_elapsed_us: u32) {}
-
-#[cfg(not(feature = "performance-monitoring"))]
-fn update_led_timing(_elapsed_us: u32) {}
-
-#[cfg(not(all(feature = "performance-monitoring", feature = "ulog-logging")))]
-#[allow(dead_code)]
-fn update_ulog_timing(_elapsed_us: u32) {}
-
-#[cfg(not(feature = "performance-monitoring"))]
-fn log_performance_summary() {}
+#[cfg(feature = "ulog-logging")]
+use elle_system::update_ulog_timing;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
@@ -86,7 +60,6 @@ use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
-#[cfg(not(feature = "rtt-control"))]
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
@@ -191,13 +164,37 @@ bind_interrupts!(
     struct Irqs {
         PIO0_IRQ_0 => PioIrqHandler<PIO0>;
         PIO1_IRQ_0 => PioIrqHandler<PIO1>;
-        #[cfg(not(feature = "rtt-control"))]
         UART0_IRQ => UartIrqHandler<UART0>;
     }
 );
 
 static mut CORE1_STACK: Stack<8192> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
+
+// Magnetometer signal for RPC handler
+#[cfg(feature = "rpc-control")]
+pub mod mag_signal {
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::signal::Signal;
+    use elle_rpc_icd::MagnetometerResp;
+
+    pub static MAG_SIGNAL: Signal<CriticalSectionRawMutex, MagnetometerResp> = Signal::new();
+}
+
+// GNSS signal for sharing position data with RPC handler
+#[cfg(all(feature = "gnss", feature = "rpc-control"))]
+pub mod gnss_signal {
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::signal::Signal;
+    use elle_rpc_icd::GnssResp;
+
+    pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssResp> = Signal::new();
+}
+
+#[cfg(feature = "rpc-control")]
+mod rpc_handlers;
+#[cfg(feature = "rpc-control")]
+pub mod log_channel;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -224,10 +221,10 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(led_task(led_common, led_sm0, p.DMA_CH2, p.PIN_10).unwrap());
 
-    #[cfg(feature = "rtt-control")]
+    #[cfg(feature = "rpc-control")]
     {
-        info!("Core0: Starting RTT control interface");
-        spawner.spawn(rtt_control_task().unwrap());
+        info!("Core0: Starting RPC server");
+        spawner.spawn(rpc_server_task(spawner).unwrap());
     }
 
     // Start supervisor to coordinate task startup
@@ -267,11 +264,17 @@ async fn main(spawner: Spawner) {
     let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, sm2, sm3, &mut pwm_pins);
     pwm.set_safe_positions();
 
-    #[cfg(not(feature = "rtt-control"))]
+    #[cfg(not(feature = "rpc-control"))]
     {
         info!("Core0: Starting SBUS receiver task");
         let sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
         spawner.spawn(sbus_receiver_task(sbus).unwrap());
+    }
+
+    #[cfg(all(feature = "gnss", feature = "rpc-control"))]
+    {
+        info!("Core0: Starting GNSS task (UART0, GPIO28/29)");
+        spawner.spawn(gnss_task(p.UART0, p.PIN_29, p.DMA_CH0).unwrap());
     }
     let mut fc = FlightController::new(pwm);
 
@@ -362,7 +365,7 @@ async fn main(spawner: Spawner) {
     // State for control loop
     let mut loop_counter = 0u32;
 
-    #[cfg(not(feature = "rtt-control"))]
+    #[cfg(not(feature = "rpc-control"))]
     {
         info!("FLIGHT MODE - SBUS Control");
 
@@ -463,15 +466,25 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    #[cfg(feature = "rtt-control")]
+    #[cfg(feature = "rpc-control")]
     {
-        info!("GROUND TEST MODE - RTT Control");
+        use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+        use embassy_time::Instant;
+        use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
+
+        info!("GROUND TEST MODE - RPC Control (postcard-RPC over RTT)");
         info!("WARNING: This mode requires programmer connection");
 
-        let mut rtt_commander = RttCommander::new(COMMAND_CHANNEL.receiver());
-        let mut last_had_commands = false;
+        // Ticker for consistent control loop timing
+        let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
+
+        // RPC commands accumulator (updated by RPC handlers)
+        let mut rpc_throttle: f32 = 0.0;
+        let mut rpc_elevon_left: f32 = 0.0;
+        let mut rpc_elevon_right: f32 = 0.0;
 
         loop {
+            ticker.next().await;
             let loop_timer = TimingMeasurement::start();
 
             // Supervisor check
@@ -480,55 +493,88 @@ async fn main(spawner: Spawner) {
             // Get latest attitude data
             let attitude = ATTITUDE_SIGNAL.try_take();
 
-            // Collect debug commands (up to 16 per loop iteration)
-            let mut debug_commands: [Option<DebugCommand>; 16] = [None; 16];
-            let mut debug_count = 0;
-
-            // Read commands from RTT (processes both flight and debug commands)
-            let pilot_commands = rtt_commander
-                .read_commands(|cmd| {
-                    if debug_count < debug_commands.len() {
-                        debug_commands[debug_count] = Some(cmd);
-                        debug_count += 1;
+            // Process all pending RPC commands
+            while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
+                match cmd {
+                    RpcCommand::SetThrottle(percent) => {
+                        rpc_throttle = (percent as f32 / 100.0).clamp(0.0, 1.0);
                     }
-                })
-                .await;
-
-            // Process collected debug commands
-            for cmd in debug_commands[..debug_count].iter().flatten() {
-                process_debug_command(&mut fc, *cmd).await;
+                    RpcCommand::SetElevons { left, right } => {
+                        rpc_elevon_left = (left as f32 / 100.0).clamp(-1.0, 1.0);
+                        rpc_elevon_right = (right as f32 / 100.0).clamp(-1.0, 1.0);
+                    }
+                    RpcCommand::SetMode(_mode) => {
+                        // TODO: implement mode switching
+                    }
+                    RpcCommand::Arm => {
+                        fc.arm();
+                        info!("Motors ARMED via RPC");
+                        log_channel::send(2, 10);
+                    }
+                    RpcCommand::Disarm => {
+                        fc.disarm();
+                        info!("Motors DISARMED via RPC");
+                        log_channel::send(2, 11);
+                    }
+                    RpcCommand::EmergencyStop => {
+                        info!("RPC: EMERGENCY STOP");
+                        log_channel::send(3, 12);
+                        rpc_throttle = 0.0;
+                        rpc_elevon_left = 0.0;
+                        rpc_elevon_right = 0.0;
+                        fc.disarm();
+                        fc.apply_failsafe();
+                    }
+                    RpcCommand::AdjustTrim { left, right } => {
+                        info!("RPC: Trim L={} R={} (not implemented)", left, right);
+                    }
+                    RpcCommand::SaveCalibration => {
+                        info!("RPC: Save calibration requested");
+                    }
+                    RpcCommand::ClearCalibration => {
+                        info!("RPC: Clear calibration requested");
+                    }
+                }
             }
 
-            // Apply pilot commands or failsafe
-            let has_commands = pilot_commands.is_some();
-            if let Some(commands) = pilot_commands {
-                if !last_had_commands {
-                    info!("RTT commands active");
-                }
-                let valid_attitude = validate_attitude(attitude);
-                fc.update(&commands, valid_attitude.as_ref());
+            // Build pilot commands from RPC state
+            let commands = PilotCommands::Normalized(NormalizedCommands {
+                throttle: rpc_throttle,
+                pitch: (rpc_elevon_left + rpc_elevon_right) / 2.0,  // Mixed
+                roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,   // Mixed
+                yaw: 0.0,
+                attitude_mode: AttitudeMode::Manual,
+                pitch_setpoint_deg: 0.0,
+                roll_setpoint_deg: 0.0,
+                timestamp: Instant::now(),
+            });
 
-                // Log flight data to ULog flash storage
-                #[cfg(feature = "ulog-logging")]
-                log_flight_data(
-                    &mut ulog_logger,
-                    valid_attitude.as_ref(),
-                    &commands,
-                    loop_counter,
-                    loop_timer.elapsed_us(),
-                    &fc,
-                )
-                .await;
-            } else {
-                // RTT timed out - apply failsafe
-                if last_had_commands {
-                    warn!("RTT command timeout - applying failsafe");
-                }
-                fc.apply_failsafe();
-            }
-            last_had_commands = has_commands;
+            // Update flight controller
+            let valid_attitude = validate_attitude(attitude);
+            fc.update(&commands, valid_attitude.as_ref());
 
-            // Don't check SBUS failsafe in RTT mode - RTT has its own timeout logic above
+            // Publish flight state for RPC handlers
+            flight_state::FLIGHT_STATE.signal(flight_state::FlightState {
+                armed: fc.is_armed(),
+                failsafe: fc.is_failsafe(),
+                mode: match fc.current_control_mode() {
+                    elle_system::ControlMode::Manual => ControlMode::Manual,
+                    elle_system::ControlMode::Mixed => ControlMode::Mixed,
+                    elle_system::ControlMode::Autopilot => ControlMode::Autopilot,
+                },
+            });
+
+            // Log flight data to ULog flash storage
+            #[cfg(feature = "ulog-logging")]
+            log_flight_data(
+                &mut ulog_logger,
+                valid_attitude.as_ref(),
+                &commands,
+                loop_counter,
+                loop_timer.elapsed_us(),
+                &fc,
+            )
+            .await;
 
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
@@ -542,21 +588,18 @@ async fn main(spawner: Spawner) {
 
                 let imu_status = IMU_STATUS.read().await;
                 let led_pattern = if fc.is_armed() {
-                    LedPattern::DoubleBlink(colors::CYAN)
+                    LedPattern::DoubleBlink(colors::PURPLE)
                 } else if fc.is_failsafe() {
                     LedPattern::RapidFlash(colors::ORANGE)
                 } else if imu_status.calibrated {
-                    LedPattern::Solid(colors::BLUE)
+                    LedPattern::Solid(colors::PURPLE)
                 } else {
-                    LedPattern::Pulse(colors::BLUE)
+                    LedPattern::Pulse(colors::PURPLE)
                 };
 
                 let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
                 drop(imu_status);
             }
-
-            // Small delay for RTT command processing
-            Timer::after(Duration::from_millis(10)).await;
         }
     }
 }
@@ -599,6 +642,95 @@ async fn imu_task(
 
     // Run continuous IMU reading
     imu.run().await;
+}
+
+#[cfg(all(feature = "gnss", feature = "rpc-control"))]
+#[embassy_executor::task]
+async fn gnss_task(
+    uart: Peri<'static, UART0>,
+    rx_pin: Peri<'static, embassy_rp::peripherals::PIN_29>,
+    rx_dma: Peri<'static, embassy_rp::peripherals::DMA_CH0>,
+) {
+    use embassy_rp::uart::{self, UartRx};
+    use sam_m10q::decoder::{Decoder, FeedResult};
+    use sam_m10q::nmea::ParseResult;
+    use sam_m10q::types::Frame;
+
+    info!("GNSS task starting (9600 baud, UART0 RX on GPIO29)");
+
+    let mut uart_config = uart::Config::default();
+    uart_config.baudrate = 9600;
+
+    let mut rx = UartRx::new(uart, rx_pin, Irqs, rx_dma, uart_config);
+    let mut decoder = Decoder::new();
+    let mut gga_count: u32 = 0;
+    let mut last_lat: f32 = 0.0;
+    let mut last_lon: f32 = 0.0;
+    let mut last_alt: f32 = 0.0;
+
+    loop {
+        let mut byte = [0u8; 1];
+        match rx.read(&mut byte).await {
+            Ok(()) => {}
+            Err(e) => {
+                warn!("GNSS UART read error: {}", e);
+                log_channel::send(3, 3);
+                Timer::after(Duration::from_millis(10)).await;
+                continue;
+            }
+        }
+
+        match decoder.feed(byte[0]) {
+            FeedResult::Pending => {}
+            FeedResult::FrameReady => {
+                if let Frame::Nmea(nmea_frame) = decoder.take_frame() {
+                    if let Some(ParseResult::GGA(gga)) = nmea_frame.parsed {
+                        gga_count = gga_count.wrapping_add(1);
+                        let sats = gga.fix_satellites.unwrap_or(0) as u8;
+                        let fix = match gga.fix_type {
+                            Some(sam_m10q::nmea::sentences::FixType::Invalid) | None => 0,
+                            Some(sam_m10q::nmea::sentences::FixType::Gps) => 1,
+                            Some(sam_m10q::nmea::sentences::FixType::DGps) => 2,
+                            Some(_) => 3,
+                        };
+
+                        if gga_count == 1 {
+                            info!("GNSS: first GGA received (fix={}, sats={})", fix, sats);
+                            log_channel::send(2, 1);
+                        } else if gga_count.is_multiple_of(60) {
+                            info!("GNSS: {} GGA sentences (fix={}, sats={})", gga_count, fix, sats);
+                            log_channel::send(1, 2);
+                        }
+
+                        if fix > 0 {
+                            if let Some(lat) = gga.latitude {
+                                last_lat = lat as f32;
+                            }
+                            if let Some(lon) = gga.longitude {
+                                last_lon = lon as f32;
+                            }
+                            if let Some(alt) = gga.altitude {
+                                last_alt = alt;
+                            }
+                        }
+
+                        let resp = elle_rpc_icd::GnssResp {
+                            latitude: last_lat,
+                            longitude: last_lon,
+                            altitude_m: last_alt,
+                            fix_quality: fix,
+                            num_satellites: sats,
+                            hdop: gga.hdop.unwrap_or(99.9),
+                        };
+                        gnss_signal::GNSS_SIGNAL.signal(resp);
+                    }
+                }
+            }
+            FeedResult::Error(_) => {
+                // Non-fatal decode error, continue
+            }
+        }
+    }
 }
 
 #[embassy_executor::task]
@@ -647,104 +779,62 @@ async fn led_task(
     }
 }
 
-#[cfg(feature = "rtt-control")]
+#[cfg(feature = "rpc-control")]
 #[embassy_executor::task]
-async fn rtt_control_task() {
-    info!("Core0: RTT control task starting");
-    let mut rtt_control = RttControl::init();
+async fn log_publisher_task(sender: postcard_rpc::server::Sender<elle_system::rpc::RttTx>) {
+    use postcard_rpc::header::VarSeq;
 
-    // Notify supervisor that RTT control is ready, then wait for start
-    SUP_RTT_READY.signal(());
-    info!("Core0: RTT control waiting for Supervisor start barrier");
-    SUP_START_RTT.wait().await;
-
-    rtt_control.run().await;
-}
-
-/// Process debug commands from RTT (non-flight commands only)
-/// Flight commands (throttle, elevons, mode) are handled by RttCommander
-#[cfg(feature = "rtt-control")]
-async fn process_debug_command(fc: &mut FlightController<'_>, command: DebugCommand) {
-    use elle_hardware::imu::IMU_STATUS;
-
-    match command {
-        // Flight control commands handled by RttCommander
-        DebugCommand::SetThrottle(_)
-        | DebugCommand::SetElevons { .. }
-        | DebugCommand::SetControlMode(_) => {
-            // No-op - handled by RttCommander
-        }
-
-        DebugCommand::Arm => {
-            fc.arm();
-            info!("Motors ARMED via RTT");
-        }
-
-        DebugCommand::Disarm => {
-            fc.disarm();
-            info!("Motors DISARMED via RTT");
-        }
-
-        DebugCommand::EmergencyStop => {
-            info!("RTT: EMERGENCY STOP");
-            fc.apply_failsafe();
-        }
-
-        DebugCommand::AdjustTrim { left, right } => {
-            info!(
-                "RTT: Trim adjustment requested L={} R={} (not implemented)",
-                left, right
-            );
-        }
-
-        DebugCommand::SaveCalibration => {
-            info!("RTT: Save calibration requested");
-        }
-
-        DebugCommand::ClearCalibration => {
-            info!("RTT: Clear calibration requested");
-        }
-
-        DebugCommand::GetStatus => {
-            let status = IMU_STATUS.read().await;
-            info!(
-                "RTT Status - Armed: {}, Failsafe: {}, IMU Cal: {}, IMU Errors: {}",
-                fc.is_armed(),
-                fc.is_failsafe(),
-                status.calibrated,
-                status.error_count
-            );
-        }
-
-        DebugCommand::GetAttitude => {
-            if let Some(attitude) = ATTITUDE_SIGNAL.try_take() {
-                info!(
-                    "RTT Attitude - P:{}° R:{}° Y:{}°",
-                    (attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                    (attitude.roll * 180.0 / core::f32::consts::PI) as i16,
-                    (attitude.yaw * 180.0 / core::f32::consts::PI) as i16
-                );
-                // Put it back for normal processing
-                ATTITUDE_SIGNAL.signal(attitude);
-            } else {
-                info!("RTT: No attitude data available");
-            }
-        }
-
-        #[cfg(feature = "performance-monitoring")]
-        DebugCommand::GetPerformance => {
-            use elle_system::log_performance_summary;
-            info!("RTT: Performance summary requested");
-            log_performance_summary();
-        }
-
-        #[cfg(feature = "performance-monitoring")]
-        DebugCommand::ResetPerformance => {
-            use elle_system::PERFORMANCE_MONITOR;
-            info!("RTT: Resetting performance counters");
-            unsafe {
-                (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR)).reset_all();
-            }
-        }
+    let mut seq: u16 = 0;
+    loop {
+        let msg = log_channel::LOG_CHANNEL.receive().await;
+        let _ = sender.publish::<elle_rpc_icd::LogTopic>(VarSeq::Seq2(seq), &msg).await;
+        seq = seq.wrapping_add(1);
     }
 }
+
+/// RPC server task using postcard-RPC over RTT with define_dispatch!
+#[cfg(feature = "rpc-control")]
+#[embassy_executor::task]
+async fn rpc_server_task(spawner: Spawner) {
+    use elle_system::rpc::ElleWireSpawn;
+    use postcard_rpc::server::{Dispatch, Server};
+    use rpc_handlers::RPC_CMD_CHANNEL;
+
+    info!("Core0: RPC server task starting");
+
+    // Initialize RTT channels for RPC
+    let channels = init_rtt_rpc();
+
+    // RX buffer for incoming messages
+    static RX_BUF: StaticCell<[u8; 1024]> = StaticCell::new();
+    let rx_buf: &'static mut [u8] = RX_BUF.init([0u8; 1024]);
+
+    // Create dispatch context with command channel sender
+    let context = rpc_app::RpcContext {
+        cmd_sender: RPC_CMD_CHANNEL.sender(),
+    };
+
+    // Create dispatcher via define_dispatch!-generated type
+    let dispatcher = rpc_app::ElleApp::new(context, ElleWireSpawn);
+    let vkk = dispatcher.min_key_len();
+
+    // Create and run the server
+    let mut server = Server::new(
+        channels.tx,
+        channels.rx,
+        rx_buf,
+        dispatcher,
+        vkk,
+    );
+
+    let sender = server.sender();
+    spawner.spawn(log_publisher_task(sender).unwrap());
+
+    info!("Core0: RPC server ready, waiting for commands");
+
+    loop {
+        // run() returns on fatal error; just restart
+        let _err = server.run().await;
+    }
+}
+

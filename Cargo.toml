@@ -7,7 +7,11 @@ members = [
     "crates/elle-control",
     "crates/elle-system",
     "crates/elle-ulog",
+    "crates/elle-rpc-icd",
     "crates/elle-eagle",
+    "tools/elle-rpc-host",
+    "drivers/mmc5616wa",
+    "drivers/sam-m10q",
 ]
 
 [workspace.package]
@@ -22,12 +26,15 @@ elle-hardware = { path = "crates/elle-hardware" }
 elle-control = { path = "crates/elle-control" }
 elle-system = { path = "crates/elle-system" }
 elle-ulog = { path = "crates/elle-ulog" }
+elle-rpc-icd = { path = "crates/elle-rpc-icd" }
+mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt"] }
+sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
 
 # External dependencies - Embassy ecosystem
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git" }
-embassy-rp = { version = "0.8.0", git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa"] }
+embassy-rp = { version = "0.9.0", git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa"] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git" }
 
 # External dependencies - Hardware drivers
@@ -50,7 +57,12 @@ rtt-target = { version = "0.6.1", features = ["defmt"] }
 thiserror = { version = "2.0.17", default-features = false }
 sequential-storage = { version = "6.0.*", default-features = false }
 heapless = "0.9"
-postcard = { version = "1.0", default-features = false }
+postcard = { version = "1.1", default-features = false }
+postcard-rpc = { version = "0.12", default-features = false }
+postcard-schema = { version = "0.2", default-features = false, features = ["derive"] }
+cobs = { version = "0.5", default-features = false }
+embedded-io = "0.7"
+serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [profile.release]
 debug = 2
