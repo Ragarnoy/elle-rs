@@ -74,6 +74,25 @@ impl<I: I2c> Mmc5616wa<I> {
 
     // --- Measurement ---
 
+    /// Read the latest magnetic output registers and return signed counts.
+    ///
+    /// Use this after starting continuous mode with [`start_continuous`].
+    /// Does **not** trigger a new measurement.
+    pub fn read_magnetic(&mut self) -> Result<MagData, Error<I::Error>> {
+        let raw = self.read_raw_mag()?;
+        Ok(MagData {
+            x: to_signed(raw.x),
+            y: to_signed(raw.y),
+            z: to_signed(raw.z),
+        })
+    }
+
+    /// Check whether a magnetic measurement is ready by reading Status1.
+    pub fn data_ready(&mut self) -> Result<bool, Error<I::Error>> {
+        let status = interface::read_reg(&mut self.i2c, self.addr, STATUS1)?;
+        Ok(status & MEAS_M_DONE != 0)
+    }
+
     /// Perform a one-shot magnetic measurement with automatic SET/RESET.
     ///
     /// Triggers TM_M with AUTO_SR_EN, polls Status1 for completion,
@@ -113,7 +132,7 @@ impl<I: I2c> Mmc5616wa<I> {
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, DO_RESET, 0)?;
         delay.delay_ms(1); // tSR
 
-        // Measure after RESET
+        // Measure after RESET (MEAS_M_DONE was cleared by set_raw read above)
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, TM_M, 0)?;
         self.poll_status(MEAS_M_DONE, delay)?;
         let reset_raw = self.read_raw_mag()?;
@@ -160,7 +179,7 @@ impl<I: I2c> Mmc5616wa<I> {
     /// Writes the ODR value, enables CMM_FREQ_EN in Ctrl0, and sets CMM_EN in Ctrl2.
     pub fn start_continuous(&mut self, odr: u8) -> Result<(), Error<I::Error>> {
         self.set_odr(odr)?;
-        interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, CMM_FREQ_EN, 0)?;
+        interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, CMM_FREQ_EN | AUTO_SR_EN, 0)?;
         interface::modify_ctrl2(&mut self.i2c, self.addr, &mut self.cache, CMM_EN, 0)?;
         Ok(())
     }

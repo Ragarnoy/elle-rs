@@ -10,9 +10,9 @@ pub struct DifferentialFactors {
 /// Calculate differential thrust from normalized yaw input using LUT
 #[inline(always)]
 pub fn calculate_yaw_differential(yaw_input: f32) -> DifferentialFactors {
-    // Convert normalized yaw input back to SBUS value for LUT lookup
-    let sbus_equiv = ((yaw_input * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
-    let (left_mult, right_mult) = calculate_yaw_differential_lut(sbus_equiv);
+    // Convert normalized yaw input back to RC value for LUT lookup
+    let rc_equiv = ((yaw_input * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+    let (left_mult, right_mult) = calculate_yaw_differential_lut(rc_equiv);
 
     DifferentialFactors {
         left_mult,
@@ -20,10 +20,10 @@ pub fn calculate_yaw_differential(yaw_input: f32) -> DifferentialFactors {
     }
 }
 
-/// Calculate differential thrust directly from SBUS channel (ultra-fast)
+/// Calculate differential thrust directly from raw RC channel (ultra-fast)
 #[inline(always)]
-pub fn calculate_yaw_differential_from_sbus(yaw_sbus: u16) -> DifferentialFactors {
-    let (left_mult, right_mult) = calculate_yaw_differential_lut(yaw_sbus);
+pub fn calculate_yaw_differential_from_raw(yaw_rc: u16) -> DifferentialFactors {
+    let (left_mult, right_mult) = calculate_yaw_differential_lut(yaw_rc);
 
     DifferentialFactors {
         left_mult,
@@ -31,7 +31,7 @@ pub fn calculate_yaw_differential_from_sbus(yaw_sbus: u16) -> DifferentialFactor
     }
 }
 
-/// Calculate differential thrust from SBUS channel (legacy) using LUT
+/// Calculate differential thrust from RC channel (legacy) using LUT
 #[inline(always)]
 pub fn calculate_differential_legacy(ch4_value: u16) -> DifferentialFactors {
     let (left_mult_percent, right_mult_percent) = calculate_differential_lut(ch4_value);
@@ -59,15 +59,15 @@ pub fn apply_differential_thrust(base_thrust: u32, factors: &DifferentialFactors
     }
 }
 
-/// Ultra-fast differential thrust calculation directly from SBUS to thrust values
+/// Ultra-fast differential thrust calculation directly from RC value to thrust values
 #[inline(always)]
-pub fn apply_differential_thrust_direct(base_thrust: u32, yaw_sbus: u16) -> (u32, u32) {
-    apply_differential_thrust_lut(base_thrust, yaw_sbus)
+pub fn apply_differential_thrust_direct(base_thrust: u32, yaw_rc: u16) -> (u32, u32) {
+    apply_differential_thrust_lut(base_thrust, yaw_rc)
 }
 
 /// Combined throttle curve + differential thrust calculation (maximum performance)
 #[inline(always)]
-pub fn throttle_with_differential_lut(throttle_sbus: u16, yaw_sbus: u16) -> (u32, u32) {
-    let base_thrust = throttle_curve_lut(throttle_sbus);
-    apply_differential_thrust_lut(base_thrust, yaw_sbus)
+pub fn throttle_with_differential_lut(throttle_rc: u16, yaw_rc: u16) -> (u32, u32) {
+    let base_thrust = throttle_curve_lut(throttle_rc);
+    apply_differential_thrust_lut(base_thrust, yaw_rc)
 }

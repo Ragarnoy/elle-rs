@@ -1,26 +1,18 @@
 use defmt::Format;
 use elle_config::*;
 
-/// Convert SBUS values to normalized control inputs using ultra-fast LUT
+/// Convert RC values to normalized control inputs using ultra-fast LUT
 #[inline(always)]
-pub fn sbus_to_normalized(sbus_value: u16) -> f32 {
-    // Default to roll normalization - this maintains backward compatibility
-    sbus_to_normalized_roll_lut(sbus_value)
-}
-
-/// Convert SBUS value to normalized with specific center point using LUT
-#[inline(always)]
-pub fn sbus_to_normalized_with_center(sbus_value: u16, _center: u16) -> f32 {
-    sbus_to_normalized_roll_lut(sbus_value) // Default to roll
+pub fn rc_to_normalized(rc_value: u16) -> f32 {
+    elle_config::rc_to_normalized(rc_value)
 }
 
 /// Convert normalized control input to servo pulse width using LUT
-/// For values outside -1.0 to 1.0, falls back to calculation
 #[inline(always)]
 pub fn normalized_to_servo_us(normalized: f32) -> u32 {
-    // Convert normalized to SBUS equivalent for LUT lookup
-    let sbus_equiv = ((normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
-    sbus_to_pulse_lut(sbus_equiv)
+    // Convert normalized to RC equivalent for LUT lookup
+    let rc_equiv = ((normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+    rc_to_pulse_lut(rc_equiv)
 }
 
 /// Flight control inputs in normalized form
@@ -40,20 +32,20 @@ pub struct ElevonOutputs {
 }
 
 impl ControlInputs {
-    /// Create control inputs from SBUS packet channels using ultra-fast LUTs
+    /// Create control inputs from RC channels using ultra-fast LUTs
     #[inline(always)]
-    pub fn from_sbus_channels(channels: &[u16]) -> Self {
+    pub fn from_rc_channels(channels: &[u16]) -> Self {
         Self {
-            pitch: sbus_to_normalized_pitch_lut(channels[PITCH_CH]),
-            roll: sbus_to_normalized_roll_lut(channels[ROLL_CH]),
-            yaw: sbus_to_normalized_yaw_lut(channels[YAW_CH]),
+            pitch: elle_config::rc_to_normalized(channels[PITCH_CH]),
+            roll: elle_config::rc_to_normalized(channels[ROLL_CH]),
+            yaw: elle_config::rc_to_normalized(channels[YAW_CH]),
             throttle: (channels[THROTTLE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
         }
     }
 
     /// Ultra-fast batch conversion using single LUT call
     #[inline(always)]
-    pub fn from_sbus_channels_fast(channels: &[u16]) -> Self {
+    pub fn from_rc_channels_fast(channels: &[u16]) -> Self {
         let (roll, pitch, yaw, throttle) = channels_to_normalized_lut(channels);
         Self {
             pitch,
@@ -69,17 +61,15 @@ impl ControlInputs {
         Self {
             pitch: 0.0, // No pitch input in direct mode
             roll: 0.0,  // No roll input in direct mode
-            yaw: sbus_to_normalized_yaw_lut(channels[DIFFERENTIAL_CH]),
+            yaw: elle_config::rc_to_normalized(channels[DIFFERENTIAL_CH]),
             throttle: (channels[ENGINE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
         }
     }
 }
 
 /// Mixes pitch, roll and yaw inputs into elevon control surface positions
-/// Optimized version using fast normalization
 #[inline(always)]
 pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
-    // Inputs are already clamped from LUT lookups, but clamp again for safety
     let pitch = inputs.pitch.clamp(-1.0, 1.0);
     let roll = inputs.roll.clamp(-1.0, 1.0);
     let yaw = inputs.yaw.clamp(-1.0, 1.0);
@@ -100,13 +90,11 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
     ElevonOutputs { left_us, right_us }
 }
 
-/// Ultra-fast elevon mixing using direct SBUS values
-/// This version skips the ControlInputs struct for maximum performance
+/// Ultra-fast elevon mixing using direct RC values
 #[inline(always)]
 pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
     let (roll, pitch, yaw, _throttle) = channels_to_normalized_lut(channels);
 
-    // Direct mixing calculations
     let left_elevon_normalized = ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN)
         + (yaw * YAW_TO_ELEVON_GAIN))
         .clamp(-1.0, 1.0);
@@ -115,13 +103,13 @@ pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
         - (yaw * YAW_TO_ELEVON_GAIN))
         .clamp(-1.0, 1.0);
 
-    // Convert back to SBUS equivalent and use LUT
-    let left_sbus = ((left_elevon_normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
-    let right_sbus = ((right_elevon_normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+    // Convert back to RC equivalent and use LUT
+    let left_rc = ((left_elevon_normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+    let right_rc = ((right_elevon_normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
 
     ElevonOutputs {
-        left_us: sbus_to_pulse_lut(left_sbus),
-        right_us: sbus_to_pulse_lut(right_sbus),
+        left_us: rc_to_pulse_lut(left_rc),
+        right_us: rc_to_pulse_lut(right_rc),
     }
 }
 
@@ -129,7 +117,7 @@ pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
 #[inline(always)]
 pub fn direct_elevon_control(channels: &[u16]) -> ElevonOutputs {
     ElevonOutputs {
-        left_us: sbus_to_pulse_lut(channels[ELEVON_LEFT_CH]),
-        right_us: sbus_to_pulse_lut(channels[ELEVON_RIGHT_CH]),
+        left_us: rc_to_pulse_lut(channels[ELEVON_LEFT_CH]),
+        right_us: rc_to_pulse_lut(channels[ELEVON_RIGHT_CH]),
     }
 }

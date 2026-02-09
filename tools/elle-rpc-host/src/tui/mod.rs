@@ -40,8 +40,11 @@ pub async fn run() -> Result<()> {
     let app_rx = ProbeRttRx { inc: inc_rx };
     let app_tx = ProbeRttTx { out: out_tx };
 
-    // Spawn RTT worker thread
-    std::thread::spawn(move || probe::rtt_worker(session, rtt, inc_tx, out_rx));
+    // Spawn RTT worker thread with shutdown flag
+    let shutdown = probe::shutdown_flag();
+    let shutdown_clone = shutdown.clone();
+    let worker_handle =
+        std::thread::spawn(move || probe::rtt_worker(session, rtt, inc_tx, out_rx, shutdown_clone));
 
     // Create HostClient
     let client = HostClient::<WireError>::new_with_wire(
@@ -100,6 +103,7 @@ pub async fn run() -> Result<()> {
     let mut status_interval = tokio::time::interval(Duration::from_secs(2)); // Status poll
     let mut mag_interval = tokio::time::interval(Duration::from_millis(200)); // 5Hz mag poll
     let mut gnss_interval = tokio::time::interval(Duration::from_secs(1)); // 1Hz GNSS poll
+    let mut rc_interval = tokio::time::interval(Duration::from_millis(50)); // 20Hz RC poll
     let mut event_stream = crossterm::event::EventStream::new();
 
     let result = loop {
@@ -230,6 +234,17 @@ pub async fn run() -> Result<()> {
                     state.connected = true;
                 }
             }
+
+            // Periodic RC channels poll
+            _ = rc_interval.tick() => {
+                if let Ok(Ok(rc)) = tokio::time::timeout(
+                    Duration::from_millis(100),
+                    client.send_resp::<GetRcChannelsEndpoint>(&()),
+                ).await {
+                    state.rc_channels = Some(rc);
+                    state.connected = true;
+                }
+            }
         }
 
         // Render
@@ -239,6 +254,10 @@ pub async fn run() -> Result<()> {
     // Restore terminal
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
+
+    // Signal the RTT worker to stop and wait for it to release the probe
+    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = worker_handle.join();
 
     result
 }

@@ -1,4 +1,4 @@
-use crate::throttle::sbus_to_pulse_us;
+use crate::throttle::rc_to_pulse_us;
 use elle_config::*;
 
 #[derive(Debug, Default)]
@@ -8,18 +8,18 @@ pub struct ArmingState {
 }
 
 impl ArmingState {
-    pub fn update(&mut self, throttle_sbus: u16, sbus_failsafe: bool) {
+    pub fn update(&mut self, throttle_raw: u16, failsafe: bool) {
         // Check arming conditions
         if !self.armed {
             let throttle_us =
-                sbus_to_pulse_us(throttle_sbus, ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US);
+                rc_to_pulse_us(throttle_raw, ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US);
             if throttle_us < ENGINE_ARM_THRESHOLD {
                 self.armed = true;
             }
         }
 
         // Handle failsafe
-        if sbus_failsafe {
+        if failsafe {
             self.armed = false;
             self.failsafe_active = true;
         }

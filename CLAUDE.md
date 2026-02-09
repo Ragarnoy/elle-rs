@@ -33,6 +33,7 @@ Key feature flags for elle-eagle:
 - `performance-monitoring` — Timing instrumentation
 - `ulog-logging` — Flash-based flight data recording
 - `gnss` — SAM-M10Q GNSS receiver support (requires `rpc-control`)
+- `crsf-telemetry` — CRSF telemetry TX to radio via PIN_20/UART1 TX (attitude, flight mode, GPS)
 - `imu-save-calibration` — Persist IMU calibration to flash (default)
 - `legacy-ctrl` — Legacy mixing functions (mutually exclusive with default mixing)
 
@@ -163,12 +164,21 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - Direct mode shares probe.rs/wire.rs with TUI
 - Firmware dispatch via `define_dispatch!` macro
 - ICD uses batch `endpoints!`/`topics!` macros
+- CRSF telemetry TX: attitude, flight mode, GPS frames to radio via PIN_20 (feature `crsf-telemetry`)
+- CRSF telemetry log events forwarded to RPC LogTopic (codes 20-23) for TUI visibility
+- Host TUI/direct mode: proper RTT worker shutdown via `AtomicBool` flag + `JoinHandle::join()`
+- `CrsfReceiver::new()` refactored to accept `UartRx` (UART split for TX telemetry)
+- MMC5616WA magnetometer wired into `disable-imu` stub — reads at ~10 Hz, populates `MAG_SIGNAL` for TUI/RPC. Always-on (no feature gate), the chip is physically on the board.
 
 ### Known TODOs in Firmware
 - `RpcCommand::SetMode`: not implemented (TODO in main loop)
 - `RpcCommand::AdjustTrim`: logged but not implemented
 - `RpcCommand::SaveCalibration` / `ClearCalibration`: logged but not implemented
+- **`disable-imu` stub generates synthetic test data** (slow sine waves) — remove once ICM42686P is connected
+- I2C0 bus plan: MMC5616WA (mag) + BMP390 (baro, driver not yet written). ICM42686P (IMU) will use SPI.
 
 ### Next Steps
-1. **Test end-to-end** — Flash firmware with `rpc-control`, run host TUI, verify attitude display + commands work
+1. **Test end-to-end** — Flash firmware with `rpc-control,disable-imu`, run host TUI, verify mag data in TUI
 2. **Implement remaining RPC commands** — Mode switching, trim adjust, calibration save/clear
+3. **Wire MMC5616WA into real IMU path** — when ICM42686P is on SPI, I2C0 still available for mag reading in the real `BnoImu::run()` loop
+4. **BMP390 barometer driver** — second I2C0 device, will need shared bus (I2C bus mutex or separate task)

@@ -5,14 +5,13 @@ use embassy_time::{Duration, Instant};
 // Import LUT functions and channel indices for decoding
 use elle_config::{
     ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH, PITCH_CH, ROLL_CH,
-    THROTTLE_CH, YAW_CH, sbus_to_normalized_pitch_lut, sbus_to_normalized_roll_lut,
-    sbus_to_normalized_yaw_lut,
+    THROTTLE_CH, YAW_CH, rc_to_normalized,
 };
 
 /// Commands can be raw (fast path) or normalized (semantic)
 #[derive(Clone, Copy, Debug, Format)]
 pub enum PilotCommands {
-    /// Raw SBUS-like values (0-2047)
+    /// Raw RC values (0-2047)
     Raw(RawCommands),
     /// Normalized semantic commands (-1.0 to 1.0)
     Normalized(NormalizedCommands),
@@ -26,13 +25,13 @@ pub struct RawCommands {
 }
 
 impl RawCommands {
-    /// Convert raw SBUS channels to normalized commands
+    /// Convert raw RC channels to normalized commands
     pub fn to_normalized(&self) -> NormalizedCommands {
         NormalizedCommands {
             throttle: (self.channels[THROTTLE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
-            pitch: sbus_to_normalized_pitch_lut(self.channels[PITCH_CH]),
-            roll: sbus_to_normalized_roll_lut(self.channels[ROLL_CH]),
-            yaw: sbus_to_normalized_yaw_lut(self.channels[YAW_CH]),
+            pitch: rc_to_normalized(self.channels[PITCH_CH]),
+            roll: rc_to_normalized(self.channels[ROLL_CH]),
+            yaw: rc_to_normalized(self.channels[YAW_CH]),
             attitude_mode: decode_attitude_mode(self.channels[ATTITUDE_ENABLE_CH]),
             pitch_setpoint_deg: decode_pitch_setpoint(self.channels[ATTITUDE_PITCH_SETPOINT_CH]),
             roll_setpoint_deg: decode_roll_setpoint(self.channels[ATTITUDE_ROLL_SETPOINT_CH]),
@@ -111,13 +110,13 @@ pub fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
 }
 
 pub fn decode_pitch_setpoint(ch6_value: u16) -> f32 {
-    let normalized = sbus_to_normalized_pitch_lut(ch6_value);
+    let normalized = rc_to_normalized(ch6_value);
     ATTITUDE_PITCH_MIN_DEG
         + (normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG)
 }
 
 pub fn decode_roll_setpoint(ch8_value: u16) -> f32 {
-    let normalized = sbus_to_normalized_roll_lut(ch8_value);
+    let normalized = rc_to_normalized(ch8_value);
     ATTITUDE_ROLL_MIN_DEG
         + (normalized + 1.0) * 0.5 * (ATTITUDE_ROLL_MAX_DEG - ATTITUDE_ROLL_MIN_DEG)
 }

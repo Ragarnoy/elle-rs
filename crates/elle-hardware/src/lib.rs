@@ -4,11 +4,14 @@ pub mod flash_constants;
 pub mod imu;
 pub mod led;
 pub mod pwm;
-pub mod sbus;
+pub mod crsf;
 pub mod sequential_flash_manager;
 
 #[cfg(feature = "ulog-logging")]
 pub mod ulog_logger;
+
+#[cfg(feature = "crsf-telemetry")]
+pub mod crsf_telemetry;
 
 // Re-export commonly used types
 pub use flash_constants::{
@@ -18,7 +21,7 @@ pub use flash_constants::{
 pub use imu::{AttitudeData, BnoImu, CORE1_HEARTBEAT, ImuStatus};
 pub use led::LedPattern;
 pub use pwm::{PwmOutputs, PwmPins};
-pub use sbus::SbusReceiver;
+pub use crsf::CrsfReceiver;
 pub use sequential_flash_manager::SequentialFlashManager;
 
 #[cfg(feature = "ulog-logging")]

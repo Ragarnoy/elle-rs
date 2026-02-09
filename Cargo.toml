@@ -39,7 +39,7 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy.git" }
 
 # External dependencies - Hardware drivers
 bno055 = "0.4.0"
-sbus-rs = "0.1.3"
+crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = false, features = ["defmt"] }
 smart-leds = "0.4.0"
 
 # External dependencies - Control algorithms
@@ -61,6 +61,7 @@ postcard = { version = "1.1", default-features = false }
 postcard-rpc = { version = "0.12", default-features = false }
 postcard-schema = { version = "0.2", default-features = false, features = ["derive"] }
 cobs = { version = "0.5", default-features = false }
+crc = { version = "3", default-features = false }
 embedded-io = "0.7"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 

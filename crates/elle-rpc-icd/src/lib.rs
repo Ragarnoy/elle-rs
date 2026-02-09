@@ -127,6 +127,12 @@ pub struct MagnetometerResp {
     pub z: i32,
 }
 
+/// RC channel data response (16 channels, 0–2047 range)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct RcChannelsResp {
+    pub channels: [u16; 16],
+}
+
 /// GNSS position fix response
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GnssResp {
@@ -182,6 +188,7 @@ endpoints! {
     | GetVersionEndpoint        | ()                | VersionResp       | "elle/sys/version"    |
     | GetMagnetometerEndpoint   | ()                | MagnetometerResp  | "elle/query/mag"      |
     | GetGnssEndpoint           | ()                | GnssResp          | "elle/query/gnss"     |
+    | GetRcChannelsEndpoint     | ()                | RcChannelsResp    | "elle/query/rc"       |
 }
 
 // ============================================================================

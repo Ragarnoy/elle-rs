@@ -9,8 +9,6 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
-use sbus_rs::SbusPacket;
-
 #[cfg(not(feature = "legacy-ctrl"))]
 use elle_control::mixing::{
     elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
@@ -300,9 +298,9 @@ impl<'a> FlightController<'a> {
     }
 
     fn update_normalized(&mut self, norm: &NormalizedCommands, attitude: Option<&AttitudeData>) {
-        // Convert throttle back to SBUS-equivalent for arming check
-        let throttle_sbus_equiv = (norm.throttle * 2047.0) as u16;
-        self.arming.update(throttle_sbus_equiv, false);
+        // Convert throttle back to RC-equivalent for arming check
+        let throttle_rc_equiv = (norm.throttle * 2047.0) as u16;
+        self.arming.update(throttle_rc_equiv, false);
 
         // Enable attitude controller based on mode
         self.attitude_controller.enabled = (norm.attitude_mode == AttitudeMode::Mixed
@@ -382,43 +380,15 @@ impl<'a> FlightController<'a> {
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
         let base_thrust = throttle_curve_lut((final_inputs.throttle * 2047.0) as u16);
-        let yaw_sbus = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+        let yaw_rc = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
 
         let (left_thrust, right_thrust) = if self.arming.armed {
-            apply_differential_thrust_direct(base_thrust, yaw_sbus)
+            apply_differential_thrust_direct(base_thrust, yaw_rc)
         } else {
             (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
         };
 
         self.pwm.set_engines(left_thrust, right_thrust);
-    }
-
-    /// Ultra-fast direct elevon control method using LUTs
-    #[cfg(feature = "legacy-ctrl")]
-    fn update_direct_elevons(&mut self, packet: &SbusPacket) {
-        // Ultra-fast LUT lookups
-        let elevon_left_us = sbus_to_pulse_lut(packet.channels[ELEVON_LEFT_CH]);
-        let elevon_right_us = sbus_to_pulse_lut(packet.channels[ELEVON_RIGHT_CH]);
-
-        // Set elevon positions
-        self.pwm.set_elevons(elevon_left_us, elevon_right_us);
-
-        // Combined throttle + differential in single LUT operation
-        let (left_thrust, right_thrust) = if self.arming.armed {
-            apply_differential_complete(
-                throttle_curve_lut(packet.channels[ENGINE_CH]),
-                packet.channels[DIFFERENTIAL_CH],
-            )
-        } else {
-            (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
-        };
-
-        self.pwm.set_engines(left_thrust, right_thrust);
-
-        info!(
-            "Direct - LEFT: {}μs RIGHT: {}μs",
-            elevon_left_us, elevon_right_us
-        );
     }
 
     /// Updated method that uses PilotCommands
@@ -430,19 +400,8 @@ impl<'a> FlightController<'a> {
         self.update(commands, attitude);
     }
 
-    /// Legacy method for compatibility - converts SbusPacket to PilotCommands
-    #[deprecated(note = "Use update() with PilotCommands instead")]
-    pub fn update_legacy(&mut self, packet: &SbusPacket) {
-        use elle_control::commands::RawCommands;
-        let commands = PilotCommands::Raw(RawCommands {
-            channels: packet.channels,
-            timestamp: Instant::now(),
-        });
-        self.update(&commands, None);
-    }
-
     pub fn check_failsafe(&mut self) {
-        if self.last_packet_time.elapsed() > Duration::from_millis(SBUS_TIMEOUT_MS) {
+        if self.last_packet_time.elapsed() > Duration::from_millis(RC_TIMEOUT_MS) {
             self.arming.signal_loss();
             self.attitude_controller.reset(); // Reset PID on signal loss
             self.apply_failsafe();

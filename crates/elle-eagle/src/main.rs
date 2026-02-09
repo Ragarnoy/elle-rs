@@ -34,8 +34,7 @@ use elle_hardware::{
 #[cfg(feature = "ulog-logging")]
 use elle_hardware::ULogLogger;
 
-#[cfg(not(feature = "rpc-control"))]
-use elle_hardware::sbus::{SBUS_COMMANDS, SbusReceiver, sbus_receiver_task};
+use elle_hardware::crsf::{RC_COMMANDS, CrsfReceiver, crsf_receiver_task, crsf_uart_config};
 
 #[cfg(feature = "rpc-control")]
 use elle_rpc_icd::ControlMode;
@@ -58,7 +57,7 @@ use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0};
+use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0, UART1};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
@@ -165,20 +164,20 @@ bind_interrupts!(
         PIO0_IRQ_0 => PioIrqHandler<PIO0>;
         PIO1_IRQ_0 => PioIrqHandler<PIO1>;
         UART0_IRQ => UartIrqHandler<UART0>;
+        UART1_IRQ => UartIrqHandler<UART1>;
     }
 );
 
 static mut CORE1_STACK: Stack<8192> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 
-// Magnetometer signal for RPC handler
+// RC channel signal for RPC handler
 #[cfg(feature = "rpc-control")]
-pub mod mag_signal {
+pub mod rc_signal {
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::signal::Signal;
-    use elle_rpc_icd::MagnetometerResp;
 
-    pub static MAG_SIGNAL: Signal<CriticalSectionRawMutex, MagnetometerResp> = Signal::new();
+    pub static RC_SIGNAL: Signal<CriticalSectionRawMutex, [u16; 16]> = Signal::new();
 }
 
 // GNSS signal for sharing position data with RPC handler
@@ -264,11 +263,41 @@ async fn main(spawner: Spawner) {
     let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, sm2, sm3, &mut pwm_pins);
     pwm.set_safe_positions();
 
-    #[cfg(not(feature = "rpc-control"))]
+    // Always spawn CRSF receiver — use DMA_CH3 when rpc-control is enabled
+    // (DMA_CH0 is reserved for GNSS in that configuration)
     {
-        info!("Core0: Starting SBUS receiver task");
-        let sbus = SbusReceiver::new(p.UART0, p.PIN_13, Irqs, p.DMA_CH0);
-        spawner.spawn(sbus_receiver_task(sbus).unwrap());
+        info!("Core0: Starting CRSF receiver task (UART1, GPIO21)");
+        let config = crsf_uart_config();
+
+        #[cfg(feature = "crsf-telemetry")]
+        {
+            // Split UART1: RX for CRSF receiver, TX for telemetry
+            #[cfg(not(feature = "rpc-control"))]
+            let uart = embassy_rp::uart::Uart::new(
+                p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH0, config,
+            );
+            #[cfg(feature = "rpc-control")]
+            let uart = embassy_rp::uart::Uart::new(
+                p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH3, config,
+            );
+            let (tx, rx) = uart.split();
+            let crsf = CrsfReceiver::new(rx);
+            spawner.spawn(crsf_receiver_task(crsf).unwrap());
+
+            info!("Core0: Starting CRSF telemetry TX task (PIN_20, DMA_CH4)");
+            spawner
+                .spawn(elle_hardware::crsf_telemetry::crsf_telemetry_task(tx).unwrap());
+        }
+
+        #[cfg(not(feature = "crsf-telemetry"))]
+        {
+            #[cfg(not(feature = "rpc-control"))]
+            let rx = embassy_rp::uart::UartRx::new(p.UART1, p.PIN_21, Irqs, p.DMA_CH0, config);
+            #[cfg(feature = "rpc-control")]
+            let rx = embassy_rp::uart::UartRx::new(p.UART1, p.PIN_21, Irqs, p.DMA_CH3, config);
+            let crsf = CrsfReceiver::new(rx);
+            spawner.spawn(crsf_receiver_task(crsf).unwrap());
+        }
     }
 
     #[cfg(all(feature = "gnss", feature = "rpc-control"))]
@@ -367,7 +396,7 @@ async fn main(spawner: Spawner) {
 
     #[cfg(not(feature = "rpc-control"))]
     {
-        info!("FLIGHT MODE - SBUS Control");
+        info!("FLIGHT MODE - CRSF/ELRS Control");
 
         // Create ticker for precise 13ms periods (77Hz)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
@@ -385,15 +414,14 @@ async fn main(spawner: Spawner) {
             // Get latest attitude data (non-blocking)
             let attitude = ATTITUDE_SIGNAL.try_take();
 
-            // Check for latest SBUS commands from dedicated receiver task (non-blocking)
-            // The SBUS task runs independently and updates this signal when packets arrive
-            if let Some(commands) = SBUS_COMMANDS.try_take() {
+            // Check for latest RC commands from dedicated CRSF receiver task (non-blocking)
+            if let Some(commands) = RC_COMMANDS.try_take() {
                 // Debug logging (~8Hz)
                 if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10)
                     && let PilotCommands::Raw(raw) = &commands
                 {
                     debug!(
-                        "SBUS: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
+                        "RC: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
                         raw.channels[ROLL_CH],
                         raw.channels[PITCH_CH],
                         raw.channels[THROTTLE_CH],
@@ -416,6 +444,15 @@ async fn main(spawner: Spawner) {
                     warn!("Stale attitude data, using manual control only");
                 }
                 fc.update(commands, valid_attitude.as_ref());
+
+                #[cfg(feature = "crsf-telemetry")]
+                elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
+                    elle_hardware::crsf_telemetry::CrsfFlightMode {
+                        armed: fc.is_armed(),
+                        failsafe: fc.is_failsafe(),
+                        attitude_mode: fc.is_attitude_enabled(),
+                    },
+                );
 
                 // Log flight data to ULog flash storage
                 #[cfg(feature = "ulog-logging")]
@@ -537,6 +574,13 @@ async fn main(spawner: Spawner) {
                 }
             }
 
+            // Poll CRSF receiver and update RC signal for RPC handler
+            if let Some(commands) = RC_COMMANDS.try_take() {
+                if let PilotCommands::Raw(raw) = &commands {
+                    rc_signal::RC_SIGNAL.signal(raw.channels);
+                }
+            }
+
             // Build pilot commands from RPC state
             let commands = PilotCommands::Normalized(NormalizedCommands {
                 throttle: rpc_throttle,
@@ -552,6 +596,22 @@ async fn main(spawner: Spawner) {
             // Update flight controller
             let valid_attitude = validate_attitude(attitude);
             fc.update(&commands, valid_attitude.as_ref());
+
+            #[cfg(feature = "crsf-telemetry")]
+            {
+                elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
+                    elle_hardware::crsf_telemetry::CrsfFlightMode {
+                        armed: fc.is_armed(),
+                        failsafe: fc.is_failsafe(),
+                        attitude_mode: fc.is_attitude_enabled(),
+                    },
+                );
+                if let Some((level, code)) =
+                    elle_hardware::crsf_telemetry::TELEMETRY_LOG.try_take()
+                {
+                    log_channel::send(level, code);
+                }
+            }
 
             // Publish flight state for RPC handlers
             flight_state::FLIGHT_STATE.signal(flight_state::FlightState {
@@ -664,6 +724,7 @@ async fn gnss_task(
     let mut rx = UartRx::new(uart, rx_pin, Irqs, rx_dma, uart_config);
     let mut decoder = Decoder::new();
     let mut gga_count: u32 = 0;
+    let mut uart_error_count: u32 = 0;
     let mut last_lat: f32 = 0.0;
     let mut last_lon: f32 = 0.0;
     let mut last_alt: f32 = 0.0;
@@ -671,10 +732,15 @@ async fn gnss_task(
     loop {
         let mut byte = [0u8; 1];
         match rx.read(&mut byte).await {
-            Ok(()) => {}
+            Ok(()) => {
+                uart_error_count = 0;
+            }
             Err(e) => {
-                warn!("GNSS UART read error: {}", e);
-                log_channel::send(3, 3);
+                uart_error_count += 1;
+                if uart_error_count <= 3 || uart_error_count % 1000 == 0 {
+                    warn!("GNSS UART read error: {} (total={})", e, uart_error_count);
+                    log_channel::send(3, 3);
+                }
                 Timer::after(Duration::from_millis(10)).await;
                 continue;
             }
@@ -723,6 +789,16 @@ async fn gnss_task(
                             hdop: gga.hdop.unwrap_or(99.9),
                         };
                         gnss_signal::GNSS_SIGNAL.signal(resp);
+
+                        #[cfg(feature = "crsf-telemetry")]
+                        elle_hardware::crsf_telemetry::TELEMETRY_GNSS.signal(
+                            elle_hardware::crsf_telemetry::TelemetryGpsData {
+                                latitude: last_lat,
+                                longitude: last_lon,
+                                altitude_m: last_alt,
+                                num_satellites: sats,
+                            },
+                        );
                     }
                 }
             }

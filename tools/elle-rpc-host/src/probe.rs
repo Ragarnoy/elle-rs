@@ -2,6 +2,8 @@
 //!
 //! Shared between direct mode and TUI mode.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -54,15 +56,23 @@ pub fn connect() -> Result<(Session, Rtt)> {
     Ok((session, rtt))
 }
 
+/// Shared shutdown flag for the RTT worker thread.
+pub fn shutdown_flag() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(false))
+}
+
 /// RTT worker thread that bridges blocking probe-rs I/O to async mpsc channels.
 ///
-/// Reads from RTT up channel 0, COBS-decodes frames, and sends them via `inc_tx`.
+/// Reads from RTT up channel 1, COBS-decodes frames, and sends them via `inc_tx`.
 /// Receives outbound messages from `out_rx`, COBS-encodes, and writes to RTT down channel 0.
+///
+/// Exits when `shutdown` is set to `true` or `out_rx` disconnects.
 pub fn rtt_worker(
     mut session: Session,
     mut rtt: Rtt,
     inc_tx: mpsc::Sender<Vec<u8>>,
     mut out_rx: mpsc::Receiver<Vec<u8>>,
+    shutdown: Arc<AtomicBool>,
 ) {
     let mut core = session.core(0).unwrap();
     let mut buf = [0u8; 1024];
@@ -70,6 +80,10 @@ pub fn rtt_worker(
     let mut pending_out: Option<Vec<u8>> = None;
 
     loop {
+        if shutdown.load(Ordering::Relaxed) {
+            return;
+        }
+
         let mut progress = false;
 
         // Read from device (up channel 1 = RPC TX; channel 0 is defmt)

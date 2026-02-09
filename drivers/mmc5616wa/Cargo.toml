@@ -13,3 +13,9 @@ defmt = ["dep:defmt"]
 [dependencies.defmt]
 version = "1.0"
 optional = true
+
+# Tests use embedded-hal-mock, but adding it as a dev-dependency pulls
+# std-requiring transitive deps that break the no_std workspace build.
+# To run tests, temporarily add to [dev-dependencies]:
+#   embedded-hal-mock = { version = "0.11", features = ["eh1"] }
+# Then: cargo test -p mmc5616wa --target x86_64-unknown-linux-gnu

@@ -24,8 +24,8 @@ pub const ENGINE_MAX_PULSE_US: u32 = 1_600; // Maximum throttle
 pub const ENGINE_IDLE_PULSE_US: u32 = 1_100; // Idle throttle for init sequence
 
 // Throttle curve
-pub const THROTTLE_DEADZONE: u32 = 200; // SBUS values 0-200 = motors off
-pub const THROTTLE_START_POINT: u32 = 300; // SBUS value where motors start
+pub const THROTTLE_DEADZONE: u32 = 200; // RC values 0-200 = motors off
+pub const THROTTLE_START_POINT: u32 = 300; // RC value where motors start
 
 // Arming parameters
 pub const ENGINE_ARM_THRESHOLD: u32 = 1_100; // Must have low throttle to arm
@@ -39,20 +39,16 @@ pub const DIFF_MAX_PERCENT: i32 = 20;
 // Engine sync tuning
 pub const ENGINE_RIGHT_OFFSET_US: u32 = 36;
 
-// SBUS parameters
-pub const SBUS_BAUD: u32 = 100_000;
-pub const SBUS_TIMEOUT_MS: u64 = 300;
-pub const SBUS_CENTER_TOLERANCE: u16 = 10; // Max deviation
-pub const SBUS_ROLL_CENTER: u16 = 999;
-pub const SBUS_PITCH_CENTER: u16 = 999; // Adjust if needed
-pub const SBUS_YAW_CENTER: u16 = 1003; // Adjust if needed
+// RC parameters (protocol-independent, values in 0–2047 range)
+pub const RC_TIMEOUT_MS: u64 = 300;
+pub const RC_CENTER: u16 = 1024; // CRSF center 992 scaled to 0–2047
 
-// Control loop timing parameters - adjusted for SBUS-limited rate
+// Control loop timing parameters
 pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = 77; // Actual measured rate (~13ms)
 pub const CONTROL_LOOP_PERIOD_MS: u64 = 1000 / CONTROL_LOOP_FREQUENCY_HZ as u64; // 13ms
 pub const CONTROL_LOOP_DT: f32 = 0.013; // 13ms actual timing for PID stability
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
-pub const SBUS_MAX_LATENCY_MS: u64 = 100; // Max acceptable SBUS packet age
+pub const RC_MAX_LATENCY_MS: u64 = 100; // Max acceptable RC packet age
 
 // NEW: Flight control channel mapping (0-indexed)
 pub const ROLL_CH: usize = 0; // Aileron/roll input

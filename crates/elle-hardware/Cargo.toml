@@ -16,9 +16,12 @@ embassy-rp = { workspace = true }
 embassy-futures = { workspace = true }
 
 bno055 = { workspace = true }
-sbus-rs = { workspace = true }
+crsf = { workspace = true }
+mmc5616wa = { workspace = true }
 smart-leds = { workspace = true }
 sequential-storage = { workspace = true }
+
+crc = { workspace = true, optional = true }
 
 defmt = { workspace = true }
 libm = { workspace = true }
@@ -30,6 +33,8 @@ imu-save-calibration = []  # Enable saving IMU calibration to flash
 performance-monitoring = []
 ulog-logging = ["elle-ulog"]  # Enable ULog flash logging
 disable-imu = []  # Disable IMU for debugging (enabled by default, use this flag to disable)
+crsf-telemetry = ["crc"]  # Enable CRSF telemetry TX to radio
+gnss = []  # Enable GPS telemetry frames (requires crsf-telemetry)
 
 [lib]
 test = false

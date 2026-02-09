@@ -170,11 +170,24 @@ fn handle_get_version(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Versi
 }
 
 fn handle_get_magnetometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagnetometerResp {
-    if let Some(mag) = crate::mag_signal::MAG_SIGNAL.try_take() {
-        crate::mag_signal::MAG_SIGNAL.signal(mag);
-        mag
+    if let Some(mag) = elle_hardware::imu::MAG_SIGNAL.try_take() {
+        elle_hardware::imu::MAG_SIGNAL.signal(mag); // put back
+        MagnetometerResp {
+            x: mag.x,
+            y: mag.y,
+            z: mag.z,
+        }
     } else {
         MagnetometerResp { x: 0, y: 0, z: 0 }
+    }
+}
+
+fn handle_get_rc_channels(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> RcChannelsResp {
+    if let Some(channels) = crate::rc_signal::RC_SIGNAL.try_take() {
+        crate::rc_signal::RC_SIGNAL.signal(channels); // put back
+        RcChannelsResp { channels }
+    } else {
+        RcChannelsResp { channels: [0; 16] }
     }
 }
 
@@ -233,6 +246,7 @@ postcard_rpc::define_dispatch! {
         | GetVersionEndpoint        | blocking  | handle_get_version        |
         | GetMagnetometerEndpoint   | blocking  | handle_get_magnetometer   |
         | GetGnssEndpoint           | blocking  | handle_get_gnss           |
+        | GetRcChannelsEndpoint     | blocking  | handle_get_rc_channels    |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

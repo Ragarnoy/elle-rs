@@ -16,8 +16,6 @@ embassy-sync = { workspace = true }
 embassy-rp = { workspace = true }
 embassy-futures = { workspace = true }
 
-sbus-rs = { workspace = true }
-
 defmt = { workspace = true }
 defmt-rtt = { workspace = true, optional = true }
 rtt-target = { workspace = true, optional = true }
@@ -32,6 +30,7 @@ heapless = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 
 [features]
+disable-imu = ["elle-hardware/disable-imu"]  # Stub IMU for board testing without sensor
 imu-save-calibration = ["elle-hardware/imu-save-calibration"]  # Pass through to hardware
 legacy-ctrl = ["elle-control/legacy-ctrl"]  # Pass through to control
 performance-monitoring = []  # Enable detailed performance monitoring

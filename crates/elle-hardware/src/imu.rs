@@ -77,6 +77,17 @@ pub fn is_attitude_valid(attitude: &AttitudeData, max_age: embassy_time::Duratio
     attitude.timestamp != Instant::from_ticks(0) && attitude.timestamp.elapsed() < max_age
 }
 
+/// Magnetometer data for RPC handler (populated by MMC5616WA)
+pub static MAG_SIGNAL: Signal<CriticalSectionRawMutex, MagReading> = Signal::new();
+
+/// Magnetometer reading (signed counts from MMC5616WA)
+#[derive(Clone, Copy, Debug, Format)]
+pub struct MagReading {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
 /// Channel for LED pattern updates
 pub static LED_COMMAND_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
@@ -528,6 +539,8 @@ impl<'a> BnoImu<'a> {
                     let process_timer = TimingMeasurement::start();
                     // Signal new attitude data
                     ATTITUDE_SIGNAL.signal(attitude);
+                    #[cfg(feature = "crsf-telemetry")]
+                    crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
                     // Send heartbeat signal to Core 0 for health monitoring
                     CORE1_HEARTBEAT.signal(());
@@ -594,6 +607,8 @@ impl<'a> BnoImu<'a> {
                         let mut failed_attitude = self.last_attitude;
                         failed_attitude.timestamp = Instant::from_ticks(0); // Invalid timestamp
                         ATTITUDE_SIGNAL.signal(failed_attitude);
+                        #[cfg(feature = "crsf-telemetry")]
+                        crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(failed_attitude);
 
                         // Try to recover
                         Timer::after(Duration::from_secs(1)).await;
@@ -649,24 +664,40 @@ pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(
 
 #[cfg(feature = "disable-imu")]
 pub struct BnoImu<'a> {
-    _phantom: core::marker::PhantomData<&'a ()>,
+    mag: mmc5616wa::Mmc5616wa<embassy_rp::i2c::I2c<'a, embassy_rp::peripherals::I2C0, embassy_rp::i2c::Blocking>>,
 }
 
 #[cfg(feature = "disable-imu")]
 impl<'a> BnoImu<'a> {
-    pub fn new<I2C>(
-        _i2c: I2C,
+    /// Create stub IMU with MMC5616WA magnetometer on the I2C bus.
+    /// The ICM42686P (future) will use SPI, so I2C0 is free for MMC + BMP390.
+    pub fn new(
+        i2c: embassy_rp::i2c::I2c<'a, embassy_rp::peripherals::I2C0, embassy_rp::i2c::Blocking>,
         _led_sender: embassy_sync::channel::Sender<'a, CriticalSectionRawMutex, crate::led::LedPattern, 8>,
     ) -> Self {
-        info!("IMU: DISABLED (stub implementation active)");
+        info!("IMU: DISABLED (stub with MMC5616WA magnetometer)");
         Self {
-            _phantom: core::marker::PhantomData,
+            mag: mmc5616wa::Mmc5616wa::new_default(i2c),
         }
     }
 
-    /// Initialize IMU (stub - immediately returns success)
+    /// Initialize IMU (stub - immediately returns success, inits MMC5616WA)
     pub async fn initialize(&mut self) -> ElleResult<()> {
         info!("IMU: Stub initialization - marking as ready");
+
+        let mut delay = embassy_time::Delay;
+        if let Err(e) = self.mag.soft_reset(&mut delay) {
+            warn!("MMC5616WA: soft reset failed: {}", e);
+        }
+        if let Err(e) = self.mag.init(&mut delay) {
+            warn!("MMC5616WA: init failed: {}", e);
+        } else if let Err(e) = self.mag.validate() {
+            warn!("MMC5616WA: chip ID validation failed: {}", e);
+        } else if let Err(e) = self.mag.start_continuous(255) {
+            warn!("MMC5616WA: start continuous failed: {}", e);
+        } else {
+            info!("MMC5616WA: initialized, continuous mode (chip ID OK)");
+        }
 
         // Mark IMU as initialized and calibrated immediately
         {
@@ -685,24 +716,53 @@ impl<'a> BnoImu<'a> {
         Ok(())
     }
 
-    /// Run continuous IMU reading (stub - generates neutral attitude data)
+    /// Run continuous IMU reading (stub - generates synthetic test data + real mag)
     pub async fn run(&mut self) -> ! {
-        info!("IMU: Starting stub IMU loop (neutral attitude data)");
+        // TEST DATA: Generates slowly changing attitude values so that the
+        // CRSF telemetry pipeline and TUI can be verified end-to-end without
+        // a real IMU. Remove this stub once the ICM42686P is connected.
+        info!("IMU: Starting stub IMU loop (synthetic test data)");
+
+        let mut tick: u32 = 0;
+        let mut mag_counter: u32 = 0;
 
         loop {
-            // Generate neutral/zero attitude data
+            // Slow sine waves: full cycle every ~16 s (4 kHz × 65536 ticks)
+            // Pitch: ±0.26 rad (±15°), Roll: ±0.17 rad (±10°), Yaw: ramp 0→2π
+            let phase = (tick as f32) * (2.0 * core::f32::consts::PI / 65536.0);
             let attitude = AttitudeData {
-                pitch: 0.0,
-                roll: 0.0,
-                yaw: 0.0,
-                pitch_rate: 0.0,
-                roll_rate: 0.0,
-                yaw_rate: 0.0,
+                pitch: libm::sinf(phase) * 0.26,
+                roll: libm::sinf(phase * 1.5) * 0.17,
+                yaw: phase % (2.0 * core::f32::consts::PI),
+                pitch_rate: libm::cosf(phase) * 0.04,
+                roll_rate: libm::cosf(phase * 1.5) * 0.03,
+                yaw_rate: 0.01,
                 timestamp: Instant::now(),
             };
+            tick = tick.wrapping_add(1);
 
-            // Signal neutral attitude data
+            // Signal synthetic attitude data
             ATTITUDE_SIGNAL.signal(attitude);
+            #[cfg(feature = "crsf-telemetry")]
+            crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
+
+            // Read MMC5616WA magnetometer at ~10 Hz (every 400 ticks at 4 kHz)
+            mag_counter += 1;
+            if mag_counter >= 400 {
+                mag_counter = 0;
+                match self.mag.read_magnetic() {
+                    Ok(data) => {
+                        MAG_SIGNAL.signal(MagReading {
+                            x: data.x,
+                            y: data.y,
+                            z: data.z,
+                        });
+                    }
+                    Err(e) => {
+                        warn!("MMC5616WA: read error: {}", e);
+                    }
+                }
+            }
 
             // Send heartbeat signal
             CORE1_HEARTBEAT.signal(());

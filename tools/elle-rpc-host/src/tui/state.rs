@@ -22,6 +22,9 @@ pub struct AppState {
     // GNSS
     pub gnss: Option<GnssResp>,
 
+    // RC channels
+    pub rc_channels: Option<RcChannelsResp>,
+
     // Attitude history for sparklines
     pub attitude_history: VecDeque<(i16, i16)>, // (pitch, roll) in centidegrees
 
@@ -48,6 +51,7 @@ impl AppState {
             version: None,
             magnetometer: None,
             gnss: None,
+            rc_channels: None,
             attitude_history: VecDeque::with_capacity(ATTITUDE_HISTORY),
             logs: VecDeque::with_capacity(LOG_HISTORY),
             connected: false,

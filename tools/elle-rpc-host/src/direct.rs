@@ -52,26 +52,42 @@ pub enum DirectCommand {
     Gnss,
 }
 
-fn connect_client() -> Result<HostClient<WireError>> {
+struct ProbeConnection {
+    client: HostClient<WireError>,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker_handle: std::thread::JoinHandle<()>,
+}
+
+fn connect_client() -> Result<ProbeConnection> {
     let (session, rtt) = probe::connect()?;
 
     let (out_tx, out_rx) = mpsc::channel(64);
     let (inc_tx, inc_rx) = mpsc::channel(64);
 
-    std::thread::spawn(move || probe::rtt_worker(session, rtt, inc_tx, out_rx));
+    let shutdown = probe::shutdown_flag();
+    let shutdown_clone = shutdown.clone();
+    let worker_handle =
+        std::thread::spawn(move || probe::rtt_worker(session, rtt, inc_tx, out_rx, shutdown_clone));
 
-    Ok(HostClient::<WireError>::new_with_wire(
+    let client = HostClient::<WireError>::new_with_wire(
         ProbeRttTx { out: out_tx },
         ProbeRttRx { inc: inc_rx },
         TokSpawn,
         VarSeqKind::Seq2,
         "error",
         64,
-    ))
+    );
+
+    Ok(ProbeConnection {
+        client,
+        shutdown,
+        worker_handle,
+    })
 }
 
 pub async fn run(cmd: DirectCommand) -> Result<()> {
-    let client = connect_client()?;
+    let conn = connect_client()?;
+    let client = &conn.client;
 
     match cmd {
         DirectCommand::Ping => {
@@ -172,5 +188,11 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             );
         }
     }
+
+    // Signal the RTT worker to stop and wait for it to release the probe
+    conn.shutdown
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = conn.worker_handle.join();
+
     Ok(())
 }
