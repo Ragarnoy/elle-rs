@@ -33,7 +33,7 @@ Key feature flags for elle-eagle:
 - `performance-monitoring` — Timing instrumentation
 - `ulog-logging` — Flash-based flight data recording
 - `gnss` — SAM-M10Q GNSS receiver support (requires `rpc-control`)
-- `crsf-telemetry` — CRSF telemetry TX to radio via PIN_20/UART1 TX (attitude, flight mode, GPS)
+- `crsf-telemetry` — CRSF telemetry TX to radio via PIN_20/UART1 TX (attitude, flight mode, GPS, baro altitude)
 - `imu-save-calibration` — Persist IMU calibration to flash (default)
 - `legacy-ctrl` — Legacy mixing functions (mutually exclusive with default mixing)
 
@@ -66,18 +66,18 @@ The firmware uses postcard-rpc's `define_dispatch!` macro for type-safe dispatch
 No extra postcard-rpc features needed — the macro works with elle's own WireTx/WireRx.
 
 - **ICD**: `crates/elle-rpc-icd/src/lib.rs` — Uses `endpoints!`/`topics!` macros generating `ENDPOINT_LIST`, `TOPICS_IN_LIST`, `TOPICS_OUT_LIST`
-- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 17 blocking handler functions
+- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 19 blocking handler functions
 - **Server task**: `crates/elle-eagle/src/main.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
 
 ### RPC Protocol
 
-17 endpoints + 1 outgoing topic defined in the ICD:
+19 endpoints + 1 outgoing topic defined in the ICD:
 
 **Endpoints** (request/response):
 - Control: SetThrottle, SetElevons, SetControlMode
 - Safety: Arm, Disarm, EmergencyStop
 - Trim/Cal: AdjustTrim, SaveCalibration, ClearCalibration
-- Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetGnss
+- Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels
 - System: Ping, GetVersion
 
 **Topics** (device -> host, streaming):
@@ -87,12 +87,13 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 
 - **`FlightState`** (`crates/elle-eagle/src/flight_state.rs`) — Signal carrying `{ armed, failsafe, mode }`, published by the RPC control loop after each `fc.update()`, read by `handle_get_status` in `rpc_app.rs`
 - **`RpcCommand`** (`crates/elle-eagle/src/rpc_handlers.rs`) — Enum + channel for RPC handler → main loop communication
+- **`BaroReading`** / **`BARO_SIGNAL`** (`crates/elle-hardware/src/imu.rs`) — BMP390 barometer data (pressure, temperature, altitude), polled at ~2 Hz on Core1
 - **`LogMsg`** (`crates/elle-eagle/src/log_channel.rs`) — Channel for firmware events → `log_publisher_task` → LogTopic
 
 ### Host Tool (`tools/elle-rpc-host/`)
 
 Two modes:
-- **Default (no subcommand)**: TUI monitoring dashboard with polled attitude/status/mag/gnss + log streaming
+- **Default (no subcommand)**: TUI monitoring dashboard with polled attitude/status/mag/baro/gnss + log streaming
 - **`direct <cmd>`**: Single RPC commands for scripting
 
 Key modules:
@@ -101,7 +102,7 @@ Key modules:
 - `tui/` — ratatui dashboard (mod.rs event loop, state.rs, ui.rs, commands.rs)
 - `direct.rs` — Single-command mode using HostClient
 
-TUI polling rates: attitude 10Hz, status 0.5Hz, magnetometer 5Hz, GNSS 1Hz.
+TUI polling rates: attitude 10Hz, status 0.5Hz, magnetometer 5Hz, barometer 1Hz, GNSS 1Hz.
 
 **Important**: Host `probe.rs` reads from RTT up channel 1 (index 1), not channel 0 (which is defmt).
 
@@ -144,6 +145,8 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 | postcard-rpc 0.12 | server (define_dispatch!) | host_client | RPC framework |
 | embassy-* (git) | yes | - | Async embedded runtime |
 | probe-rs 0.30 | - | yes | Debug probe + RTT access |
+| bmp390 0.4 | yes (sync) | - | BMP390 barometer driver |
+| embedded-hal-bus 0.2 | yes | - | I2C bus sharing (RefCellDevice) |
 | cobs 0.5 | yes | yes | Frame encoding |
 | ratatui 0.30 | - | yes | TUI dashboard |
 | rtt-target 0.6 | yes | - | RTT channel API |
@@ -169,16 +172,20 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - Host TUI/direct mode: proper RTT worker shutdown via `AtomicBool` flag + `JoinHandle::join()`
 - `CrsfReceiver::new()` refactored to accept `UartRx` (UART split for TX telemetry)
 - MMC5616WA magnetometer wired into `disable-imu` stub — reads at ~10 Hz, populates `MAG_SIGNAL` for TUI/RPC. Always-on (no feature gate), the chip is physically on the board.
+- BMP390 barometer driver integrated via `embedded-hal-bus::RefCellDevice` for I2C0 bus sharing with MMC5616WA. Polls at ~2 Hz, populates `BARO_SIGNAL`. Init tries both addresses (0x77, 0x76). Always-on (no feature gate).
+- I2C bus sharing: `disable-imu` stub wraps I2C0 in `RefCell` + `StaticCell`, creates `RefCellDevice` handles for MMC5616WA and BMP390. Safe because both run in a single task on Core1.
+- CRSF telemetry expanded to 4 slots: attitude → flight_mode → GPS → baro (~12.5 Hz each at 50 Hz tick)
+- `GetBarometerEndpoint` RPC endpoint returns pressure (hPa), temperature (°C), barometric altitude (m)
+- Host TUI displays barometer data (pressure, temperature, altitude) at 1 Hz poll rate
 
 ### Known TODOs in Firmware
 - `RpcCommand::SetMode`: not implemented (TODO in main loop)
 - `RpcCommand::AdjustTrim`: logged but not implemented
 - `RpcCommand::SaveCalibration` / `ClearCalibration`: logged but not implemented
 - **`disable-imu` stub generates synthetic test data** (slow sine waves) — remove once ICM42686P is connected
-- I2C0 bus plan: MMC5616WA (mag) + BMP390 (baro, driver not yet written). ICM42686P (IMU) will use SPI.
+- **BMP390 hardware issue**: chip on board not responding to I2C (NoAcknowledge on both 0x76/0x77). MMC5616WA at 0x30 works fine on same bus. Likely needs resoldering (2x2mm LGA-10 package).
 
 ### Next Steps
-1. **Test end-to-end** — Flash firmware with `rpc-control,disable-imu`, run host TUI, verify mag data in TUI
+1. **Resolder BMP390** — verify with I2C bus scan, then test pressure/altitude in TUI and CRSF telemetry
 2. **Implement remaining RPC commands** — Mode switching, trim adjust, calibration save/clear
 3. **Wire MMC5616WA into real IMU path** — when ICM42686P is on SPI, I2C0 still available for mag reading in the real `BnoImu::run()` loop
-4. **BMP390 barometer driver** — second I2C0 device, will need shared bus (I2C bus mutex or separate task)
