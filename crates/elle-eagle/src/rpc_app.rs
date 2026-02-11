@@ -191,6 +191,23 @@ fn handle_get_rc_channels(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> R
     }
 }
 
+fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> BarometerResp {
+    if let Some(baro) = elle_hardware::imu::BARO_SIGNAL.try_take() {
+        elle_hardware::imu::BARO_SIGNAL.signal(baro); // put back
+        BarometerResp {
+            pressure_hpa: baro.pressure_hpa,
+            temperature_c: baro.temperature_c,
+            altitude_m: baro.altitude_m,
+        }
+    } else {
+        BarometerResp {
+            pressure_hpa: 0.0,
+            temperature_c: 0.0,
+            altitude_m: 0.0,
+        }
+    }
+}
+
 fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp {
     #[cfg(feature = "gnss")]
     {
@@ -245,6 +262,7 @@ postcard_rpc::define_dispatch! {
         | PingEndpoint              | blocking  | handle_ping               |
         | GetVersionEndpoint        | blocking  | handle_get_version        |
         | GetMagnetometerEndpoint   | blocking  | handle_get_magnetometer   |
+        | GetBarometerEndpoint      | blocking  | handle_get_barometer      |
         | GetGnssEndpoint           | blocking  | handle_get_gnss           |
         | GetRcChannelsEndpoint     | blocking  | handle_get_rc_channels    |
     };

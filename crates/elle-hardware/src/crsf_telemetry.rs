@@ -3,7 +3,7 @@
 //! Frame format: `[0xC8 | len | type | payload... | crc8_dvb_s2]`
 //! where `len` = payload_len + 2 (type + CRC bytes), CRC covers type + payload.
 
-use crate::imu::{AttitudeData, MAG_SIGNAL};
+use crate::imu::{AttitudeData, BARO_SIGNAL, MAG_SIGNAL};
 use crc::{Crc, CRC_8_DVB_S2};
 use defmt::{info, warn};
 use embassy_rp::uart::{Async, UartTx};
@@ -13,6 +13,7 @@ use embassy_time::{Duration, Ticker};
 
 const CRSF_SYNC_BYTE: u8 = 0xC8;
 const CRSF_FRAMETYPE_GPS: u8 = 0x02;
+const CRSF_FRAMETYPE_BARO: u8 = 0x09;
 const CRSF_FRAMETYPE_ATTITUDE: u8 = 0x1E;
 const CRSF_FRAMETYPE_FLIGHT_MODE: u8 = 0x21;
 
@@ -151,6 +152,20 @@ fn build_gps_frame(
     buf[18] = CRC8.checksum(&buf[2..18]);
 }
 
+/// Build a CRSF Barometric Altitude frame (type 0x09).
+/// Payload: altitude_dm:u16 (decimeters, offset +10000) + vario_cm:i16 (cm/s).
+fn build_baro_frame(buf: &mut [u8; 8], altitude_m: f32) {
+    // CRSF barometric altitude = decimeters + 10000 offset
+    let alt_dm = ((altitude_m * 10.0) as i32 + 10000).clamp(0, 65535) as u16;
+    let vario: i16 = 0; // no vario computation yet
+    buf[0] = CRSF_SYNC_BYTE;
+    buf[1] = 6; // type + 4 payload + crc
+    buf[2] = CRSF_FRAMETYPE_BARO;
+    buf[3..5].copy_from_slice(&alt_dm.to_be_bytes());
+    buf[5..7].copy_from_slice(&vario.to_be_bytes());
+    buf[7] = CRC8.checksum(&buf[2..7]);
+}
+
 // ---------------------------------------------------------------------------
 // Telemetry task
 // ---------------------------------------------------------------------------
@@ -168,6 +183,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
 
     let mut last_attitude = AttitudeData::zero();
     let mut last_heading: f32 = 0.0; // magnetic heading from MMC5616WA (radians)
+    let mut last_baro_alt: f32 = 0.0; // barometric altitude from BMP390
     let mut last_mode = CrsfFlightMode {
         armed: false,
         failsafe: false,
@@ -179,7 +195,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
 
     let mut ticker = Ticker::every(Duration::from_millis(20)); // 50 Hz
     let mut slot: u8 = 0;
-    let num_slots: u8 = 3; // attitude, flight_mode, gps
+    let num_slots: u8 = 4; // attitude, flight_mode, gps, baro
 
     let mut frame_count: u32 = 0;
     let mut error_count: u32 = 0;
@@ -198,6 +214,10 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         }
         if let Some(mode) = CRSF_FLIGHT_MODE.try_take() {
             last_mode = mode;
+        }
+        if let Some(baro) = BARO_SIGNAL.try_take() {
+            BARO_SIGNAL.signal(baro); // put back for RPC handler
+            last_baro_alt = baro.altitude_m;
         }
 
         let mut tx_ok = true;
@@ -238,6 +258,14 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
                 );
                 if let Err(e) = tx.write(&buf).await {
                     warn!("CRSF TX gps error: {}", e);
+                    tx_ok = false;
+                }
+            }
+            3 => {
+                let mut buf = [0u8; 8];
+                build_baro_frame(&mut buf, last_baro_alt);
+                if let Err(e) = tx.write(&buf).await {
+                    warn!("CRSF TX baro error: {}", e);
                     tx_ok = false;
                 }
             }

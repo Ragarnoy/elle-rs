@@ -102,6 +102,7 @@ pub async fn run() -> Result<()> {
     let mut attitude_interval = tokio::time::interval(Duration::from_millis(100)); // 10Hz attitude poll
     let mut status_interval = tokio::time::interval(Duration::from_secs(2)); // Status poll
     let mut mag_interval = tokio::time::interval(Duration::from_millis(200)); // 5Hz mag poll
+    let mut baro_interval = tokio::time::interval(Duration::from_secs(1)); // 1Hz baro poll
     let mut gnss_interval = tokio::time::interval(Duration::from_secs(1)); // 1Hz GNSS poll
     let mut rc_interval = tokio::time::interval(Duration::from_millis(50)); // 20Hz RC poll
     let mut event_stream = crossterm::event::EventStream::new();
@@ -220,6 +221,17 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetMagnetometerEndpoint>(&()),
                 ).await {
                     state.magnetometer = Some(m);
+                    state.connected = true;
+                }
+            }
+
+            // Periodic barometer poll
+            _ = baro_interval.tick() => {
+                if let Ok(Ok(b)) = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    client.send_resp::<GetBarometerEndpoint>(&()),
+                ).await {
+                    state.barometer = Some(b);
                     state.connected = true;
                 }
             }

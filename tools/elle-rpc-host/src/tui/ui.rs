@@ -119,7 +119,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(11), // attitude data + mag + heading + gnss
+            Constraint::Length(13), // attitude data + mag + heading + baro + gnss
             Constraint::Length(4),  // pitch sparkline
             Constraint::Length(4),  // roll sparkline
             Constraint::Min(0),    // remaining space
@@ -169,6 +169,15 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         ("  Mag: ---".into(), "  Heading: ---".into())
     };
 
+    let (baro_line1, baro_line2) = if let Some(b) = state.barometer {
+        (
+            format!("  Baro: {:.1} hPa | {:.1}\u{00B0}C", b.pressure_hpa, b.temperature_c),
+            format!("  Alt:  {:.1}m (baro)", b.altitude_m),
+        )
+    } else {
+        ("  Baro: ---".into(), "  Alt:  --- (baro)".into())
+    };
+
     let (gnss_pos_line, gnss_fix_line, gnss_alt_line) = if let Some(g) = state.gnss {
         let fix_str = match g.fix_quality {
             0 => "No fix",
@@ -196,6 +205,8 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         Line::from(""),
         Line::from(mag_line),
         Line::from(heading_line),
+        Line::from(baro_line1),
+        Line::from(baro_line2),
         Line::from(gnss_pos_line),
         Line::from(gnss_fix_line),
         Line::from(gnss_alt_line),

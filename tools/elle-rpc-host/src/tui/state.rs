@@ -19,6 +19,9 @@ pub struct AppState {
     // Magnetometer
     pub magnetometer: Option<MagnetometerResp>,
 
+    // Barometer
+    pub barometer: Option<BarometerResp>,
+
     // GNSS
     pub gnss: Option<GnssResp>,
 
@@ -50,6 +53,7 @@ impl AppState {
             performance: None,
             version: None,
             magnetometer: None,
+            barometer: None,
             gnss: None,
             rc_channels: None,
             attitude_history: VecDeque::with_capacity(ATTITUDE_HISTORY),

@@ -16,8 +16,11 @@ embassy-rp = { workspace = true }
 embassy-futures = { workspace = true }
 
 bno055 = { workspace = true }
+bmp390 = { workspace = true }
 crsf = { workspace = true }
 mmc5616wa = { workspace = true }
+embedded-hal-bus = { workspace = true }
+uom = { workspace = true }
 smart-leds = { workspace = true }
 sequential-storage = { workspace = true }
 

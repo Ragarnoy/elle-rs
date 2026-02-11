@@ -88,6 +88,17 @@ pub struct MagReading {
     pub z: i32,
 }
 
+/// Barometer data for RPC handler (populated by BMP390)
+pub static BARO_SIGNAL: Signal<CriticalSectionRawMutex, BaroReading> = Signal::new();
+
+/// Barometer reading from BMP390
+#[derive(Clone, Copy, Debug, Format)]
+pub struct BaroReading {
+    pub pressure_hpa: f32,
+    pub temperature_c: f32,
+    pub altitude_m: f32,
+}
+
 /// Channel for LED pattern updates
 pub static LED_COMMAND_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
@@ -663,25 +674,35 @@ use embassy_sync::rwlock::RwLock;
 pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
 
 #[cfg(feature = "disable-imu")]
+type I2cBus<'a> = embassy_rp::i2c::I2c<'a, embassy_rp::peripherals::I2C0, embassy_rp::i2c::Blocking>;
+#[cfg(feature = "disable-imu")]
+type SharedI2c<'a> = embedded_hal_bus::i2c::RefCellDevice<'a, I2cBus<'a>>;
+
+#[cfg(feature = "disable-imu")]
 pub struct BnoImu<'a> {
-    mag: mmc5616wa::Mmc5616wa<embassy_rp::i2c::I2c<'a, embassy_rp::peripherals::I2C0, embassy_rp::i2c::Blocking>>,
+    mag: mmc5616wa::Mmc5616wa<SharedI2c<'a>>,
+    baro: Option<bmp390::sync::Bmp390<SharedI2c<'a>>>,
+    i2c_bus: &'a core::cell::RefCell<I2cBus<'a>>,
 }
 
 #[cfg(feature = "disable-imu")]
 impl<'a> BnoImu<'a> {
-    /// Create stub IMU with MMC5616WA magnetometer on the I2C bus.
+    /// Create stub IMU with MMC5616WA magnetometer and BMP390 barometer on shared I2C bus.
     /// The ICM42686P (future) will use SPI, so I2C0 is free for MMC + BMP390.
     pub fn new(
-        i2c: embassy_rp::i2c::I2c<'a, embassy_rp::peripherals::I2C0, embassy_rp::i2c::Blocking>,
+        i2c_bus: &'a core::cell::RefCell<I2cBus<'a>>,
         _led_sender: embassy_sync::channel::Sender<'a, CriticalSectionRawMutex, crate::led::LedPattern, 8>,
     ) -> Self {
-        info!("IMU: DISABLED (stub with MMC5616WA magnetometer)");
+        info!("IMU: DISABLED (stub with MMC5616WA + BMP390 on shared I2C)");
+        let mag_i2c = embedded_hal_bus::i2c::RefCellDevice::new(i2c_bus);
         Self {
-            mag: mmc5616wa::Mmc5616wa::new_default(i2c),
+            mag: mmc5616wa::Mmc5616wa::new_default(mag_i2c),
+            baro: None,
+            i2c_bus,
         }
     }
 
-    /// Initialize IMU (stub - immediately returns success, inits MMC5616WA)
+    /// Initialize IMU (stub - immediately returns success, inits MMC5616WA + BMP390)
     pub async fn initialize(&mut self) -> ElleResult<()> {
         info!("IMU: Stub initialization - marking as ready");
 
@@ -697,6 +718,37 @@ impl<'a> BnoImu<'a> {
             warn!("MMC5616WA: start continuous failed: {}", e);
         } else {
             info!("MMC5616WA: initialized, continuous mode (chip ID OK)");
+        }
+
+        // Initialize BMP390 barometer — try Address::Up (0x77) first, fall back to Down (0x76)
+        let baro_config = bmp390::Configuration::default();
+        let baro_i2c = embedded_hal_bus::i2c::RefCellDevice::new(self.i2c_bus);
+        match bmp390::sync::Bmp390::try_new(
+            baro_i2c,
+            bmp390::Address::Up,
+            embassy_time::Delay,
+            &baro_config,
+        ) {
+            Ok(baro) => {
+                self.baro = Some(baro);
+                info!("BMP390: initialized at 0x77 (pressure + temperature)");
+            }
+            Err(_) => {
+                info!("BMP390: 0x77 failed, trying 0x76...");
+                let baro_i2c = embedded_hal_bus::i2c::RefCellDevice::new(self.i2c_bus);
+                match bmp390::sync::Bmp390::try_new(
+                    baro_i2c,
+                    bmp390::Address::Down,
+                    embassy_time::Delay,
+                    &baro_config,
+                ) {
+                    Ok(baro) => {
+                        self.baro = Some(baro);
+                        info!("BMP390: initialized at 0x76 (pressure + temperature)");
+                    }
+                    Err(e) => warn!("BMP390: init failed on both addresses: {}", e),
+                }
+            }
         }
 
         // Mark IMU as initialized and calibrated immediately
@@ -716,7 +768,7 @@ impl<'a> BnoImu<'a> {
         Ok(())
     }
 
-    /// Run continuous IMU reading (stub - generates synthetic test data + real mag)
+    /// Run continuous IMU reading (stub - generates synthetic test data + real mag + real baro)
     pub async fn run(&mut self) -> ! {
         // TEST DATA: Generates slowly changing attitude values so that the
         // CRSF telemetry pipeline and TUI can be verified end-to-end without
@@ -725,6 +777,7 @@ impl<'a> BnoImu<'a> {
 
         let mut tick: u32 = 0;
         let mut mag_counter: u32 = 0;
+        let mut baro_counter: u32 = 0;
 
         loop {
             // Slow sine waves: full cycle every ~16 s (4 kHz × 65536 ticks)
@@ -760,6 +813,27 @@ impl<'a> BnoImu<'a> {
                     }
                     Err(e) => {
                         warn!("MMC5616WA: read error: {}", e);
+                    }
+                }
+            }
+
+            // Read BMP390 barometer at ~2 Hz (every 2000 ticks at 4 kHz)
+            baro_counter += 1;
+            if baro_counter >= 2000 {
+                baro_counter = 0;
+                if let Some(baro) = &mut self.baro {
+                    match baro.measure() {
+                        Ok(m) => {
+                            use uom::si::pressure::hectopascal;
+                            use uom::si::thermodynamic_temperature::degree_celsius;
+                            use uom::si::length::meter;
+                            BARO_SIGNAL.signal(BaroReading {
+                                pressure_hpa: m.pressure.get::<hectopascal>(),
+                                temperature_c: m.temperature.get::<degree_celsius>(),
+                                altitude_m: m.altitude.get::<meter>(),
+                            });
+                        }
+                        Err(e) => warn!("BMP390: measure error: {}", e),
                     }
                 }
             }

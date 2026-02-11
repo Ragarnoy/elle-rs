@@ -678,6 +678,15 @@ async fn imu_task(
 
     let i2c_bus = I2c::new_blocking(i2c, scl, sda, i2c_config);
     let led_sender = LED_COMMAND_CHANNEL.sender();
+
+    #[cfg(feature = "disable-imu")]
+    let mut imu = {
+        use core::cell::RefCell;
+        static I2C_BUS: StaticCell<RefCell<I2c<'static, I2C0, embassy_rp::i2c::Blocking>>> = StaticCell::new();
+        let i2c_ref = I2C_BUS.init(RefCell::new(i2c_bus));
+        BnoImu::new(i2c_ref, led_sender)
+    };
+    #[cfg(not(feature = "disable-imu"))]
     let mut imu = BnoImu::new(i2c_bus, led_sender);
 
     // Initialize with flash calibration support

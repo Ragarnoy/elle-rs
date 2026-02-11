@@ -133,6 +133,17 @@ pub struct RcChannelsResp {
     pub channels: [u16; 16],
 }
 
+/// Barometer data response (BMP390)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
+pub struct BarometerResp {
+    /// Pressure in hectopascals
+    pub pressure_hpa: f32,
+    /// Temperature in degrees Celsius
+    pub temperature_c: f32,
+    /// Barometric altitude in meters
+    pub altitude_m: f32,
+}
+
 /// GNSS position fix response
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GnssResp {
@@ -187,6 +198,7 @@ endpoints! {
     | PingEndpoint              | ()                | ()                | "elle/sys/ping"       |
     | GetVersionEndpoint        | ()                | VersionResp       | "elle/sys/version"    |
     | GetMagnetometerEndpoint   | ()                | MagnetometerResp  | "elle/query/mag"      |
+    | GetBarometerEndpoint      | ()                | BarometerResp     | "elle/query/baro"     |
     | GetGnssEndpoint           | ()                | GnssResp          | "elle/query/gnss"     |
     | GetRcChannelsEndpoint     | ()                | RcChannelsResp    | "elle/query/rc"       |
 }
