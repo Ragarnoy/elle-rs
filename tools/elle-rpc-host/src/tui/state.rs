@@ -43,6 +43,9 @@ pub struct AppState {
     pub command_history: VecDeque<String>,
     pub history_index: Option<usize>,
     pub status_message: Option<(String, Instant)>,
+
+    // Background task (e.g. ulog extract)
+    pub background_task: Option<tokio::task::JoinHandle<String>>,
 }
 
 impl AppState {
@@ -64,6 +67,7 @@ impl AppState {
             command_history: VecDeque::with_capacity(COMMAND_HISTORY),
             history_index: None,
             status_message: None,
+            background_task: None,
         }
     }
 

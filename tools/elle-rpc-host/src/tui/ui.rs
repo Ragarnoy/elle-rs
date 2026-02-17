@@ -1,10 +1,10 @@
 //! TUI rendering with ratatui
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Sparkline, Wrap};
-use ratatui::Frame;
 
 use super::state::AppState;
 
@@ -13,7 +13,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // header
-            Constraint::Min(10),  // main content
+            Constraint::Min(10),   // main content
             Constraint::Length(5), // command area
         ])
         .split(f.area());
@@ -51,9 +51,7 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let armed_style = if armed {
-        Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Green)
     };
@@ -63,9 +61,7 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
     let failsafe_span = if failsafe {
         Span::styled(
             " | FAILSAFE",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("")
@@ -78,13 +74,13 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!(" | {version} "),
-            Style::default().fg(Color::Gray),
-        ),
+        Span::styled(format!(" | {version} "), Style::default().fg(Color::Gray)),
         Span::raw(" | "),
         Span::styled(armed_text, armed_style),
-        Span::styled(format!(" | Mode: {mode}"), Style::default().fg(Color::White)),
+        Span::styled(
+            format!(" | Mode: {mode}"),
+            Style::default().fg(Color::White),
+        ),
         failsafe_span,
         Span::raw(" | "),
         Span::styled(connected_text, connected_style),
@@ -110,9 +106,7 @@ fn draw_main(f: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
-    let block = Block::default()
-        .title(" Telemetry ")
-        .borders(Borders::ALL);
+    let block = Block::default().title(" Telemetry ").borders(Borders::ALL);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -122,7 +116,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Length(13), // attitude data + mag + heading + baro + gnss
             Constraint::Length(4),  // pitch sparkline
             Constraint::Length(4),  // roll sparkline
-            Constraint::Min(0),    // remaining space
+            Constraint::Min(0),     // remaining space
         ])
         .split(inner);
 
@@ -160,7 +154,11 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
 
     let (mag_line, heading_line) = if let Some(m) = state.magnetometer {
         let heading = (m.y as f64).atan2(m.x as f64).to_degrees();
-        let heading = if heading < 0.0 { heading + 360.0 } else { heading };
+        let heading = if heading < 0.0 {
+            heading + 360.0
+        } else {
+            heading
+        };
         (
             format!("  Mag: X={:>7} Y={:>7} Z={:>7}", m.x, m.y, m.z),
             format!("  Heading: {:>6.1}°", heading),
@@ -171,7 +169,10 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
 
     let (baro_line1, baro_line2) = if let Some(b) = state.barometer {
         (
-            format!("  Baro: {:.1} hPa | {:.1}\u{00B0}C", b.pressure_hpa, b.temperature_c),
+            format!(
+                "  Baro: {:.1} hPa | {:.1}\u{00B0}C",
+                b.pressure_hpa, b.temperature_c
+            ),
             format!("  Alt:  {:.1}m (baro)", b.altitude_m),
         )
     } else {
@@ -187,7 +188,10 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         };
         (
             format!("  GPS: {:.6}, {:.6}", g.latitude, g.longitude),
-            format!("  Fix: {} | Sats: {} | HDOP: {:.1}", fix_str, g.num_satellites, g.hdop),
+            format!(
+                "  Fix: {} | Sats: {} | HDOP: {:.1}",
+                fix_str, g.num_satellites, g.hdop
+            ),
             format!("  Alt: {:.1}m MSL", g.altitude_m),
         )
     } else {
@@ -324,10 +328,7 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
                 _ => ("?????", Color::White),
             };
             Line::from(vec![
-                Span::styled(
-                    format!("[{label}]"),
-                    Style::default().fg(color),
-                ),
+                Span::styled(format!("[{label}]"), Style::default().fg(color)),
                 Span::raw(format!(" {}", log_code_text(log.code))),
             ])
         })
@@ -347,16 +348,45 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
 
 fn log_code_text(code: u16) -> &'static str {
     match code {
+        // GNSS (1–9)
         1 => "GNSS: first GGA received",
         2 => "GNSS: periodic update",
         3 => "GNSS: UART error",
+        // Safety (10–19)
         10 => "Motors ARMED",
         11 => "Motors DISARMED",
         12 => "EMERGENCY STOP",
+        // CRSF telemetry TX (20–29)
         20 => "CRSF TX: telemetry started",
         21 => "CRSF TX: first second OK",
         22 => "CRSF TX: UART write error",
         23 => "CRSF TX: running (periodic)",
+        // ULog (30–39)
+        30 => "ULog: recording started",
+        31 => "ULog: init failed",
+        32 => "ULog: not compiled in",
+        33 => "ULog: recording stopped",
+        34 => "ULog: flash erased",
+        // IMU / sensors (40–49)
+        40 => "IMU: init failed",
+        41 => "IMU: FIFO overflow",
+        42 => "IMU: read errors",
+        43 => "Magnetometer: init failed",
+        44 => "Barometer: init failed",
+        // CRSF receiver (50–59)
+        50 => "CRSF RX: first frame received",
+        51 => "CRSF RX: UART error",
+        // Flash storage (60–69)
+        60 => "Flash: ULog write failed",
+        61 => "Flash: ULog erase failed",
+        62 => "Flash: ULog write timeout",
+        // Supervisor (70–79)
+        70 => "Supervisor: Core1 unhealthy",
+        71 => "Supervisor: Core1 restored",
+        // Flight state (80–89)
+        80 => "Attitude data stale",
+        81 => "ULog: RC switch ON",
+        82 => "ULog: RC switch OFF",
         _ => "unknown",
     }
 }
@@ -381,9 +411,10 @@ fn draw_command(f: &mut Frame, area: Rect, state: &AppState) {
     let cursor_y = chunks[0].y + 1;
     f.set_cursor_position((cursor_x, cursor_y));
 
-    // Status/help line
+    // Status/help line — keep message visible while background task is running
+    let has_bg_task = state.background_task.is_some();
     let help_text = if let Some((msg, when)) = &state.status_message {
-        if when.elapsed().as_secs() < 5 {
+        if has_bg_task || when.elapsed().as_secs() < 10 {
             msg.clone()
         } else {
             default_help()
@@ -392,9 +423,17 @@ fn draw_command(f: &mut Frame, area: Rect, state: &AppState) {
         default_help()
     };
 
+    let help_color = if has_bg_task {
+        Color::Yellow
+    } else if help_text != default_help() {
+        Color::Cyan
+    } else {
+        Color::Gray
+    };
+
     let help = Paragraph::new(Line::from(Span::styled(
         format!(" {help_text}"),
-        Style::default().fg(Color::Gray),
+        Style::default().fg(help_color),
     )));
     f.render_widget(help, chunks[1]);
 }

@@ -5,7 +5,7 @@
 
 #![cfg_attr(not(feature = "use-std"), no_std)]
 
-use postcard_rpc::{endpoints, topics, TopicDirection};
+use postcard_rpc::{TopicDirection, endpoints, topics};
 use postcard_schema::Schema;
 use serde::{Deserialize, Serialize};
 
@@ -144,6 +144,30 @@ pub struct BarometerResp {
     pub altitude_m: f32,
 }
 
+/// ULog read chunk response
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct ULogReadResp {
+    /// Data payload (variable length, up to 512 bytes)
+    pub data: heapless::Vec<u8, 512>,
+    /// More data available after this chunk
+    pub has_more: bool,
+    /// Not ready yet, host should retry
+    pub pending: bool,
+}
+
+/// ULog storage info response
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct ULogInfoResp {
+    /// Whether ULog recording is currently active
+    pub recording: bool,
+    /// Total ULog flash region size in bytes
+    pub region_total: u32,
+    /// Approximate bytes currently stored in queue
+    pub bytes_used: u32,
+    /// Number of items currently in queue
+    pub items_stored: u32,
+}
+
 /// GNSS position fix response
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GnssResp {
@@ -201,6 +225,11 @@ endpoints! {
     | GetBarometerEndpoint      | ()                | BarometerResp     | "elle/query/baro"     |
     | GetGnssEndpoint           | ()                | GnssResp          | "elle/query/gnss"     |
     | GetRcChannelsEndpoint     | ()                | RcChannelsResp    | "elle/query/rc"       |
+    | StartULogEndpoint         | ()                | AckResp           | "elle/ulog/start"     |
+    | StopULogEndpoint          | ()                | AckResp           | "elle/ulog/stop"      |
+    | ReadULogChunkEndpoint     | ()                | ULogReadResp      | "elle/ulog/read"      |
+    | EraseULogEndpoint         | ()                | AckResp           | "elle/ulog/erase"     |
+    | GetULogInfoEndpoint       | ()                | ULogInfoResp      | "elle/ulog/info"      |
 }
 
 // ============================================================================

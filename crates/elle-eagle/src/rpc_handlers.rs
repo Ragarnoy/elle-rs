@@ -13,6 +13,11 @@ pub enum RpcCommand {
     AdjustTrim { left: i8, right: i8 },
     SaveCalibration,
     ClearCalibration,
+    StartULog,
+    StopULog,
+    ReadULogChunk,
+    PopAndPeekULog,
+    EraseULog,
 }
 
 /// Channel for RPC commands to flight controller

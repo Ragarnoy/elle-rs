@@ -2,13 +2,37 @@
 //!
 //! Replaces the hand-rolled dispatch_rpc_request() with macro-generated dispatch.
 
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 use defmt::info;
+use elle_config::profile::ULOG_CHUNK_SIZE;
 use elle_rpc_icd::*;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Sender;
+use embassy_sync::signal::Signal;
 use postcard_rpc::header::VarHeader;
 
 use crate::rpc_handlers::RpcCommand;
+
+// ULog recording enable flag (checked by main loop before logging)
+pub static ULOG_ENABLED: AtomicBool = AtomicBool::new(false);
+
+// ULog transfer state machine
+const ULOG_IDLE: u8 = 0;
+const ULOG_READING: u8 = 1;
+const ULOG_READY: u8 = 2;
+const ULOG_EMPTY: u8 = 3;
+
+/// ULog transfer state (atomic for cross-context access)
+pub static ULOG_STATE: AtomicU8 = AtomicU8::new(ULOG_IDLE);
+
+/// Full queue item buffer (up to ULOG_CHUNK_SIZE bytes) from flash peek
+pub static ULOG_ITEM_SIGNAL: Signal<CriticalSectionRawMutex, ([u8; ULOG_CHUNK_SIZE], usize)> =
+    Signal::new();
+
+/// Fragment tracking: offset within current item
+pub static ULOG_OFFSET: AtomicU16 = AtomicU16::new(0);
+/// Total length of current item
+pub static ULOG_ITEM_LEN: AtomicU16 = AtomicU16::new(0);
 
 /// Context passed to all RPC handlers
 pub struct RpcContext {
@@ -19,20 +43,14 @@ pub struct RpcContext {
 // Handlers
 // ---------------------------------------------------------------------------
 
-fn handle_set_throttle(
-    ctx: &mut RpcContext,
-    _hdr: VarHeader,
-    req: SetThrottleReq,
-) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::SetThrottle(req.percent));
+fn handle_set_throttle(ctx: &mut RpcContext, _hdr: VarHeader, req: SetThrottleReq) -> AckResp {
+    let _ = ctx
+        .cmd_sender
+        .try_send(RpcCommand::SetThrottle(req.percent));
     AckResp::ok()
 }
 
-fn handle_set_elevons(
-    ctx: &mut RpcContext,
-    _hdr: VarHeader,
-    req: SetElevonsReq,
-) -> AckResp {
+fn handle_set_elevons(ctx: &mut RpcContext, _hdr: VarHeader, req: SetElevonsReq) -> AckResp {
     let _ = ctx.cmd_sender.try_send(RpcCommand::SetElevons {
         left: req.left,
         right: req.right,
@@ -64,11 +82,7 @@ fn handle_emergency_stop(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Ack
     AckResp::ok()
 }
 
-fn handle_adjust_trim(
-    ctx: &mut RpcContext,
-    _hdr: VarHeader,
-    req: AdjustTrimReq,
-) -> AckResp {
+fn handle_adjust_trim(ctx: &mut RpcContext, _hdr: VarHeader, req: AdjustTrimReq) -> AckResp {
     let _ = ctx.cmd_sender.try_send(RpcCommand::AdjustTrim {
         left: req.left,
         right: req.right,
@@ -208,6 +222,101 @@ fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Bar
     }
 }
 
+fn handle_start_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    let _ = ctx.cmd_sender.try_send(RpcCommand::StartULog);
+    AckResp::ok()
+}
+
+fn handle_stop_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    let _ = ctx.cmd_sender.try_send(RpcCommand::StopULog);
+    AckResp::ok()
+}
+
+fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogReadResp {
+    let state = ULOG_STATE.load(Ordering::Acquire);
+    match state {
+        ULOG_READY => {
+            let offset = ULOG_OFFSET.load(Ordering::Acquire) as usize;
+            let total = ULOG_ITEM_LEN.load(Ordering::Acquire) as usize;
+
+            if let Some((item_data, _)) = ULOG_ITEM_SIGNAL.try_take() {
+                let chunk_len = (total - offset).min(512);
+                let mut data = heapless::Vec::new();
+                let _ = data.extend_from_slice(&item_data[offset..offset + chunk_len]);
+                let new_offset = offset + chunk_len;
+
+                if new_offset >= total {
+                    // Item fully sent — pop it and prefetch next
+                    ULOG_STATE.store(ULOG_READING, Ordering::Release);
+                    ULOG_OFFSET.store(0, Ordering::Release);
+                    let _ = ctx.cmd_sender.try_send(RpcCommand::PopAndPeekULog);
+                } else {
+                    // More fragments of this item remain
+                    ULOG_OFFSET.store(new_offset as u16, Ordering::Release);
+                    ULOG_ITEM_SIGNAL.signal((item_data, total));
+                }
+
+                ULogReadResp {
+                    data,
+                    has_more: true,
+                    pending: false,
+                }
+            } else {
+                // Signal was taken between state check and try_take
+                ULogReadResp {
+                    data: heapless::Vec::new(),
+                    has_more: true,
+                    pending: true,
+                }
+            }
+        }
+        ULOG_EMPTY => {
+            ULOG_STATE.store(ULOG_IDLE, Ordering::Release);
+            ULogReadResp {
+                data: heapless::Vec::new(),
+                has_more: false,
+                pending: false,
+            }
+        }
+        ULOG_IDLE => {
+            // Start first read
+            ULOG_STATE.store(ULOG_READING, Ordering::Release);
+            let _ = ctx.cmd_sender.try_send(RpcCommand::ReadULogChunk);
+            ULogReadResp {
+                data: heapless::Vec::new(),
+                has_more: true,
+                pending: true,
+            }
+        }
+        _ => {
+            // READING state — not ready yet
+            ULogReadResp {
+                data: heapless::Vec::new(),
+                has_more: true,
+                pending: true,
+            }
+        }
+    }
+}
+
+fn handle_erase_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    info!("RPC: ULog erase requested");
+    let _ = ctx.cmd_sender.try_send(RpcCommand::EraseULog);
+    AckResp::ok()
+}
+
+fn handle_get_ulog_info(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogInfoResp {
+    use elle_hardware::flash_constants::ULOG_FLASH_SIZE;
+    use elle_hardware::sequential_flash_manager::{ULOG_BYTES_USED, ULOG_ITEMS_STORED};
+
+    ULogInfoResp {
+        recording: ULOG_ENABLED.load(Ordering::Relaxed),
+        region_total: ULOG_FLASH_SIZE as u32,
+        bytes_used: ULOG_BYTES_USED.load(Ordering::Relaxed),
+        items_stored: ULOG_ITEMS_STORED.load(Ordering::Relaxed),
+    }
+}
+
 fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp {
     #[cfg(feature = "gnss")]
     {
@@ -265,6 +374,11 @@ postcard_rpc::define_dispatch! {
         | GetBarometerEndpoint      | blocking  | handle_get_barometer      |
         | GetGnssEndpoint           | blocking  | handle_get_gnss           |
         | GetRcChannelsEndpoint     | blocking  | handle_get_rc_channels    |
+        | StartULogEndpoint         | blocking  | handle_start_ulog         |
+        | StopULogEndpoint          | blocking  | handle_stop_ulog          |
+        | ReadULogChunkEndpoint     | blocking  | handle_read_ulog_chunk    |
+        | EraseULogEndpoint         | blocking  | handle_erase_ulog         |
+        | GetULogInfoEndpoint       | blocking  | handle_get_ulog_info      |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

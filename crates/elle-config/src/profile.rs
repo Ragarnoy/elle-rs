@@ -23,6 +23,9 @@ pub enum FlashRequest {
         data: [u8; ULOG_CHUNK_SIZE],
         len: usize,
     },
+    PeekULog,
+    PopULog,
+    EraseULog,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -33,6 +36,14 @@ pub enum FlashResponse {
     SaveFailed,
     ULogWriteSuccess,
     ULogWriteFailed,
+    ULogData {
+        data: [u8; ULOG_CHUNK_SIZE],
+        len: usize,
+    },
+    ULogEmpty,
+    ULogPopSuccess,
+    ULogEraseSuccess,
+    ULogEraseFailed,
 }
 
 // Calibration storage structure (must be u32-aligned for flash API)
