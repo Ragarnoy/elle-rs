@@ -10,18 +10,18 @@ use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
+use crossterm::ExecutableCommand;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
 use elle_rpc_icd::*;
 use futures::StreamExt;
 use postcard_rpc::header::VarSeqKind;
 use postcard_rpc::host_client::HostClient;
 use postcard_rpc::standard_icd::WireError;
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
 use crate::probe;
@@ -143,6 +143,10 @@ pub async fn run() -> Result<()> {
                                             format!("Unknown command: {cmd} (? for help)")
                                         );
                                     }
+                                    CommandResult::Background(msg, handle) => {
+                                        state.set_status_message(msg);
+                                        state.background_task = Some(handle);
+                                    }
                                 }
                             }
                         }
@@ -190,10 +194,22 @@ pub async fn run() -> Result<()> {
                 if let Some(last) = state.last_poll {
                     state.connected = last.elapsed() < Duration::from_secs(5);
                 }
+
+                // Poll background task for completion
+                if let Some(handle) = &mut state.background_task {
+                    if handle.is_finished() {
+                        if let Some(handle) = state.background_task.take() {
+                            match handle.await {
+                                Ok(msg) => state.set_status_message(msg),
+                                Err(e) => state.set_status_message(format!("ERROR: Task failed: {e}")),
+                            }
+                        }
+                    }
+                }
             }
 
-            // Periodic attitude poll
-            _ = attitude_interval.tick() => {
+            // Periodic attitude poll (paused during background tasks to avoid RTT congestion)
+            _ = attitude_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(a)) = tokio::time::timeout(
                     Duration::from_millis(200),
                     client.send_resp::<GetAttitudeEndpoint>(&()),
@@ -203,7 +219,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic status poll
-            _ = status_interval.tick() => {
+            _ = status_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(s)) = tokio::time::timeout(
                     Duration::from_secs(1),
                     client.send_resp::<GetStatusEndpoint>(&()),
@@ -215,7 +231,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic magnetometer poll
-            _ = mag_interval.tick() => {
+            _ = mag_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(m)) = tokio::time::timeout(
                     Duration::from_millis(500),
                     client.send_resp::<GetMagnetometerEndpoint>(&()),
@@ -226,7 +242,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic barometer poll
-            _ = baro_interval.tick() => {
+            _ = baro_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(b)) = tokio::time::timeout(
                     Duration::from_secs(1),
                     client.send_resp::<GetBarometerEndpoint>(&()),
@@ -237,7 +253,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic GNSS poll
-            _ = gnss_interval.tick() => {
+            _ = gnss_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(g)) = tokio::time::timeout(
                     Duration::from_secs(1),
                     client.send_resp::<GetGnssEndpoint>(&()),
@@ -248,7 +264,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic RC channels poll
-            _ = rc_interval.tick() => {
+            _ = rc_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(rc)) = tokio::time::timeout(
                     Duration::from_millis(100),
                     client.send_resp::<GetRcChannelsEndpoint>(&()),
