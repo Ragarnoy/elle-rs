@@ -1,5 +1,5 @@
 use crsf::{Packet, Parser, ParserConfig};
-use defmt::{debug, info, warn};
+use defmt::{debug, warn};
 use elle_control::commands::{PilotCommands, RawCommands};
 use embassy_rp::uart::{Async, Config, DataBits, Parity, StopBits, UartRx};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -69,11 +69,20 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
                                     if let Packet::RcChannelsPacked(channels) = packet {
                                         frame_count += 1;
                                         if frame_count == 1 {
-                                            info!("CRSF: first RC frame received (ch1={} ch2={} ch3={} ch4={})",
-                                                channels.0[0], channels.0[1], channels.0[2], channels.0[3]);
+                                            crate::elle_event!(
+                                                info,
+                                                crate::event::EVT_CRSF_RX_FIRST_FRAME,
+                                                "CRSF: first RC frame received (ch1={} ch2={} ch3={} ch4={})",
+                                                channels.0[0],
+                                                channels.0[1],
+                                                channels.0[2],
+                                                channels.0[3]
+                                            );
                                         } else if frame_count % 500 == 0 {
-                                            debug!("CRSF: {} frames ok, {} parse errors, {} uart errors",
-                                                frame_count, parse_error_count, error_count);
+                                            debug!(
+                                                "CRSF: {} frames ok, {} parse errors, {} uart errors",
+                                                frame_count, parse_error_count, error_count
+                                            );
                                         }
                                         let mut scaled = [0u16; 16];
                                         for i in 0..16 {
@@ -101,7 +110,13 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
             Err(e) => {
                 error_count += 1;
                 if error_count <= 3 || error_count % 1000 == 0 {
-                    warn!("CRSF: UART error: {} (total={})", e, error_count);
+                    crate::elle_event!(
+                        warn,
+                        crate::event::EVT_CRSF_RX_UART_ERROR,
+                        "CRSF: UART error: {} (total={})",
+                        e,
+                        error_count
+                    );
                 }
                 Timer::after(Duration::from_millis(1)).await;
             }

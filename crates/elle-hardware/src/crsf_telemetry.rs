@@ -4,8 +4,8 @@
 //! where `len` = payload_len + 2 (type + CRC bytes), CRC covers type + payload.
 
 use crate::imu::{AttitudeData, BARO_SIGNAL, MAG_SIGNAL};
-use crc::{Crc, CRC_8_DVB_S2};
-use defmt::{info, warn};
+use crc::{CRC_8_DVB_S2, Crc};
+use defmt::warn;
 use embassy_rp::uart::{Async, UartTx};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -51,16 +51,6 @@ pub struct TelemetryGpsData {
 /// Dedicated GNSS signal for telemetry (populated by the GNSS task in elle-eagle).
 #[cfg(feature = "gnss")]
 pub static TELEMETRY_GNSS: Signal<CriticalSectionRawMutex, TelemetryGpsData> = Signal::new();
-
-/// Log event from the telemetry task. The eagle crate forwards these to LogTopic.
-/// Encoded as `(level, code)` — same convention as `log_channel::send()`.
-pub static TELEMETRY_LOG: Signal<CriticalSectionRawMutex, (u8, u16)> = Signal::new();
-
-// Log code constants for CRSF telemetry events
-pub const LOG_CRSF_TX_STARTED: u16 = 20;
-pub const LOG_CRSF_TX_FIRST_SEC: u16 = 21;
-pub const LOG_CRSF_TX_ERROR: u16 = 22;
-pub const LOG_CRSF_TX_STATS: u16 = 23;
 
 // ---------------------------------------------------------------------------
 // Frame builders
@@ -178,8 +168,11 @@ fn build_baro_frame(buf: &mut [u8; 8], altitude_m: f32) {
 /// when the `gnss` feature is enabled, it also carries position data.
 #[embassy_executor::task]
 pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
-    info!("CRSF telemetry TX task starting (50 Hz)");
-    TELEMETRY_LOG.signal((2, LOG_CRSF_TX_STARTED));
+    crate::elle_event!(
+        info,
+        crate::event::EVT_CRSF_TX_STARTED,
+        "CRSF telemetry TX task starting (50 Hz)"
+    );
 
     let mut last_attitude = AttitudeData::zero();
     let mut last_heading: f32 = 0.0; // magnetic heading from MMC5616WA (radians)
@@ -275,7 +268,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         if !tx_ok {
             error_count += 1;
             if error_count <= 3 || error_count % 500 == 0 {
-                TELEMETRY_LOG.signal((3, LOG_CRSF_TX_ERROR));
+                crate::event::send(3, crate::event::EVT_CRSF_TX_ERROR);
             }
         }
 
@@ -283,10 +276,19 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         frame_count += 1;
 
         if frame_count == 50 {
-            TELEMETRY_LOG.signal((1, LOG_CRSF_TX_FIRST_SEC));
+            crate::elle_event!(
+                debug,
+                crate::event::EVT_CRSF_TX_FIRST_SEC,
+                "CRSF TX: first second complete"
+            );
         }
         if frame_count % 5000 == 0 {
-            TELEMETRY_LOG.signal((1, LOG_CRSF_TX_STATS));
+            crate::elle_event!(
+                debug,
+                crate::event::EVT_CRSF_TX_STATS,
+                "CRSF TX: {} frames sent",
+                frame_count
+            );
         }
     }
 }

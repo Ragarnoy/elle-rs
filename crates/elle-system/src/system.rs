@@ -1,6 +1,11 @@
 use defmt::{info, warn};
 use elle_config::*;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+#[cfg(not(feature = "legacy-ctrl"))]
+use elle_control::mixing::{
+    elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
+    yaw::{apply_differential_thrust_direct, throttle_with_differential_lut},
+};
 use elle_control::{arming::ArmingState, pid::AttitudeController};
 use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT};
 use elle_hardware::pwm::PwmOutputs;
@@ -9,11 +14,6 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
-#[cfg(not(feature = "legacy-ctrl"))]
-use elle_control::mixing::{
-    elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
-    yaw::{apply_differential_thrust_direct, throttle_with_differential_lut},
-};
 
 #[cfg(feature = "legacy-ctrl")]
 use elle_control::mixing::apply_differential_complete;
@@ -195,14 +195,20 @@ impl<'a> FlightController<'a> {
         // Only log on state transitions to prevent spam
         if is_healthy != self.core1_health.last_logged_healthy {
             if !is_healthy {
-                warn!(
+                elle_hardware::elle_event!(
+                    warn,
+                    elle_hardware::event::EVT_CORE1_UNHEALTHY,
                     "Supervisor: Core 1 (IMU) unhealthy - last heartbeat {}ms ago",
                     self.core1_health.last_heartbeat.elapsed().as_millis()
                 );
                 // Disable attitude control if Core 1 is unhealthy
                 self.attitude_controller.enabled = false;
             } else {
-                info!("Supervisor: Core 1 (IMU) healthy - heartbeat restored");
+                elle_hardware::elle_event!(
+                    info,
+                    elle_hardware::event::EVT_CORE1_RESTORED,
+                    "Supervisor: Core 1 (IMU) healthy - heartbeat restored"
+                );
             }
             self.core1_health.last_logged_healthy = is_healthy;
         } else if !is_healthy {
@@ -582,7 +588,9 @@ impl PerformanceMonitor {
 
         // ULog logging (77Hz, Core 0)
         if self.ulog_logging.samples > 0 {
-            let ulog_cpu = self.ulog_logging.cpu_utilization_percent(CONTROL_LOOP_FREQUENCY_HZ);
+            let ulog_cpu = self
+                .ulog_logging
+                .cpu_utilization_percent(CONTROL_LOOP_FREQUENCY_HZ);
             info!(
                 "ULog Logging: min={} avg={} max={}μs ({}% @ {}Hz) | {} samples",
                 self.ulog_logging.min_us,
