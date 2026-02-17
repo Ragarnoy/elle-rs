@@ -21,6 +21,10 @@ pub struct ULogLogger {
     attitude_msg_id: Option<u16>,
     commands_msg_id: Option<u16>,
     status_msg_id: Option<u16>,
+    barometer_msg_id: Option<u16>,
+    magnetometer_msg_id: Option<u16>,
+    gnss_msg_id: Option<u16>,
+    log_event_msg_id: Option<u16>,
     /// Log start time
     start_time: Option<Instant>,
 }
@@ -35,6 +39,10 @@ impl ULogLogger {
             attitude_msg_id: None,
             commands_msg_id: None,
             status_msg_id: None,
+            barometer_msg_id: None,
+            magnetometer_msg_id: None,
+            gnss_msg_id: None,
+            log_event_msg_id: None,
             start_time: None,
         }
     }
@@ -49,7 +57,10 @@ impl ULogLogger {
         info!("Initializing ULog logger");
 
         // Import ULog types
-        use elle_ulog::{AttitudeMessage, CommandsMessage, StatusMessage};
+        use elle_ulog::{
+            AttitudeMessage, BarometerMessage, CommandsMessage, GnssMessage, LogEventMessage,
+            MagnetometerMessage, StatusMessage,
+        };
 
         let start_time = Instant::now();
         self.start_time = Some(start_time);
@@ -78,12 +89,36 @@ impl ULogLogger {
                 .add_subscription(StatusMessage::NAME)
                 .map_err(|_| ())?,
         );
+        self.barometer_msg_id = Some(
+            self.writer
+                .add_subscription(BarometerMessage::NAME)
+                .map_err(|_| ())?,
+        );
+        self.magnetometer_msg_id = Some(
+            self.writer
+                .add_subscription(MagnetometerMessage::NAME)
+                .map_err(|_| ())?,
+        );
+        self.gnss_msg_id = Some(
+            self.writer
+                .add_subscription(GnssMessage::NAME)
+                .map_err(|_| ())?,
+        );
+        self.log_event_msg_id = Some(
+            self.writer
+                .add_subscription(LogEventMessage::NAME)
+                .map_err(|_| ())?,
+        );
 
         info!(
-            "ULog subscriptions: attitude={}, commands={}, status={}",
+            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, event={}",
             self.attitude_msg_id.unwrap(),
             self.commands_msg_id.unwrap(),
-            self.status_msg_id.unwrap()
+            self.status_msg_id.unwrap(),
+            self.barometer_msg_id.unwrap(),
+            self.magnetometer_msg_id.unwrap(),
+            self.gnss_msg_id.unwrap(),
+            self.log_event_msg_id.unwrap()
         );
 
         // Flush header and definitions to flash
@@ -239,22 +274,151 @@ impl ULogLogger {
         Ok(())
     }
 
+    /// Log barometer data
+    pub async fn log_barometer(
+        &mut self,
+        pressure_hpa: f32,
+        temperature_c: f32,
+        altitude_m: f32,
+    ) -> Result<(), ()> {
+        if !self.initialized {
+            return Err(());
+        }
+
+        use elle_ulog::BarometerMessage;
+
+        let msg = BarometerMessage::new(Instant::now(), pressure_hpa, temperature_c, altitude_m);
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_barometer(self.barometer_msg_id.unwrap(), &msg)
+            .map_err(|_| ())?;
+
+        self.buffer
+            .extend_from_slice(self.writer.buffer())
+            .map_err(|_| ())?;
+
+        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+            self.flush().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Log magnetometer data
+    pub async fn log_magnetometer(&mut self, mag_x: f32, mag_y: f32, mag_z: f32) -> Result<(), ()> {
+        if !self.initialized {
+            return Err(());
+        }
+
+        use elle_ulog::MagnetometerMessage;
+
+        let msg = MagnetometerMessage::new(Instant::now(), mag_x, mag_y, mag_z);
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_magnetometer(self.magnetometer_msg_id.unwrap(), &msg)
+            .map_err(|_| ())?;
+
+        self.buffer
+            .extend_from_slice(self.writer.buffer())
+            .map_err(|_| ())?;
+
+        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+            self.flush().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Log GNSS data
+    #[allow(clippy::too_many_arguments)]
+    pub async fn log_gnss(
+        &mut self,
+        latitude: f32,
+        longitude: f32,
+        altitude_m: f32,
+        fix_quality: u8,
+        num_satellites: u8,
+        hdop: f32,
+    ) -> Result<(), ()> {
+        if !self.initialized {
+            return Err(());
+        }
+
+        use elle_ulog::GnssMessage;
+
+        let msg = GnssMessage::new(
+            Instant::now(),
+            latitude,
+            longitude,
+            altitude_m,
+            fix_quality,
+            num_satellites,
+            hdop,
+        );
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_gnss(self.gnss_msg_id.unwrap(), &msg)
+            .map_err(|_| ())?;
+
+        self.buffer
+            .extend_from_slice(self.writer.buffer())
+            .map_err(|_| ())?;
+
+        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+            self.flush().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Log a discrete event (level + code)
+    pub async fn log_event(&mut self, level: u8, code: u16) -> Result<(), ()> {
+        if !self.initialized {
+            return Err(());
+        }
+
+        use elle_ulog::LogEventMessage;
+
+        let msg = LogEventMessage::new(Instant::now(), level, code);
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_log_event(self.log_event_msg_id.unwrap(), &msg)
+            .map_err(|_| ())?;
+
+        self.buffer
+            .extend_from_slice(self.writer.buffer())
+            .map_err(|_| ())?;
+
+        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+            self.flush().await?;
+        }
+
+        Ok(())
+    }
+
     /// Flush buffered data to flash
     pub async fn flush(&mut self) -> Result<(), ()> {
         if self.buffer.is_empty() {
             return Ok(());
         }
 
-        info!("Flushing {} bytes of ULog data to flash", self.buffer.len());
-
         let success = request_write_ulog(&self.buffer).await;
         if success {
             self.buffer.clear();
             Ok(())
         } else {
-            error!("Failed to flush ULog data to flash");
+            error!("ULog flush failed");
             Err(())
         }
+    }
+
+    /// Check if the logger has been initialized
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
     }
 
     /// Check if the logger needs flushing

@@ -2,10 +2,11 @@
 //!
 //! Provides a buffered writer for ULog messages to minimize flash writes.
 
-use crate::format::{
-    InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader, FLAG_BITS_MSG,
+use crate::format::{FLAG_BITS_MSG, InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader};
+use crate::messages::{
+    AttitudeMessage, BarometerMessage, CommandsMessage, GnssMessage, LogEventMessage,
+    MagnetometerMessage, MessageType, StatusMessage,
 };
-use crate::messages::{AttitudeMessage, CommandsMessage, MessageType, StatusMessage};
 use embassy_time::Instant;
 use heapless::Vec;
 
@@ -89,6 +90,18 @@ impl ULogWriter {
         self.buffer
             .extend_from_slice(StatusMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(BarometerMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(MagnetometerMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(GnssMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(LogEventMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
 
         // Write info messages (type 'I')
         self.write_info("char[] sys_name", sys_name)?;
@@ -139,6 +152,50 @@ impl ULogWriter {
     /// Write a status message
     pub fn write_status(&mut self, msg_id: u16, data: &StatusMessage) -> Result<(), WriteError> {
         let mut payload = [0u8; StatusMessage::SIZE + 2];
+        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
+        payload[2..].copy_from_slice(&data.to_bytes());
+        self.write_message(MessageType::Data, &payload)
+    }
+
+    /// Write a barometer data message
+    pub fn write_barometer(
+        &mut self,
+        msg_id: u16,
+        data: &BarometerMessage,
+    ) -> Result<(), WriteError> {
+        let mut payload = [0u8; BarometerMessage::SIZE + 2];
+        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
+        payload[2..].copy_from_slice(&data.to_bytes());
+        self.write_message(MessageType::Data, &payload)
+    }
+
+    /// Write a magnetometer data message
+    pub fn write_magnetometer(
+        &mut self,
+        msg_id: u16,
+        data: &MagnetometerMessage,
+    ) -> Result<(), WriteError> {
+        let mut payload = [0u8; MagnetometerMessage::SIZE + 2];
+        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
+        payload[2..].copy_from_slice(&data.to_bytes());
+        self.write_message(MessageType::Data, &payload)
+    }
+
+    /// Write a GNSS data message
+    pub fn write_gnss(&mut self, msg_id: u16, data: &GnssMessage) -> Result<(), WriteError> {
+        let mut payload = [0u8; GnssMessage::SIZE + 2];
+        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
+        payload[2..].copy_from_slice(&data.to_bytes());
+        self.write_message(MessageType::Data, &payload)
+    }
+
+    /// Write a log event data message
+    pub fn write_log_event(
+        &mut self,
+        msg_id: u16,
+        data: &LogEventMessage,
+    ) -> Result<(), WriteError> {
+        let mut payload = [0u8; LogEventMessage::SIZE + 2];
         payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
         payload[2..].copy_from_slice(&data.to_bytes());
         self.write_message(MessageType::Data, &payload)
