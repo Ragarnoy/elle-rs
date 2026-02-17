@@ -1,20 +1,13 @@
-//! BNO055 IMU integration for attitude sensing with RGB LED status
+//! ICM-42686-P IMU integration with AHRS sensor fusion
 //!
 //! When the `disable-imu` feature is enabled, this module provides stub implementations
-//! that return zero/neutral attitude data for debugging without hardware.
+//! that return synthetic attitude data for debugging without hardware.
 
 use defmt::*;
 use elle_error::ElleResult;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Instant;
-
-#[cfg(not(feature = "disable-imu"))]
-use crate::led::{LedPattern, colors};
-#[cfg(not(feature = "disable-imu"))]
-use crate::sequential_flash_manager::request_load_calibration;
-#[cfg(all(feature = "imu-save-calibration", not(feature = "disable-imu")))]
-use crate::sequential_flash_manager::request_save_calibration;
 
 // ============================================================================
 // COMMON TYPES AND STATICS (available in both modes)
@@ -117,550 +110,350 @@ use embassy_sync::rwlock::RwLock;
 pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
 
 #[cfg(not(feature = "disable-imu"))]
-// Dummy implementations for performance monitoring
-// These are no-ops to avoid circular dependency with system crate
-struct TimingMeasurement;
-
+use crate::led::{LedPattern, colors};
 #[cfg(not(feature = "disable-imu"))]
-impl TimingMeasurement {
-    fn start() -> Self {
-        Self
-    }
-    fn elapsed_us(&self) -> u32 {
-        0
-    }
-}
-
+use ahrs::Ahrs;
 #[cfg(not(feature = "disable-imu"))]
-fn update_imu_timing(_elapsed_us: u32) {}
-
+use core::cell::RefCell;
 #[cfg(not(feature = "disable-imu"))]
-#[cfg(feature = "imu-save-calibration")]
-use bno055::BNO055_CALIB_SIZE;
-
+use elle_error::ImuError;
 #[cfg(not(feature = "disable-imu"))]
-use bno055::{BNO055AxisSign, BNO055Calibration, mint};
+use embassy_rp::gpio::Output;
 #[cfg(not(feature = "disable-imu"))]
-use elle_error::{CalibrationError, ImuError};
+use embassy_rp::i2c;
 #[cfg(not(feature = "disable-imu"))]
-use embassy_rp::i2c::{Blocking, I2c};
+use embassy_rp::peripherals::{I2C0, SPI0};
 #[cfg(not(feature = "disable-imu"))]
-use embassy_rp::peripherals::I2C0;
+use embassy_rp::spi;
 #[cfg(not(feature = "disable-imu"))]
 use embassy_sync::channel::{Sender, TrySendError};
 #[cfg(not(feature = "disable-imu"))]
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{Duration, Timer};
+#[cfg(not(feature = "disable-imu"))]
+use embedded_hal_bus::i2c::RefCellDevice as I2cRefCellDevice;
+#[cfg(not(feature = "disable-imu"))]
+use embedded_hal_bus::spi::ExclusiveDevice;
 
 #[cfg(not(feature = "disable-imu"))]
-pub struct BnoImu<'a> {
-    bno: bno055::Bno055<I2c<'a, I2C0, Blocking>>,
+type I2cBus<'a> = i2c::I2c<'a, I2C0, i2c::Blocking>;
+#[cfg(not(feature = "disable-imu"))]
+type SharedI2c<'a> = I2cRefCellDevice<'a, I2cBus<'a>>;
+#[cfg(not(feature = "disable-imu"))]
+type SpiDev<'a> =
+    ExclusiveDevice<spi::Spi<'a, SPI0, spi::Blocking>, Output<'a>, embassy_time::Delay>;
+
+#[cfg(not(feature = "disable-imu"))]
+pub struct Imu<'a> {
+    icm: Option<icm426xx::ICM42686<SpiDev<'a>, icm426xx::Ready>>,
+    spi_dev: Option<SpiDev<'a>>,
+    ahrs: ahrs::Madgwick<f32>,
+    mag: mmc5616wa::Mmc5616wa<SharedI2c<'a>>,
+    baro: Option<bmp390::sync::Bmp390<SharedI2c<'a>>>,
+    i2c_bus: &'a RefCell<I2cBus<'a>>,
     led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
     last_attitude: AttitudeData,
+    last_mag: nalgebra::Vector3<f32>,
+    has_mag: bool,
+    mag_ok: bool,
     error_threshold: u32,
-    last_cal_log: elle_config::CalibrationLevels,
-    #[cfg(feature = "imu-save-calibration")]
-    last_cal_request: Option<Instant>,
-    calibration_loaded: bool,
 }
 
 #[cfg(not(feature = "disable-imu"))]
-impl<'a> BnoImu<'a> {
+impl<'a> Imu<'a> {
     pub fn new(
-        i2c: I2c<'a, I2C0, Blocking>,
+        spi_dev: SpiDev<'a>,
+        i2c_bus: &'a RefCell<I2cBus<'a>>,
         led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
     ) -> Self {
-        let bno = bno055::Bno055::new(i2c).with_alternative_address();
-
+        let mag_i2c = I2cRefCellDevice::new(i2c_bus);
         Self {
-            bno,
+            icm: None,
+            spi_dev: Some(spi_dev),
+            ahrs: ahrs::Madgwick::new(
+                elle_config::AHRS_SAMPLE_PERIOD_US as f32 / 1_000_000.0, // sample period in seconds
+                0.033, // Madgwick beta (conservative)
+            ),
+            mag: mmc5616wa::Mmc5616wa::new_default(mag_i2c),
+            baro: None,
+            i2c_bus,
             led_sender,
             last_attitude: AttitudeData::zero(),
+            last_mag: nalgebra::Vector3::zeros(),
+            has_mag: false,
+            mag_ok: false,
             error_threshold: 10,
-            last_cal_log: elle_config::CalibrationLevels::new(),
-            #[cfg(feature = "imu-save-calibration")]
-            last_cal_request: None,
-            calibration_loaded: false,
         }
     }
 
     /// Send LED pattern update
     async fn set_led_pattern(&self, pattern: LedPattern) {
         if let Err(TrySendError::Full(_)) = self.led_sender.try_send(pattern) {
-            // Fall back to an awaited send; ignore errors from closed channel.
             warn!("Core1: LED channel full, falling back to awaited send");
             let _ = self.led_sender.send(pattern).await;
         }
     }
 
-    /// Try to load saved calibration via inter-core communication
-    async fn load_calibration(&mut self) -> ElleResult<bool> {
-        info!("Core1: Requesting calibration load from Core0");
-
-        if let Some(profile_data) = request_load_calibration().await {
-            let calib = BNO055Calibration::from_buf(&profile_data);
-
-            let mut delay = Delay;
-            return match self.bno.set_calibration_profile(calib, &mut delay) {
-                Ok(_) => {
-                    info!("Core1: Successfully applied saved calibration");
-                    self.calibration_loaded = true;
-                    Ok(true)
-                }
-                Err(e) => {
-                    warn!(
-                        "Core1: Failed to apply saved calibration: {:?}",
-                        Debug2Format(&e)
-                    );
-                    Err(CalibrationError::LoadFailed.into())
-                }
-            };
-        } else {
-            info!("Core1: No saved calibration available");
-        }
-
-        Ok(false)
-    }
-
-    /// Request calibration save via inter-core communication
-    /// Only saves calibration if imu-save-calibration feature is enabled
-    async fn save_calibration(
-        &mut self,
-        _levels: &elle_config::CalibrationLevels,
-    ) -> ElleResult<()> {
-        // Check if saving calibration is enabled
-        #[cfg(not(feature = "imu-save-calibration"))]
-        {
-            info!("Core1: Calibration saving is disabled, skipping save");
-            Ok(())
-        }
-
-        #[cfg(feature = "imu-save-calibration")]
-        {
-            // Rate limiting - only request save once per 10 minutes
-            if let Some(last_request) = self.last_cal_request
-                && last_request.elapsed() < Duration::from_secs(600)
-            {
-                return Ok(());
-            }
-
-            if !_levels.is_flight_ready() {
-                return Ok(());
-            }
-
-            info!("Core1: Requesting calibration save to Core0");
-
-            // Get current calibration profile
-            let mut delay = Delay;
-            let profile = match self.bno.calibration_profile(&mut delay) {
-                Ok(profile) => profile,
-                Err(e) => {
-                    warn!(
-                        "Core1: Failed to get calibration profile: {:?}",
-                        Debug2Format(&e)
-                    );
-                    return Err(CalibrationError::ProfileFailed.into());
-                }
-            };
-
-            let profile_array: [u8; BNO055_CALIB_SIZE] = profile
-                .as_bytes()
-                .try_into()
-                .map_err(|_| CalibrationError::ProfileFailed)?;
-
-            let success =
-                request_save_calibration(profile_array, *_levels, Instant::now().as_ticks()).await;
-
-            if success {
-                info!("Core1: Calibration save requested successfully");
-                self.last_cal_request = Some(Instant::now());
-                Ok(())
-            } else {
-                warn!("Core1: Calibration save request failed");
-                Err(CalibrationError::SaveFailed.into())
-            }
-        }
-    }
-
-    /// Initialize IMU with flash calibration loading
-    /// Attempts to load calibration from flash first, and only proceeds with full calibration if no saved calibration is found
+    /// Initialize ICM-42686-P, MMC5616WA magnetometer, and BMP390 barometer
     pub async fn initialize(&mut self) -> ElleResult<()> {
-        info!("Core1: Initializing BNO055 IMU...");
+        info!("Core1: Initializing ICM-42686-P IMU...");
         self.set_led_pattern(LedPattern::SlowBlink(colors::BLUE))
             .await;
 
-        // Initialize BNO055 hardware
-        let mut delay = Delay;
-        for attempt in 0..3 {
-            match self.bno.init(&mut delay) {
-                Ok(_) => {
-                    info!("Core1: BNO055 initialized on attempt {}", attempt + 1);
-                    break;
-                }
-                Err(e) => {
-                    error!(
-                        "Core1: Init attempt {} failed: {:?}",
-                        attempt + 1,
-                        Debug2Format(&e)
-                    );
-                    if attempt == 2 {
-                        error!(
-                            "Core1: BNO055 failed to initialize after {} attempts",
-                            attempt + 1
-                        );
-                        self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
-                            .await;
-                        return Err(ImuError::InitializationFailed.into());
-                    }
-                    Timer::after(Duration::from_millis(100)).await;
-                }
-            }
-        }
-
-        // Configure BNO055
-        self.bno
-            .set_axis_sign(BNO055AxisSign::Y_NEGATIVE | BNO055AxisSign::Z_NEGATIVE)
-            .map_err(|_| ImuError::AxisConfigFailed)?;
-
-        self.bno
-            .set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)
-            .map_err(|_| ImuError::ModeConfigFailed)?;
-
-        // Try to load saved calibration
-        match self.load_calibration().await {
-            Ok(true) => {
-                info!("Core1: Using saved calibration - shorter wait time");
-                // Update status
-                {
-                    let mut status = IMU_STATUS.write().await;
-                    status.initialized = true;
-                    status.last_update = Instant::now();
-                }
-                self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
-                return Ok(());
-            }
-            Ok(false) => {
-                info!("Core1: No saved calibration, will perform full calibration");
+        // 1. Initialize ICM-42686-P on SPI0
+        let spi_dev = self.spi_dev.take().expect("SPI device already consumed");
+        let icm_uninit = icm426xx::ICM42686::new(spi_dev);
+        let config = icm426xx::Config {
+            rate: icm426xx::OutputDataRate::Hz1000,
+            ..Default::default()
+        };
+        match icm_uninit.initialize(embassy_time::Delay, config) {
+            Ok(icm) => {
+                self.icm = Some(icm);
+                info!("ICM-42686: initialized (WHO_AM_I OK, 1 kHz ODR)");
             }
             Err(e) => {
-                warn!("Core1: Failed to load calibration: {}", e);
+                crate::elle_event!(
+                    error,
+                    crate::event::EVT_IMU_INIT_FAILED,
+                    "ICM-42686: init failed: {:?}",
+                    Debug2Format(&e)
+                );
+                return Err(ImuError::InitializationFailed.into());
             }
         }
 
-        // Update status for normal calibration path
+        // Mark IMU as initialized — ICM-42686 is factory-calibrated
+        // Do this before I2C sensors so a hanging mag/baro doesn't block Core0
         {
             let mut status = IMU_STATUS.write().await;
             status.initialized = true;
+            status.calibrated = true;
             status.last_update = Instant::now();
         }
 
-        self.set_led_pattern(LedPattern::Pulse(colors::CYAN)).await;
-        Ok(())
-    }
-
-    /// Wait for calibration with optional auto-save based on configuration
-    /// Always performs calibration, but only saves to flash if imu-save-calibration feature is enabled
-    pub async fn wait_for_calibration(&mut self, timeout_secs: u64) -> ElleResult<()> {
-        info!("Core1: Waiting for IMU calibration...");
-
-        #[cfg(feature = "imu-save-calibration")]
-        info!("Core1: Calibration saving is enabled");
-        #[cfg(not(feature = "imu-save-calibration"))]
-        info!("Core1: Calibration saving is disabled");
-
-        let start = Instant::now();
-        let timeout = Duration::from_secs(timeout_secs);
-        let mut best_quality = elle_config::CalibrationLevels::new();
-
-        loop {
-            // Send heartbeat to supervisor during calibration
-            CORE1_HEARTBEAT.signal(());
-
-            if start.elapsed() > timeout {
-                warn!("Core1: Calibration timeout - proceeding with partial calibration");
-                break;
-            }
-
-            match self.update_calibration_status().await {
-                Ok(levels) => {
-                    // Update LED to show calibration progress
-                    self.set_led_pattern(LedPattern::Pulse(if levels.is_flight_ready() {
-                        colors::GREEN
-                    } else if levels.sys >= 2 {
-                        colors::YELLOW
-                    } else {
-                        colors::ORANGE
-                    }))
-                    .await;
-
-                    // Check if this is the best calibration we've seen
-                    let current_quality = levels.hash_quality();
-                    let best_quality_hash = best_quality.hash_quality();
-
-                    if current_quality > best_quality_hash {
-                        best_quality = levels;
-
-                        // Auto-save improved calibration if enabled
-                        if levels.is_flight_ready() && !self.calibration_loaded {
-                            // Don't save if we just loaded calibration from flash
-                            // save_calibration will check imu-save-calibration feature internally
-                            if let Err(e) = self.save_calibration(&levels).await {
-                                warn!("Core1: Failed to save calibration: {}", e);
-                            }
-                        } else if levels.is_flight_ready() && self.calibration_loaded {
-                            info!(
-                                "Core1: Skipping immediate save after loading calibration from flash"
-                            );
-                        }
-                    }
-
-                    if levels.is_flight_ready() {
-                        info!("Core1: IMU calibration sufficient for flight!");
-                        self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
-
-                        // Try to save final calibration if enabled, but not if we just loaded it
-                        // save_calibration will check imu-save-calibration feature internally
-                        if !self.calibration_loaded {
-                            if let Err(e) = self.save_calibration(&levels).await {
-                                warn!("Core1: Failed to save calibration: {}", e);
-                            }
-                        } else {
-                            info!(
-                                "Core1: Skipping immediate save after loading calibration from flash"
-                            );
-                        }
-                        return Ok(());
-                    }
-                }
-                Err(e) => error!("Core1: Calibration check error: {}", e),
-            }
-
-            Timer::after(Duration::from_millis(250)).await;
-        }
-
-        // Save best calibration achieved even if timeout, but not if we just loaded it
-        if best_quality.is_flight_ready() {
-            if !self.calibration_loaded {
-                // save_calibration will check imu-save-calibration feature internally
-                if let Err(e) = self.save_calibration(&best_quality).await {
-                    warn!("Core1: Failed to save final calibration: {}", e);
-                }
-
-                #[cfg(feature = "imu-save-calibration")]
-                info!("Core1: Final calibration saved to flash");
-                #[cfg(not(feature = "imu-save-calibration"))]
-                info!("Core1: Final calibration achieved but not saved (saving disabled)");
-            } else {
-                info!("Core1: Skipping immediate save after loading calibration from flash");
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn update_calibration_status(&mut self) -> ElleResult<elle_config::CalibrationLevels> {
-        match self.bno.get_calibration_status() {
-            Ok(status) => {
-                let levels = elle_config::CalibrationLevels {
-                    sys: status.sys,
-                    gyro: status.gyr,
-                    accel: status.acc,
-                    mag: status.mag,
-                };
-
-                {
-                    let mut imu_status = IMU_STATUS.write().await;
-                    imu_status.calibration_status = levels;
-                    imu_status.calibrated = levels.is_flight_ready();
-                }
-
-                // Only log when values change significantly
-                if levels.sys != self.last_cal_log.sys
-                    || levels.gyro != self.last_cal_log.gyro
-                    || levels.accel != self.last_cal_log.accel
-                    || levels.mag != self.last_cal_log.mag
-                {
-                    info!(
-                        "Core1: Cal - Sys:{}/3 Gyro:{}/3 Acc:{}/3 Mag:{}/3",
-                        levels.sys, levels.gyro, levels.accel, levels.mag
-                    );
-                    self.last_cal_log = levels;
-                }
-
-                Ok(levels)
-            }
-            Err(_) => Err(ImuError::CalibrationReadFailed.into()),
-        }
-    }
-
-    pub async fn read_attitude(&mut self) -> ElleResult<AttitudeData> {
-        // Read quaternion (more reliable than Euler angles)
-        let quat = self
-            .bno
-            .quaternion()
-            .map_err(|_| ImuError::QuaternionReadFailed)?;
-
-        // Read gyroscope for rates
-        let gyro = self
-            .bno
-            .gyro_data()
-            .map_err(|_| ImuError::GyroscopeReadFailed)?;
-
-        // Convert quaternion to Euler angles
-        let (yaw, pitch, roll) = quaternion_to_euler(&quat);
-
-        let now = Instant::now();
-        let attitude = AttitudeData {
-            pitch: -pitch,
-            roll,
-            yaw,
-            pitch_rate: gyro.y, // Pitch rate around Y axis
-            roll_rate: gyro.x,  // Roll rate around X axis
-            yaw_rate: gyro.z,   // Yaw rate around Z axis
-            timestamp: now,
+        // 2. Initialize MMC5616WA magnetometer on I2C0
+        let mut delay = embassy_time::Delay;
+        let mag_init_ok = if let Err(e) = self.mag.soft_reset(&mut delay) {
+            crate::elle_event!(
+                warn,
+                crate::event::EVT_MAG_INIT_FAILED,
+                "MMC5616WA: soft reset failed: {}",
+                e
+            );
+            false
+        } else if let Err(e) = self.mag.init(&mut delay) {
+            crate::elle_event!(
+                warn,
+                crate::event::EVT_MAG_INIT_FAILED,
+                "MMC5616WA: init failed: {}",
+                e
+            );
+            false
+        } else if let Err(e) = self.mag.validate() {
+            crate::elle_event!(
+                warn,
+                crate::event::EVT_MAG_INIT_FAILED,
+                "MMC5616WA: chip ID validation failed: {}",
+                e
+            );
+            false
+        } else if let Err(e) = self.mag.start_continuous(255) {
+            crate::elle_event!(
+                warn,
+                crate::event::EVT_MAG_INIT_FAILED,
+                "MMC5616WA: start continuous failed: {}",
+                e
+            );
+            false
+        } else {
+            info!("MMC5616WA: initialized, continuous mode (chip ID OK)");
+            true
         };
+        self.mag_ok = mag_init_ok;
 
-        // Update status
-        {
-            let mut status = IMU_STATUS.write().await;
-            status.last_update = now;
-            status.error_count = 0; // Reset on successful read
+        // 3. Initialize BMP390 barometer on I2C0 at address 0x76
+        let baro_config = bmp390::Configuration::default();
+        let baro_i2c = I2cRefCellDevice::new(self.i2c_bus);
+        match bmp390::sync::Bmp390::try_new(
+            baro_i2c,
+            bmp390::Address::Down,
+            embassy_time::Delay,
+            &baro_config,
+        ) {
+            Ok(baro) => {
+                self.baro = Some(baro);
+                info!("BMP390: initialized at 0x76 (pressure + temperature)");
+            }
+            Err(e) => {
+                crate::elle_event!(
+                    warn,
+                    crate::event::EVT_BARO_INIT_FAILED,
+                    "BMP390: init failed at 0x76: {}",
+                    e
+                );
+            }
         }
 
-        self.last_attitude = attitude;
-        Ok(attitude)
+        self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
+        Ok(())
     }
 
-    pub async fn run(&mut self) {
-        info!("Core1: Starting IMU reading task");
+    /// ICM-42686 has no user calibration (factory-calibrated MEMS)
+    pub async fn wait_for_calibration(&mut self, _timeout_secs: u64) -> ElleResult<()> {
+        info!("ICM-42686: no calibration needed (factory-calibrated MEMS)");
+        Ok(())
+    }
 
-        let mut consecutive_errors = 0u32;
-        let mut led_cycle = 0u32;
-        let mut last_debug = Instant::now();
-        let mut last_cal_check = Instant::now();
+    /// Run continuous IMU reading with AHRS sensor fusion at 1 kHz
+    pub async fn run(&mut self) -> ! {
+        info!("Core1: Starting ICM-42686 + AHRS fusion loop");
 
-        // Set normal operation LED pattern
-        self.set_led_pattern(LedPattern::DoubleBlink(colors::GREEN))
-            .await;
+        let icm = self.icm.as_mut().expect("ICM not initialized");
+
+        // Flush FIFO — it accumulated samples during the supervisor barrier wait
+        if let Err(e) = icm.reset_fifo() {
+            warn!("ICM-42686: FIFO flush failed: {:?}", Debug2Format(&e));
+        }
+
+        let mut consecutive_errors: u32 = 0;
+        let mut mag_counter: u32 = 0;
+        let mut baro_counter: u32 = 0;
 
         loop {
-            match self.read_attitude().await {
-                Ok(attitude) => {
+            // 1. Read ICM-42686 FIFO sample
+            match icm.read_sample() {
+                Ok(Some((sample, _more))) => {
                     consecutive_errors = 0;
 
-                    let process_timer = TimingMeasurement::start();
-                    // Signal new attitude data
+                    let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
+                    let (gx, gy, gz) = sample.gyro.unwrap_or((0.0, 0.0, 0.0));
+
+                    let gyro = nalgebra::Vector3::new(gx, gy, gz);
+                    let accel = nalgebra::Vector3::new(ax, ay, az);
+
+                    // 2. Update AHRS (9-DOF with mag, or 6-DOF if no mag yet)
+                    let q_result = if self.has_mag {
+                        self.ahrs.update(&gyro, &accel, &self.last_mag)
+                    } else {
+                        self.ahrs.update_imu(&gyro, &accel)
+                    };
+
+                    let q = match q_result {
+                        Ok(q) => q,
+                        Err(_) => {
+                            // AHRS normalization error — skip this sample
+                            continue;
+                        }
+                    };
+
+                    // 3. Extract Euler angles from quaternion
+                    let (roll, pitch, yaw) = q.euler_angles();
+
+                    // NOTE: Axis mapping may need sign adjustment on hardware.
+                    // Verify: board flat → pitch≈0, roll≈0; nose up → pitch>0; right wing down → roll>0.
+                    let attitude = AttitudeData {
+                        pitch,
+                        roll,
+                        yaw,
+                        pitch_rate: gy,
+                        roll_rate: gx,
+                        yaw_rate: gz,
+                        timestamp: Instant::now(),
+                    };
+
                     ATTITUDE_SIGNAL.signal(attitude);
                     #[cfg(feature = "crsf-telemetry")]
                     crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
-                    // Send heartbeat signal to Core 0 for health monitoring
                     CORE1_HEARTBEAT.signal(());
-
-                    // Update LED pattern based on attitude (optional visual feedback)
-                    if led_cycle.is_multiple_of(500) {
-                        // Check if we're level or tilted
-                        let color = if attitude.roll.abs() > 0.5 || attitude.pitch.abs() > 0.5 {
-                            colors::YELLOW // Significant tilt
-                        } else {
-                            colors::GREEN // Level flight
-                        };
-                        self.set_led_pattern(LedPattern::DoubleBlink(color)).await;
-                    }
-                    led_cycle = led_cycle.wrapping_add(1);
-
-                    // Debug output every 100ms (10Hz)
-                    if last_debug.elapsed() > Duration::from_millis(300) {
-                        trace!(
-                            "Core1: Pitch: {}°, Roll: {}°, Rate: {}°/s",
-                            (attitude.pitch * 180.0 / core::f32::consts::PI) as i16,
-                            (attitude.roll * 180.0 / core::f32::consts::PI) as i16,
-                            attitude.pitch_rate
-                        );
-                        last_debug = Instant::now();
-                    }
-
-                    // Check calibration periodically
-                    if last_cal_check.elapsed() > Duration::from_secs(90) {
-                        info!("Core1: Checking IMU calibration status...");
-                        let _ = self.update_calibration_status().await;
-
-                        // Reset calibration_loaded flag after 60 seconds
-                        // This allows saving calibration during periodic checks
-                        if self.calibration_loaded {
-                            info!(
-                                "Core1: Resetting calibration_loaded flag to allow periodic saves"
-                            );
-                            self.calibration_loaded = false;
-                        }
-
-                        last_cal_check = Instant::now();
-                    }
-
-                    // Update performance metrics (only processing time, not sleep)
-                    update_imu_timing(process_timer.elapsed_us());
-                }
-                Err(e) => {
-                    consecutive_errors += 1;
-                    error!("Core1: IMU read error ({}): {}", consecutive_errors, e);
-
-                    // Rapid flash on errors
-                    self.set_led_pattern(LedPattern::RapidFlash(colors::RED))
-                        .await;
+                    self.last_attitude = attitude;
 
                     {
                         let mut status = IMU_STATUS.write().await;
-                        status.error_count = consecutive_errors;
+                        status.last_update = Instant::now();
+                        status.error_count = 0;
                     }
-
+                }
+                Ok(None) => {
+                    // FIFO empty — yield until next sample arrives
+                    Timer::after(Duration::from_micros(500)).await;
+                }
+                Err(icm426xx::Error::FifoOverflow) => {
+                    // FIFO overflowed — flush and restart
+                    let _ = icm.reset_fifo();
+                    crate::elle_event!(
+                        warn,
+                        crate::event::EVT_IMU_FIFO_OVERFLOW,
+                        "ICM-42686: FIFO overflow, flushed"
+                    );
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    if consecutive_errors % 100 == 1 {
+                        crate::elle_event!(
+                            warn,
+                            crate::event::EVT_IMU_READ_ERRORS,
+                            "ICM-42686: read error ({}): {:?}",
+                            consecutive_errors,
+                            Debug2Format(&e)
+                        );
+                    }
                     if consecutive_errors >= self.error_threshold {
-                        error!("Core1: IMU failure threshold exceeded!");
-                        // Signal invalid data to trigger failsafe
-                        let mut failed_attitude = self.last_attitude;
-                        failed_attitude.timestamp = Instant::from_ticks(0); // Invalid timestamp
-                        ATTITUDE_SIGNAL.signal(failed_attitude);
+                        let mut failed = self.last_attitude;
+                        failed.timestamp = Instant::from_ticks(0);
+                        ATTITUDE_SIGNAL.signal(failed);
                         #[cfg(feature = "crsf-telemetry")]
-                        crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(failed_attitude);
-
-                        // Try to recover
+                        crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(failed);
                         Timer::after(Duration::from_secs(1)).await;
                         consecutive_errors = 0;
                     }
                 }
             }
 
-            // Run at 4000Hz for smooth control
-            Timer::after(Duration::from_micros(250)).await;
+            // 4. Read MMC5616WA at ~10 Hz (every 100 iterations at 1 kHz)
+            mag_counter += 1;
+            if self.mag_ok && mag_counter >= 100 {
+                mag_counter = 0;
+                match self.mag.read_magnetic() {
+                    Ok(data) => {
+                        self.last_mag =
+                            nalgebra::Vector3::new(data.x as f32, data.y as f32, data.z as f32);
+                        self.has_mag = true;
+                        MAG_SIGNAL.signal(MagReading {
+                            x: data.x,
+                            y: data.y,
+                            z: data.z,
+                        });
+                    }
+                    Err(e) => warn!("MMC5616WA: read error: {}", e),
+                }
+            }
+
+            // 5. Read BMP390 at ~2 Hz (every 500 iterations at 1 kHz)
+            baro_counter += 1;
+            if baro_counter >= 500 {
+                baro_counter = 0;
+                if let Some(baro) = &mut self.baro {
+                    match baro.measure() {
+                        Ok(m) => {
+                            use uom::si::length::meter;
+                            use uom::si::pressure::hectopascal;
+                            use uom::si::thermodynamic_temperature::degree_celsius;
+                            BARO_SIGNAL.signal(BaroReading {
+                                pressure_hpa: m.pressure.get::<hectopascal>(),
+                                temperature_c: m.temperature.get::<degree_celsius>(),
+                                altitude_m: m.altitude.get::<meter>(),
+                            });
+                        }
+                        Err(e) => warn!("BMP390: measure error: {}", e),
+                    }
+                }
+            }
+
+            // Yield to other tasks briefly (only when FIFO had data — busy-drain)
+            embassy_futures::yield_now().await;
         }
     }
-}
-
-#[cfg(not(feature = "disable-imu"))]
-/// Convert quaternion to Euler angles (ZYX convention)
-fn quaternion_to_euler(q: &mint::Quaternion<f32>) -> (f32, f32, f32) {
-    let w = q.s;
-    let x = q.v.x;
-    let y = q.v.y;
-    let z = q.v.z;
-
-    // Roll (x-axis rotation)
-    let sinr_cosp = 2.0 * (w * x + y * z);
-    let cosr_cosp = 1.0 - 2.0 * (x * x + y * y);
-    let roll = libm::atan2f(sinr_cosp, cosr_cosp);
-
-    // Pitch (y-axis rotation)
-    let sinp = 2.0 * (w * y - z * x);
-    let pitch = if sinp.abs() >= 1.0 {
-        libm::copysignf(core::f32::consts::PI / 2.0, sinp)
-    } else {
-        libm::asinf(sinp)
-    };
-
-    // Yaw (z-axis rotation)
-    let siny_cosp = 2.0 * (w * z + x * y);
-    let cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
-    let yaw = libm::atan2f(siny_cosp, cosy_cosp);
-
-    (yaw, pitch, roll)
 }
 
 // ============================================================================
@@ -674,24 +467,29 @@ use embassy_sync::rwlock::RwLock;
 pub static IMU_STATUS: RwLock<CriticalSectionRawMutex, ImuStatus> = RwLock::new(ImuStatus::new());
 
 #[cfg(feature = "disable-imu")]
-type I2cBus<'a> = embassy_rp::i2c::I2c<'a, embassy_rp::peripherals::I2C0, embassy_rp::i2c::Blocking>;
+type I2cBus<'a> =
+    embassy_rp::i2c::I2c<'a, embassy_rp::peripherals::I2C0, embassy_rp::i2c::Blocking>;
 #[cfg(feature = "disable-imu")]
 type SharedI2c<'a> = embedded_hal_bus::i2c::RefCellDevice<'a, I2cBus<'a>>;
 
 #[cfg(feature = "disable-imu")]
-pub struct BnoImu<'a> {
+pub struct Imu<'a> {
     mag: mmc5616wa::Mmc5616wa<SharedI2c<'a>>,
     baro: Option<bmp390::sync::Bmp390<SharedI2c<'a>>>,
     i2c_bus: &'a core::cell::RefCell<I2cBus<'a>>,
 }
 
 #[cfg(feature = "disable-imu")]
-impl<'a> BnoImu<'a> {
+impl<'a> Imu<'a> {
     /// Create stub IMU with MMC5616WA magnetometer and BMP390 barometer on shared I2C bus.
-    /// The ICM42686P (future) will use SPI, so I2C0 is free for MMC + BMP390.
     pub fn new(
         i2c_bus: &'a core::cell::RefCell<I2cBus<'a>>,
-        _led_sender: embassy_sync::channel::Sender<'a, CriticalSectionRawMutex, crate::led::LedPattern, 8>,
+        _led_sender: embassy_sync::channel::Sender<
+            'a,
+            CriticalSectionRawMutex,
+            crate::led::LedPattern,
+            8,
+        >,
     ) -> Self {
         info!("IMU: DISABLED (stub with MMC5616WA + BMP390 on shared I2C)");
         let mag_i2c = embedded_hal_bus::i2c::RefCellDevice::new(i2c_bus);
@@ -770,9 +568,6 @@ impl<'a> BnoImu<'a> {
 
     /// Run continuous IMU reading (stub - generates synthetic test data + real mag + real baro)
     pub async fn run(&mut self) -> ! {
-        // TEST DATA: Generates slowly changing attitude values so that the
-        // CRSF telemetry pipeline and TUI can be verified end-to-end without
-        // a real IMU. Remove this stub once the ICM42686P is connected.
         info!("IMU: Starting stub IMU loop (synthetic test data)");
 
         let mut tick: u32 = 0;
@@ -781,7 +576,6 @@ impl<'a> BnoImu<'a> {
 
         loop {
             // Slow sine waves: full cycle every ~16 s (4 kHz × 65536 ticks)
-            // Pitch: ±0.26 rad (±15°), Roll: ±0.17 rad (±10°), Yaw: ramp 0→2π
             let phase = (tick as f32) * (2.0 * core::f32::consts::PI / 65536.0);
             let attitude = AttitudeData {
                 pitch: libm::sinf(phase) * 0.26,
@@ -824,9 +618,9 @@ impl<'a> BnoImu<'a> {
                 if let Some(baro) = &mut self.baro {
                     match baro.measure() {
                         Ok(m) => {
+                            use uom::si::length::meter;
                             use uom::si::pressure::hectopascal;
                             use uom::si::thermodynamic_temperature::degree_celsius;
-                            use uom::si::length::meter;
                             BARO_SIGNAL.signal(BaroReading {
                                 pressure_hpa: m.pressure.get::<hectopascal>(),
                                 temperature_c: m.temperature.get::<degree_celsius>(),

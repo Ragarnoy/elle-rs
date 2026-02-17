@@ -76,6 +76,10 @@ pub const IMU_I2C_FREQ: u32 = 200_000; // 200kHz I2C
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
+// IMU SPI parameters (ICM-42686-P)
+pub const IMU_SPI_FREQ: u32 = 1_000_000; // 1 MHz SPI clock
+pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
+
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
@@ -106,6 +110,10 @@ pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better r
 pub const ATTITUDE_ENABLE_CH: usize = 4; // CH5 - Attitude hold enable
 pub const ATTITUDE_PITCH_SETPOINT_CH: usize = 5; // CH6 - Desired pitch angle
 pub const ATTITUDE_ROLL_SETPOINT_CH: usize = 7; // CH8 - Desired roll angle
+
+// ULog recording switch
+pub const ULOG_ENABLE_CH: usize = 6; // CH7 - ULog recording enable (high ~2047 = on)
+pub const ULOG_ENABLE_THRESHOLD: u16 = 1500; // Above this = recording enabled
 
 // Control mode switch thresholds (3-state switch on CH5)
 pub const MANUAL_MODE_THRESHOLD: u16 = 500; // Below this = Full Manual (~306)

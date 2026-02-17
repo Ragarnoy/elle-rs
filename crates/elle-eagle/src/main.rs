@@ -23,8 +23,10 @@ use elle_config::{
 #[cfg(not(feature = "rpc-control"))]
 use elle_control::commands::PilotCommands;
 use elle_hardware::imu::{
-    ATTITUDE_SIGNAL, AttitudeData, BnoImu, IMU_STATUS, LED_COMMAND_CHANNEL, is_attitude_valid,
+    ATTITUDE_SIGNAL, AttitudeData, IMU_STATUS, Imu, LED_COMMAND_CHANNEL, is_attitude_valid,
 };
+#[cfg(feature = "ulog-logging")]
+use elle_hardware::imu::{BARO_SIGNAL, MAG_SIGNAL};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
     pwm::{PwmOutputs, PwmPins},
@@ -34,30 +36,33 @@ use elle_hardware::{
 #[cfg(feature = "ulog-logging")]
 use elle_hardware::ULogLogger;
 
-use elle_hardware::crsf::{RC_COMMANDS, CrsfReceiver, crsf_receiver_task, crsf_uart_config};
+use elle_hardware::crsf::{CrsfReceiver, RC_COMMANDS, crsf_receiver_task, crsf_uart_config};
 
 #[cfg(feature = "rpc-control")]
 use elle_rpc_icd::ControlMode;
 #[cfg(feature = "rpc-control")]
 use elle_system::rpc::init_rtt_rpc;
 #[cfg(feature = "rpc-control")]
-mod rpc_app;
-#[cfg(feature = "rpc-control")]
 pub mod flight_state;
+#[cfg(feature = "rpc-control")]
+mod rpc_app;
 
+#[cfg(feature = "ulog-logging")]
+use elle_system::update_ulog_timing;
 use elle_system::{
     FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
     TimingMeasurement, log_performance_summary, supervisor_task, update_control_loop_timing,
     update_led_timing,
 };
-#[cfg(feature = "ulog-logging")]
-use elle_system::update_ulog_timing;
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
-use embassy_rp::peripherals::{DMA_CH2, FLASH, I2C0, PIN_8, PIN_9, PIN_10, PIO0, PIO1, UART0, UART1};
+use embassy_rp::peripherals::{
+    DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_8, PIN_9, PIN_10, PIO0, PIO1, SPI0,
+    UART0, UART1,
+};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
@@ -155,6 +160,49 @@ async fn log_flight_data(
             .await;
     }
 
+    // Log barometer at ~2Hz (every 38 iterations)
+    if loop_counter.is_multiple_of(38) {
+        if let Some(baro) = BARO_SIGNAL.try_take() {
+            BARO_SIGNAL.signal(baro); // put back for other readers
+            let _ = logger
+                .log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m)
+                .await;
+        }
+    }
+
+    // Log magnetometer at ~10Hz (every 8 iterations)
+    if loop_counter.is_multiple_of(8) {
+        if let Some(mag) = MAG_SIGNAL.try_take() {
+            MAG_SIGNAL.signal(mag); // put back for other readers
+            let _ = logger
+                .log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32)
+                .await;
+        }
+    }
+
+    // Log GNSS at ~1Hz (every 77 iterations) — feature-gated
+    #[cfg(all(feature = "gnss", feature = "rpc-control"))]
+    if loop_counter.is_multiple_of(77) {
+        if let Some(gnss) = gnss_signal::GNSS_SIGNAL.try_take() {
+            gnss_signal::GNSS_SIGNAL.signal(gnss); // put back for other readers
+            let _ = logger
+                .log_gnss(
+                    gnss.latitude,
+                    gnss.longitude,
+                    gnss.altitude_m,
+                    gnss.fix_quality,
+                    gnss.num_satellites,
+                    gnss.hdop,
+                )
+                .await;
+        }
+    }
+
+    // Drain event channel into ULog
+    while let Ok((level, code)) = elle_hardware::event::ULOG_EVENT_CHANNEL.try_receive() {
+        let _ = logger.log_event(level, code).await;
+    }
+
     // Update performance monitoring
     update_ulog_timing(ulog_timer.elapsed_us());
 }
@@ -168,7 +216,7 @@ bind_interrupts!(
     }
 );
 
-static mut CORE1_STACK: Stack<8192> = Stack::new();
+static mut CORE1_STACK: Stack<16384> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 
 // RC channel signal for RPC handler
@@ -183,17 +231,15 @@ pub mod rc_signal {
 // GNSS signal for sharing position data with RPC handler
 #[cfg(all(feature = "gnss", feature = "rpc-control"))]
 pub mod gnss_signal {
+    use elle_rpc_icd::GnssResp;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::signal::Signal;
-    use elle_rpc_icd::GnssResp;
 
     pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssResp> = Signal::new();
 }
 
 #[cfg(feature = "rpc-control")]
 mod rpc_handlers;
-#[cfg(feature = "rpc-control")]
-pub mod log_channel;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -238,7 +284,13 @@ async fn main(spawner: Spawner) {
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
-                spawner.spawn(imu_task(spawner, p.I2C0, p.PIN_8, p.PIN_9).unwrap());
+                spawner.spawn(
+                    imu_task(
+                        spawner, p.I2C0, p.PIN_8, p.PIN_9, p.SPI0, p.PIN_0, p.PIN_1, p.PIN_2,
+                        p.PIN_3,
+                    )
+                    .unwrap(),
+                );
             })
         },
     );
@@ -285,8 +337,7 @@ async fn main(spawner: Spawner) {
             spawner.spawn(crsf_receiver_task(crsf).unwrap());
 
             info!("Core0: Starting CRSF telemetry TX task (PIN_20, DMA_CH4)");
-            spawner
-                .spawn(elle_hardware::crsf_telemetry::crsf_telemetry_task(tx).unwrap());
+            spawner.spawn(elle_hardware::crsf_telemetry::crsf_telemetry_task(tx).unwrap());
         }
 
         #[cfg(not(feature = "crsf-telemetry"))]
@@ -357,22 +408,9 @@ async fn main(spawner: Spawner) {
     });
     drop(status);
 
-    // Initialize ULog logger for flight data recording
+    // ULog logger created but NOT initialized — user starts recording via `ulog start`
     #[cfg(feature = "ulog-logging")]
-    let mut ulog_logger = {
-        info!("Core0: Initializing ULog logger");
-        let mut logger = ULogLogger::new();
-        match logger.initialize().await {
-            Ok(_) => {
-                info!("Core0: ULog logger ready");
-                logger
-            }
-            Err(_) => {
-                warn!("Core0: ULog logger initialization failed, continuing without logging");
-                logger
-            }
-        }
-    };
+    let mut ulog_logger = ULogLogger::new();
 
     info!("Core0: Starting main control loop");
 
@@ -397,6 +435,9 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "rpc-control"))]
     {
         info!("FLIGHT MODE - CRSF/ELRS Control");
+
+        #[cfg(feature = "ulog-logging")]
+        let mut ulog_recording = false;
 
         // Create ticker for precise 13ms periods (77Hz)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
@@ -441,7 +482,11 @@ async fn main(spawner: Spawner) {
                 // Update with validated attitude (warns if stale)
                 let valid_attitude = validate_attitude(attitude);
                 if valid_attitude.is_none() && attitude.is_some() {
-                    warn!("Stale attitude data, using manual control only");
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_ATTITUDE_STALE,
+                        "Stale attitude data, using manual control only"
+                    );
                 }
                 fc.update(commands, valid_attitude.as_ref());
 
@@ -454,17 +499,58 @@ async fn main(spawner: Spawner) {
                     },
                 );
 
-                // Log flight data to ULog flash storage
+                // ULog recording controlled by RC switch
                 #[cfg(feature = "ulog-logging")]
-                log_flight_data(
-                    &mut ulog_logger,
-                    valid_attitude.as_ref(),
-                    commands,
-                    loop_counter,
-                    loop_timer.elapsed_us(),
-                    &fc,
-                )
-                .await;
+                {
+                    let switch_on = if let PilotCommands::Raw(raw) = commands {
+                        raw.channels[elle_config::ULOG_ENABLE_CH]
+                            > elle_config::ULOG_ENABLE_THRESHOLD
+                    } else {
+                        false
+                    };
+
+                    if switch_on && !ulog_recording {
+                        // Switch just turned on — initialize and start
+                        if !ulog_logger.is_initialized() {
+                            let _ = ulog_logger.initialize().await;
+                        }
+                        if ulog_logger.is_initialized() {
+                            ulog_recording = true;
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_ULOG_RC_ON,
+                                "ULog recording ON (RC switch)"
+                            );
+                        }
+                    } else if !switch_on && ulog_recording {
+                        // Switch just turned off — flush and stop
+                        let _ = ulog_logger.flush().await;
+                        ulog_recording = false;
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_ULOG_RC_OFF,
+                            "ULog recording OFF (RC switch)"
+                        );
+                    }
+
+                    if ulog_recording {
+                        log_flight_data(
+                            &mut ulog_logger,
+                            valid_attitude.as_ref(),
+                            commands,
+                            loop_counter,
+                            loop_timer.elapsed_us(),
+                            &fc,
+                        )
+                        .await;
+                    } else {
+                        // Drain stale events when not recording
+                        while elle_hardware::event::ULOG_EVENT_CHANNEL
+                            .try_receive()
+                            .is_ok()
+                        {}
+                    }
+                }
             }
 
             // Check for failsafe (triggers after 300ms of no valid packets)
@@ -505,8 +591,14 @@ async fn main(spawner: Spawner) {
 
     #[cfg(feature = "rpc-control")]
     {
+        use core::sync::atomic::Ordering;
+        use elle_config::profile::{FlashRequest, FlashResponse};
         use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+        use elle_hardware::sequential_flash_manager::{
+            FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
+        };
         use embassy_time::Instant;
+        use rpc_app::{ULOG_ENABLED, ULOG_ITEM_LEN, ULOG_ITEM_SIGNAL, ULOG_OFFSET, ULOG_STATE};
         use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
 
         info!("GROUND TEST MODE - RPC Control (postcard-RPC over RTT)");
@@ -545,17 +637,26 @@ async fn main(spawner: Spawner) {
                     }
                     RpcCommand::Arm => {
                         fc.arm();
-                        info!("Motors ARMED via RPC");
-                        log_channel::send(2, 10);
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_MOTORS_ARMED,
+                            "Motors ARMED via RPC"
+                        );
                     }
                     RpcCommand::Disarm => {
                         fc.disarm();
-                        info!("Motors DISARMED via RPC");
-                        log_channel::send(2, 11);
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_MOTORS_DISARMED,
+                            "Motors DISARMED via RPC"
+                        );
                     }
                     RpcCommand::EmergencyStop => {
-                        info!("RPC: EMERGENCY STOP");
-                        log_channel::send(3, 12);
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_EMERGENCY_STOP,
+                            "RPC: EMERGENCY STOP"
+                        );
                         rpc_throttle = 0.0;
                         rpc_elevon_left = 0.0;
                         rpc_elevon_right = 0.0;
@@ -571,6 +672,100 @@ async fn main(spawner: Spawner) {
                     RpcCommand::ClearCalibration => {
                         info!("RPC: Clear calibration requested");
                     }
+                    RpcCommand::StartULog => {
+                        #[cfg(feature = "ulog-logging")]
+                        {
+                            let mut ok = ulog_logger.is_initialized();
+                            if !ok {
+                                ok = ulog_logger.initialize().await.is_ok();
+                            }
+                            if ok {
+                                ULOG_ENABLED.store(true, Ordering::Release);
+                                elle_hardware::elle_event!(
+                                    info,
+                                    elle_hardware::event::EVT_ULOG_STARTED,
+                                    "ULog recording started"
+                                );
+                            } else {
+                                elle_hardware::elle_event!(
+                                    error,
+                                    elle_hardware::event::EVT_ULOG_INIT_FAILED,
+                                    "ULog init failed"
+                                );
+                            }
+                        }
+                        #[cfg(not(feature = "ulog-logging"))]
+                        {
+                            elle_hardware::elle_event!(
+                                warn,
+                                elle_hardware::event::EVT_ULOG_NOT_COMPILED,
+                                "ULog not compiled in"
+                            );
+                        }
+                    }
+                    RpcCommand::StopULog => {
+                        ULOG_ENABLED.store(false, Ordering::Release);
+                        #[cfg(feature = "ulog-logging")]
+                        {
+                            let _ = ulog_logger.flush().await;
+                        }
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_ULOG_STOPPED,
+                            "ULog recording stopped"
+                        );
+                    }
+                    RpcCommand::ReadULogChunk => {
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::PeekULog);
+                        match FLASH_RESPONSE_SIGNAL.wait().await {
+                            FlashResponse::ULogData { data, len } => {
+                                ULOG_ITEM_LEN.store(len as u16, Ordering::Release);
+                                ULOG_ITEM_SIGNAL.signal((data, len));
+                                ULOG_STATE.store(2, Ordering::Release); // ULOG_READY
+                            }
+                            FlashResponse::ULogEmpty => {
+                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY
+                            }
+                            _ => {
+                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY on error
+                            }
+                        }
+                    }
+                    RpcCommand::PopAndPeekULog => {
+                        // Pop the item we just finished sending
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::PopULog);
+                        let _ = FLASH_RESPONSE_SIGNAL.wait().await;
+                        // Peek the next item
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::PeekULog);
+                        match FLASH_RESPONSE_SIGNAL.wait().await {
+                            FlashResponse::ULogData { data, len } => {
+                                ULOG_ITEM_LEN.store(len as u16, Ordering::Release);
+                                ULOG_ITEM_SIGNAL.signal((data, len));
+                                ULOG_STATE.store(2, Ordering::Release); // ULOG_READY
+                            }
+                            FlashResponse::ULogEmpty => {
+                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY
+                            }
+                            _ => {
+                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY on error
+                            }
+                        }
+                    }
+                    RpcCommand::EraseULog => {
+                        // Stop recording first
+                        ULOG_ENABLED.store(false, Ordering::Release);
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::EraseULog);
+                        let _ = FLASH_RESPONSE_SIGNAL.wait().await;
+                        // Reset ULog transfer state
+                        ULOG_STATE.store(0, Ordering::Release); // ULOG_IDLE
+                        ULOG_OFFSET.store(0, Ordering::Release);
+                        ULOG_ITEM_LEN.store(0, Ordering::Release);
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_ULOG_ERASED,
+                            "ULog: flash erased"
+                        );
+                    }
                 }
             }
 
@@ -584,8 +779,8 @@ async fn main(spawner: Spawner) {
             // Build pilot commands from RPC state
             let commands = PilotCommands::Normalized(NormalizedCommands {
                 throttle: rpc_throttle,
-                pitch: (rpc_elevon_left + rpc_elevon_right) / 2.0,  // Mixed
-                roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,   // Mixed
+                pitch: (rpc_elevon_left + rpc_elevon_right) / 2.0, // Mixed
+                roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,  // Mixed
                 yaw: 0.0,
                 attitude_mode: AttitudeMode::Manual,
                 pitch_setpoint_deg: 0.0,
@@ -598,20 +793,13 @@ async fn main(spawner: Spawner) {
             fc.update(&commands, valid_attitude.as_ref());
 
             #[cfg(feature = "crsf-telemetry")]
-            {
-                elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
-                    elle_hardware::crsf_telemetry::CrsfFlightMode {
-                        armed: fc.is_armed(),
-                        failsafe: fc.is_failsafe(),
-                        attitude_mode: fc.is_attitude_enabled(),
-                    },
-                );
-                if let Some((level, code)) =
-                    elle_hardware::crsf_telemetry::TELEMETRY_LOG.try_take()
-                {
-                    log_channel::send(level, code);
-                }
-            }
+            elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
+                elle_hardware::crsf_telemetry::CrsfFlightMode {
+                    armed: fc.is_armed(),
+                    failsafe: fc.is_failsafe(),
+                    attitude_mode: fc.is_attitude_enabled(),
+                },
+            );
 
             // Publish flight state for RPC handlers
             flight_state::FLIGHT_STATE.signal(flight_state::FlightState {
@@ -624,17 +812,25 @@ async fn main(spawner: Spawner) {
                 },
             });
 
-            // Log flight data to ULog flash storage
+            // Log flight data to ULog flash storage (only when recording is active)
             #[cfg(feature = "ulog-logging")]
-            log_flight_data(
-                &mut ulog_logger,
-                valid_attitude.as_ref(),
-                &commands,
-                loop_counter,
-                loop_timer.elapsed_us(),
-                &fc,
-            )
-            .await;
+            if ULOG_ENABLED.load(Ordering::Acquire) {
+                log_flight_data(
+                    &mut ulog_logger,
+                    valid_attitude.as_ref(),
+                    &commands,
+                    loop_counter,
+                    loop_timer.elapsed_us(),
+                    &fc,
+                )
+                .await;
+            } else {
+                // Drain stale events when not recording
+                while elle_hardware::event::ULOG_EVENT_CHANNEL
+                    .try_receive()
+                    .is_ok()
+                {}
+            }
 
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
@@ -667,29 +863,54 @@ async fn main(spawner: Spawner) {
 #[embassy_executor::task]
 async fn imu_task(
     _spawner: Spawner,
+    // I2C (mag + baro)
     i2c: Peri<'static, I2C0>,
     sda: Peri<'static, PIN_8>,
     scl: Peri<'static, PIN_9>,
+    // SPI (ICM-42686) — unused in disable-imu stub
+    #[allow(unused_variables)] spi: Peri<'static, SPI0>,
+    #[allow(unused_variables)] spi_miso: Peri<'static, PIN_0>,
+    #[allow(unused_variables)] spi_cs: Peri<'static, PIN_1>,
+    #[allow(unused_variables)] spi_sck: Peri<'static, PIN_2>,
+    #[allow(unused_variables)] spi_mosi: Peri<'static, PIN_3>,
 ) {
-    info!("Core1: IMU task starting with flash calibration support");
+    info!("Core1: IMU task starting");
 
+    // I2C bus — always wrapped in RefCell (both cfg paths use shared I2C)
     let mut i2c_config = Config::default();
     i2c_config.frequency = IMU_I2C_FREQ;
-
     let i2c_bus = I2c::new_blocking(i2c, scl, sda, i2c_config);
+
+    use core::cell::RefCell;
+    static I2C_BUS: StaticCell<RefCell<I2c<'static, I2C0, embassy_rp::i2c::Blocking>>> =
+        StaticCell::new();
+    let i2c_ref = I2C_BUS.init(RefCell::new(i2c_bus));
+
     let led_sender = LED_COMMAND_CHANNEL.sender();
 
     #[cfg(feature = "disable-imu")]
-    let mut imu = {
-        use core::cell::RefCell;
-        static I2C_BUS: StaticCell<RefCell<I2c<'static, I2C0, embassy_rp::i2c::Blocking>>> = StaticCell::new();
-        let i2c_ref = I2C_BUS.init(RefCell::new(i2c_bus));
-        BnoImu::new(i2c_ref, led_sender)
-    };
-    #[cfg(not(feature = "disable-imu"))]
-    let mut imu = BnoImu::new(i2c_bus, led_sender);
+    let mut imu = Imu::new(i2c_ref, led_sender);
 
-    // Initialize with flash calibration support
+    #[cfg(not(feature = "disable-imu"))]
+    let mut imu = {
+        use embassy_rp::gpio::{Level, Output};
+        use embassy_rp::spi as rp_spi;
+        use embedded_hal_bus::spi::ExclusiveDevice;
+
+        let mut spi_config = rp_spi::Config::default();
+        spi_config.frequency = elle_config::IMU_SPI_FREQ;
+        // SPI Mode 0 (CPOL=0, CPHA=0) — ICM-42686 default
+        spi_config.polarity = rp_spi::Polarity::IdleLow;
+        spi_config.phase = rp_spi::Phase::CaptureOnFirstTransition;
+
+        let spi_bus = rp_spi::Spi::new_blocking(spi, spi_sck, spi_mosi, spi_miso, spi_config);
+        let cs = Output::new(spi_cs, Level::High);
+        let spi_dev = ExclusiveDevice::new(spi_bus, cs, embassy_time::Delay).unwrap();
+
+        Imu::new(spi_dev, i2c_ref, led_sender)
+    };
+
+    // Initialize sensors
     match imu.initialize().await {
         Ok(_) => info!("Core1: IMU initialized"),
         Err(e) => {
@@ -700,7 +921,7 @@ async fn imu_task(
     // Notify supervisor that IMU is initialized
     SUP_IMU_READY.signal(());
 
-    // Calibration wait (may be shorter if loaded from flash)
+    // Calibration wait (ICM-42686 returns immediately — factory calibrated)
     if let Err(e) = imu.wait_for_calibration(IMU_CALIBRATION_TIMEOUT_S).await {
         warn!("Core1: IMU calibration incomplete: {}", e);
     }
@@ -747,8 +968,13 @@ async fn gnss_task(
             Err(e) => {
                 uart_error_count += 1;
                 if uart_error_count <= 3 || uart_error_count % 1000 == 0 {
-                    warn!("GNSS UART read error: {} (total={})", e, uart_error_count);
-                    log_channel::send(3, 3);
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_GNSS_UART_ERROR,
+                        "GNSS UART read error: {} (total={})",
+                        e,
+                        uart_error_count
+                    );
                 }
                 Timer::after(Duration::from_millis(10)).await;
                 continue;
@@ -770,11 +996,22 @@ async fn gnss_task(
                         };
 
                         if gga_count == 1 {
-                            info!("GNSS: first GGA received (fix={}, sats={})", fix, sats);
-                            log_channel::send(2, 1);
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_GNSS_FIRST_FIX,
+                                "GNSS: first GGA received (fix={}, sats={})",
+                                fix,
+                                sats
+                            );
                         } else if gga_count.is_multiple_of(60) {
-                            info!("GNSS: {} GGA sentences (fix={}, sats={})", gga_count, fix, sats);
-                            log_channel::send(1, 2);
+                            elle_hardware::elle_event!(
+                                debug,
+                                elle_hardware::event::EVT_GNSS_PERIODIC,
+                                "GNSS: {} GGA sentences (fix={}, sats={})",
+                                gga_count,
+                                fix,
+                                sats
+                            );
                         }
 
                         if fix > 0 {
@@ -871,8 +1108,11 @@ async fn log_publisher_task(sender: postcard_rpc::server::Sender<elle_system::rp
 
     let mut seq: u16 = 0;
     loop {
-        let msg = log_channel::LOG_CHANNEL.receive().await;
-        let _ = sender.publish::<elle_rpc_icd::LogTopic>(VarSeq::Seq2(seq), &msg).await;
+        let (level, code) = elle_hardware::event::EVENT_CHANNEL.receive().await;
+        let msg = elle_rpc_icd::LogMsg { level, code };
+        let _ = sender
+            .publish::<elle_rpc_icd::LogTopic>(VarSeq::Seq2(seq), &msg)
+            .await;
         seq = seq.wrapping_add(1);
     }
 }
@@ -904,13 +1144,7 @@ async fn rpc_server_task(spawner: Spawner) {
     let vkk = dispatcher.min_key_len();
 
     // Create and run the server
-    let mut server = Server::new(
-        channels.tx,
-        channels.rx,
-        rx_buf,
-        dispatcher,
-        vkk,
-    );
+    let mut server = Server::new(channels.tx, channels.rx, rx_buf, dispatcher, vkk);
 
     let sender = server.sender();
     spawner.spawn(log_publisher_task(sender).unwrap());
@@ -922,4 +1156,3 @@ async fn rpc_server_task(spawner: Spawner) {
         let _err = server.run().await;
     }
 }
-
