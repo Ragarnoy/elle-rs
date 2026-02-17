@@ -18,6 +18,7 @@ pub mod writer;
 
 pub use format::{FLAG_BITS_MSG, ULOG_MAGIC, ULogHeader};
 pub use messages::{
-    AttitudeMessage, CommandsMessage, LogLevel, MessageDefinition, MessageType, StatusMessage,
+    AttitudeMessage, BarometerMessage, CommandsMessage, GnssMessage, LogEventMessage, LogLevel,
+    MagnetometerMessage, MessageDefinition, MessageType, StatusMessage,
 };
 pub use writer::{ULogWriter, WriteError};

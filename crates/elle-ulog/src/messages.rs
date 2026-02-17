@@ -165,10 +165,11 @@ impl CommandsMessage {
     pub const NAME: &'static str = "commands";
 
     /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub const FORMAT_MSG: &'static [u8] = b"\xa2\x00Fcommands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg";
+    /// msg_size = 146 bytes (format string length)
+    pub const FORMAT_MSG: &'static [u8] = b"\x92\x00Fcommands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg";
 
     /// Size of the message in bytes
-    pub const SIZE: usize = 37; // 8 + 6*4 + 1 + 4
+    pub const SIZE: usize = 33; // 8 + 4*4 + 1 + 2*4
 
     /// Create a new commands message
     #[allow(clippy::too_many_arguments)]
@@ -238,7 +239,8 @@ impl StatusMessage {
     pub const NAME: &'static str = "system_status";
 
     /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub const FORMAT_MSG: &'static [u8] = b"\x90\x00Fsystem_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load";
+    /// msg_size = 122 bytes (format string length)
+    pub const FORMAT_MSG: &'static [u8] = b"\x7a\x00Fsystem_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load";
 
     /// Size of the message in bytes
     pub const SIZE: usize = 22; // 8 + 4 + 4 + 1 + 1 + 4
@@ -275,6 +277,227 @@ impl StatusMessage {
     }
 }
 
+/// Barometer data message - logs BMP390 pressure, temperature, altitude
+///
+/// Format: "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct BarometerMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Pressure in hectopascals
+    pub pressure_hpa: f32,
+    /// Temperature in degrees Celsius
+    pub temperature_c: f32,
+    /// Barometric altitude in meters
+    pub altitude_m: f32,
+}
+
+impl BarometerMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str =
+        "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m";
+
+    /// Message name
+    pub const NAME: &'static str = "barometer_data";
+
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] = b"\x59\x00Fbarometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 20; // 8 + 3*4
+
+    /// Create a new barometer message
+    pub fn new(timestamp: Instant, pressure_hpa: f32, temperature_c: f32, altitude_m: f32) -> Self {
+        Self {
+            timestamp: timestamp.as_micros(),
+            pressure_hpa,
+            temperature_c,
+            altitude_m,
+        }
+    }
+
+    /// Serialize to little-endian bytes
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.pressure_hpa.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.temperature_c.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.altitude_m.to_le_bytes());
+        buf
+    }
+}
+
+/// Magnetometer data message - logs MMC5616WA magnetic field
+///
+/// Format: "magnetometer_data:uint64_t timestamp;float mag_x;float mag_y;float mag_z"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MagnetometerMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Magnetic field X axis (counts cast to float)
+    pub mag_x: f32,
+    /// Magnetic field Y axis (counts cast to float)
+    pub mag_y: f32,
+    /// Magnetic field Z axis (counts cast to float)
+    pub mag_z: f32,
+}
+
+impl MagnetometerMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str =
+        "magnetometer_data:uint64_t timestamp;float mag_x;float mag_y;float mag_z";
+
+    /// Message name
+    pub const NAME: &'static str = "magnetometer_data";
+
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] =
+        b"\x48\x00Fmagnetometer_data:uint64_t timestamp;float mag_x;float mag_y;float mag_z";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 20; // 8 + 3*4
+
+    /// Create a new magnetometer message
+    pub fn new(timestamp: Instant, mag_x: f32, mag_y: f32, mag_z: f32) -> Self {
+        Self {
+            timestamp: timestamp.as_micros(),
+            mag_x,
+            mag_y,
+            mag_z,
+        }
+    }
+
+    /// Serialize to little-endian bytes
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.mag_x.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.mag_y.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.mag_z.to_le_bytes());
+        buf
+    }
+}
+
+/// GNSS data message - logs GPS position fix
+///
+/// Format: "gnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct GnssMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Latitude in degrees
+    pub latitude: f32,
+    /// Longitude in degrees
+    pub longitude: f32,
+    /// Altitude in meters
+    pub altitude_m: f32,
+    /// Fix quality (0=none, 1=GPS, 2=DGPS)
+    pub fix_quality: u8,
+    /// Number of satellites
+    pub num_satellites: u8,
+    /// Horizontal dilution of precision
+    pub hdop: f32,
+}
+
+impl GnssMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str = "gnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop";
+
+    /// Message name
+    pub const NAME: &'static str = "gnss_data";
+
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] = b"\x82\x00Fgnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 26; // 8 + 3*4 + 1 + 1 + 4
+
+    /// Create a new GNSS message
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        timestamp: Instant,
+        latitude: f32,
+        longitude: f32,
+        altitude_m: f32,
+        fix_quality: u8,
+        num_satellites: u8,
+        hdop: f32,
+    ) -> Self {
+        Self {
+            timestamp: timestamp.as_micros(),
+            latitude,
+            longitude,
+            altitude_m,
+            fix_quality,
+            num_satellites,
+            hdop,
+        }
+    }
+
+    /// Serialize to little-endian bytes
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.latitude.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.longitude.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.altitude_m.to_le_bytes());
+        buf[20] = self.fix_quality;
+        buf[21] = self.num_satellites;
+        buf[22..26].copy_from_slice(&self.hdop.to_le_bytes());
+        buf
+    }
+}
+
+/// Log event message — compact discrete event for ULog flash
+///
+/// Format: "log_event:uint64_t timestamp;uint8_t level;uint16_t code"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct LogEventMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Log level (0=trace, 1=debug, 2=info, 3=warn, 4=error)
+    pub level: u8,
+    /// Application-defined event code
+    pub code: u16,
+}
+
+impl LogEventMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str = "log_event:uint64_t timestamp;uint8_t level;uint16_t code";
+
+    /// Message name
+    pub const NAME: &'static str = "log_event";
+
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] =
+        b"\x38\x00Flog_event:uint64_t timestamp;uint8_t level;uint16_t code";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 11; // 8 + 1 + 2
+
+    /// Create a new log event message
+    pub fn new(timestamp: Instant, level: u8, code: u16) -> Self {
+        Self {
+            timestamp: timestamp.as_micros(),
+            level,
+            code,
+        }
+    }
+
+    /// Serialize to little-endian bytes
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8] = self.level;
+        buf[9..11].copy_from_slice(&self.code.to_le_bytes());
+        buf
+    }
+}
+
 /// Logged string message (type 'L')
 #[derive(Debug, Clone)]
 pub struct LoggedString<'a> {
@@ -306,3 +529,69 @@ impl<'a> LoggedString<'a> {
         9 + self.message.len()
     }
 }
+
+// Compile-time checks: the msg_size field (LE u16 in first 2 bytes of FORMAT_MSG)
+// must equal FORMAT string length, and total FORMAT_MSG length must be 3 + FORMAT length.
+const _: () = {
+    // AttitudeMessage
+    let encoded =
+        AttitudeMessage::FORMAT_MSG[0] as usize | (AttitudeMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == AttitudeMessage::FORMAT.len(),
+        "AttitudeMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(AttitudeMessage::FORMAT_MSG.len() == 3 + AttitudeMessage::FORMAT.len());
+
+    // CommandsMessage
+    let encoded =
+        CommandsMessage::FORMAT_MSG[0] as usize | (CommandsMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == CommandsMessage::FORMAT.len(),
+        "CommandsMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(CommandsMessage::FORMAT_MSG.len() == 3 + CommandsMessage::FORMAT.len());
+
+    // StatusMessage
+    let encoded =
+        StatusMessage::FORMAT_MSG[0] as usize | (StatusMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == StatusMessage::FORMAT.len(),
+        "StatusMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(StatusMessage::FORMAT_MSG.len() == 3 + StatusMessage::FORMAT.len());
+
+    // BarometerMessage
+    let encoded =
+        BarometerMessage::FORMAT_MSG[0] as usize | (BarometerMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == BarometerMessage::FORMAT.len(),
+        "BarometerMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(BarometerMessage::FORMAT_MSG.len() == 3 + BarometerMessage::FORMAT.len());
+
+    // MagnetometerMessage
+    let encoded = MagnetometerMessage::FORMAT_MSG[0] as usize
+        | (MagnetometerMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == MagnetometerMessage::FORMAT.len(),
+        "MagnetometerMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(MagnetometerMessage::FORMAT_MSG.len() == 3 + MagnetometerMessage::FORMAT.len());
+
+    // GnssMessage
+    let encoded = GnssMessage::FORMAT_MSG[0] as usize | (GnssMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == GnssMessage::FORMAT.len(),
+        "GnssMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(GnssMessage::FORMAT_MSG.len() == 3 + GnssMessage::FORMAT.len());
+
+    // LogEventMessage
+    let encoded =
+        LogEventMessage::FORMAT_MSG[0] as usize | (LogEventMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == LogEventMessage::FORMAT.len(),
+        "LogEventMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(LogEventMessage::FORMAT_MSG.len() == 3 + LogEventMessage::FORMAT.len());
+};
