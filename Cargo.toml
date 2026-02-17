@@ -38,7 +38,7 @@ embassy-rp = { version = "0.9.0", git = "https://github.com/embassy-rs/embassy.g
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git" }
 
 # External dependencies - Hardware drivers
-bno055 = "0.4.0"
+icm426xx = { path = "../icm426xx", default-features = false, features = ["defmt"] }
 crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = false, features = ["defmt"] }
 smart-leds = "0.4.0"
 
@@ -51,18 +51,19 @@ defmt = "1.0.1"
 defmt-rtt = "1.0.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 libm = "0.2.15"
-mint = "0.5.9"
 static_cell = "2.1.1"
 rtt-target = { version = "0.6.1", features = ["defmt"] }
 thiserror = { version = "2.0.17", default-features = false }
-sequential-storage = { version = "6.0.*", default-features = false }
-heapless = "0.9"
+sequential-storage = { version = "7.1.0", default-features = false }
+heapless = { version = "0.9", features = ["serde"] }
 postcard = { version = "1.1", default-features = false }
 postcard-rpc = { version = "0.12", default-features = false }
-postcard-schema = { version = "0.2", default-features = false, features = ["derive"] }
+postcard-schema = { version = "0.2", default-features = false, features = ["derive", "heapless-v0_9"] }
 bmp390 = { version = "0.4", default-features = false, features = ["sync"] }
-embedded-hal-bus = { version = "0.2", default-features = false }
-uom = { version = "0.36", default-features = false, features = ["f32", "si"] }
+embedded-hal-bus = { version = "0.3.0", default-features = false }
+ahrs = { version = "0.8", default-features = false }
+nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+uom = { version = "0.36.0", default-features = false, features = ["f32", "si"] }
 cobs = { version = "0.5", default-features = false }
 crc = { version = "3", default-features = false }
 embedded-io = "0.7"
