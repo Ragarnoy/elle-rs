@@ -15,10 +15,12 @@ embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-rp = { workspace = true }
+embedded-hal-bus = { workspace = true }
 
 static_cell = { workspace = true }
 postcard-rpc = { workspace = true, optional = true }
 postcard = { workspace = true, optional = true }
+heapless = { workspace = true, optional = true }
 
 defmt = { workspace = true }
 defmt-rtt = { workspace = true, optional = true }
@@ -32,7 +34,7 @@ disable-imu = ["elle-system/disable-imu"]
 imu-save-calibration = ["elle-system/imu-save-calibration"]
 performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
-rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard"]
+rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless"]
 gnss = ["sam-m10q", "elle-hardware/gnss"]
 ulog-logging = ["elle-hardware/ulog-logging"]
 crsf-telemetry = ["elle-hardware/crsf-telemetry"]
