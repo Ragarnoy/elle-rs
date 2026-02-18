@@ -71,6 +71,7 @@ pub struct Decoder {
 
 impl Decoder {
     /// Create a new decoder in the Idle state.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             state: State::Idle,
@@ -110,6 +111,7 @@ impl Decoder {
     /// Must only be called after `feed()` returns `FeedResult::FrameReady`.
     /// The returned `Frame` borrows from the decoder's internal buffer —
     /// it must be consumed before the next call to `feed()`.
+    #[must_use]
     pub fn take_frame(&self) -> Frame<'_> {
         match self.last_frame {
             FrameType::Ubx => Frame::Ubx(UbxFrame {

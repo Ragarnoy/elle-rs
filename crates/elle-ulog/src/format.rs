@@ -24,6 +24,7 @@ pub struct ULogHeader {
 
 impl ULogHeader {
     /// Create a new ULog header with the given timestamp
+    #[must_use]
     pub const fn new(timestamp_us: u64) -> Self {
         Self {
             magic: ULOG_MAGIC,
@@ -33,11 +34,13 @@ impl ULogHeader {
     }
 
     /// Create a new ULog header with timestamp from current Instant
+    #[must_use]
     pub fn from_instant(instant: Instant) -> Self {
         Self::new(instant.as_micros())
     }
 
     /// Serialize the header to a byte buffer (16 bytes)
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; 16] {
         let mut buf = [0u8; 16];
         buf[0..7].copy_from_slice(&self.magic);
@@ -47,6 +50,7 @@ impl ULogHeader {
     }
 
     /// Deserialize a header from bytes
+    #[must_use]
     pub fn from_bytes(buf: &[u8; 16]) -> Option<Self> {
         if buf[0..7] != ULOG_MAGIC {
             return None;
@@ -78,11 +82,13 @@ pub struct MessageHeader {
 
 impl MessageHeader {
     /// Create a new message header
+    #[must_use]
     pub const fn new(msg_size: u16, msg_type: u8) -> Self {
         Self { msg_size, msg_type }
     }
 
     /// Serialize to bytes (3 bytes)
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; 3] {
         let mut buf = [0u8; 3];
         buf[0..2].copy_from_slice(&self.msg_size.to_le_bytes());
@@ -91,6 +97,7 @@ impl MessageHeader {
     }
 
     /// Deserialize from bytes
+    #[must_use]
     pub fn from_bytes(buf: &[u8; 3]) -> Self {
         let msg_size = u16::from_le_bytes([buf[0], buf[1]]);
         let msg_type = buf[2];
@@ -124,6 +131,7 @@ pub const FLAG_BITS_MSG: [u8; 43] = [
 
 impl FlagBits {
     /// Create new flag bits with default values
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             compat_flags: [0; 8],
@@ -133,6 +141,7 @@ impl FlagBits {
     }
 
     /// Serialize to bytes (40 bytes)
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; 40] {
         let mut buf = [0u8; 40];
         buf[0..8].copy_from_slice(&self.compat_flags);
@@ -159,11 +168,13 @@ pub struct InfoMessage<'a> {
 
 impl<'a> InfoMessage<'a> {
     /// Create a new info message
+    #[must_use]
     pub fn new(key: &'a str, value: &'a str) -> Self {
         Self { key, value }
     }
 
     /// Calculate total message size (excluding header)
+    #[must_use]
     pub fn msg_size(&self) -> u16 {
         (1 + self.key.len() + self.value.len()) as u16
     }
@@ -188,11 +199,13 @@ pub struct FormatMessage<'a> {
 
 impl<'a> FormatMessage<'a> {
     /// Create a new format message
+    #[must_use]
     pub fn new(format: &'a str) -> Self {
         Self { format }
     }
 
     /// Calculate message size
+    #[must_use]
     pub fn msg_size(&self) -> u16 {
         self.format.len() as u16
     }
@@ -217,6 +230,7 @@ pub struct SubscriptionMessage<'a> {
 
 impl<'a> SubscriptionMessage<'a> {
     /// Create a new subscription
+    #[must_use]
     pub fn new(multi_id: u8, msg_id: u16, message_name: &'a str) -> Self {
         Self {
             multi_id,
@@ -226,6 +240,7 @@ impl<'a> SubscriptionMessage<'a> {
     }
 
     /// Calculate message size
+    #[must_use]
     pub fn msg_size(&self) -> u16 {
         (3 + self.message_name.len()) as u16
     }

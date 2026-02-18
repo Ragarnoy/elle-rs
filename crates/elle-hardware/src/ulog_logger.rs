@@ -31,6 +31,7 @@ pub struct ULogLogger {
 
 impl ULogLogger {
     /// Create a new ULog logger
+    #[must_use]
     pub fn new() -> Self {
         Self {
             writer: elle_ulog::ULogWriter::new(),
@@ -48,7 +49,10 @@ impl ULogLogger {
     }
 
     /// Initialize the ULog logger (write header and definitions)
-    pub async fn initialize(&mut self) -> Result<(), ()> {
+    ///
+    /// `epoch_ms` is the wall-clock time in ms since UNIX epoch, used for
+    /// the `sys_start_time_utc_ms` info message in the ULog header.
+    pub async fn initialize(&mut self, epoch_ms: u64) -> Result<(), ()> {
         if self.initialized {
             info!("ULog logger already initialized");
             return Ok(());
@@ -70,7 +74,7 @@ impl ULogLogger {
 
         // Write definitions
         self.writer
-            .write_definitions("ELLE-RS", "RP2350-XFly-Eagle", env!("CARGO_PKG_VERSION"))
+            .write_definitions("ELLE-RS", "RP2350-XFly-Eagle", env!("CARGO_PKG_VERSION"), epoch_ms)
             .map_err(|_| ())?;
 
         // Add subscriptions
@@ -417,16 +421,19 @@ impl ULogLogger {
     }
 
     /// Check if the logger has been initialized
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
 
     /// Check if the logger needs flushing
+    #[must_use]
     pub fn needs_flush(&self) -> bool {
         self.buffer.len() > (ULOG_CHUNK_SIZE / 2)
     }
 
     /// Get the buffer fill percentage
+    #[must_use]
     pub fn buffer_fill_percent(&self) -> u8 {
         ((self.buffer.len() * 100) / ULOG_CHUNK_SIZE) as u8
     }

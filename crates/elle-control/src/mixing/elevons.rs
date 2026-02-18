@@ -1,13 +1,16 @@
+#![allow(clippy::inline_always)]
 use defmt::Format;
 use elle_config::*;
 
 /// Convert RC values to normalized control inputs using ultra-fast LUT
+#[must_use]
 #[inline(always)]
 pub fn rc_to_normalized(rc_value: u16) -> f32 {
     elle_config::rc_to_normalized(rc_value)
 }
 
 /// Convert normalized control input to servo pulse width using LUT
+#[must_use]
 #[inline(always)]
 pub fn normalized_to_servo_us(normalized: f32) -> u32 {
     // Convert normalized to RC equivalent for LUT lookup
@@ -33,6 +36,7 @@ pub struct ElevonOutputs {
 
 impl ControlInputs {
     /// Create control inputs from RC channels using ultra-fast LUTs
+    #[must_use]
     #[inline(always)]
     pub fn from_rc_channels(channels: &[u16]) -> Self {
         Self {
@@ -44,6 +48,7 @@ impl ControlInputs {
     }
 
     /// Ultra-fast batch conversion using single LUT call
+    #[must_use]
     #[inline(always)]
     pub fn from_rc_channels_fast(channels: &[u16]) -> Self {
         let (roll, pitch, yaw, throttle) = channels_to_normalized_lut(channels);
@@ -55,19 +60,10 @@ impl ControlInputs {
         }
     }
 
-    /// Legacy: create from direct elevon channels (for backwards compatibility)
-    #[cfg(feature = "legacy-ctrl")]
-    pub fn from_direct_elevons(channels: &[u16]) -> Self {
-        Self {
-            pitch: 0.0, // No pitch input in direct mode
-            roll: 0.0,  // No roll input in direct mode
-            yaw: elle_config::rc_to_normalized(channels[DIFFERENTIAL_CH]),
-            throttle: (channels[ENGINE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
-        }
-    }
 }
 
 /// Mixes pitch, roll and yaw inputs into elevon control surface positions
+#[must_use]
 #[inline(always)]
 pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
     let pitch = inputs.pitch.clamp(-1.0, 1.0);
@@ -91,6 +87,7 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
 }
 
 /// Ultra-fast elevon mixing using direct RC values
+#[must_use]
 #[inline(always)]
 pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
     let (roll, pitch, yaw, _throttle) = channels_to_normalized_lut(channels);
@@ -114,6 +111,7 @@ pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
 }
 
 /// Get direct elevon control using LUT (legacy mode, trim applied in PWM layer)
+#[must_use]
 #[inline(always)]
 pub fn direct_elevon_control(channels: &[u16]) -> ElevonOutputs {
     ElevonOutputs {

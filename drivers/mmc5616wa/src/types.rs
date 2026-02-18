@@ -34,6 +34,7 @@ pub enum Bandwidth {
 
 impl Bandwidth {
     /// Returns the register bits for BW1:BW0.
+    #[must_use]
     pub fn bits(self) -> u8 {
         match self {
             Self::Bw00 => 0b00,
@@ -44,6 +45,7 @@ impl Bandwidth {
     }
 
     /// Returns the typical measurement time in microseconds for this bandwidth.
+    #[must_use]
     pub fn measurement_time_us(self) -> u32 {
         match self {
             Self::Bw00 => 6600,
@@ -59,16 +61,19 @@ impl Bandwidth {
 /// - `out0`: high byte (bits 19:12)
 /// - `out1`: mid byte (bits 11:4)
 /// - `out2`: low nibble in upper 4 bits (bits 3:0)
+#[must_use]
 pub fn reconstruct_20bit(out0: u8, out1: u8, out2: u8) -> u32 {
     ((out0 as u32) << 12) | ((out1 as u32) << 4) | ((out2 as u32) >> 4)
 }
 
 /// Convert a raw 20-bit unsigned value to signed counts by subtracting the null field offset.
+#[must_use]
 pub fn to_signed(raw: u32) -> i32 {
     raw as i32 - NULL_FIELD_OUTPUT
 }
 
 /// Convert signed counts to Gauss.
+#[must_use]
 pub fn to_gauss(signed: i32) -> f32 {
     signed as f32 / COUNTS_PER_GAUSS
 }
@@ -76,6 +81,7 @@ pub fn to_gauss(signed: i32) -> f32 {
 /// Convert the raw Tout register value to degrees Celsius.
 ///
 /// Formula: T(°C) = -75.0 + 0.8 * Tout
+#[must_use]
 pub fn tout_to_celsius(tout: u8) -> f32 {
     -75.0 + 0.8 * tout as f32
 }

@@ -59,6 +59,7 @@ pub mod nav {
 ///
 /// The checksum is computed over class + id + length + payload (everything
 /// between sync bytes and the checksum itself).
+#[must_use]
 pub fn checksum(data: &[u8]) -> (u8, u8) {
     let mut ck_a: u8 = 0;
     let mut ck_b: u8 = 0;
@@ -70,6 +71,7 @@ pub fn checksum(data: &[u8]) -> (u8, u8) {
 }
 
 /// Verify a UBX checksum against expected values.
+#[must_use]
 pub fn verify_checksum(data: &[u8], expected: (u8, u8)) -> bool {
     checksum(data) == expected
 }
@@ -78,6 +80,7 @@ pub fn verify_checksum(data: &[u8], expected: (u8, u8)) -> bool {
 ///
 /// Returns the total frame length, or `None` if `buf` is too small.
 /// Layout: `[SYNC1, SYNC2, class, id, len_lo, len_hi, payload..., ck_a, ck_b]`
+#[must_use]
 pub fn build_frame(buf: &mut [u8], class: u8, id: u8, payload: &[u8]) -> Option<usize> {
     let total = HEADER_SIZE + payload.len() + CHECKSUM_SIZE;
     if buf.len() < total {
@@ -104,6 +107,7 @@ pub fn build_frame(buf: &mut [u8], class: u8, id: u8, payload: &[u8]) -> Option<
 /// Compute the NMEA XOR checksum over data between '$' and '*'.
 ///
 /// `data` should be the bytes between (but not including) '$' and '*'.
+#[must_use]
 pub fn nmea_checksum(data: &[u8]) -> u8 {
     let mut ck: u8 = 0;
     for &byte in data {

@@ -1,7 +1,6 @@
 use defmt::{info, warn};
 use elle_config::*;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
-#[cfg(not(feature = "legacy-ctrl"))]
 use elle_control::mixing::{
     elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
     yaw::{apply_differential_thrust_direct, throttle_with_differential_lut},
@@ -14,9 +13,6 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
-
-#[cfg(feature = "legacy-ctrl")]
-use elle_control::mixing::apply_differential_complete;
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
 pub enum ControlMode {
@@ -81,6 +77,7 @@ pub struct FlightController<'a> {
 }
 
 impl<'a> FlightController<'a> {
+    #[must_use]
     pub fn new(pwm: PwmOutputs<'a>) -> Self {
         // Use conservative gains similar to free-flight-stabilization example
         let mut config = FlightStabilizerConfig::<f32>::new();
@@ -171,7 +168,7 @@ impl<'a> FlightController<'a> {
     /// Feed the watchdog timer to prevent system reset
     pub fn kick_watchdog(&mut self) {
         if let Some(ref mut wd) = self.watchdog {
-            wd.feed();
+            wd.feed(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
             self.last_watchdog_kick = Instant::now();
         }
     }
@@ -238,6 +235,7 @@ impl<'a> FlightController<'a> {
     }
 
     /// Get supervisor status for monitoring
+    #[must_use]
     pub fn supervisor_status(&self) -> (bool, bool, u32) {
         (
             self.supervisor_enabled,
@@ -285,6 +283,7 @@ impl<'a> FlightController<'a> {
         }
     }
 
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     fn update_fast_path_raw(&mut self, channels: &[u16; 16]) {
         // Existing ultra-fast path logic - UNCHANGED
@@ -418,18 +417,22 @@ impl<'a> FlightController<'a> {
         self.pwm.set_safe_positions();
     }
 
+    #[must_use]
     pub fn is_armed(&self) -> bool {
         self.arming.armed
     }
 
+    #[must_use]
     pub fn is_failsafe(&self) -> bool {
         self.arming.failsafe_active
     }
 
+    #[must_use]
     pub fn is_attitude_enabled(&self) -> bool {
         self.attitude_controller.enabled
     }
 
+    #[must_use]
     pub fn current_control_mode(&self) -> ControlMode {
         self.current_control_mode
     }
@@ -733,11 +736,15 @@ pub struct TimingMeasurement;
 
 #[cfg(not(feature = "performance-monitoring"))]
 impl TimingMeasurement {
+    #[must_use]
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn start() -> Self {
         Self
     }
 
+    #[must_use]
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn elapsed_us(&self) -> u32 {
         0

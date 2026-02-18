@@ -58,6 +58,7 @@ pub struct MessageDefinition {
 }
 
 impl MessageDefinition {
+    #[must_use]
     pub const fn new(msg_id: u16, multi_id: u8) -> Self {
         Self { msg_id, multi_id }
     }
@@ -96,6 +97,7 @@ impl AttitudeMessage {
     pub const FORMAT_MSG: &'static [u8] = b"\x71\x00Fattitude_data:uint64_t timestamp;float pitch;float roll;float yaw;float pitch_rate;float roll_rate;float yaw_rate";
 
     /// Create a new attitude message
+    #[must_use]
     pub fn new(
         timestamp: Instant,
         pitch: f32,
@@ -120,6 +122,7 @@ impl AttitudeMessage {
     pub const SIZE: usize = 32; // 8 + 6*4
 
     /// Serialize to little-endian bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
@@ -172,6 +175,7 @@ impl CommandsMessage {
     pub const SIZE: usize = 33; // 8 + 4*4 + 1 + 2*4
 
     /// Create a new commands message
+    #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: Instant,
@@ -196,6 +200,7 @@ impl CommandsMessage {
     }
 
     /// Serialize to little-endian bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
@@ -246,6 +251,7 @@ impl StatusMessage {
     pub const SIZE: usize = 22; // 8 + 4 + 4 + 1 + 1 + 4
 
     /// Create a new status message
+    #[must_use]
     pub fn new(
         timestamp: Instant,
         loop_time_us: u32,
@@ -265,6 +271,7 @@ impl StatusMessage {
     }
 
     /// Serialize to little-endian bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
@@ -308,6 +315,7 @@ impl BarometerMessage {
     pub const SIZE: usize = 20; // 8 + 3*4
 
     /// Create a new barometer message
+    #[must_use]
     pub fn new(timestamp: Instant, pressure_hpa: f32, temperature_c: f32, altitude_m: f32) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
@@ -318,6 +326,7 @@ impl BarometerMessage {
     }
 
     /// Serialize to little-endian bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
@@ -360,6 +369,7 @@ impl MagnetometerMessage {
     pub const SIZE: usize = 20; // 8 + 3*4
 
     /// Create a new magnetometer message
+    #[must_use]
     pub fn new(timestamp: Instant, mag_x: f32, mag_y: f32, mag_z: f32) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
@@ -370,6 +380,7 @@ impl MagnetometerMessage {
     }
 
     /// Serialize to little-endian bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
@@ -416,6 +427,7 @@ impl GnssMessage {
     pub const SIZE: usize = 26; // 8 + 3*4 + 1 + 1 + 4
 
     /// Create a new GNSS message
+    #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: Instant,
@@ -438,6 +450,7 @@ impl GnssMessage {
     }
 
     /// Serialize to little-endian bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
@@ -480,6 +493,7 @@ impl LogEventMessage {
     pub const SIZE: usize = 11; // 8 + 1 + 2
 
     /// Create a new log event message
+    #[must_use]
     pub fn new(timestamp: Instant, level: u8, code: u16) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
@@ -489,6 +503,7 @@ impl LogEventMessage {
     }
 
     /// Serialize to little-endian bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
@@ -508,6 +523,7 @@ pub struct LoggedString<'a> {
 
 impl<'a> LoggedString<'a> {
     /// Create a new logged string
+    #[must_use]
     pub fn new(log_level: LogLevel, timestamp: Instant, message: &'a str) -> Self {
         Self {
             log_level,
@@ -517,6 +533,7 @@ impl<'a> LoggedString<'a> {
     }
 
     /// Calculate message size
+    #[must_use]
     pub fn msg_size(&self) -> u16 {
         (9 + self.message.len()) as u16
     }

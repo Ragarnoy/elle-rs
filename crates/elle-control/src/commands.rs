@@ -26,6 +26,7 @@ pub struct RawCommands {
 
 impl RawCommands {
     /// Convert raw RC channels to normalized commands
+    #[must_use]
     pub fn to_normalized(&self) -> NormalizedCommands {
         NormalizedCommands {
             throttle: (self.channels[THROTTLE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
@@ -61,6 +62,7 @@ pub enum AttitudeMode {
 }
 
 impl PilotCommands {
+    #[must_use]
     #[inline]
     pub fn timestamp(&self) -> Instant {
         match self {
@@ -69,11 +71,13 @@ impl PilotCommands {
         }
     }
 
+    #[must_use]
     #[inline]
     pub fn is_fresh(&self, max_age: Duration) -> bool {
         self.timestamp().elapsed() < max_age
     }
 
+    #[must_use]
     #[inline]
     pub fn attitude_mode(&self) -> AttitudeMode {
         match self {
@@ -84,6 +88,7 @@ impl PilotCommands {
 }
 
 impl NormalizedCommands {
+    #[must_use]
     pub const fn neutral() -> Self {
         Self {
             throttle: 0.0,
@@ -99,6 +104,7 @@ impl NormalizedCommands {
 }
 
 // Helper functions
+#[must_use]
 pub fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
     if ch5_value < MANUAL_MODE_THRESHOLD {
         AttitudeMode::Manual
@@ -109,12 +115,14 @@ pub fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
     }
 }
 
+#[must_use]
 pub fn decode_pitch_setpoint(ch6_value: u16) -> f32 {
     let normalized = rc_to_normalized(ch6_value);
     ATTITUDE_PITCH_MIN_DEG
         + (normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG)
 }
 
+#[must_use]
 pub fn decode_roll_setpoint(ch8_value: u16) -> f32 {
     let normalized = rc_to_normalized(ch8_value);
     ATTITUDE_ROLL_MIN_DEG

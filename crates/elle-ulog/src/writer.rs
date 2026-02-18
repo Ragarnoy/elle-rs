@@ -38,6 +38,7 @@ pub struct ULogWriter {
 
 impl ULogWriter {
     /// Create a new ULog writer
+    #[must_use]
     pub fn new() -> Self {
         Self {
             buffer: Vec::new(),
@@ -65,11 +66,15 @@ impl ULogWriter {
     }
 
     /// Write definitions section (flag bits, formats, info)
+    ///
+    /// `epoch_ms` is the wall-clock time in ms since UNIX epoch at the start of recording.
+    /// Written as `uint64_t sys_start_time_utc_ms` info message (PX4 convention).
     pub fn write_definitions(
         &mut self,
         sys_name: &str,
         ver_hw: &str,
         ver_sw: &str,
+        epoch_ms: u64,
     ) -> Result<(), WriteError> {
         if self.definitions_written {
             return Ok(());
@@ -107,6 +112,7 @@ impl ULogWriter {
         self.write_info("char[] sys_name", sys_name)?;
         self.write_info("char[] ver_hw", ver_hw)?;
         self.write_info("char[] ver_sw", ver_sw)?;
+        self.write_info_u64("uint64_t sys_start_time_utc_ms", epoch_ms)?;
 
         self.definitions_written = true;
         Ok(())
@@ -201,12 +207,24 @@ impl ULogWriter {
         self.write_message(MessageType::Data, &payload)
     }
 
-    /// Write an info message
+    /// Write an info message with a string value
     fn write_info(&mut self, key: &str, value: &str) -> Result<(), WriteError> {
         let msg = InfoMessage::new(key, value);
         let mut buf = [0u8; 256];
         let len = msg.to_bytes(&mut buf);
         self.write_message(MessageType::Info, &buf[..len])
+    }
+
+    /// Write an info message with a binary u64 value (little-endian)
+    fn write_info_u64(&mut self, key: &str, value: u64) -> Result<(), WriteError> {
+        let key_len = key.len() as u8;
+        let mut buf = [0u8; 256];
+        buf[0] = key_len;
+        buf[1..1 + key.len()].copy_from_slice(key.as_bytes());
+        let val_start = 1 + key.len();
+        buf[val_start..val_start + 8].copy_from_slice(&value.to_le_bytes());
+        let total_len = val_start + 8;
+        self.write_message(MessageType::Info, &buf[..total_len])
     }
 
     /// Write a message with header
@@ -234,16 +252,19 @@ impl ULogWriter {
     }
 
     /// Get the current buffer contents
+    #[must_use]
     pub fn buffer(&self) -> &[u8] {
         &self.buffer
     }
 
     /// Get the buffer size
+    #[must_use]
     pub fn buffer_len(&self) -> usize {
         self.buffer.len()
     }
 
     /// Check if buffer needs flushing (>75% full)
+    #[must_use]
     pub fn needs_flush(&self) -> bool {
         self.buffer.len() > (BUFFER_SIZE * 3 / 4)
     }

@@ -1,3 +1,4 @@
+#![allow(clippy::inline_always)]
 use crate::*;
 
 /// RC value range (0-2047, so we need 2048 entries)
@@ -196,6 +197,7 @@ pub static DIFFERENTIAL_LEGACY_LUT: [(u32, u32); DIFF_LUT_SIZE] = generate_diffe
 pub static YAW_DIFFERENTIAL_LUT: [(i32, i32); RC_LUT_SIZE] = generate_yaw_differential_lut();
 
 /// Ultra-fast throttle curve lookup - single array access
+#[must_use]
 #[inline(always)]
 pub fn throttle_curve_lut(rc_value: u16) -> u32 {
     unsafe {
@@ -205,6 +207,7 @@ pub fn throttle_curve_lut(rc_value: u16) -> u32 {
 }
 
 /// Ultra-fast servo pulse lookup
+#[must_use]
 #[inline(always)]
 pub fn rc_to_pulse_lut(rc_value: u16) -> u32 {
     unsafe {
@@ -214,6 +217,7 @@ pub fn rc_to_pulse_lut(rc_value: u16) -> u32 {
 }
 
 /// Ultra-fast engine pulse lookup (for arming logic - linear mapping)
+#[must_use]
 #[inline(always)]
 pub fn rc_to_engine_pulse_lut(rc_value: u16) -> u32 {
     unsafe {
@@ -223,6 +227,7 @@ pub fn rc_to_engine_pulse_lut(rc_value: u16) -> u32 {
 }
 
 /// Ultra-fast normalized value lookup (all axes share the same center)
+#[must_use]
 #[inline(always)]
 pub fn rc_to_normalized(rc_value: u16) -> f32 {
     unsafe {
@@ -234,6 +239,7 @@ pub fn rc_to_normalized(rc_value: u16) -> f32 {
 }
 
 /// Ultra-fast differential thrust calculation (legacy)
+#[must_use]
 #[inline(always)]
 pub fn calculate_differential_lut(ch4_value: u16) -> (u32, u32) {
     unsafe {
@@ -243,6 +249,7 @@ pub fn calculate_differential_lut(ch4_value: u16) -> (u32, u32) {
 }
 
 /// Ultra-fast yaw differential factors (mixing mode)
+#[must_use]
 #[inline(always)]
 pub fn calculate_yaw_differential_lut(yaw_rc: u16) -> (f32, f32) {
     unsafe {
@@ -254,6 +261,7 @@ pub fn calculate_yaw_differential_lut(yaw_rc: u16) -> (f32, f32) {
 }
 
 /// Convert raw RC channels to normalized control inputs using LUTs
+#[must_use]
 #[inline(always)]
 pub fn channels_to_normalized_lut(channels: &[u16]) -> (f32, f32, f32, f32) {
     (
@@ -265,6 +273,7 @@ pub fn channels_to_normalized_lut(channels: &[u16]) -> (f32, f32, f32, f32) {
 }
 
 /// Apply differential thrust using pre-computed values (mixing mode)
+#[must_use]
 #[inline(always)]
 pub fn apply_differential_thrust_lut(base_thrust: u32, yaw_rc: u16) -> (u32, u32) {
     let (left_mult, right_mult) = calculate_yaw_differential_lut(yaw_rc);
@@ -284,6 +293,7 @@ pub fn apply_differential_thrust_lut(base_thrust: u32, yaw_rc: u16) -> (u32, u32
 }
 
 /// Apply differential thrust using pre-computed values (legacy)
+#[must_use]
 #[inline(always)]
 pub fn apply_differential_lut(base_thrust: u32, ch4_value: u16) -> (u32, u32) {
     let (left_mult, right_mult) = calculate_differential_lut(ch4_value);

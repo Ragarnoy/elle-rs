@@ -22,11 +22,13 @@ impl Default for AttitudeController {
 }
 
 impl AttitudeController {
+    #[must_use]
     pub fn new() -> Self {
         Self::with_config(FlightStabilizerConfig::new())
     }
 
     /// Create with custom configuration (matches free-flight-stabilization pattern)
+    #[must_use]
     pub fn with_config(config: FlightStabilizerConfig<f32>) -> Self {
         let stabilizer = AngleStabilizer::with_config(config);
 
@@ -127,6 +129,7 @@ impl AttitudeController {
     }
 
     /// Check if controller has been initialized
+    #[must_use]
     pub fn is_active(&self) -> bool {
         self.last_time.is_some()
     }
