@@ -10,6 +10,7 @@ use embassy_time::{Duration, Instant, Timer};
 pub const CRSF_BAUD: u32 = 420_000;
 
 /// Return a UART config suitable for CRSF (420 kbaud, 8N1).
+#[must_use]
 pub fn crsf_uart_config() -> Config {
     let mut config = Config::default();
     config.baudrate = CRSF_BAUD;
@@ -30,6 +31,7 @@ pub struct CrsfReceiver<'d> {
 }
 
 impl<'d> CrsfReceiver<'d> {
+    #[must_use]
     pub fn new(rx: UartRx<'d, Async>) -> Self {
         let parser = Parser::new(ParserConfig::default());
         Self { uart: rx, parser }
@@ -78,15 +80,15 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
                                                 channels.0[2],
                                                 channels.0[3]
                                             );
-                                        } else if frame_count % 500 == 0 {
+                                        } else if frame_count.is_multiple_of(500) {
                                             debug!(
                                                 "CRSF: {} frames ok, {} parse errors, {} uart errors",
                                                 frame_count, parse_error_count, error_count
                                             );
                                         }
                                         let mut scaled = [0u16; 16];
-                                        for i in 0..16 {
-                                            scaled[i] = crsf_to_rc(channels.0[i]);
+                                        for (i, val) in scaled.iter_mut().enumerate() {
+                                            *val = crsf_to_rc(channels.0[i]);
                                         }
                                         let commands = PilotCommands::Raw(RawCommands {
                                             channels: scaled,
@@ -97,7 +99,7 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
                                 }
                                 Err(_) => {
                                     parse_error_count += 1;
-                                    if parse_error_count <= 3 || parse_error_count % 1000 == 0 {
+                                    if parse_error_count <= 3 || parse_error_count.is_multiple_of(1000) {
                                         warn!("CRSF: parse error (total={})", parse_error_count);
                                     }
                                 }
@@ -109,7 +111,7 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
             }
             Err(e) => {
                 error_count += 1;
-                if error_count <= 3 || error_count % 1000 == 0 {
+                if error_count <= 3 || error_count.is_multiple_of(1000) {
                     crate::elle_event!(
                         warn,
                         crate::event::EVT_CRSF_RX_UART_ERROR,

@@ -267,7 +267,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
 
         if !tx_ok {
             error_count += 1;
-            if error_count <= 3 || error_count % 500 == 0 {
+            if error_count <= 3 || error_count.is_multiple_of(500) {
                 crate::event::send(3, crate::event::EVT_CRSF_TX_ERROR);
             }
         }
@@ -282,7 +282,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
                 "CRSF TX: first second complete"
             );
         }
-        if frame_count % 5000 == 0 {
+        if frame_count.is_multiple_of(5000) {
             crate::elle_event!(
                 debug,
                 crate::event::EVT_CRSF_TX_STATS,

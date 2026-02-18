@@ -1,7 +1,7 @@
 //! WS2812B RGB LED driver for status indication
 
 use embassy_rp::Peri;
-use embassy_rp::peripherals::DMA_CH2;
+use embassy_rp::dma;
 use embassy_rp::pio::{Common, StateMachine};
 use embassy_rp::pio_programs::ws2812::{Grb, PioWs2812, PioWs2812Program};
 use embassy_time::{Duration, Timer};
@@ -53,14 +53,15 @@ impl<PIO, const SM: usize> StatusLed<'_, PIO, SM>
 where
     PIO: embassy_rp::pio::Instance,
 {
-    pub fn new(
+    pub fn new<D: dma::ChannelInstance>(
         common: &mut Common<'static, PIO>,
         sm: StateMachine<'static, PIO, SM>,
         pin: Peri<'static, impl embassy_rp::pio::PioPin>,
-        dma: Peri<'static, DMA_CH2>,
+        dma: Peri<'static, D>,
+        irq: impl embassy_rp::interrupt::typelevel::Binding<D::Interrupt, dma::InterruptHandler<D>> + 'static,
     ) -> Self {
         let program = PioWs2812Program::new(common);
-        let ws2812 = PioWs2812::new(common, sm, dma, pin, &program);
+        let ws2812 = PioWs2812::new(common, sm, dma, irq, pin, &program);
 
         Self {
             ws2812,
