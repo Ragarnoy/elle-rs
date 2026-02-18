@@ -41,13 +41,6 @@ pub struct SetControlModeReq {
     pub mode: ControlMode,
 }
 
-/// Adjust trim values (-100 to 100 for each)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
-pub struct AdjustTrimReq {
-    pub left: i8,
-    pub right: i8,
-}
-
 // ============================================================================
 // Wire Types - Responses
 // ============================================================================
@@ -60,6 +53,7 @@ pub struct AckResp {
 }
 
 impl AckResp {
+    #[must_use]
     pub const fn ok() -> Self {
         Self {
             success: true,
@@ -67,6 +61,7 @@ impl AckResp {
         }
     }
 
+    #[must_use]
     pub const fn error(code: u8) -> Self {
         Self {
             success: false,
@@ -144,7 +139,7 @@ pub struct BarometerResp {
     pub altitude_m: f32,
 }
 
-/// ULog read chunk response
+/// `ULog` read chunk response
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct ULogReadResp {
     /// Data payload (variable length, up to 512 bytes)
@@ -155,12 +150,12 @@ pub struct ULogReadResp {
     pub pending: bool,
 }
 
-/// ULog storage info response
+/// `ULog` storage info response
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct ULogInfoResp {
-    /// Whether ULog recording is currently active
+    /// Whether `ULog` recording is currently active
     pub recording: bool,
-    /// Total ULog flash region size in bytes
+    /// Total `ULog` flash region size in bytes
     pub region_total: u32,
     /// Approximate bytes currently stored in queue
     pub bytes_used: u32,
@@ -212,9 +207,6 @@ endpoints! {
     | ArmEndpoint               | ()                | AckResp           | "elle/safety/arm"     |
     | DisarmEndpoint            | ()                | AckResp           | "elle/safety/disarm"  |
     | EmergencyStopEndpoint     | ()                | AckResp           | "elle/safety/estop"   |
-    | AdjustTrimEndpoint        | AdjustTrimReq     | AckResp           | "elle/trim/adjust"    |
-    | SaveCalibrationEndpoint   | ()                | AckResp           | "elle/cal/save"       |
-    | ClearCalibrationEndpoint  | ()                | AckResp           | "elle/cal/clear"      |
     | GetStatusEndpoint         | ()                | StatusResp        | "elle/query/status"   |
     | GetAttitudeEndpoint       | ()                | AttitudeResp      | "elle/query/attitude" |
     | GetPerformanceEndpoint    | ()                | PerformanceResp   | "elle/query/perf"     |
@@ -230,6 +222,7 @@ endpoints! {
     | ReadULogChunkEndpoint     | ()                | ULogReadResp      | "elle/ulog/read"      |
     | EraseULogEndpoint         | ()                | AckResp           | "elle/ulog/erase"     |
     | GetULogInfoEndpoint       | ()                | ULogInfoResp      | "elle/ulog/info"      |
+    | GetTimeEndpoint           | ()                | u64               | "elle/sys/time"       |
 }
 
 // ============================================================================

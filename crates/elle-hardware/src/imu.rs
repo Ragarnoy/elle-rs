@@ -25,6 +25,7 @@ pub struct AttitudeData {
 }
 
 impl AttitudeData {
+    #[must_use]
     pub const fn zero() -> Self {
         Self {
             pitch: 0.0,
@@ -42,17 +43,22 @@ impl AttitudeData {
 pub struct ImuStatus {
     pub initialized: bool,
     pub calibrated: bool,
-    pub calibration_status: elle_config::CalibrationLevels,
     pub error_count: u32,
     pub last_update: Instant,
 }
 
+impl Default for ImuStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ImuStatus {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             initialized: false,
             calibrated: false,
-            calibration_status: elle_config::CalibrationLevels::new(),
             error_count: 0,
             last_update: Instant::from_ticks(0),
         }
@@ -66,6 +72,7 @@ pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Sign
 pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Helper function to check if attitude data is valid and recent
+#[must_use]
 pub fn is_attitude_valid(attitude: &AttitudeData, max_age: embassy_time::Duration) -> bool {
     attitude.timestamp != Instant::from_ticks(0) && attitude.timestamp.elapsed() < max_age
 }
@@ -272,7 +279,13 @@ impl<'a> Imu<'a> {
         self.mag_ok = mag_init_ok;
 
         // 3. Initialize BMP390 barometer on I2C0 at address 0x76
-        let baro_config = bmp390::Configuration::default();
+        // Standard resolution config (datasheet Section 3.5): osrs_p=x8, osrs_t=x1, IIR=coef_3, ODR=50Hz
+        let baro_config = bmp390::Configuration {
+            iir_filter: bmp390::Config {
+                iir_filter: bmp390::IirFilter::coef_3,
+            },
+            ..bmp390::Configuration::default()
+        };
         let baro_i2c = I2cRefCellDevice::new(self.i2c_bus);
         match bmp390::sync::Bmp390::try_new(
             baro_i2c,
@@ -519,7 +532,13 @@ impl<'a> Imu<'a> {
         }
 
         // Initialize BMP390 barometer — try Address::Up (0x77) first, fall back to Down (0x76)
-        let baro_config = bmp390::Configuration::default();
+        // Standard resolution config (datasheet Section 3.5): osrs_p=x8, osrs_t=x1, IIR=coef_3, ODR=50Hz
+        let baro_config = bmp390::Configuration {
+            iir_filter: bmp390::Config {
+                iir_filter: bmp390::IirFilter::coef_3,
+            },
+            ..bmp390::Configuration::default()
+        };
         let baro_i2c = embedded_hal_bus::i2c::RefCellDevice::new(self.i2c_bus);
         match bmp390::sync::Bmp390::try_new(
             baro_i2c,

@@ -7,8 +7,6 @@ pub mod profile;
 pub use lut::*;
 pub use profile::*;
 
-use defmt::Format;
-
 // PWM timing parameters
 pub const REFRESH_INTERVAL_US: u32 = 20_000; // 50Hz servo refresh rate
 
@@ -131,41 +129,3 @@ pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (d
 // Mixed mode control blending
 pub const MIXED_MODE_AUTOPILOT_WEIGHT: f32 = 0.6; // 60% autopilot, 40% pilot in mixed mode
 
-/// IMU calibration quality levels
-#[derive(Clone, Copy, Debug, Format)]
-pub struct CalibrationLevels {
-    pub sys: u8,
-    pub gyro: u8,
-    pub accel: u8,
-    pub mag: u8,
-}
-
-impl Default for CalibrationLevels {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CalibrationLevels {
-    pub const fn new() -> Self {
-        Self {
-            sys: 0,
-            gyro: 0,
-            accel: 0,
-            mag: 0,
-        }
-    }
-
-    pub fn is_flight_ready(&self) -> bool {
-        // Relaxed requirements for flight - magnetometer not critical
-        self.sys >= 2 && self.gyro >= 3 && self.accel >= 2
-    }
-
-    pub fn hash_quality(&self) -> u32 {
-        // Simple quality metric: prioritize sys and gyro, accel important, mag less so
-        (self.sys as u32 * 100)
-            + (self.gyro as u32 * 50)
-            + (self.accel as u32 * 25)
-            + (self.mag as u32 * 10)
-    }
-}

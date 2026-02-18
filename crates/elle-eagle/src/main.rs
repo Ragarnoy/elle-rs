@@ -63,12 +63,15 @@ use embassy_rp::peripherals::{
     DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_8, PIN_9, PIN_10, PIO0, PIO1, SPI0,
     UART0, UART1,
 };
+use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
+#[cfg(any(feature = "ulog-logging", feature = "rpc-control"))]
+use embassy_time::Instant;
 use embassy_time::{Duration, Ticker, Timer};
 use panic_probe as _;
 use static_cell::StaticCell;
@@ -161,41 +164,41 @@ async fn log_flight_data(
     }
 
     // Log barometer at ~2Hz (every 38 iterations)
-    if loop_counter.is_multiple_of(38) {
-        if let Some(baro) = BARO_SIGNAL.try_take() {
-            BARO_SIGNAL.signal(baro); // put back for other readers
-            let _ = logger
-                .log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m)
-                .await;
-        }
+    if loop_counter.is_multiple_of(38)
+        && let Some(baro) = BARO_SIGNAL.try_take()
+    {
+        BARO_SIGNAL.signal(baro); // put back for other readers
+        let _ = logger
+            .log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m)
+            .await;
     }
 
     // Log magnetometer at ~10Hz (every 8 iterations)
-    if loop_counter.is_multiple_of(8) {
-        if let Some(mag) = MAG_SIGNAL.try_take() {
-            MAG_SIGNAL.signal(mag); // put back for other readers
-            let _ = logger
-                .log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32)
-                .await;
-        }
+    if loop_counter.is_multiple_of(8)
+        && let Some(mag) = MAG_SIGNAL.try_take()
+    {
+        MAG_SIGNAL.signal(mag); // put back for other readers
+        let _ = logger
+            .log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32)
+            .await;
     }
 
     // Log GNSS at ~1Hz (every 77 iterations) — feature-gated
     #[cfg(all(feature = "gnss", feature = "rpc-control"))]
-    if loop_counter.is_multiple_of(77) {
-        if let Some(gnss) = gnss_signal::GNSS_SIGNAL.try_take() {
-            gnss_signal::GNSS_SIGNAL.signal(gnss); // put back for other readers
-            let _ = logger
-                .log_gnss(
-                    gnss.latitude,
-                    gnss.longitude,
-                    gnss.altitude_m,
-                    gnss.fix_quality,
-                    gnss.num_satellites,
-                    gnss.hdop,
-                )
-                .await;
-        }
+    if loop_counter.is_multiple_of(77)
+        && let Some(gnss) = gnss_signal::GNSS_SIGNAL.try_take()
+    {
+        gnss_signal::GNSS_SIGNAL.signal(gnss); // put back for other readers
+        let _ = logger
+            .log_gnss(
+                gnss.latitude,
+                gnss.longitude,
+                gnss.altitude_m,
+                gnss.fix_quality,
+                gnss.num_satellites,
+                gnss.hdop,
+            )
+            .await;
     }
 
     // Drain event channel into ULog
@@ -213,11 +216,18 @@ bind_interrupts!(
         PIO1_IRQ_0 => PioIrqHandler<PIO1>;
         UART0_IRQ => UartIrqHandler<UART0>;
         UART1_IRQ => UartIrqHandler<UART1>;
+        POWMAN_IRQ_TIMER => embassy_rp::aon_timer::InterruptHandler;
+        DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH0>,
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH1>,
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH2>,
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH3>,
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH4>;
     }
 );
 
 static mut CORE1_STACK: Stack<16384> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
+static AON_TIMER: StaticCell<AonTimer<'static>> = StaticCell::new();
 
 // RC channel signal for RPC handler
 #[cfg(feature = "rpc-control")]
@@ -249,9 +259,23 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_rp::init(config);
 
+    // Initialize AON timer with compile-time UNIX epoch for wall-clock reference
+    let epoch_ms = compile_time::unix!() * 1000;
+    let aon_config = AonConfig {
+        clock_source: ClockSource::Xosc,
+        clock_freq_khz: 12_000,
+        alarm_wake_mode: AlarmWakeMode::Disabled,
+    };
+    let mut aon = AonTimer::new(p.POWMAN, Irqs, aon_config);
+    aon.set_counter(epoch_ms);
+    aon.start();
+    info!("AON: seeded with epoch {}ms", epoch_ms);
+    #[allow(unused_variables)]
+    let aon_ref = AON_TIMER.init(aon);
+
     info!("Core0: Starting flash manager");
     // Create flash manager on Core 0 before spawning Core 1
-    let flash = embassy_rp::flash::Flash::<_, Async, { FLASH_SIZE }>::new(p.FLASH, p.DMA_CH1);
+    let flash = embassy_rp::flash::Flash::<_, Async, { FLASH_SIZE }>::new(p.FLASH, p.DMA_CH1, Irqs);
     // Small delay to let debug probe settle
     Timer::after_millis(10).await;
     spawner.spawn(flash_manager_task(flash).unwrap());
@@ -264,12 +288,12 @@ async fn main(spawner: Spawner) {
         ..
     } = Pio::new(p.PIO1, Irqs);
 
-    spawner.spawn(led_task(led_common, led_sm0, p.DMA_CH2, p.PIN_10).unwrap());
+    spawner.spawn(led_task(led_common, led_sm0, p.DMA_CH2, Irqs, p.PIN_10).unwrap());
 
     #[cfg(feature = "rpc-control")]
     {
         info!("Core0: Starting RPC server");
-        spawner.spawn(rpc_server_task(spawner).unwrap());
+        spawner.spawn(rpc_server_task(spawner, aon_ref).unwrap());
     }
 
     // Start supervisor to coordinate task startup
@@ -512,7 +536,8 @@ async fn main(spawner: Spawner) {
                     if switch_on && !ulog_recording {
                         // Switch just turned on — initialize and start
                         if !ulog_logger.is_initialized() {
-                            let _ = ulog_logger.initialize().await;
+                            let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
+                            let _ = ulog_logger.initialize(wall_ms).await;
                         }
                         if ulog_logger.is_initialized() {
                             ulog_recording = true;
@@ -597,7 +622,6 @@ async fn main(spawner: Spawner) {
         use elle_hardware::sequential_flash_manager::{
             FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
         };
-        use embassy_time::Instant;
         use rpc_app::{ULOG_ENABLED, ULOG_ITEM_LEN, ULOG_ITEM_SIGNAL, ULOG_OFFSET, ULOG_STATE};
         use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
 
@@ -611,6 +635,7 @@ async fn main(spawner: Spawner) {
         let mut rpc_throttle: f32 = 0.0;
         let mut rpc_elevon_left: f32 = 0.0;
         let mut rpc_elevon_right: f32 = 0.0;
+        let mut rpc_mode = AttitudeMode::Manual;
 
         loop {
             ticker.next().await;
@@ -632,8 +657,17 @@ async fn main(spawner: Spawner) {
                         rpc_elevon_left = (left as f32 / 100.0).clamp(-1.0, 1.0);
                         rpc_elevon_right = (right as f32 / 100.0).clamp(-1.0, 1.0);
                     }
-                    RpcCommand::SetMode(_mode) => {
-                        // TODO: implement mode switching
+                    RpcCommand::SetMode(mode) => {
+                        rpc_mode = match mode {
+                            ControlMode::Manual => AttitudeMode::Manual,
+                            ControlMode::Mixed => AttitudeMode::Mixed,
+                            ControlMode::Autopilot => AttitudeMode::Autopilot,
+                        };
+                        info!("RPC: Control mode set to {}", match mode {
+                            ControlMode::Manual => "Manual",
+                            ControlMode::Mixed => "Mixed",
+                            ControlMode::Autopilot => "Autopilot",
+                        });
                     }
                     RpcCommand::Arm => {
                         fc.arm();
@@ -663,21 +697,13 @@ async fn main(spawner: Spawner) {
                         fc.disarm();
                         fc.apply_failsafe();
                     }
-                    RpcCommand::AdjustTrim { left, right } => {
-                        info!("RPC: Trim L={} R={} (not implemented)", left, right);
-                    }
-                    RpcCommand::SaveCalibration => {
-                        info!("RPC: Save calibration requested");
-                    }
-                    RpcCommand::ClearCalibration => {
-                        info!("RPC: Clear calibration requested");
-                    }
                     RpcCommand::StartULog => {
                         #[cfg(feature = "ulog-logging")]
                         {
                             let mut ok = ulog_logger.is_initialized();
                             if !ok {
-                                ok = ulog_logger.initialize().await.is_ok();
+                                let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
+                                ok = ulog_logger.initialize(wall_ms).await.is_ok();
                             }
                             if ok {
                                 ULOG_ENABLED.store(true, Ordering::Release);
@@ -770,10 +796,8 @@ async fn main(spawner: Spawner) {
             }
 
             // Poll CRSF receiver and update RC signal for RPC handler
-            if let Some(commands) = RC_COMMANDS.try_take() {
-                if let PilotCommands::Raw(raw) = &commands {
-                    rc_signal::RC_SIGNAL.signal(raw.channels);
-                }
+            if let Some(PilotCommands::Raw(raw)) = RC_COMMANDS.try_take().as_ref() {
+                rc_signal::RC_SIGNAL.signal(raw.channels);
             }
 
             // Build pilot commands from RPC state
@@ -782,7 +806,7 @@ async fn main(spawner: Spawner) {
                 pitch: (rpc_elevon_left + rpc_elevon_right) / 2.0, // Mixed
                 roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,  // Mixed
                 yaw: 0.0,
-                attitude_mode: AttitudeMode::Manual,
+                attitude_mode: rpc_mode,
                 pitch_setpoint_deg: 0.0,
                 roll_setpoint_deg: 0.0,
                 timestamp: Instant::now(),
@@ -967,7 +991,7 @@ async fn gnss_task(
             }
             Err(e) => {
                 uart_error_count += 1;
-                if uart_error_count <= 3 || uart_error_count % 1000 == 0 {
+                if uart_error_count <= 3 || uart_error_count.is_multiple_of(1000) {
                     elle_hardware::elle_event!(
                         warn,
                         elle_hardware::event::EVT_GNSS_UART_ERROR,
@@ -984,68 +1008,68 @@ async fn gnss_task(
         match decoder.feed(byte[0]) {
             FeedResult::Pending => {}
             FeedResult::FrameReady => {
-                if let Frame::Nmea(nmea_frame) = decoder.take_frame() {
-                    if let Some(ParseResult::GGA(gga)) = nmea_frame.parsed {
-                        gga_count = gga_count.wrapping_add(1);
-                        let sats = gga.fix_satellites.unwrap_or(0) as u8;
-                        let fix = match gga.fix_type {
-                            Some(sam_m10q::nmea::sentences::FixType::Invalid) | None => 0,
-                            Some(sam_m10q::nmea::sentences::FixType::Gps) => 1,
-                            Some(sam_m10q::nmea::sentences::FixType::DGps) => 2,
-                            Some(_) => 3,
-                        };
+                if let Frame::Nmea(nmea_frame) = decoder.take_frame()
+                    && let Some(ParseResult::GGA(gga)) = nmea_frame.parsed
+                {
+                    gga_count = gga_count.wrapping_add(1);
+                    let sats = gga.fix_satellites.unwrap_or(0) as u8;
+                    let fix = match gga.fix_type {
+                        Some(sam_m10q::nmea::sentences::FixType::Invalid) | None => 0,
+                        Some(sam_m10q::nmea::sentences::FixType::Gps) => 1,
+                        Some(sam_m10q::nmea::sentences::FixType::DGps) => 2,
+                        Some(_) => 3,
+                    };
 
-                        if gga_count == 1 {
-                            elle_hardware::elle_event!(
-                                info,
-                                elle_hardware::event::EVT_GNSS_FIRST_FIX,
-                                "GNSS: first GGA received (fix={}, sats={})",
-                                fix,
-                                sats
-                            );
-                        } else if gga_count.is_multiple_of(60) {
-                            elle_hardware::elle_event!(
-                                debug,
-                                elle_hardware::event::EVT_GNSS_PERIODIC,
-                                "GNSS: {} GGA sentences (fix={}, sats={})",
-                                gga_count,
-                                fix,
-                                sats
-                            );
+                    if gga_count == 1 {
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_GNSS_FIRST_FIX,
+                            "GNSS: first GGA received (fix={}, sats={})",
+                            fix,
+                            sats
+                        );
+                    } else if gga_count.is_multiple_of(60) {
+                        elle_hardware::elle_event!(
+                            debug,
+                            elle_hardware::event::EVT_GNSS_PERIODIC,
+                            "GNSS: {} GGA sentences (fix={}, sats={})",
+                            gga_count,
+                            fix,
+                            sats
+                        );
+                    }
+
+                    if fix > 0 {
+                        if let Some(lat) = gga.latitude {
+                            last_lat = lat as f32;
                         }
-
-                        if fix > 0 {
-                            if let Some(lat) = gga.latitude {
-                                last_lat = lat as f32;
-                            }
-                            if let Some(lon) = gga.longitude {
-                                last_lon = lon as f32;
-                            }
-                            if let Some(alt) = gga.altitude {
-                                last_alt = alt;
-                            }
+                        if let Some(lon) = gga.longitude {
+                            last_lon = lon as f32;
                         }
+                        if let Some(alt) = gga.altitude {
+                            last_alt = alt;
+                        }
+                    }
 
-                        let resp = elle_rpc_icd::GnssResp {
+                    let resp = elle_rpc_icd::GnssResp {
+                        latitude: last_lat,
+                        longitude: last_lon,
+                        altitude_m: last_alt,
+                        fix_quality: fix,
+                        num_satellites: sats,
+                        hdop: gga.hdop.unwrap_or(99.9),
+                    };
+                    gnss_signal::GNSS_SIGNAL.signal(resp);
+
+                    #[cfg(feature = "crsf-telemetry")]
+                    elle_hardware::crsf_telemetry::TELEMETRY_GNSS.signal(
+                        elle_hardware::crsf_telemetry::TelemetryGpsData {
                             latitude: last_lat,
                             longitude: last_lon,
                             altitude_m: last_alt,
-                            fix_quality: fix,
                             num_satellites: sats,
-                            hdop: gga.hdop.unwrap_or(99.9),
-                        };
-                        gnss_signal::GNSS_SIGNAL.signal(resp);
-
-                        #[cfg(feature = "crsf-telemetry")]
-                        elle_hardware::crsf_telemetry::TELEMETRY_GNSS.signal(
-                            elle_hardware::crsf_telemetry::TelemetryGpsData {
-                                latitude: last_lat,
-                                longitude: last_lon,
-                                altitude_m: last_alt,
-                                num_satellites: sats,
-                            },
-                        );
-                    }
+                        },
+                    );
                 }
             }
             FeedResult::Error(_) => {
@@ -1067,11 +1091,12 @@ async fn led_task(
     mut common: embassy_rp::pio::Common<'static, PIO1>,
     sm0: embassy_rp::pio::StateMachine<'static, PIO1, 0>,
     dma: Peri<'static, DMA_CH2>,
+    irq: Irqs,
     pin: Peri<'static, PIN_10>,
 ) {
     info!("Core0: LED task starting");
 
-    let mut led = StatusLed::new(&mut common, sm0, pin, dma);
+    let mut led = StatusLed::new(&mut common, sm0, pin, dma, irq);
     let receiver: Receiver<'static, CriticalSectionRawMutex, LedPattern, 8> =
         LED_COMMAND_CHANNEL.receiver();
 
@@ -1120,7 +1145,10 @@ async fn log_publisher_task(sender: postcard_rpc::server::Sender<elle_system::rp
 /// RPC server task using postcard-RPC over RTT with define_dispatch!
 #[cfg(feature = "rpc-control")]
 #[embassy_executor::task]
-async fn rpc_server_task(spawner: Spawner) {
+async fn rpc_server_task(
+    spawner: Spawner,
+    aon_timer: &'static mut embassy_rp::aon_timer::AonTimer<'static>,
+) {
     use elle_system::rpc::ElleWireSpawn;
     use postcard_rpc::server::{Dispatch, Server};
     use rpc_handlers::RPC_CMD_CHANNEL;
@@ -1137,6 +1165,7 @@ async fn rpc_server_task(spawner: Spawner) {
     // Create dispatch context with command channel sender
     let context = rpc_app::RpcContext {
         cmd_sender: RPC_CMD_CHANNEL.sender(),
+        aon_timer,
     };
 
     // Create dispatcher via define_dispatch!-generated type

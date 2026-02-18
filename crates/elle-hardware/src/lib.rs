@@ -16,10 +16,7 @@ pub mod crsf_telemetry;
 
 pub use crsf::CrsfReceiver;
 // Re-export commonly used types
-pub use flash_constants::{
-    CALIBRATION_FLASH_END, CALIBRATION_FLASH_SIZE, CALIBRATION_FLASH_START, ULOG_FLASH_END,
-    ULOG_FLASH_SIZE, ULOG_FLASH_START,
-};
+pub use flash_constants::{ULOG_FLASH_END, ULOG_FLASH_SIZE, ULOG_FLASH_START};
 pub use imu::{AttitudeData, CORE1_HEARTBEAT, Imu, ImuStatus};
 pub use led::LedPattern;
 pub use pwm::{PwmOutputs, PwmPins};

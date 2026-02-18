@@ -31,8 +31,6 @@ serde = { workspace = true, optional = true }
 
 [features]
 disable-imu = ["elle-hardware/disable-imu"]  # Stub IMU for board testing without sensor
-imu-save-calibration = ["elle-hardware/imu-save-calibration"]  # Pass through to hardware
-legacy-ctrl = ["elle-control/legacy-ctrl"]  # Pass through to control
 performance-monitoring = []  # Enable detailed performance monitoring
 defmt-logging = ["defmt-rtt"]  # Use defmt-rtt for logging
 rpc-control = ["rtt-target", "elle-rpc-icd", "postcard-rpc", "postcard", "cobs", "static_cell", "heapless", "serde"]  # postcard-RPC over RTT

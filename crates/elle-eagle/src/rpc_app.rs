@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 use defmt::info;
 use elle_config::profile::ULOG_CHUNK_SIZE;
 use elle_rpc_icd::*;
+use embassy_rp::aon_timer::AonTimer;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Sender;
 use embassy_sync::signal::Signal;
@@ -37,6 +38,7 @@ pub static ULOG_ITEM_LEN: AtomicU16 = AtomicU16::new(0);
 /// Context passed to all RPC handlers
 pub struct RpcContext {
     pub cmd_sender: Sender<'static, CriticalSectionRawMutex, RpcCommand, 16>,
+    pub aon_timer: &'static AonTimer<'static>,
 }
 
 // ---------------------------------------------------------------------------
@@ -44,18 +46,23 @@ pub struct RpcContext {
 // ---------------------------------------------------------------------------
 
 fn handle_set_throttle(ctx: &mut RpcContext, _hdr: VarHeader, req: SetThrottleReq) -> AckResp {
-    let _ = ctx
+    match ctx
         .cmd_sender
-        .try_send(RpcCommand::SetThrottle(req.percent));
-    AckResp::ok()
+        .try_send(RpcCommand::SetThrottle(req.percent))
+    {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_set_elevons(ctx: &mut RpcContext, _hdr: VarHeader, req: SetElevonsReq) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::SetElevons {
+    match ctx.cmd_sender.try_send(RpcCommand::SetElevons {
         left: req.left,
         right: req.right,
-    });
-    AckResp::ok()
+    }) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_set_control_mode(
@@ -63,41 +70,31 @@ fn handle_set_control_mode(
     _hdr: VarHeader,
     req: SetControlModeReq,
 ) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::SetMode(req.mode));
-    AckResp::ok()
+    match ctx.cmd_sender.try_send(RpcCommand::SetMode(req.mode)) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_arm(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::Arm);
-    AckResp::ok()
+    match ctx.cmd_sender.try_send(RpcCommand::Arm) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_disarm(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::Disarm);
-    AckResp::ok()
+    match ctx.cmd_sender.try_send(RpcCommand::Disarm) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_emergency_stop(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::EmergencyStop);
-    AckResp::ok()
-}
-
-fn handle_adjust_trim(ctx: &mut RpcContext, _hdr: VarHeader, req: AdjustTrimReq) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::AdjustTrim {
-        left: req.left,
-        right: req.right,
-    });
-    AckResp::ok()
-}
-
-fn handle_save_calibration(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::SaveCalibration);
-    AckResp::ok()
-}
-
-fn handle_clear_calibration(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::ClearCalibration);
-    AckResp::ok()
+    match ctx.cmd_sender.try_send(RpcCommand::EmergencyStop) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> StatusResp {
@@ -223,13 +220,17 @@ fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Bar
 }
 
 fn handle_start_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::StartULog);
-    AckResp::ok()
+    match ctx.cmd_sender.try_send(RpcCommand::StartULog) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_stop_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    let _ = ctx.cmd_sender.try_send(RpcCommand::StopULog);
-    AckResp::ok()
+    match ctx.cmd_sender.try_send(RpcCommand::StopULog) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogReadResp {
@@ -301,8 +302,10 @@ fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> UL
 
 fn handle_erase_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     info!("RPC: ULog erase requested");
-    let _ = ctx.cmd_sender.try_send(RpcCommand::EraseULog);
-    AckResp::ok()
+    match ctx.cmd_sender.try_send(RpcCommand::EraseULog) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
 }
 
 fn handle_get_ulog_info(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogInfoResp {
@@ -315,6 +318,10 @@ fn handle_get_ulog_info(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULo
         bytes_used: ULOG_BYTES_USED.load(Ordering::Relaxed),
         items_stored: ULOG_ITEMS_STORED.load(Ordering::Relaxed),
     }
+}
+
+fn handle_get_time(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> u64 {
+    ctx.aon_timer.now()
 }
 
 fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp {
@@ -361,9 +368,6 @@ postcard_rpc::define_dispatch! {
         | ArmEndpoint               | blocking  | handle_arm                |
         | DisarmEndpoint            | blocking  | handle_disarm             |
         | EmergencyStopEndpoint     | blocking  | handle_emergency_stop     |
-        | AdjustTrimEndpoint        | blocking  | handle_adjust_trim        |
-        | SaveCalibrationEndpoint   | blocking  | handle_save_calibration   |
-        | ClearCalibrationEndpoint  | blocking  | handle_clear_calibration  |
         | GetStatusEndpoint         | blocking  | handle_get_status         |
         | GetAttitudeEndpoint       | blocking  | handle_get_attitude       |
         | GetPerformanceEndpoint    | blocking  | handle_get_performance    |
@@ -379,6 +383,7 @@ postcard_rpc::define_dispatch! {
         | ReadULogChunkEndpoint     | blocking  | handle_read_ulog_chunk    |
         | EraseULogEndpoint         | blocking  | handle_erase_ulog         |
         | GetULogInfoEndpoint       | blocking  | handle_get_ulog_info      |
+        | GetTimeEndpoint           | blocking  | handle_get_time           |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

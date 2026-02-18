@@ -22,16 +22,16 @@ postcard-rpc = { workspace = true, optional = true }
 postcard = { workspace = true, optional = true }
 heapless = { workspace = true, optional = true }
 
+compile-time = "0.2"
+
 defmt = { workspace = true }
 defmt-rtt = { workspace = true, optional = true }
 cortex-m-rt = { workspace = true }
 panic-probe = { workspace = true }
 
 [features]
-default = ["imu-save-calibration", "defmt-logging"]
-legacy-ctrl = ["elle-system/legacy-ctrl"]
+default = ["defmt-logging"]
 disable-imu = ["elle-system/disable-imu"]
-imu-save-calibration = ["elle-system/imu-save-calibration"]
 performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
 rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless"]
