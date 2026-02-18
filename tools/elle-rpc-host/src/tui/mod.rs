@@ -196,14 +196,13 @@ pub async fn run() -> Result<()> {
                 }
 
                 // Poll background task for completion
-                if let Some(handle) = &mut state.background_task {
-                    if handle.is_finished() {
-                        if let Some(handle) = state.background_task.take() {
-                            match handle.await {
-                                Ok(msg) => state.set_status_message(msg),
-                                Err(e) => state.set_status_message(format!("ERROR: Task failed: {e}")),
-                            }
-                        }
+                if let Some(handle) = &mut state.background_task
+                    && handle.is_finished()
+                    && let Some(handle) = state.background_task.take()
+                {
+                    match handle.await {
+                        Ok(msg) => state.set_status_message(msg),
+                        Err(e) => state.set_status_message(format!("ERROR: Task failed: {e}")),
                     }
                 }
             }
@@ -218,7 +217,7 @@ pub async fn run() -> Result<()> {
                 }
             }
 
-            // Periodic status poll
+            // Periodic status + ULog info poll
             _ = status_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(s)) = tokio::time::timeout(
                     Duration::from_secs(1),
@@ -227,6 +226,12 @@ pub async fn run() -> Result<()> {
                     state.status = Some(s);
                     state.last_poll = Some(std::time::Instant::now());
                     state.connected = true;
+                }
+                if let Ok(Ok(info)) = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    client.send_resp::<GetULogInfoEndpoint>(&()),
+                ).await {
+                    state.ulog_recording = info.recording;
                 }
             }
 

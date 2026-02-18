@@ -25,7 +25,7 @@ pub async fn execute(
     client: &HostClient<WireError>,
     state: &mut AppState,
 ) -> CommandResult {
-    let parts: Vec<&str> = input.trim().split_whitespace().collect();
+    let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.is_empty() {
         return CommandResult::Ok(String::new());
     }
@@ -74,29 +74,6 @@ pub async fn execute(
                 _ => CommandResult::Err("Mode must be: manual, mixed, or auto".into()),
             }
         }
-        "trim" => {
-            if parts.len() < 3 {
-                return CommandResult::Err("Usage: trim <left> <right>".into());
-            }
-            let left = parts[1].parse::<i8>();
-            let right = parts[2].parse::<i8>();
-            match (left, right) {
-                (Ok(l), Ok(r)) if (-100..=100).contains(&l) && (-100..=100).contains(&r) => {
-                    cmd_trim(client, l, r).await
-                }
-                _ => CommandResult::Err("Trim values must be -100 to 100".into()),
-            }
-        }
-        "cal" => {
-            if parts.len() < 2 {
-                return CommandResult::Err("Usage: cal <save|clear>".into());
-            }
-            match parts[1].to_lowercase().as_str() {
-                "save" => cmd_cal_save(client).await,
-                "clear" => cmd_cal_clear(client).await,
-                _ => CommandResult::Err("cal subcommand must be: save or clear".into()),
-            }
-        }
         "ulog" => {
             if parts.len() < 2 {
                 return CommandResult::Err(
@@ -128,12 +105,13 @@ pub async fn execute(
                 ),
             }
         }
+        "time" => cmd_time(client).await,
         "mag" => cmd_mag(client).await,
         "gnss" | "gps" => cmd_gnss(client).await,
         "help" | "?" => CommandResult::Ok(
-            "Commands: ping status attitude version perf mag gnss arm disarm estop \
+            "Commands: ping status attitude version perf time mag gnss arm disarm estop \
              throttle <0-100> elevon <L> <R> mode <manual|mixed|auto> \
-             trim <L> <R> cal <save|clear> ulog <info|start|stop|extract [file]|erase> quit"
+             ulog <info|start|stop|extract [file]|erase> quit"
                 .into(),
         ),
         other => CommandResult::Unknown(other.into()),
@@ -269,31 +247,19 @@ async fn cmd_mode(client: &HostClient<WireError>, mode: ControlMode) -> CommandR
     }
 }
 
-async fn cmd_trim(client: &HostClient<WireError>, left: i8, right: i8) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<AdjustTrimEndpoint>(&AdjustTrimReq { left, right }),
-    )
-    .await
-    {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!("Trim: L={left} R={right}")),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Trim failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Trim failed: {e}")),
-        Err(_) => CommandResult::Err("Trim timeout".into()),
-    }
-}
 
-async fn cmd_cal_save(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<SaveCalibrationEndpoint>(&()),
-    )
-    .await
-    {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("Calibration saved".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Cal save failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Cal save failed: {e}")),
-        Err(_) => CommandResult::Err("Cal save timeout".into()),
+async fn cmd_time(client: &HostClient<WireError>) -> CommandResult {
+    match timeout(CMD_TIMEOUT, client.send_resp::<GetTimeEndpoint>(&())).await {
+        Ok(Ok(ms)) => {
+            let dt = chrono::DateTime::from_timestamp_millis(ms as i64);
+            let time_str = match dt {
+                Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                None => "invalid".into(),
+            };
+            CommandResult::Ok(format!("{time_str} ({ms})"))
+        }
+        Ok(Err(e)) => CommandResult::Err(format!("Time failed: {e}")),
+        Err(_) => CommandResult::Err("Time timeout".into()),
     }
 }
 
@@ -321,19 +287,6 @@ async fn cmd_gnss(client: &HostClient<WireError>) -> CommandResult {
     }
 }
 
-async fn cmd_cal_clear(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<ClearCalibrationEndpoint>(&()),
-    )
-    .await
-    {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("Calibration cleared".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Cal clear failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Cal clear failed: {e}")),
-        Err(_) => CommandResult::Err("Cal clear timeout".into()),
-    }
-}
 
 async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {
     match timeout(CMD_TIMEOUT, client.send_resp::<GetULogInfoEndpoint>(&())).await {

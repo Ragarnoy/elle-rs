@@ -28,6 +28,9 @@ pub struct AppState {
     // RC channels
     pub rc_channels: Option<RcChannelsResp>,
 
+    // ULog recording state (polled from device)
+    pub ulog_recording: bool,
+
     // Attitude history for sparklines
     pub attitude_history: VecDeque<(i16, i16)>, // (pitch, roll) in centidegrees
 
@@ -59,6 +62,7 @@ impl AppState {
             barometer: None,
             gnss: None,
             rc_channels: None,
+            ulog_recording: false,
             attitude_history: VecDeque::with_capacity(ATTITUDE_HISTORY),
             logs: VecDeque::with_capacity(LOG_HISTORY),
             connected: false,

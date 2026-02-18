@@ -67,6 +67,26 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("")
     };
 
+    // Blink REC at ~1Hz using sub-second parity
+    let rec_span = if state.ulog_recording {
+        let blink_on = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 500)
+            .is_multiple_of(2);
+        if blink_on {
+            Span::styled(
+                " REC",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" REC", Style::default().fg(Color::DarkGray))
+        }
+    } else {
+        Span::styled(" REC", Style::default().fg(Color::DarkGray))
+    };
+
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
             " elle monitor ",
@@ -82,6 +102,8 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
             Style::default().fg(Color::White),
         ),
         failsafe_span,
+        Span::raw(" |"),
+        rec_span,
         Span::raw(" | "),
         Span::styled(connected_text, connected_style),
     ]))
@@ -411,24 +433,22 @@ fn draw_command(f: &mut Frame, area: Rect, state: &AppState) {
     let cursor_y = chunks[0].y + 1;
     f.set_cursor_position((cursor_x, cursor_y));
 
-    // Status/help line — keep message visible while background task is running
+    // Status/help line — show status messages with timeout, otherwise empty
     let has_bg_task = state.background_task.is_some();
     let help_text = if let Some((msg, when)) = &state.status_message {
         if has_bg_task || when.elapsed().as_secs() < 10 {
             msg.clone()
         } else {
-            default_help()
+            String::new()
         }
     } else {
-        default_help()
+        String::new()
     };
 
     let help_color = if has_bg_task {
         Color::Yellow
-    } else if help_text != default_help() {
-        Color::Cyan
     } else {
-        Color::Gray
+        Color::Cyan
     };
 
     let help = Paragraph::new(Line::from(Span::styled(
@@ -438,6 +458,3 @@ fn draw_command(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(help, chunks[1]);
 }
 
-fn default_help() -> String {
-    "arm disarm throttle elevon mode estop status perf cal quit | ? for help".into()
-}
