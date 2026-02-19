@@ -113,27 +113,14 @@ fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Status
 }
 
 fn handle_get_attitude(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AttitudeResp {
-    if let Some(att) = elle_hardware::imu::ATTITUDE_SIGNAL.try_take() {
-        let resp = AttitudeResp {
-            pitch_cdeg: (att.pitch * 5729.578) as i16,
-            roll_cdeg: (att.roll * 5729.578) as i16,
-            yaw_cdeg: (att.yaw * 5729.578) as i16,
-            pitch_rate_cdeg: (att.pitch_rate * 5729.578) as i16,
-            roll_rate_cdeg: (att.roll_rate * 5729.578) as i16,
-            yaw_rate_cdeg: (att.yaw_rate * 5729.578) as i16,
-        };
-        // Put attitude back for main loop
-        elle_hardware::imu::ATTITUDE_SIGNAL.signal(att);
-        resp
-    } else {
-        AttitudeResp {
-            pitch_cdeg: 0,
-            roll_cdeg: 0,
-            yaw_cdeg: 0,
-            pitch_rate_cdeg: 0,
-            roll_rate_cdeg: 0,
-            yaw_rate_cdeg: 0,
-        }
+    let att = elle_hardware::imu::ATTITUDE_CACHE.lock(|c| c.get());
+    AttitudeResp {
+        pitch_cdeg: (att.pitch * 5729.578) as i16,
+        roll_cdeg: (att.roll * 5729.578) as i16,
+        yaw_cdeg: (att.yaw * 5729.578) as i16,
+        pitch_rate_cdeg: (att.pitch_rate * 5729.578) as i16,
+        roll_rate_cdeg: (att.roll_rate * 5729.578) as i16,
+        yaw_rate_cdeg: (att.yaw_rate * 5729.578) as i16,
     }
 }
 

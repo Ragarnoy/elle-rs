@@ -84,6 +84,18 @@ impl AppState {
     }
 
     pub fn push_attitude(&mut self, att: AttitudeResp) {
+        // Skip all-zero responses — firmware returns zeros when ATTITUDE_SIGNAL
+        // is momentarily consumed (race between RPC handler and main loop).
+        if att.pitch_cdeg == 0
+            && att.roll_cdeg == 0
+            && att.yaw_cdeg == 0
+            && self.attitude.is_some()
+        {
+            self.last_poll = Some(Instant::now());
+            self.connected = true;
+            return;
+        }
+
         self.attitude_history
             .push_back((att.pitch_cdeg, att.roll_cdeg));
         if self.attitude_history.len() > ATTITUDE_HISTORY {

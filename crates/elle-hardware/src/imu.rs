@@ -3,8 +3,10 @@
 //! When the `disable-imu` feature is enabled, this module provides stub implementations
 //! that return synthetic attitude data for debugging without hardware.
 
+use core::cell::Cell;
 use defmt::*;
 use elle_error::ElleResult;
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Instant;
@@ -67,6 +69,12 @@ impl ImuStatus {
 
 /// Shared attitude data between cores/tasks
 pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
+
+/// Non-consuming attitude cache for RPC queries.
+/// Written alongside `ATTITUDE_SIGNAL` by the IMU task; read (without consuming) by
+/// RPC handlers so they never race with the control loop's `try_take()`.
+pub static ATTITUDE_CACHE: Mutex<CriticalSectionRawMutex, Cell<AttitudeData>> =
+    Mutex::new(Cell::new(AttitudeData::zero()));
 
 /// Global signal for Core 1 (IMU) heartbeat
 pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -375,6 +383,7 @@ impl<'a> Imu<'a> {
                     };
 
                     ATTITUDE_SIGNAL.signal(attitude);
+                    ATTITUDE_CACHE.lock(|c| c.set(attitude));
                     #[cfg(feature = "crsf-telemetry")]
                     crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
@@ -415,6 +424,7 @@ impl<'a> Imu<'a> {
                         let mut failed = self.last_attitude;
                         failed.timestamp = Instant::from_ticks(0);
                         ATTITUDE_SIGNAL.signal(failed);
+                        ATTITUDE_CACHE.lock(|c| c.set(failed));
                         #[cfg(feature = "crsf-telemetry")]
                         crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(failed);
                         Timer::after(Duration::from_secs(1)).await;
@@ -609,6 +619,7 @@ impl<'a> Imu<'a> {
 
             // Signal synthetic attitude data
             ATTITUDE_SIGNAL.signal(attitude);
+            ATTITUDE_CACHE.lock(|c| c.set(attitude));
             #[cfg(feature = "crsf-telemetry")]
             crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
