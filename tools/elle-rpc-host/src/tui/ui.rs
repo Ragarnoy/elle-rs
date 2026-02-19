@@ -4,7 +4,8 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Sparkline, Wrap};
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
+use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 
 use super::state::AppState;
 
@@ -136,9 +137,8 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(13), // attitude data + mag + heading + baro + gnss
-            Constraint::Length(4),  // pitch sparkline
-            Constraint::Length(4),  // roll sparkline
-            Constraint::Min(0),     // remaining space
+            Constraint::Length(2),  // controller output
+            Constraint::Min(8),    // artificial horizon canvas
         ])
         .split(inner);
 
@@ -242,35 +242,169 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
 
     f.render_widget(Paragraph::new(attitude_text), chunks[0]);
 
-    // Pitch sparkline
-    let pitch_data: Vec<u64> = state
-        .attitude_history
-        .iter()
-        .map(|(p, _)| (*p as i32 + 18000) as u64) // shift to positive range
-        .collect();
+    // Controller output
+    let ctrl_lines = if let Some(c) = state.controller_output {
+        let err_str = if let Some(a) = state.attitude {
+            let pitch_err = (c.pitch_setpoint_cdeg - a.pitch_cdeg) as f32 / 100.0;
+            let roll_err = (c.roll_setpoint_cdeg - a.roll_cdeg) as f32 / 100.0;
+            format!("  Err: P={:+.1}\u{00B0} R={:+.1}\u{00B0}", pitch_err, roll_err)
+        } else {
+            String::new()
+        };
+        vec![
+            Line::from(format!(
+                "  PID: P={:+.3} R={:+.3}{err_str}",
+                c.pitch_correction_cp as f32 / 10000.0,
+                c.roll_correction_cp as f32 / 10000.0,
+            )),
+            Line::from(format!(
+                "  Elevon L={} R={}  Eng L={} R={}",
+                c.elevon_left_us, c.elevon_right_us, c.engine_left_us, c.engine_right_us,
+            )),
+        ]
+    } else {
+        vec![Line::from("  Controller: ---")]
+    };
+    f.render_widget(Paragraph::new(ctrl_lines), chunks[1]);
 
-    if !pitch_data.is_empty() {
-        let pitch_spark = Sparkline::default()
-            .block(Block::default().title(" Pitch ").borders(Borders::TOP))
-            .data(&pitch_data)
-            .style(Style::default().fg(Color::Yellow));
-        f.render_widget(pitch_spark, chunks[1]);
-    }
+    // Artificial horizon with PID correction arrows
+    draw_horizon(f, chunks[2], state);
+}
 
-    // Roll sparkline
-    let roll_data: Vec<u64> = state
-        .attitude_history
-        .iter()
-        .map(|(_, r)| (*r as i32 + 18000) as u64)
-        .collect();
+fn draw_horizon(f: &mut Frame, area: Rect, state: &AppState) {
+    let pitch_deg = state
+        .attitude
+        .map(|a| a.pitch_cdeg as f64 / 100.0)
+        .unwrap_or(0.0);
+    let roll_deg = state
+        .attitude
+        .map(|a| a.roll_cdeg as f64 / 100.0)
+        .unwrap_or(0.0);
 
-    if !roll_data.is_empty() {
-        let roll_spark = Sparkline::default()
-            .block(Block::default().title(" Roll ").borders(Borders::TOP))
-            .data(&roll_data)
-            .style(Style::default().fg(Color::Magenta));
-        f.render_widget(roll_spark, chunks[2]);
-    }
+    let (pitch_cp, roll_cp) = state
+        .controller_output
+        .map(|c| (c.pitch_correction_cp as i32, c.roll_correction_cp as i32))
+        .unwrap_or((0, 0));
+
+    let roll_rad = -roll_deg * std::f64::consts::PI / 180.0;
+    let cos_r = roll_rad.cos();
+    let sin_r = roll_rad.sin();
+    let pitch_shift = -pitch_deg;
+
+    let pid_color = |mag: i32| -> Color {
+        let abs = mag.unsigned_abs();
+        if abs >= 3000 {
+            Color::Red
+        } else if abs >= 1000 {
+            Color::Yellow
+        } else {
+            Color::Green
+        }
+    };
+
+    let canvas = Canvas::default()
+        .block(Block::default().title(" Horizon ").borders(Borders::TOP))
+        .x_bounds([-100.0, 100.0])
+        .y_bounds([-45.0, 45.0])
+        .paint(move |ctx| {
+            // Horizon line (full width, rotated by roll, shifted by pitch)
+            let half_w = 100.0;
+            ctx.draw(&CanvasLine {
+                x1: -half_w * cos_r,
+                y1: pitch_shift - half_w * sin_r,
+                x2: half_w * cos_r,
+                y2: pitch_shift + half_w * sin_r,
+                color: Color::White,
+            });
+
+            // Pitch ladder at ±10°, ±20°, ±30°
+            let ladder_half = 25.0;
+            for &angle in &[-30.0, -20.0, -10.0, 10.0, 20.0, 30.0_f64] {
+                let y_off = pitch_shift + (-angle);
+                ctx.draw(&CanvasLine {
+                    x1: -ladder_half * cos_r + (y_off * sin_r).copysign(-1.0) * ladder_half / half_w,
+                    y1: y_off - ladder_half * sin_r,
+                    x2: ladder_half * cos_r + (y_off * sin_r).copysign(1.0) * ladder_half / half_w,
+                    y2: y_off + ladder_half * sin_r,
+                    color: Color::DarkGray,
+                });
+                // Simplified ladder: short horizontal segments at the pitch offset
+                let lx = ladder_half + 2.0;
+                ctx.print(
+                    lx * cos_r,
+                    y_off + lx * sin_r,
+                    ratatui::text::Line::from(Span::styled(
+                        format!("{:+.0}", angle),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                );
+            }
+
+            // Center reference (fixed aircraft symbol)
+            ctx.draw(&CanvasLine {
+                x1: -18.0,
+                y1: 0.0,
+                x2: -5.0,
+                y2: 0.0,
+                color: Color::Cyan,
+            });
+            ctx.draw(&CanvasLine {
+                x1: 5.0,
+                y1: 0.0,
+                x2: 18.0,
+                y2: 0.0,
+                color: Color::Cyan,
+            });
+            ctx.draw(&CanvasLine {
+                x1: 0.0,
+                y1: -2.0,
+                x2: 0.0,
+                y2: 2.0,
+                color: Color::Cyan,
+            });
+
+            // PID pitch arrow — fixed position on right edge, direction indicates sign
+            if pitch_cp.unsigned_abs() >= 10 {
+                let arrow = if pitch_cp > 0 { "^" } else { "v" };
+                ctx.print(
+                    88.0,
+                    0.0,
+                    ratatui::text::Line::from(Span::styled(
+                        arrow,
+                        Style::default()
+                            .fg(pid_color(pitch_cp))
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                );
+            }
+
+            // PID roll arrow — fixed position on bottom, direction indicates sign
+            if roll_cp.unsigned_abs() >= 10 {
+                let arrow = if roll_cp > 0 { ">>>" } else { "<<<" };
+                ctx.print(
+                    -8.0,
+                    -38.0,
+                    ratatui::text::Line::from(Span::styled(
+                        arrow,
+                        Style::default()
+                            .fg(pid_color(roll_cp))
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                );
+            }
+
+            // Debug: show raw correction values on horizon
+            ctx.print(
+                -95.0,
+                -40.0,
+                ratatui::text::Line::from(Span::styled(
+                    format!("P:{pitch_cp} R:{roll_cp}"),
+                    Style::default().fg(Color::DarkGray),
+                )),
+            );
+        });
+
+    f.render_widget(canvas, area);
 }
 
 fn draw_rc_channels(f: &mut Frame, area: Rect, state: &AppState) {

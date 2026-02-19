@@ -28,11 +28,17 @@ pub struct AppState {
     // RC channels
     pub rc_channels: Option<RcChannelsResp>,
 
+    // Controller output
+    pub controller_output: Option<ControllerOutputResp>,
+
     // ULog recording state (polled from device)
     pub ulog_recording: bool,
 
     // Attitude history for sparklines
     pub attitude_history: VecDeque<(i16, i16)>, // (pitch, roll) in centidegrees
+
+    // PID correction history for sparklines
+    pub pid_history: VecDeque<(i16, i16)>, // (pitch_correction_cp, roll_correction_cp)
 
     // Logs
     pub logs: VecDeque<LogMsg>,
@@ -62,8 +68,10 @@ impl AppState {
             barometer: None,
             gnss: None,
             rc_channels: None,
+            controller_output: None,
             ulog_recording: false,
             attitude_history: VecDeque::with_capacity(ATTITUDE_HISTORY),
+            pid_history: VecDeque::with_capacity(ATTITUDE_HISTORY),
             logs: VecDeque::with_capacity(LOG_HISTORY),
             connected: false,
             last_poll: None,
@@ -85,6 +93,15 @@ impl AppState {
         self.attitude = Some(att);
         self.last_poll = Some(Instant::now());
         self.connected = true;
+    }
+
+    pub fn push_controller_output(&mut self, c: ControllerOutputResp) {
+        self.pid_history
+            .push_back((c.pitch_correction_cp, c.roll_correction_cp));
+        if self.pid_history.len() > ATTITUDE_HISTORY {
+            self.pid_history.pop_front();
+        }
+        self.controller_output = Some(c);
     }
 
     pub fn push_log(&mut self, msg: LogMsg) {

@@ -105,6 +105,7 @@ pub async fn run() -> Result<()> {
     let mut baro_interval = tokio::time::interval(Duration::from_secs(1)); // 1Hz baro poll
     let mut gnss_interval = tokio::time::interval(Duration::from_secs(1)); // 1Hz GNSS poll
     let mut rc_interval = tokio::time::interval(Duration::from_millis(50)); // 20Hz RC poll
+    let mut ctrl_interval = tokio::time::interval(Duration::from_millis(100)); // 10Hz controller poll
     let mut event_stream = crossterm::event::EventStream::new();
 
     let result = loop {
@@ -275,6 +276,17 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetRcChannelsEndpoint>(&()),
                 ).await {
                     state.rc_channels = Some(rc);
+                    state.connected = true;
+                }
+            }
+
+            // Periodic controller output poll
+            _ = ctrl_interval.tick(), if state.background_task.is_none() => {
+                if let Ok(Ok(c)) = tokio::time::timeout(
+                    Duration::from_millis(200),
+                    client.send_resp::<GetControllerOutputEndpoint>(&()),
+                ).await {
+                    state.push_controller_output(c);
                     state.connected = true;
                 }
             }

@@ -105,13 +105,51 @@ pub async fn execute(
                 ),
             }
         }
+        "pid" => {
+            if parts.len() < 9 {
+                return CommandResult::Err(
+                    "Usage: pid <Pkp> <Pki> <Pkd> <Rkp> <Rki> <Rkd> <scale> <ilimit>".into(),
+                );
+            }
+            let parse = || -> Option<(f32, f32, f32, f32, f32, f32, f32, f32)> {
+                Some((
+                    parts[1].parse().ok()?,
+                    parts[2].parse().ok()?,
+                    parts[3].parse().ok()?,
+                    parts[4].parse().ok()?,
+                    parts[5].parse().ok()?,
+                    parts[6].parse().ok()?,
+                    parts[7].parse().ok()?,
+                    parts[8].parse().ok()?,
+                ))
+            };
+            match parse() {
+                Some((pkp, pki, pkd, rkp, rki, rkd, scale, ilimit)) => {
+                    cmd_set_pid_gains(client, pkp, pki, pkd, rkp, rki, rkd, scale, ilimit).await
+                }
+                None => CommandResult::Err("All PID arguments must be valid floats".into()),
+            }
+        }
+        "setpoint" | "sp" => {
+            if parts.len() < 3 {
+                return CommandResult::Err("Usage: setpoint <pitch_deg> <roll_deg>".into());
+            }
+            let pitch: Result<f32, _> = parts[1].parse();
+            let roll: Result<f32, _> = parts[2].parse();
+            match (pitch, roll) {
+                (Ok(p), Ok(r)) => cmd_set_attitude_setpoint(client, p, r).await,
+                _ => CommandResult::Err("Setpoint values must be valid floats".into()),
+            }
+        }
+        "ctrl" => cmd_controller_output(client, state).await,
         "time" => cmd_time(client).await,
         "mag" => cmd_mag(client).await,
         "gnss" | "gps" => cmd_gnss(client).await,
         "help" | "?" => CommandResult::Ok(
-            "Commands: ping status attitude version perf time mag gnss arm disarm estop \
-             throttle <0-100> elevon <L> <R> mode <manual|mixed|auto> \
-             ulog <info|start|stop|extract [file]|erase> quit"
+            "query: ping status att perf ver time mag gnss ctrl | \
+             safety: arm disarm estop | \
+             ctrl: thr <0-100> elv <L> <R> mode <man|mix|auto> pid <8 floats> sp <P> <R> | \
+             ulog: ulog <info|start|stop|extract|erase> | quit"
                 .into(),
         ),
         other => CommandResult::Unknown(other.into()),
@@ -287,6 +325,93 @@ async fn cmd_gnss(client: &HostClient<WireError>) -> CommandResult {
     }
 }
 
+
+async fn cmd_controller_output(
+    client: &HostClient<WireError>,
+    state: &mut AppState,
+) -> CommandResult {
+    match timeout(
+        CMD_TIMEOUT,
+        client.send_resp::<GetControllerOutputEndpoint>(&()),
+    )
+    .await
+    {
+        Ok(Ok(c)) => {
+            let msg = format!(
+                "PID: P={:.4} R={:.4}  SP: P={:.1}° R={:.1}°  Elevon L={} R={}  Eng L={} R={}",
+                c.pitch_correction_cp as f32 / 10000.0,
+                c.roll_correction_cp as f32 / 10000.0,
+                c.pitch_setpoint_cdeg as f32 / 100.0,
+                c.roll_setpoint_cdeg as f32 / 100.0,
+                c.elevon_left_us,
+                c.elevon_right_us,
+                c.engine_left_us,
+                c.engine_right_us,
+            );
+            state.controller_output = Some(c);
+            CommandResult::Ok(msg)
+        }
+        Ok(Err(e)) => CommandResult::Err(format!("Controller output failed: {e}")),
+        Err(_) => CommandResult::Err("Controller output timeout".into()),
+    }
+}
+
+async fn cmd_set_pid_gains(
+    client: &HostClient<WireError>,
+    pkp: f32,
+    pki: f32,
+    pkd: f32,
+    rkp: f32,
+    rki: f32,
+    rkd: f32,
+    scale: f32,
+    ilimit: f32,
+) -> CommandResult {
+    let req = SetPidGainsReq {
+        pitch_kp_x1000: (pkp * 1000.0) as i16,
+        pitch_ki_x1000: (pki * 1000.0) as i16,
+        pitch_kd_x1000: (pkd * 1000.0) as i16,
+        roll_kp_x1000: (rkp * 1000.0) as i16,
+        roll_ki_x1000: (rki * 1000.0) as i16,
+        roll_kd_x1000: (rkd * 1000.0) as i16,
+        scale_x10000: (scale * 10000.0) as i16,
+        i_limit_x10: (ilimit * 10.0) as i16,
+    };
+    match timeout(CMD_TIMEOUT, client.send_resp::<SetPidGainsEndpoint>(&req)).await {
+        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!(
+            "PID: P({pkp}/{pki}/{pkd}) R({rkp}/{rki}/{rkd}) scale={scale} ilim={ilimit}"
+        )),
+        Ok(Ok(ack)) => CommandResult::Err(format!("PID set failed (error: {})", ack.error_code)),
+        Ok(Err(e)) => CommandResult::Err(format!("PID set failed: {e}")),
+        Err(_) => CommandResult::Err("PID set timeout".into()),
+    }
+}
+
+async fn cmd_set_attitude_setpoint(
+    client: &HostClient<WireError>,
+    pitch_deg: f32,
+    roll_deg: f32,
+) -> CommandResult {
+    let req = SetAttitudeSetpointReq {
+        pitch_cdeg: (pitch_deg * 100.0) as i16,
+        roll_cdeg: (roll_deg * 100.0) as i16,
+    };
+    match timeout(
+        CMD_TIMEOUT,
+        client.send_resp::<SetAttitudeSetpointEndpoint>(&req),
+    )
+    .await
+    {
+        Ok(Ok(ack)) if ack.success => {
+            CommandResult::Ok(format!("Setpoint: P={pitch_deg}° R={roll_deg}°"))
+        }
+        Ok(Ok(ack)) => {
+            CommandResult::Err(format!("Setpoint failed (error: {})", ack.error_code))
+        }
+        Ok(Err(e)) => CommandResult::Err(format!("Setpoint failed: {e}")),
+        Err(_) => CommandResult::Err("Setpoint timeout".into()),
+    }
+}
 
 async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {
     match timeout(CMD_TIMEOUT, client.send_resp::<GetULogInfoEndpoint>(&())).await {
