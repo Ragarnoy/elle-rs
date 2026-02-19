@@ -109,7 +109,9 @@ impl<'a> FlightController<'a> {
         config.kd_yaw = 0.00015;
 
         // Set the upper limit for the integral term to prevent windup
-        config.i_limit = 25.0;
+        // At i_limit=2.0, max integral contribution = ki * 2.0 * scale ≈ 0.001
+        // (enough for steady-state trim, won't cause runaway from sensor bias)
+        config.i_limit = 2.0;
 
         // Set the scale to adjust the PID outputs to the actuator range
         config.scale = 0.015; // Increased for more responsive but still smooth control

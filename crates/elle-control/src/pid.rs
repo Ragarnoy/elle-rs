@@ -49,6 +49,12 @@ impl AttitudeController {
         self.last_time = None;
     }
 
+    /// Update configuration and reset integral state
+    pub fn update_config(&mut self, config: FlightStabilizerConfig<f32>) {
+        self.stabilizer = AngleStabilizer::with_config(config);
+        self.last_time = None;
+    }
+
     /// Control method compatible with free-flight-stabilization crate interface
     pub fn control(
         &mut self,
@@ -76,6 +82,7 @@ impl AttitudeController {
         current_roll: f32,
         gyro_rates: Option<(f32, f32, f32)>, // (roll_rate, pitch_rate, yaw_rate)
         now: Instant,
+        low_throttle: bool,
     ) -> (f32, f32) {
         if !self.enabled {
             return (0.0, 0.0);
@@ -119,8 +126,6 @@ impl AttitudeController {
 
         // Use provided gyro rates or fall back to zeros
         let gyro_rates = gyro_rates.unwrap_or((0.0, 0.0, 0.0));
-
-        let low_throttle = false;
 
         let (roll_output, pitch_output, _yaw_output) =
             self.control(set_point, current_attitude, gyro_rates, dt, low_throttle);
