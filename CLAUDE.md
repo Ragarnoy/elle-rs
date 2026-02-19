@@ -66,20 +66,19 @@ The firmware uses postcard-rpc's `define_dispatch!` macro for type-safe dispatch
 No extra postcard-rpc features needed — the macro works with elle's own WireTx/WireRx.
 
 - **ICD**: `crates/elle-rpc-icd/src/lib.rs` — Uses `endpoints!`/`topics!` macros generating `ENDPOINT_LIST`, `TOPICS_IN_LIST`, `TOPICS_OUT_LIST`
-- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 23 blocking handler functions
+- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 25 blocking handler functions
 - **Server task**: `crates/elle-eagle/src/main.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
 
 ### RPC Protocol
 
-23 endpoints + 1 outgoing topic defined in the ICD:
+25 endpoints + 1 outgoing topic defined in the ICD:
 
 **Endpoints** (request/response):
-- Control: SetThrottle, SetElevons, SetControlMode
+- Control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetAttitudeSetpoint
 - Safety: Arm, Disarm, EmergencyStop
-- Trim/Cal: AdjustTrim, SaveCalibration, ClearCalibration
-- Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels
-- ULog: StartULog, StopULog, ReadULogChunk, EraseULog
-- System: Ping, GetVersion
+- Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels, GetControllerOutput
+- ULog: StartULog, StopULog, ReadULogChunk, EraseULog, GetULogInfo
+- System: Ping, GetVersion, GetTime
 
 **Topics** (device -> host, streaming):
 - LogTopic — device-side log messages (level + numeric code)
@@ -195,9 +194,6 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **I2C bus always RefCell-wrapped**: Both real and stub paths now use `RefCell<I2c>` for I2C0, since mag+baro share the bus.
 
 ### Known TODOs in Firmware
-- `RpcCommand::SetMode`: not implemented (TODO in main loop)
-- `RpcCommand::AdjustTrim`: logged but not implemented
-- `RpcCommand::SaveCalibration` / `ClearCalibration`: logged but not implemented
 - **`disable-imu` stub generates synthetic test data** (slow sine waves) — for debugging without ICM-42686 hardware
 - ~~BMP390 hardware issue~~ — **resolved**: resoldered, now working on I2C0.
 - **Axis mapping**: ICM-42686 → AHRS Euler angles may need sign adjustment depending on chip orientation on PCB. Start with identity mapping, verify in TUI.
@@ -234,5 +230,4 @@ Architecture:
 1. **Verify ICM-42686 on hardware** — test attitude in TUI and CRSF telemetry
 2. **Tune AHRS** — adjust Madgwick beta (currently 0.033), verify axis mapping
 3. **Test ULog start/stop/extract/erase on hardware** — record data via RC switch or TUI command, extract via TUI, verify .ulg file
-4. **Implement remaining RPC commands** — Mode switching, trim adjust, calibration save/clear
-5. **Explore async SPI** — If IMU task moves to Core0, or DMA cross-core routing is confirmed, enable `async` feature on `icm426xx` for DMA-based SPI
+4. **Explore async SPI** — If IMU task moves to Core0, or DMA cross-core routing is confirmed, enable `async` feature on `icm426xx` for DMA-based SPI
