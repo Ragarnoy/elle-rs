@@ -58,6 +58,19 @@ impl CoreHealth {
     }
 }
 
+/// Snapshot of controller outputs for observability
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ControllerOutputSnapshot {
+    pub pitch_correction: f32,
+    pub roll_correction: f32,
+    pub pitch_setpoint_deg: f32,
+    pub roll_setpoint_deg: f32,
+    pub elevon_left_us: u32,
+    pub elevon_right_us: u32,
+    pub engine_left_us: u32,
+    pub engine_right_us: u32,
+}
+
 pub struct FlightController<'a> {
     pwm: PwmOutputs<'a>,
     arming: ArmingState,
@@ -69,6 +82,8 @@ pub struct FlightController<'a> {
     filtered_roll_setpoint_rad: f32,
     // Control mode tracking
     current_control_mode: ControlMode,
+    // Controller output snapshot for observability
+    last_output: ControllerOutputSnapshot,
     // Supervisor components
     watchdog: Option<Watchdog>,
     core1_health: CoreHealth,
@@ -111,6 +126,7 @@ impl<'a> FlightController<'a> {
             filtered_pitch_setpoint_rad: 0.0,
             filtered_roll_setpoint_rad: 0.0,
             current_control_mode: ControlMode::Manual,
+            last_output: ControllerOutputSnapshot::default(),
             watchdog: None,
             core1_health: CoreHealth::default(),
             last_watchdog_kick: Instant::now(),
@@ -334,6 +350,10 @@ impl<'a> FlightController<'a> {
             self.last_attitude = Some(*att);
         }
 
+        // Track PID corrections for output snapshot
+        let mut pitch_correction = 0.0f32;
+        let mut roll_correction = 0.0f32;
+
         // Apply control mode logic
         let final_inputs = match norm.attitude_mode {
             AttitudeMode::Manual => {
@@ -348,14 +368,19 @@ impl<'a> FlightController<'a> {
                 match attitude.or(self.last_attitude.as_ref()) {
                     Some(att) => {
                         // Compute attitude corrections
-                        let (pitch_correction, roll_correction) = self.attitude_controller.update(
+                        // Reset integrator when disarmed or throttle near zero
+                        let low_throttle = !self.arming.armed || norm.throttle < 0.05;
+                        let (pc, rc) = self.attitude_controller.update(
                             self.filtered_pitch_setpoint_rad,
                             self.filtered_roll_setpoint_rad,
                             att.pitch,
                             att.roll,
                             Some((att.roll_rate, att.pitch_rate, att.yaw_rate)),
                             Instant::now(),
+                            low_throttle,
                         );
+                        pitch_correction = pc;
+                        roll_correction = rc;
 
                         // Blend based on mode
                         let mut corrected = pilot_inputs;
@@ -394,6 +419,18 @@ impl<'a> FlightController<'a> {
         };
 
         self.pwm.set_engines(left_thrust, right_thrust);
+
+        // Capture controller output snapshot
+        self.last_output = ControllerOutputSnapshot {
+            pitch_correction,
+            roll_correction,
+            pitch_setpoint_deg: norm.pitch_setpoint_deg,
+            roll_setpoint_deg: norm.roll_setpoint_deg,
+            elevon_left_us: elevon_outputs.left_us,
+            elevon_right_us: elevon_outputs.right_us,
+            engine_left_us: left_thrust,
+            engine_right_us: right_thrust,
+        };
     }
 
     /// Updated method that uses PilotCommands
@@ -445,6 +482,40 @@ impl<'a> FlightController<'a> {
     /// Manual disarm (for RTT/debug control)
     pub fn disarm(&mut self) {
         self.arming.disarm();
+    }
+
+    /// Update PID gains at runtime (resets integral state)
+    pub fn set_pid_gains(
+        &mut self,
+        pitch_kp: f32,
+        pitch_ki: f32,
+        pitch_kd: f32,
+        roll_kp: f32,
+        roll_ki: f32,
+        roll_kd: f32,
+        scale: f32,
+        i_limit: f32,
+    ) {
+        let mut config = FlightStabilizerConfig::<f32>::new();
+        config.kp_pitch = pitch_kp;
+        config.ki_pitch = pitch_ki;
+        config.kd_pitch = pitch_kd;
+        config.kp_roll = roll_kp;
+        config.ki_roll = roll_ki;
+        config.kd_roll = roll_kd;
+        config.scale = scale;
+        config.i_limit = i_limit;
+        // Keep yaw gains at defaults (flying wing — yaw not actively controlled)
+        config.kp_yaw = 0.3;
+        config.ki_yaw = 0.05;
+        config.kd_yaw = 0.00015;
+        self.attitude_controller.update_config(config);
+    }
+
+    /// Get the last controller output snapshot
+    #[must_use]
+    pub fn last_output(&self) -> &ControllerOutputSnapshot {
+        &self.last_output
     }
 }
 

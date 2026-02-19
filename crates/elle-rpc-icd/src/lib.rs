@@ -163,6 +163,49 @@ pub struct ULogInfoResp {
     pub items_stored: u32,
 }
 
+/// Controller output snapshot (integer-scaled to avoid f32 on wire)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct ControllerOutputResp {
+    /// PID pitch correction * 10000
+    pub pitch_correction_cp: i16,
+    /// PID roll correction * 10000
+    pub roll_correction_cp: i16,
+    /// Pitch setpoint in centidegrees
+    pub pitch_setpoint_cdeg: i16,
+    /// Roll setpoint in centidegrees
+    pub roll_setpoint_cdeg: i16,
+    /// Left elevon servo PWM microseconds
+    pub elevon_left_us: u16,
+    /// Right elevon servo PWM microseconds
+    pub elevon_right_us: u16,
+    /// Left engine PWM microseconds
+    pub engine_left_us: u16,
+    /// Right engine PWM microseconds
+    pub engine_right_us: u16,
+}
+
+/// Set PID gains (integer-scaled: x1000 for gains, x10000 for scale, x10 for i_limit)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct SetPidGainsReq {
+    pub pitch_kp_x1000: i16,
+    pub pitch_ki_x1000: i16,
+    pub pitch_kd_x1000: i16,
+    pub roll_kp_x1000: i16,
+    pub roll_ki_x1000: i16,
+    pub roll_kd_x1000: i16,
+    /// Scale * 10000 (e.g. 150 = 0.0150)
+    pub scale_x10000: i16,
+    /// I-limit * 10 (e.g. 250 = 25.0)
+    pub i_limit_x10: i16,
+}
+
+/// Set attitude setpoint in centidegrees (e.g. 500 = 5.0°)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct SetAttitudeSetpointReq {
+    pub pitch_cdeg: i16,
+    pub roll_cdeg: i16,
+}
+
 /// GNSS position fix response
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GnssResp {
@@ -223,6 +266,9 @@ endpoints! {
     | EraseULogEndpoint         | ()                | AckResp           | "elle/ulog/erase"     |
     | GetULogInfoEndpoint       | ()                | ULogInfoResp      | "elle/ulog/info"      |
     | GetTimeEndpoint           | ()                | u64               | "elle/sys/time"       |
+    | GetControllerOutputEndpoint | ()              | ControllerOutputResp | "elle/query/ctrl_out" |
+    | SetPidGainsEndpoint       | SetPidGainsReq    | AckResp           | "elle/ctrl/pid"       |
+    | SetAttitudeSetpointEndpoint | SetAttitudeSetpointReq | AckResp      | "elle/ctrl/setpoint"  |
 }
 
 // ============================================================================

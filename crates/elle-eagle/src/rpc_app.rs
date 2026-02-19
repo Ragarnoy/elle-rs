@@ -324,6 +324,71 @@ fn handle_get_time(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> u64 {
     ctx.aon_timer.now()
 }
 
+fn handle_get_controller_output(
+    _ctx: &mut RpcContext,
+    _hdr: VarHeader,
+    _req: (),
+) -> ControllerOutputResp {
+    if let Some(out) = crate::flight_state::CONTROLLER_OUTPUT.try_take() {
+        crate::flight_state::CONTROLLER_OUTPUT.signal(out); // put back
+        ControllerOutputResp {
+            pitch_correction_cp: (out.pitch_correction * 10000.0) as i16,
+            roll_correction_cp: (out.roll_correction * 10000.0) as i16,
+            pitch_setpoint_cdeg: (out.pitch_setpoint_deg * 100.0) as i16,
+            roll_setpoint_cdeg: (out.roll_setpoint_deg * 100.0) as i16,
+            elevon_left_us: out.elevon_left_us as u16,
+            elevon_right_us: out.elevon_right_us as u16,
+            engine_left_us: out.engine_left_us as u16,
+            engine_right_us: out.engine_right_us as u16,
+        }
+    } else {
+        ControllerOutputResp {
+            pitch_correction_cp: 0,
+            roll_correction_cp: 0,
+            pitch_setpoint_cdeg: 0,
+            roll_setpoint_cdeg: 0,
+            elevon_left_us: 0,
+            elevon_right_us: 0,
+            engine_left_us: 0,
+            engine_right_us: 0,
+        }
+    }
+}
+
+fn handle_set_pid_gains(
+    ctx: &mut RpcContext,
+    _hdr: VarHeader,
+    req: SetPidGainsReq,
+) -> AckResp {
+    match ctx.cmd_sender.try_send(RpcCommand::SetPidGains {
+        pitch_kp: req.pitch_kp_x1000 as f32 / 1000.0,
+        pitch_ki: req.pitch_ki_x1000 as f32 / 1000.0,
+        pitch_kd: req.pitch_kd_x1000 as f32 / 1000.0,
+        roll_kp: req.roll_kp_x1000 as f32 / 1000.0,
+        roll_ki: req.roll_ki_x1000 as f32 / 1000.0,
+        roll_kd: req.roll_kd_x1000 as f32 / 1000.0,
+        scale: req.scale_x10000 as f32 / 10000.0,
+        i_limit: req.i_limit_x10 as f32 / 10.0,
+    }) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
+}
+
+fn handle_set_attitude_setpoint(
+    ctx: &mut RpcContext,
+    _hdr: VarHeader,
+    req: SetAttitudeSetpointReq,
+) -> AckResp {
+    match ctx.cmd_sender.try_send(RpcCommand::SetAttitudeSetpoint {
+        pitch_deg: req.pitch_cdeg as f32 / 100.0,
+        roll_deg: req.roll_cdeg as f32 / 100.0,
+    }) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
+}
+
 fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp {
     #[cfg(feature = "gnss")]
     {
@@ -384,6 +449,9 @@ postcard_rpc::define_dispatch! {
         | EraseULogEndpoint         | blocking  | handle_erase_ulog         |
         | GetULogInfoEndpoint       | blocking  | handle_get_ulog_info      |
         | GetTimeEndpoint           | blocking  | handle_get_time           |
+        | GetControllerOutputEndpoint | blocking | handle_get_controller_output |
+        | SetPidGainsEndpoint       | blocking  | handle_set_pid_gains      |
+        | SetAttitudeSetpointEndpoint | blocking | handle_set_attitude_setpoint |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

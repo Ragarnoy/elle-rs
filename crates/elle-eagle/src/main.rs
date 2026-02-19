@@ -636,6 +636,8 @@ async fn main(spawner: Spawner) {
         let mut rpc_elevon_left: f32 = 0.0;
         let mut rpc_elevon_right: f32 = 0.0;
         let mut rpc_mode = AttitudeMode::Manual;
+        let mut rpc_pitch_setpoint_deg: f32 = 0.0;
+        let mut rpc_roll_setpoint_deg: f32 = 0.0;
 
         loop {
             ticker.next().await;
@@ -696,6 +698,44 @@ async fn main(spawner: Spawner) {
                         rpc_elevon_right = 0.0;
                         fc.disarm();
                         fc.apply_failsafe();
+                    }
+                    RpcCommand::SetPidGains {
+                        pitch_kp,
+                        pitch_ki,
+                        pitch_kd,
+                        roll_kp,
+                        roll_ki,
+                        roll_kd,
+                        scale,
+                        i_limit,
+                    } => {
+                        fc.set_pid_gains(
+                            pitch_kp, pitch_ki, pitch_kd, roll_kp, roll_ki, roll_kd, scale,
+                            i_limit,
+                        );
+                        info!(
+                            "RPC: PID gains updated P({}/{}/{}) R({}/{}/{}) s={} il={}",
+                            (pitch_kp * 1000.0) as i32,
+                            (pitch_ki * 1000.0) as i32,
+                            (pitch_kd * 1000.0) as i32,
+                            (roll_kp * 1000.0) as i32,
+                            (roll_ki * 1000.0) as i32,
+                            (roll_kd * 1000.0) as i32,
+                            (scale * 10000.0) as i32,
+                            (i_limit * 10.0) as i32,
+                        );
+                    }
+                    RpcCommand::SetAttitudeSetpoint {
+                        pitch_deg,
+                        roll_deg,
+                    } => {
+                        rpc_pitch_setpoint_deg = pitch_deg;
+                        rpc_roll_setpoint_deg = roll_deg;
+                        info!(
+                            "RPC: Setpoint P={}cdeg R={}cdeg",
+                            (pitch_deg * 100.0) as i32,
+                            (roll_deg * 100.0) as i32,
+                        );
                     }
                     RpcCommand::StartULog => {
                         #[cfg(feature = "ulog-logging")]
@@ -807,8 +847,8 @@ async fn main(spawner: Spawner) {
                 roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,  // Mixed
                 yaw: 0.0,
                 attitude_mode: rpc_mode,
-                pitch_setpoint_deg: 0.0,
-                roll_setpoint_deg: 0.0,
+                pitch_setpoint_deg: rpc_pitch_setpoint_deg,
+                roll_setpoint_deg: rpc_roll_setpoint_deg,
                 timestamp: Instant::now(),
             });
 
@@ -835,6 +875,21 @@ async fn main(spawner: Spawner) {
                     elle_system::ControlMode::Autopilot => ControlMode::Autopilot,
                 },
             });
+
+            // Publish controller output for RPC observability
+            {
+                let out = fc.last_output();
+                flight_state::CONTROLLER_OUTPUT.signal(flight_state::ControllerOutput {
+                    pitch_correction: out.pitch_correction,
+                    roll_correction: out.roll_correction,
+                    pitch_setpoint_deg: out.pitch_setpoint_deg,
+                    roll_setpoint_deg: out.roll_setpoint_deg,
+                    elevon_left_us: out.elevon_left_us,
+                    elevon_right_us: out.elevon_right_us,
+                    engine_left_us: out.engine_left_us,
+                    engine_right_us: out.engine_right_us,
+                });
+            }
 
             // Log flight data to ULog flash storage (only when recording is active)
             #[cfg(feature = "ulog-logging")]
