@@ -22,20 +22,19 @@ Target is RP2350 (`thumbv8m.main-none-eabihf`), configured in `.cargo/config.tom
 
 ```sh
 cd crates/elle-eagle
-cargo build --release                          # default features (CRSF/ELRS flight mode)
-cargo build --release --features rpc-control   # with RPC server (ground test mode)
-cargo run --release --features rpc-control     # flash via probe-rs
+cargo build --release                                              # default features (CRSF/ELRS flight mode)
+cargo build --release --no-default-features --features rpc-control # with RPC server (ground test mode)
+cargo run --release --no-default-features --features rpc-control   # flash via probe-rs
 ```
 
 Key feature flags for elle-eagle:
-- `rpc-control` — postcard-RPC server over RTT (ground test mode)
+- `rpc-control` — postcard-RPC server over RTT (ground test mode). **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`); build with `--no-default-features --features rpc-control`
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
-- `ulog-logging` — Flash-based flight data recording
 - `gnss` — SAM-M10Q GNSS receiver support (requires `rpc-control`)
 - `crsf-telemetry` — CRSF telemetry TX to radio via PIN_20/UART1 TX (attitude, flight mode, GPS, baro altitude)
-- `imu-save-calibration` — Persist IMU calibration to flash (default, currently no-op with ICM-42686)
-- `legacy-ctrl` — Legacy mixing functions (mutually exclusive with default mixing)
+
+ULog flash recording is always compiled in (no feature gate). Recording is idle until explicitly started.
 
 ### Host Tool
 
@@ -66,18 +65,19 @@ The firmware uses postcard-rpc's `define_dispatch!` macro for type-safe dispatch
 No extra postcard-rpc features needed — the macro works with elle's own WireTx/WireRx.
 
 - **ICD**: `crates/elle-rpc-icd/src/lib.rs` — Uses `endpoints!`/`topics!` macros generating `ENDPOINT_LIST`, `TOPICS_IN_LIST`, `TOPICS_OUT_LIST`
-- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 25 blocking handler functions
+- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 27 blocking handler functions
 - **Server task**: `crates/elle-eagle/src/main.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
 
 ### RPC Protocol
 
-25 endpoints + 1 outgoing topic defined in the ICD:
+27 endpoints + 1 outgoing topic defined in the ICD:
 
 **Endpoints** (request/response):
 - Control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetAttitudeSetpoint
 - Safety: Arm, Disarm, EmergencyStop
 - Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels, GetControllerOutput
 - ULog: StartULog, StopULog, ReadULogChunk, EraseULog, GetULogInfo
+- Autotune: StartAutotune, AbortAutotune
 - System: Ping, GetVersion, GetTime
 
 **Topics** (device -> host, streaming):
@@ -85,12 +85,13 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 
 ### Shared State
 
-- **`FlightState`** (`crates/elle-eagle/src/flight_state.rs`) — Signal carrying `{ armed, failsafe, mode }`, published by the RPC control loop after each `fc.update()`, read by `handle_get_status` in `rpc_app.rs`
-- **`RpcCommand`** (`crates/elle-eagle/src/rpc_handlers.rs`) — Enum + channel for RPC handler → main loop communication (includes StartULog, StopULog, ReadULogChunk, PopAndPeekULog, EraseULog)
-- **`BaroReading`** / **`BARO_SIGNAL`** (`crates/elle-hardware/src/imu.rs`) — BMP390 barometer data (pressure, temperature, altitude), polled at ~2 Hz on Core1
+- **`FlightState`** / **`FLIGHT_STATE_CACHE`** (`crates/elle-eagle/src/flight_state.rs`) — Signal + Mutex cache carrying `{ armed, failsafe, mode }`, published by the RPC control loop after each `fc.update()`, read by `handle_get_status` via cache
+- **`ControllerOutput`** / **`CONTROLLER_OUTPUT_CACHE`** (`crates/elle-eagle/src/flight_state.rs`) — Signal + Mutex cache for PID output observability (corrections, setpoints, servo μs)
+- **`RpcCommand`** (`crates/elle-eagle/src/rpc_handlers.rs`) — Enum + channel for RPC handler → main loop communication (includes ULog, autotune, PID save commands)
+- **`MAG_CACHE`** / **`BARO_CACHE`** (`crates/elle-hardware/src/imu.rs`) — Mutex-based non-consuming caches alongside Signals for mag/baro data. Producers write both Signal and cache; consumers read cache (no signal race).
 - **`LogMsg`** (`crates/elle-eagle/src/log_channel.rs`) — Channel for firmware events → `log_publisher_task` → LogTopic
 - **`ULOG_ENABLED`** (`crates/elle-eagle/src/rpc_app.rs`) — AtomicBool flag controlling ULog recording in RPC mode. Set by StartULog/StopULog RPC commands.
-- **`ULOG_STATE`** / **`ULOG_ITEM_SIGNAL`** (`crates/elle-eagle/src/rpc_app.rs`) — Atomic state machine (IDLE→READING→READY→EMPTY) + Signal for ULog extraction, bridging blocking RPC handlers to async flash operations
+- **`ULogState`** / **`ULOG_ITEM_SIGNAL`** (`crates/elle-eagle/src/rpc_app.rs`) — `#[repr(u8)]` enum state machine (Idle→Reading→Ready→Empty) + Signal for ULog extraction, bridging blocking RPC handlers to async flash operations
 
 ### Host Tool (`tools/elle-rpc-host/`)
 
@@ -119,8 +120,8 @@ Three independent logging systems coexist, each serving a different purpose:
 | **ULog** | Flash storage | 77Hz attitude+commands, 7.7Hz status | Yes — survives power loss | Post-flight analysis |
 
 - defmt macros (`info!`, `warn!`, etc.) are always compiled in; the transport (`defmt-rtt`) is gated on `defmt-logging` (default on). Without the transport, macros become no-ops.
-- RPC LogTopic carries `(level: u8, code: u16)` — numeric event codes mapped to strings on the host side in `tui/ui.rs::log_code_text()`. ULog-related codes: 30=recording started, 31=init failed, 32=not compiled in, 33=recording stopped, 34=flash erased.
-- ULog records full-fidelity flight data (attitude, commands, status) to flash via `elle-hardware::ULogLogger`, gated on `ulog-logging`. Recording is explicitly started/stopped — in RPC mode via `ulog start`/`ulog stop` TUI commands, in flight mode via RC aux channel switch (CH7, threshold 1500).
+- RPC LogTopic carries `(level: u8, code: u16)` — numeric event codes mapped to strings on the host side in `tui/ui.rs::log_code_text()`. ULog-related codes: 30=recording started, 31=init failed, 33=recording stopped, 34=flash erased.
+- ULog records full-fidelity flight data (attitude, commands, status, baro, mag) to flash via `elle-hardware::ULogLogger`. Always compiled in (no feature gate). Recording is explicitly started/stopped — in RPC mode via `ulog start`/`ulog stop` TUI commands, in flight mode via RC aux channel switch (CH7, threshold 1500).
 
 ### Control Loop Architecture
 
@@ -129,17 +130,20 @@ The firmware main loop runs at 77Hz (13ms ticker):
 **Flight mode** (default, no `rpc-control`):
 1. Reads CRSF/ELRS commands from dedicated receiver task
 2. Updates FlightController with attitude + pilot commands
-3. Failsafe check, LED pattern updates
-4. ULog recording controlled by RC aux channel switch (edge detection, CH7 > 1500 = on)
+3. Autotune state machine (RC CH9 3-position switch with debounce)
+4. Failsafe check, LED pattern updates
+5. ULog recording controlled by RC aux channel switch (edge detection, CH7 > 1500 = on)
+6. Auto-saves PID gains to flash on autotune completion
 
 **RPC mode** (`rpc-control` feature):
 1. Reads RPC commands from `RPC_CMD_CHANNEL`
 2. Builds `PilotCommands::Normalized` from accumulated RPC state
 3. Updates FlightController with attitude data from IMU
-4. Publishes `FlightState` signal for RPC query handlers
-5. Periodic LED pattern updates
-6. ULog recording gated on `ULOG_ENABLED` flag (set via StartULog/StopULog RPC commands)
-7. Handles ULog extraction commands (ReadULogChunk, PopAndPeekULog, EraseULog) via `FLASH_REQUEST_SIGNAL`
+4. Autotune state machine (triggered via StartAutotune/AbortAutotune RPC)
+5. Publishes `FlightState` + `ControllerOutput` signals and caches for RPC query handlers
+6. Periodic LED pattern updates
+7. ULog recording gated on `ULOG_ENABLED` flag (set via StartULog/StopULog RPC commands)
+8. Handles ULog extraction commands (ReadULogChunk, PopAndPeekULog, EraseULog) via `FLASH_REQUEST_SIGNAL`
 
 RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never directly control hardware.
 
@@ -193,41 +197,38 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Blocking SPI on Core1**: Uses blocking SPI (polled, no DMA) since DMA interrupt handlers are registered on Core0's NVIC. 24-byte FIFO read at 1 MHz SPI takes ~200µs.
 - **I2C bus always RefCell-wrapped**: Both real and stub paths now use `RefCell<I2c>` for I2C0, since mag+baro share the bus.
 
+- **RPC autotune endpoints**: StartAutotune/AbortAutotune RPC endpoints + TUI commands (`autotune pitch`, `autotune roll`, `autotune abort`, `savepid`)
+- **Relay-based autotuner** (`crates/elle-control/src/autotune.rs`): Oscillation detection, Tyreus-Luyben/Ziegler-Nichols/SomeOvershoot tuning rules, safety timeout/amplitude limits
+- **Flash PID persistence**: `SavedGains` serialized to flash via sequential-storage MapStorage. Auto-loads on boot with f32 validation (finite + range checks). Auto-saves on autotune completion.
+- **Signal race fixes**: Replaced `try_take()`+`signal()` peek pattern with Mutex-based non-consuming caches (`MAG_CACHE`, `BARO_CACHE`, `FLIGHT_STATE_CACHE`, `CONTROLLER_OUTPUT_CACHE`)
+- **ULog always compiled in**: Removed `ulog-logging` feature gate. ULog support is always available; recording starts only when explicitly triggered (RC switch or TUI command).
+- **Code quality pass**: clippy pedantic/nursery fixes, f64→f32 atan2, named constants for magic numbers (AHRS_BETA, sensor rate ticks), `ULogState` enum replacing magic constants, event drain throttling, setpoint filter skip in Manual mode
+
 ### Known TODOs in Firmware
 - **`disable-imu` stub generates synthetic test data** (slow sine waves) — for debugging without ICM-42686 hardware
-- ~~BMP390 hardware issue~~ — **resolved**: resoldered, now working on I2C0.
 - **Axis mapping**: ICM-42686 → AHRS Euler angles may need sign adjustment depending on chip orientation on PCB. Start with identity mapping, verify in TUI.
-- **`imu-save-calibration` feature**: Now a no-op (ICM-42686 is factory-calibrated, no user calibration to persist). Flash calibration infrastructure remains for potential future use.
 
-### ICM-42686-P resoldered and functional
+### ULog Recording
 
-**Status**: ICM-42686-P has been resoldered and is working on SPI0. Software integration complete, compiles on all feature combos.
-
-**Hardware verification TODO**:
-1. Flash: `cargo run -p elle-eagle --release --features rpc-control,crsf-telemetry`
-2. Expected log: `ICM-42686: initialized (WHO_AM_I OK, 1 kHz ODR)` — WHO_AM_I should be `0x44`
-3. Verify attitude in TUI (pitch/roll/yaw should track board motion)
-4. **Axis mapping**: if pitch/roll are swapped or inverted, adjust signs in `imu.rs` `run()` loop (search for "axis sign adjustment")
-5. Verify mag + baro still work alongside ICM (shared I2C0 bus via RefCell)
-
-### ULog Extraction & Erasure via RPC
-
-**Status**: Implemented. ULog data can be extracted from flash, recording can be started/stopped, and flash can be erased via TUI commands.
-
-TUI commands:
+Always compiled in. TUI commands:
 - `ulog start` — start ULog recording (initializes logger on first call, sets `ULOG_ENABLED`)
 - `ulog stop` — stop ULog recording (flushes buffer, clears `ULOG_ENABLED`)
 - `ulog extract [file]` — downloads all queued ULog data (auto-stops recording first, fragments 4KB queue items into 512B RPC chunks, default filename `flight_YYYYMMDD_HHMMSS.ulg`)
 - `ulog erase` — erases entire ULog flash region (0x210000–0xFFFFFF, auto-stops recording)
 
-Architecture:
-- Flash manager migrated to sequential-storage v7.1.0 API (QueueStorage/MapStorage structs with destroy() for ownership recovery)
-- RPC handlers use atomic state machine (IDLE→READING→READY→EMPTY) bridging blocking dispatch to async flash operations
-- Extraction runs as a background task in the TUI (non-blocking UI)
-- Flight mode: RC aux channel (CH7, `ULOG_ENABLE_CH`) controls recording via edge detection (high ~2047 = on)
+Flight mode: RC aux channel (CH7, `ULOG_ENABLE_CH`) controls recording via edge detection (high ~2047 = on).
+
+### PID Autotune
+
+Relay-based autotuner with 3-position RC switch (CH9) in flight mode, or RPC commands in ground test mode.
+
+TUI commands:
+- `autotune pitch [relay_deg] [cycles] [tl|zn|so]` — start pitch autotune
+- `autotune roll [relay_deg] [cycles] [tl|zn|so]` — start roll autotune
+- `autotune abort` — abort active autotune, restore original gains
+- `savepid` — save current PID gains to flash without autotuning
+
+Computed gains are auto-saved to flash and auto-loaded on next boot.
 
 ### Next Steps
-1. **Verify ICM-42686 on hardware** — test attitude in TUI and CRSF telemetry
-2. **Tune AHRS** — adjust Madgwick beta (currently 0.033), verify axis mapping
-3. **Test ULog start/stop/extract/erase on hardware** — record data via RC switch or TUI command, extract via TUI, verify .ulg file
-4. **Explore async SPI** — If IMU task moves to Core0, or DMA cross-core routing is confirmed, enable `async` feature on `icm426xx` for DMA-based SPI
+See `TODO.md` for prioritized task list (DShot, mag calibration, waypoint navigation, pitot tube).
