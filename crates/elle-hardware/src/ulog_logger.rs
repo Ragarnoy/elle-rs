@@ -189,6 +189,7 @@ impl ULogLogger {
     }
 
     /// Log commands data
+    #[allow(clippy::too_many_arguments)]
     pub async fn log_commands(
         &mut self,
         throttle: f32,

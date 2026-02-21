@@ -37,7 +37,6 @@ performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
 rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless"]
 gnss = ["sam-m10q", "elle-hardware/gnss"]
-ulog-logging = ["elle-hardware/ulog-logging"]
 crsf-telemetry = ["elle-hardware/crsf-telemetry"]
 
 [[bin]]

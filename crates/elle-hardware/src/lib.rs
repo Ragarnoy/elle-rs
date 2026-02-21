@@ -8,7 +8,6 @@ pub mod led;
 pub mod pwm;
 pub mod sequential_flash_manager;
 
-#[cfg(feature = "ulog-logging")]
 pub mod ulog_logger;
 
 #[cfg(feature = "crsf-telemetry")]
@@ -22,5 +21,4 @@ pub use led::LedPattern;
 pub use pwm::{PwmOutputs, PwmPins};
 pub use sequential_flash_manager::SequentialFlashManager;
 
-#[cfg(feature = "ulog-logging")]
 pub use ulog_logger::ULogLogger;

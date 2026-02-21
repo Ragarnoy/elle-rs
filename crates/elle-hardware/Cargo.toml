@@ -7,7 +7,7 @@ edition.workspace = true
 elle-error = { workspace = true }
 elle-config = { workspace = true }
 elle-control = { workspace = true }
-elle-ulog = { workspace = true, optional = true }
+elle-ulog = { workspace = true }
 
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
@@ -36,7 +36,6 @@ heapless = { workspace = true }
 
 [features]
 performance-monitoring = []
-ulog-logging = ["elle-ulog"]  # Enable ULog flash logging
 disable-imu = []  # Disable IMU for debugging (enabled by default, use this flag to disable)
 crsf-telemetry = ["crc"]  # Enable CRSF telemetry TX to radio
 gnss = []  # Enable GPS telemetry frames (requires crsf-telemetry)

@@ -27,7 +27,6 @@ use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains
 use elle_hardware::imu::{
     ATTITUDE_SIGNAL, AttitudeData, IMU_STATUS, Imu, LED_COMMAND_CHANNEL, is_attitude_valid,
 };
-#[cfg(feature = "ulog-logging")]
 use elle_hardware::imu::{BARO_CACHE, MAG_CACHE};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
@@ -35,7 +34,6 @@ use elle_hardware::{
     sequential_flash_manager::SequentialFlashManager,
 };
 
-#[cfg(feature = "ulog-logging")]
 use elle_hardware::ULogLogger;
 
 use elle_hardware::crsf::{CrsfReceiver, RC_COMMANDS, crsf_receiver_task, crsf_uart_config};
@@ -49,12 +47,10 @@ pub mod flight_state;
 #[cfg(feature = "rpc-control")]
 mod rpc_app;
 
-#[cfg(feature = "ulog-logging")]
-use elle_system::update_ulog_timing;
 use elle_system::{
     FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
     TimingMeasurement, log_performance_summary, supervisor_task, update_control_loop_timing,
-    update_led_timing,
+    update_led_timing, update_ulog_timing,
 };
 use embassy_executor::{Executor, Spawner};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
@@ -72,9 +68,7 @@ use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
-#[cfg(any(feature = "ulog-logging", feature = "rpc-control"))]
-use embassy_time::Instant;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -90,7 +84,6 @@ fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
 /// - Attitude: 77Hz (every call)
 /// - Commands: 77Hz (every call)
 /// - Status: 7.7Hz (every 10th call)
-#[cfg(feature = "ulog-logging")]
 async fn log_flight_data(
     logger: &mut ULogLogger,
     attitude: Option<&AttitudeData>,
@@ -431,7 +424,6 @@ async fn main(spawner: Spawner) {
     drop(status);
 
     // ULog logger created but NOT initialized — user starts recording via `ulog start`
-    #[cfg(feature = "ulog-logging")]
     let mut ulog_logger = ULogLogger::new();
 
     // Boot-time PID profile load from flash
@@ -507,7 +499,6 @@ async fn main(spawner: Spawner) {
     {
         info!("FLIGHT MODE - CRSF/ELRS Control");
 
-        #[cfg(feature = "ulog-logging")]
         let mut ulog_recording = false;
 
         // Autotune state
@@ -739,57 +730,54 @@ async fn main(spawner: Spawner) {
                 }
 
                 // ULog recording controlled by RC switch
-                #[cfg(feature = "ulog-logging")]
-                {
-                    let switch_on = if let PilotCommands::Raw(raw) = commands {
-                        raw.channels[elle_config::ULOG_ENABLE_CH]
-                            > elle_config::ULOG_ENABLE_THRESHOLD
-                    } else {
-                        false
-                    };
+                let switch_on = if let PilotCommands::Raw(raw) = commands {
+                    raw.channels[elle_config::ULOG_ENABLE_CH]
+                        > elle_config::ULOG_ENABLE_THRESHOLD
+                } else {
+                    false
+                };
 
-                    if switch_on && !ulog_recording {
-                        // Switch just turned on — initialize and start
-                        if !ulog_logger.is_initialized() {
-                            let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
-                            let _ = ulog_logger.initialize(wall_ms).await;
-                        }
-                        if ulog_logger.is_initialized() {
-                            ulog_recording = true;
-                            elle_hardware::elle_event!(
-                                info,
-                                elle_hardware::event::EVT_ULOG_RC_ON,
-                                "ULog recording ON (RC switch)"
-                            );
-                        }
-                    } else if !switch_on && ulog_recording {
-                        // Switch just turned off — flush and stop
-                        let _ = ulog_logger.flush().await;
-                        ulog_recording = false;
+                if switch_on && !ulog_recording {
+                    // Switch just turned on — initialize and start
+                    if !ulog_logger.is_initialized() {
+                        let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
+                        let _ = ulog_logger.initialize(wall_ms).await;
+                    }
+                    if ulog_logger.is_initialized() {
+                        ulog_recording = true;
                         elle_hardware::elle_event!(
                             info,
-                            elle_hardware::event::EVT_ULOG_RC_OFF,
-                            "ULog recording OFF (RC switch)"
+                            elle_hardware::event::EVT_ULOG_RC_ON,
+                            "ULog recording ON (RC switch)"
                         );
                     }
+                } else if !switch_on && ulog_recording {
+                    // Switch just turned off — flush and stop
+                    let _ = ulog_logger.flush().await;
+                    ulog_recording = false;
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_ULOG_RC_OFF,
+                        "ULog recording OFF (RC switch)"
+                    );
+                }
 
-                    if ulog_recording {
-                        log_flight_data(
-                            &mut ulog_logger,
-                            valid_attitude.as_ref(),
-                            commands,
-                            loop_counter,
-                            loop_timer.elapsed_us(),
-                            &fc,
-                        )
-                        .await;
-                    } else if loop_counter % 77 == 0 {
-                        // Drain stale events when not recording (~1Hz)
-                        while elle_hardware::event::ULOG_EVENT_CHANNEL
-                            .try_receive()
-                            .is_ok()
-                        {}
-                    }
+                if ulog_recording {
+                    log_flight_data(
+                        &mut ulog_logger,
+                        valid_attitude.as_ref(),
+                        commands,
+                        loop_counter,
+                        loop_timer.elapsed_us(),
+                        &fc,
+                    )
+                    .await;
+                } else if loop_counter.is_multiple_of(77) {
+                    // Drain stale events when not recording (~1Hz)
+                    while elle_hardware::event::ULOG_EVENT_CHANNEL
+                        .try_receive()
+                        .is_ok()
+                    {}
                 }
             }
 
@@ -960,43 +948,29 @@ async fn main(spawner: Spawner) {
                         );
                     }
                     RpcCommand::StartULog => {
-                        #[cfg(feature = "ulog-logging")]
-                        {
-                            let mut ok = ulog_logger.is_initialized();
-                            if !ok {
-                                let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
-                                ok = ulog_logger.initialize(wall_ms).await.is_ok();
-                            }
-                            if ok {
-                                ULOG_ENABLED.store(true, Ordering::Release);
-                                elle_hardware::elle_event!(
-                                    info,
-                                    elle_hardware::event::EVT_ULOG_STARTED,
-                                    "ULog recording started"
-                                );
-                            } else {
-                                elle_hardware::elle_event!(
-                                    error,
-                                    elle_hardware::event::EVT_ULOG_INIT_FAILED,
-                                    "ULog init failed"
-                                );
-                            }
+                        let mut ok = ulog_logger.is_initialized();
+                        if !ok {
+                            let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
+                            ok = ulog_logger.initialize(wall_ms).await.is_ok();
                         }
-                        #[cfg(not(feature = "ulog-logging"))]
-                        {
+                        if ok {
+                            ULOG_ENABLED.store(true, Ordering::Release);
                             elle_hardware::elle_event!(
-                                warn,
-                                elle_hardware::event::EVT_ULOG_NOT_COMPILED,
-                                "ULog not compiled in"
+                                info,
+                                elle_hardware::event::EVT_ULOG_STARTED,
+                                "ULog recording started"
+                            );
+                        } else {
+                            elle_hardware::elle_event!(
+                                error,
+                                elle_hardware::event::EVT_ULOG_INIT_FAILED,
+                                "ULog init failed"
                             );
                         }
                     }
                     RpcCommand::StopULog => {
                         ULOG_ENABLED.store(false, Ordering::Release);
-                        #[cfg(feature = "ulog-logging")]
-                        {
-                            let _ = ulog_logger.flush().await;
-                        }
+                        let _ = ulog_logger.flush().await;
                         elle_hardware::elle_event!(
                             info,
                             elle_hardware::event::EVT_ULOG_STOPPED,
@@ -1314,7 +1288,6 @@ async fn main(spawner: Spawner) {
             }
 
             // Log flight data to ULog flash storage (only when recording is active)
-            #[cfg(feature = "ulog-logging")]
             if ULOG_ENABLED.load(Ordering::Acquire) {
                 log_flight_data(
                     &mut ulog_logger,
@@ -1325,7 +1298,7 @@ async fn main(spawner: Spawner) {
                     &fc,
                 )
                 .await;
-            } else if loop_counter % 77 == 0 {
+            } else if loop_counter.is_multiple_of(77) {
                 // Drain stale events when not recording (~1Hz)
                 while elle_hardware::event::ULOG_EVENT_CHANNEL
                     .try_receive()
