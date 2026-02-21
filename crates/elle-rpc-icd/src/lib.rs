@@ -206,6 +206,19 @@ pub struct SetAttitudeSetpointReq {
     pub roll_cdeg: i16,
 }
 
+/// Start autotune on a specific axis
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct StartAutotuneReq {
+    /// 0=pitch, 1=roll
+    pub axis: u8,
+    /// Relay amplitude * 10 (e.g. 50 = 5.0°)
+    pub relay_deg_x10: u8,
+    /// Number of measurable cycles to collect
+    pub num_cycles: u8,
+    /// Tuning rule: 0=TyreusLuyben, 1=ZieglerNichols, 2=SomeOvershoot
+    pub rule: u8,
+}
+
 /// GNSS position fix response
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GnssResp {
@@ -269,6 +282,8 @@ endpoints! {
     | GetControllerOutputEndpoint | ()              | ControllerOutputResp | "elle/query/ctrl_out" |
     | SetPidGainsEndpoint       | SetPidGainsReq    | AckResp           | "elle/ctrl/pid"       |
     | SetAttitudeSetpointEndpoint | SetAttitudeSetpointReq | AckResp      | "elle/ctrl/setpoint"  |
+    | StartAutotuneEndpoint   | StartAutotuneReq  | AckResp           | "elle/ctrl/atune/start" |
+    | AbortAutotuneEndpoint   | ()                | AckResp           | "elle/ctrl/atune/abort" |
 }
 
 // ============================================================================

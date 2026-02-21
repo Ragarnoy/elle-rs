@@ -18,13 +18,16 @@ use crate::rpc_handlers::RpcCommand;
 pub static ULOG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 // ULog transfer state machine
-const ULOG_IDLE: u8 = 0;
-const ULOG_READING: u8 = 1;
-const ULOG_READY: u8 = 2;
-const ULOG_EMPTY: u8 = 3;
+#[repr(u8)]
+pub enum ULogState {
+    Idle = 0,
+    Reading = 1,
+    Ready = 2,
+    Empty = 3,
+}
 
 /// ULog transfer state (atomic for cross-context access)
-pub static ULOG_STATE: AtomicU8 = AtomicU8::new(ULOG_IDLE);
+pub static ULOG_STATE: AtomicU8 = AtomicU8::new(ULogState::Idle as u8);
 
 /// Full queue item buffer (up to ULOG_CHUNK_SIZE bytes) from flash peek
 pub static ULOG_ITEM_SIGNAL: Signal<CriticalSectionRawMutex, ([u8; ULOG_CHUNK_SIZE], usize)> =
@@ -99,14 +102,11 @@ fn handle_emergency_stop(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Ack
 
 fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> StatusResp {
     let imu_status = elle_hardware::imu::IMU_STATUS.try_read();
-    let state = crate::flight_state::FLIGHT_STATE.try_take();
-    if let Some(s) = state {
-        crate::flight_state::FLIGHT_STATE.signal(s); // put back
-    }
+    let state = crate::flight_state::FLIGHT_STATE_CACHE.lock(|c| c.get());
     StatusResp {
-        armed: state.map(|s| s.armed).unwrap_or(false),
-        failsafe: state.map(|s| s.failsafe).unwrap_or(false),
-        mode: state.map(|s| s.mode).unwrap_or(ControlMode::Manual),
+        armed: state.armed,
+        failsafe: state.failsafe,
+        mode: state.mode,
         imu_calibrated: imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
         imu_error_count: imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
     }
@@ -168,15 +168,11 @@ fn handle_get_version(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Versi
 }
 
 fn handle_get_magnetometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagnetometerResp {
-    if let Some(mag) = elle_hardware::imu::MAG_SIGNAL.try_take() {
-        elle_hardware::imu::MAG_SIGNAL.signal(mag); // put back
-        MagnetometerResp {
-            x: mag.x,
-            y: mag.y,
-            z: mag.z,
-        }
-    } else {
-        MagnetometerResp { x: 0, y: 0, z: 0 }
+    let mag = elle_hardware::imu::MAG_CACHE.lock(|c| c.get());
+    MagnetometerResp {
+        x: mag.x,
+        y: mag.y,
+        z: mag.z,
     }
 }
 
@@ -190,19 +186,11 @@ fn handle_get_rc_channels(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> R
 }
 
 fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> BarometerResp {
-    if let Some(baro) = elle_hardware::imu::BARO_SIGNAL.try_take() {
-        elle_hardware::imu::BARO_SIGNAL.signal(baro); // put back
-        BarometerResp {
-            pressure_hpa: baro.pressure_hpa,
-            temperature_c: baro.temperature_c,
-            altitude_m: baro.altitude_m,
-        }
-    } else {
-        BarometerResp {
-            pressure_hpa: 0.0,
-            temperature_c: 0.0,
-            altitude_m: 0.0,
-        }
+    let baro = elle_hardware::imu::BARO_CACHE.lock(|c| c.get());
+    BarometerResp {
+        pressure_hpa: baro.pressure_hpa,
+        temperature_c: baro.temperature_c,
+        altitude_m: baro.altitude_m,
     }
 }
 
@@ -223,7 +211,7 @@ fn handle_stop_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp 
 fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogReadResp {
     let state = ULOG_STATE.load(Ordering::Acquire);
     match state {
-        ULOG_READY => {
+        s if s == ULogState::Ready as u8 => {
             let offset = ULOG_OFFSET.load(Ordering::Acquire) as usize;
             let total = ULOG_ITEM_LEN.load(Ordering::Acquire) as usize;
 
@@ -235,7 +223,7 @@ fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> UL
 
                 if new_offset >= total {
                     // Item fully sent — pop it and prefetch next
-                    ULOG_STATE.store(ULOG_READING, Ordering::Release);
+                    ULOG_STATE.store(ULogState::Reading as u8, Ordering::Release);
                     ULOG_OFFSET.store(0, Ordering::Release);
                     let _ = ctx.cmd_sender.try_send(RpcCommand::PopAndPeekULog);
                 } else {
@@ -258,17 +246,17 @@ fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> UL
                 }
             }
         }
-        ULOG_EMPTY => {
-            ULOG_STATE.store(ULOG_IDLE, Ordering::Release);
+        s if s == ULogState::Empty as u8 => {
+            ULOG_STATE.store(ULogState::Idle as u8, Ordering::Release);
             ULogReadResp {
                 data: heapless::Vec::new(),
                 has_more: false,
                 pending: false,
             }
         }
-        ULOG_IDLE => {
+        s if s == ULogState::Idle as u8 => {
             // Start first read
-            ULOG_STATE.store(ULOG_READING, Ordering::Release);
+            ULOG_STATE.store(ULogState::Reading as u8, Ordering::Release);
             let _ = ctx.cmd_sender.try_send(RpcCommand::ReadULogChunk);
             ULogReadResp {
                 data: heapless::Vec::new(),
@@ -316,29 +304,16 @@ fn handle_get_controller_output(
     _hdr: VarHeader,
     _req: (),
 ) -> ControllerOutputResp {
-    if let Some(out) = crate::flight_state::CONTROLLER_OUTPUT.try_take() {
-        crate::flight_state::CONTROLLER_OUTPUT.signal(out); // put back
-        ControllerOutputResp {
-            pitch_correction_cp: (out.pitch_correction * 10000.0) as i16,
-            roll_correction_cp: (out.roll_correction * 10000.0) as i16,
-            pitch_setpoint_cdeg: (out.pitch_setpoint_deg * 100.0) as i16,
-            roll_setpoint_cdeg: (out.roll_setpoint_deg * 100.0) as i16,
-            elevon_left_us: out.elevon_left_us as u16,
-            elevon_right_us: out.elevon_right_us as u16,
-            engine_left_us: out.engine_left_us as u16,
-            engine_right_us: out.engine_right_us as u16,
-        }
-    } else {
-        ControllerOutputResp {
-            pitch_correction_cp: 0,
-            roll_correction_cp: 0,
-            pitch_setpoint_cdeg: 0,
-            roll_setpoint_cdeg: 0,
-            elevon_left_us: 0,
-            elevon_right_us: 0,
-            engine_left_us: 0,
-            engine_right_us: 0,
-        }
+    let out = crate::flight_state::CONTROLLER_OUTPUT_CACHE.lock(|c| c.get());
+    ControllerOutputResp {
+        pitch_correction_cp: (out.pitch_correction * 10000.0) as i16,
+        roll_correction_cp: (out.roll_correction * 10000.0) as i16,
+        pitch_setpoint_cdeg: (out.pitch_setpoint_deg * 100.0) as i16,
+        roll_setpoint_cdeg: (out.roll_setpoint_deg * 100.0) as i16,
+        elevon_left_us: out.elevon_left_us as u16,
+        elevon_right_us: out.elevon_right_us as u16,
+        engine_left_us: out.engine_left_us as u16,
+        engine_right_us: out.engine_right_us as u16,
     }
 }
 
@@ -371,6 +346,29 @@ fn handle_set_attitude_setpoint(
         pitch_deg: req.pitch_cdeg as f32 / 100.0,
         roll_deg: req.roll_cdeg as f32 / 100.0,
     }) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
+}
+
+fn handle_start_autotune(
+    ctx: &mut RpcContext,
+    _hdr: VarHeader,
+    req: StartAutotuneReq,
+) -> AckResp {
+    match ctx.cmd_sender.try_send(RpcCommand::StartAutotune {
+        axis: req.axis,
+        relay_deg_x10: req.relay_deg_x10,
+        num_cycles: req.num_cycles,
+        rule: req.rule,
+    }) {
+        Ok(()) => AckResp::ok(),
+        Err(_) => AckResp::error(1),
+    }
+}
+
+fn handle_abort_autotune(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    match ctx.cmd_sender.try_send(RpcCommand::AbortAutotune) {
         Ok(()) => AckResp::ok(),
         Err(_) => AckResp::error(1),
     }
@@ -439,6 +437,8 @@ postcard_rpc::define_dispatch! {
         | GetControllerOutputEndpoint | blocking | handle_get_controller_output |
         | SetPidGainsEndpoint       | blocking  | handle_set_pid_gains      |
         | SetAttitudeSetpointEndpoint | blocking | handle_set_attitude_setpoint |
+        | StartAutotuneEndpoint     | blocking  | handle_start_autotune       |
+        | AbortAutotuneEndpoint     | blocking  | handle_abort_autotune       |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

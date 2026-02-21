@@ -9,9 +9,10 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 use sequential_storage::cache::NoCache;
+use sequential_storage::map::{MapConfig, MapStorage};
 use sequential_storage::queue::{QueueConfig, QueueStorage};
 
-use crate::flash_constants::ULOG_FLASH_START;
+use crate::flash_constants::{PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_START};
 
 /// Inter-core communication signals for flash operations
 pub static FLASH_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, FlashRequest> = Signal::new();
@@ -34,7 +35,7 @@ pub struct SequentialFlashManager<'a> {
 
 impl<'a> SequentialFlashManager<'a> {
     #[must_use]
-    pub fn new(flash: FlashDevice<'a>) -> Self {
+    pub const fn new(flash: FlashDevice<'a>) -> Self {
         Self {
             flash: Some(flash),
             ulog_buffer: [0; ULOG_CHUNK_SIZE],
@@ -43,12 +44,12 @@ impl<'a> SequentialFlashManager<'a> {
     }
 
     /// Take the flash device out. Panics if already taken.
-    fn take_flash(&mut self) -> FlashDevice<'a> {
+    const fn take_flash(&mut self) -> FlashDevice<'a> {
         self.flash.take().expect("flash already taken")
     }
 
     /// Put the flash device back.
-    fn put_flash(&mut self, flash: FlashDevice<'a>) {
+    const fn put_flash(&mut self, flash: FlashDevice<'a>) {
         self.flash = Some(flash);
     }
 
@@ -84,6 +85,16 @@ impl<'a> SequentialFlashManager<'a> {
                 FlashRequest::EraseULog => {
                     info!("Flash: erasing ULog region");
                     let response = self.erase_ulog_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::SavePidProfile { data } => {
+                    let response = self.save_pid_profile_internal(&data).await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::LoadPidProfile => {
+                    let response = self.load_pid_profile_internal().await;
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
             }
@@ -190,6 +201,79 @@ impl<'a> SequentialFlashManager<'a> {
         self.put_flash(flash);
 
         response
+    }
+
+    /// Save PID profile to flash map storage
+    async fn save_pid_profile_internal(&mut self, data: &[u8; 32]) -> FlashResponse {
+        let flash = self.take_flash();
+        let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
+        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
+
+        let mut data_buffer = [0u8; 128];
+        let key: u8 = 1;
+        let value: &[u8] = data.as_slice();
+        let result = map.store_item(&mut data_buffer, &key, &value).await;
+
+        let (flash, _cache) = map.destroy();
+        self.put_flash(flash);
+
+        match result {
+            Ok(_) => {
+                info!("Flash: PID profile saved");
+                FlashResponse::PidProfileSaved
+            }
+            Err(e) => {
+                warn!("Flash: PID profile save failed: {:?}", Debug2Format(&e));
+                FlashResponse::PidProfileSaveFailed
+            }
+        }
+    }
+
+    /// Load PID profile from flash map storage
+    async fn load_pid_profile_internal(&mut self) -> FlashResponse {
+        let flash = self.take_flash();
+        let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
+        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
+
+        let mut data_buffer = [0u8; 128];
+        let key: u8 = 1;
+        let result: Result<Option<&[u8]>, _> =
+            map.fetch_item(&mut data_buffer, &key).await;
+
+        // Copy data out before destroying map (result borrows data_buffer via the slice)
+        let response = match result {
+            Ok(Some(slice)) if slice.len() == 32 => {
+                let mut out = [0u8; 32];
+                out.copy_from_slice(slice);
+                Some(out)
+            }
+            Ok(Some(slice)) => {
+                warn!(
+                    "Flash: PID profile wrong size ({}), expected 32",
+                    slice.len()
+                );
+                None
+            }
+            Ok(None) => None,
+            Err(e) => {
+                warn!("Flash: PID profile load failed: {:?}", Debug2Format(&e));
+                None
+            }
+        };
+
+        let (flash, _cache) = map.destroy();
+        self.put_flash(flash);
+
+        match response {
+            Some(data) => {
+                info!("Flash: PID profile loaded");
+                FlashResponse::PidProfileLoaded { data }
+            }
+            None => {
+                info!("Flash: No PID profile stored");
+                FlashResponse::PidProfileEmpty
+            }
+        }
     }
 
     /// Erase the entire ULog flash region

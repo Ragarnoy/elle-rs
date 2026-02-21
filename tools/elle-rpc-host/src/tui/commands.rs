@@ -34,9 +34,6 @@ pub async fn execute(
     match cmd.as_str() {
         "q" | "quit" | "exit" => CommandResult::Quit,
         "ping" => cmd_ping(client).await,
-        "status" => cmd_status(client, state).await,
-        "attitude" | "att" => cmd_attitude(client, state).await,
-        "version" | "ver" => cmd_version(client, state).await,
         "perf" => cmd_perf(client, state).await,
         "arm" => cmd_arm(client).await,
         "disarm" => cmd_disarm(client).await,
@@ -111,6 +108,7 @@ pub async fn execute(
                     "Usage: pid <Pkp> <Pki> <Pkd> <Rkp> <Rki> <Rkd> <scale> <ilimit>".into(),
                 );
             }
+            #[allow(clippy::type_complexity)]
             let parse = || -> Option<(f32, f32, f32, f32, f32, f32, f32, f32)> {
                 Some((
                     parts[1].parse().ok()?,
@@ -141,15 +139,49 @@ pub async fn execute(
                 _ => CommandResult::Err("Setpoint values must be valid floats".into()),
             }
         }
-        "ctrl" => cmd_controller_output(client, state).await,
         "time" => cmd_time(client).await,
-        "mag" => cmd_mag(client).await,
-        "gnss" | "gps" => cmd_gnss(client).await,
+        "autotune" | "atune" => {
+            if parts.len() < 2 {
+                return CommandResult::Err(
+                    "Usage: autotune <pitch|roll> [relay_deg] [cycles] [tl|zn|so] | autotune abort"
+                        .into(),
+                );
+            }
+            match parts[1].to_lowercase().as_str() {
+                "abort" | "stop" => cmd_autotune_abort(client).await,
+                "pitch" | "roll" => {
+                    let axis: u8 = if parts[1].to_lowercase() == "pitch" {
+                        0
+                    } else {
+                        1
+                    };
+                    let relay_deg: f32 = parts
+                        .get(2)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(5.0);
+                    let cycles: u8 = parts
+                        .get(3)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(6);
+                    let rule: u8 = match parts.get(4).map(|s| s.to_lowercase()).as_deref() {
+                        Some("zn") => 1,
+                        Some("so") => 2,
+                        _ => 0, // TyreusLuyben default
+                    };
+                    cmd_autotune_start(client, axis, relay_deg, cycles, rule).await
+                }
+                _ => CommandResult::Err(
+                    "autotune subcommand must be: pitch, roll, or abort".into(),
+                ),
+            }
+        }
+        "savepid" => cmd_savepid(client).await,
         "help" | "?" => CommandResult::Ok(
-            "query: ping status att perf ver time mag gnss ctrl | \
+            "query: ping perf time | \
              safety: arm disarm estop | \
              ctrl: thr <0-100> elv <L> <R> mode <man|mix|auto> pid <8 floats> sp <P> <R> | \
-             ulog: ulog <info|start|stop|extract|erase> | quit"
+             autotune: autotune <pitch|roll> [deg] [cycles] [tl|zn|so] | autotune abort | \
+             savepid | ulog: ulog <info|start|stop|extract|erase> | quit"
                 .into(),
         ),
         other => CommandResult::Unknown(other.into()),
@@ -161,44 +193,6 @@ async fn cmd_ping(client: &HostClient<WireError>) -> CommandResult {
         Ok(Ok(_)) => CommandResult::Ok("Pong!".into()),
         Ok(Err(e)) => CommandResult::Err(format!("Ping failed: {e}")),
         Err(_) => CommandResult::Err("Ping timeout".into()),
-    }
-}
-
-async fn cmd_status(client: &HostClient<WireError>, state: &mut AppState) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<GetStatusEndpoint>(&())).await {
-        Ok(Ok(s)) => {
-            state.status = Some(s);
-            CommandResult::Ok("Status updated".into())
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Status failed: {e}")),
-        Err(_) => CommandResult::Err("Status timeout".into()),
-    }
-}
-
-async fn cmd_attitude(client: &HostClient<WireError>, _state: &mut AppState) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<GetAttitudeEndpoint>(&())).await {
-        Ok(Ok(a)) => {
-            let msg = format!(
-                "P:{:.1} R:{:.1} Y:{:.1}",
-                a.pitch_cdeg as f32 / 100.0,
-                a.roll_cdeg as f32 / 100.0,
-                a.yaw_cdeg as f32 / 100.0,
-            );
-            CommandResult::Ok(msg)
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Attitude failed: {e}")),
-        Err(_) => CommandResult::Err("Attitude timeout".into()),
-    }
-}
-
-async fn cmd_version(client: &HostClient<WireError>, state: &mut AppState) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<GetVersionEndpoint>(&())).await {
-        Ok(Ok(v)) => {
-            state.version = Some(v);
-            CommandResult::Ok(format!("Firmware v{}.{}.{}", v.major, v.minor, v.patch))
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Version failed: {e}")),
-        Err(_) => CommandResult::Err("Version timeout".into()),
     }
 }
 
@@ -301,61 +295,7 @@ async fn cmd_time(client: &HostClient<WireError>) -> CommandResult {
     }
 }
 
-async fn cmd_mag(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<GetMagnetometerEndpoint>(&()),
-    )
-    .await
-    {
-        Ok(Ok(m)) => CommandResult::Ok(format!("Mag: X={} Y={} Z={}", m.x, m.y, m.z)),
-        Ok(Err(e)) => CommandResult::Err(format!("Mag failed: {e}")),
-        Err(_) => CommandResult::Err("Mag timeout".into()),
-    }
-}
-
-async fn cmd_gnss(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<GetGnssEndpoint>(&())).await {
-        Ok(Ok(g)) => CommandResult::Ok(format!(
-            "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} hdop={:.1}",
-            g.latitude, g.longitude, g.altitude_m, g.fix_quality, g.num_satellites, g.hdop
-        )),
-        Ok(Err(e)) => CommandResult::Err(format!("GNSS failed: {e}")),
-        Err(_) => CommandResult::Err("GNSS timeout".into()),
-    }
-}
-
-
-async fn cmd_controller_output(
-    client: &HostClient<WireError>,
-    state: &mut AppState,
-) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<GetControllerOutputEndpoint>(&()),
-    )
-    .await
-    {
-        Ok(Ok(c)) => {
-            let msg = format!(
-                "PID: P={:.4} R={:.4}  SP: P={:.1}° R={:.1}°  Elevon L={} R={}  Eng L={} R={}",
-                c.pitch_correction_cp as f32 / 10000.0,
-                c.roll_correction_cp as f32 / 10000.0,
-                c.pitch_setpoint_cdeg as f32 / 100.0,
-                c.roll_setpoint_cdeg as f32 / 100.0,
-                c.elevon_left_us,
-                c.elevon_right_us,
-                c.engine_left_us,
-                c.engine_right_us,
-            );
-            state.controller_output = Some(c);
-            CommandResult::Ok(msg)
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Controller output failed: {e}")),
-        Err(_) => CommandResult::Err("Controller output timeout".into()),
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 async fn cmd_set_pid_gains(
     client: &HostClient<WireError>,
     pkp: f32,
@@ -557,5 +497,66 @@ async fn cmd_ulog_erase(client: &HostClient<WireError>) -> CommandResult {
         Ok(Ok(ack)) => CommandResult::Err(format!("ULog erase failed (error: {})", ack.error_code)),
         Ok(Err(e)) => CommandResult::Err(format!("ULog erase failed: {e}")),
         Err(_) => CommandResult::Err("ULog erase timeout (30s)".into()),
+    }
+}
+
+async fn cmd_autotune_start(
+    client: &HostClient<WireError>,
+    axis: u8,
+    relay_deg: f32,
+    cycles: u8,
+    rule: u8,
+) -> CommandResult {
+    let relay_deg_x10 = (relay_deg * 10.0).clamp(1.0, 255.0) as u8;
+    let req = StartAutotuneReq {
+        axis,
+        relay_deg_x10,
+        num_cycles: cycles,
+        rule,
+    };
+    let axis_name = if axis == 0 { "pitch" } else { "roll" };
+    let rule_name = match rule {
+        1 => "ZieglerNichols",
+        2 => "SomeOvershoot",
+        _ => "TyreusLuyben",
+    };
+    match timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await {
+        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!(
+            "Autotune started: {axis_name} relay={relay_deg}° cycles={cycles} rule={rule_name}"
+        )),
+        Ok(Ok(ack)) => {
+            CommandResult::Err(format!("Autotune start failed (error: {})", ack.error_code))
+        }
+        Ok(Err(e)) => CommandResult::Err(format!("Autotune start failed: {e}")),
+        Err(_) => CommandResult::Err("Autotune start timeout".into()),
+    }
+}
+
+async fn cmd_autotune_abort(client: &HostClient<WireError>) -> CommandResult {
+    match timeout(CMD_TIMEOUT, client.send_resp::<AbortAutotuneEndpoint>(&())).await {
+        Ok(Ok(ack)) if ack.success => CommandResult::Ok("Autotune aborted".into()),
+        Ok(Ok(ack)) => {
+            CommandResult::Err(format!("Autotune abort failed (error: {})", ack.error_code))
+        }
+        Ok(Err(e)) => CommandResult::Err(format!("Autotune abort failed: {e}")),
+        Err(_) => CommandResult::Err("Autotune abort timeout".into()),
+    }
+}
+
+async fn cmd_savepid(client: &HostClient<WireError>) -> CommandResult {
+    // Send StartAutotune with axis=0xFF — firmware interprets this as "save current PID to flash"
+    let req = StartAutotuneReq {
+        axis: 0xFF, // Magic value = save current PID gains to flash
+        relay_deg_x10: 0,
+        num_cycles: 0,
+        rule: 0,
+    };
+    match timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await {
+        Ok(Ok(ack)) if ack.success => CommandResult::Ok("PID gains save requested".into()),
+        Ok(Ok(ack)) => {
+            CommandResult::Err(format!("PID save failed (error: {})", ack.error_code))
+        }
+        Ok(Err(e)) => CommandResult::Err(format!("PID save failed: {e}")),
+        Err(_) => CommandResult::Err("PID save timeout".into()),
     }
 }

@@ -14,6 +14,10 @@ pub enum FlashRequest {
     PeekULog,
     PopULog,
     EraseULog,
+    SavePidProfile {
+        data: [u8; 32],
+    },
+    LoadPidProfile,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -29,4 +33,10 @@ pub enum FlashResponse {
     ULogPopSuccess,
     ULogEraseSuccess,
     ULogEraseFailed,
+    PidProfileSaved,
+    PidProfileSaveFailed,
+    PidProfileLoaded {
+        data: [u8; 32],
+    },
+    PidProfileEmpty,
 }

@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![allow(clippy::too_many_arguments)] // embassy task macros generate wrapper fns
 
 //! Firmware for the XFly Eagle Testbed with WS2812B LED
 
@@ -22,11 +23,12 @@ use elle_config::{
 };
 #[cfg(not(feature = "rpc-control"))]
 use elle_control::commands::PilotCommands;
+use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains};
 use elle_hardware::imu::{
     ATTITUDE_SIGNAL, AttitudeData, IMU_STATUS, Imu, LED_COMMAND_CHANNEL, is_attitude_valid,
 };
 #[cfg(feature = "ulog-logging")]
-use elle_hardware::imu::{BARO_SIGNAL, MAG_SIGNAL};
+use elle_hardware::imu::{BARO_CACHE, MAG_CACHE};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
     pwm::{PwmOutputs, PwmPins},
@@ -164,20 +166,16 @@ async fn log_flight_data(
     }
 
     // Log barometer at ~2Hz (every 38 iterations)
-    if loop_counter.is_multiple_of(38)
-        && let Some(baro) = BARO_SIGNAL.try_take()
-    {
-        BARO_SIGNAL.signal(baro); // put back for other readers
+    if loop_counter.is_multiple_of(38) {
+        let baro = BARO_CACHE.lock(|c| c.get());
         let _ = logger
             .log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m)
             .await;
     }
 
     // Log magnetometer at ~10Hz (every 8 iterations)
-    if loop_counter.is_multiple_of(8)
-        && let Some(mag) = MAG_SIGNAL.try_take()
-    {
-        MAG_SIGNAL.signal(mag); // put back for other readers
+    if loop_counter.is_multiple_of(8) {
+        let mag = MAG_CACHE.lock(|c| c.get());
         let _ = logger
             .log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32)
             .await;
@@ -436,6 +434,55 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "ulog-logging")]
     let mut ulog_logger = ULogLogger::new();
 
+    // Boot-time PID profile load from flash
+    {
+        use elle_config::profile::{FlashRequest, FlashResponse};
+        use elle_hardware::sequential_flash_manager::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+
+        info!("Core0: Loading PID profile from flash");
+        FLASH_REQUEST_SIGNAL.signal(FlashRequest::LoadPidProfile);
+        let load_timeout = Timer::after(Duration::from_secs(2));
+        match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), load_timeout).await {
+            embassy_futures::select::Either::First(FlashResponse::PidProfileLoaded { data }) => {
+                if let Some(gains) = SavedGains::from_bytes(&data) {
+                    fc.apply_saved_gains(&gains);
+                    info!(
+                        "Core0: PID loaded P({}/{}/{}) R({}/{}/{}) s={} il={}",
+                        (gains.pitch_kp * 1000.0) as i32,
+                        (gains.pitch_ki * 1000.0) as i32,
+                        (gains.pitch_kd * 1000.0) as i32,
+                        (gains.roll_kp * 1000.0) as i32,
+                        (gains.roll_ki * 1000.0) as i32,
+                        (gains.roll_kd * 1000.0) as i32,
+                        (gains.scale * 10000.0) as i32,
+                        (gains.i_limit * 10.0) as i32,
+                    );
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_PID_LOADED,
+                        "PID profile loaded from flash"
+                    );
+                } else {
+                    warn!("PID profile: invalid data in flash, using defaults");
+                }
+            }
+            embassy_futures::select::Either::First(FlashResponse::PidProfileEmpty) => {
+                info!("Core0: No PID profile saved, using defaults");
+                elle_hardware::elle_event!(
+                    info,
+                    elle_hardware::event::EVT_PID_LOAD_EMPTY,
+                    "No PID profile in flash"
+                );
+            }
+            embassy_futures::select::Either::First(_) => {
+                warn!("Core0: Unexpected flash response for PID load");
+            }
+            embassy_futures::select::Either::Second(_) => {
+                warn!("Core0: PID profile load timeout, using defaults");
+            }
+        }
+    }
+
     info!("Core0: Starting main control loop");
 
     // Test timing precision (only when performance monitoring is enabled)
@@ -462,6 +509,15 @@ async fn main(spawner: Spawner) {
 
         #[cfg(feature = "ulog-logging")]
         let mut ulog_recording = false;
+
+        // Autotune state
+        let mut autotuner = Autotuner::new();
+        let mut autotune_tick: u32 = 0;
+        let mut autotune_debounce_pos: u8 = 0; // 0=Off, 1=Pitch, 2=Roll
+        let mut autotune_debounce_count: u32 = 0;
+        let mut autotune_stable_pos: u8 = 0;
+        let mut pitch_tune_done: bool = false;
+        let mut save_pending: Option<[u8; 32]> = None;
 
         // Create ticker for precise 13ms periods (77Hz)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
@@ -520,8 +576,167 @@ async fn main(spawner: Spawner) {
                         armed: fc.is_armed(),
                         failsafe: fc.is_failsafe(),
                         attitude_mode: fc.is_attitude_enabled(),
+                        autotuning: autotuner.is_active(),
                     },
                 );
+
+                // --- Autotune RC switch logic (CH9, 3-position with debounce) ---
+                if let PilotCommands::Raw(raw) = commands {
+                    let ch9 = raw.channels[elle_config::AUTOTUNE_CH];
+                    let current_pos: u8 = if ch9 < elle_config::AUTOTUNE_OFF_THRESHOLD {
+                        0 // Off
+                    } else if ch9 < elle_config::AUTOTUNE_PITCH_THRESHOLD {
+                        1 // Pitch
+                    } else {
+                        2 // Roll
+                    };
+
+                    // Debounce
+                    if current_pos == autotune_debounce_pos {
+                        autotune_debounce_count += 1;
+                    } else {
+                        autotune_debounce_pos = current_pos;
+                        autotune_debounce_count = 0;
+                    }
+
+                    if autotune_debounce_count == elle_config::AUTOTUNE_DEBOUNCE_TICKS {
+                        let new_pos = autotune_debounce_pos;
+
+                        if new_pos == 0 && autotuner.is_active() {
+                            // Abort: switch moved to off while active
+                            if let Some(saved) = autotuner.abort() {
+                                fc.apply_saved_gains(&saved);
+                                fc.clear_setpoint_override();
+                                elle_hardware::elle_event!(
+                                    warn,
+                                    elle_hardware::event::EVT_AUTOTUNE_ABORTED,
+                                    "Autotune ABORTED (RC switch off)"
+                                );
+                            }
+                        } else if autotune_stable_pos == 0
+                            && (new_pos == 1 && !pitch_tune_done || new_pos == 2)
+                            && !autotuner.is_active()
+                        {
+                            // Start: from off to pitch (not locked) or roll
+                            if fc.is_armed() && fc.is_attitude_enabled() {
+                                let axis = if new_pos == 1 {
+                                    AutotuneAxis::Pitch
+                                } else {
+                                    AutotuneAxis::Roll
+                                };
+                                let current_gains = fc.get_pid_gains();
+                                let test_gains = autotuner.start(
+                                    axis,
+                                    current_gains,
+                                    5.0,  // relay_deg
+                                    6,    // num_cycles
+                                    elle_control::autotune::TuningRule::TyreusLuyben,
+                                    autotune_tick,
+                                );
+                                fc.apply_saved_gains(&test_gains);
+                                elle_hardware::elle_event!(
+                                    info,
+                                    elle_hardware::event::EVT_AUTOTUNE_STARTED,
+                                    "Autotune STARTED (axis={})",
+                                    if new_pos == 1 { "pitch" } else { "roll" }
+                                );
+                            }
+                        }
+                        // Completion lock: ignore mid position if pitch already done
+                        // (no action needed, the conditions above skip it)
+
+                        autotune_stable_pos = new_pos;
+                    }
+                }
+
+                // Autotune state machine tick
+                if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
+                    let measurement_deg = if autotune_stable_pos == 1 {
+                        att.pitch * (180.0 / core::f32::consts::PI)
+                    } else {
+                        att.roll * (180.0 / core::f32::consts::PI)
+                    };
+
+                    match autotuner.update(measurement_deg, autotune_tick) {
+                        AutotuneAction::None => {}
+                        AutotuneAction::SetpointOverride { pitch_deg, roll_deg } => {
+                            fc.set_setpoint_override(pitch_deg, roll_deg);
+                        }
+                        AutotuneAction::ApplyGains(gains) => {
+                            fc.apply_saved_gains(&gains);
+                        }
+                        AutotuneAction::RestoreGains(gains) => {
+                            fc.apply_saved_gains(&gains);
+                            fc.clear_setpoint_override();
+                            elle_hardware::elle_event!(
+                                warn,
+                                elle_hardware::event::EVT_AUTOTUNE_ESTOP,
+                                "Autotune safety abort (timeout/amplitude)"
+                            );
+                        }
+                        AutotuneAction::Completed(result) => {
+                            if let Some(gains) = autotuner.computed_gains() {
+                                fc.apply_saved_gains(&gains);
+                                save_pending = Some(gains.to_bytes());
+                            }
+                            fc.clear_setpoint_override();
+                            if result.axis == AutotuneAxis::Pitch {
+                                pitch_tune_done = true;
+                            }
+                            info!(
+                                "Autotune COMPLETE: Ku={} Tu={}ms kp={} ki={} kd={} amp={}cdeg cycles={}",
+                                (result.ku * 1000.0) as i32,
+                                (result.tu_s * 1000.0) as i32,
+                                (result.kp * 1000.0) as i32,
+                                (result.ki * 1000.0) as i32,
+                                (result.kd * 1000.0) as i32,
+                                (result.amplitude_deg * 100.0) as i32,
+                                result.cycles,
+                            );
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_AUTOTUNE_COMPLETE,
+                                "Autotune COMPLETE"
+                            );
+                        }
+                    }
+                }
+
+                autotune_tick += 1;
+
+                // Auto-save PID gains to flash after autotune completion
+                if let Some(data) = save_pending.take() {
+                    use elle_config::profile::{FlashRequest, FlashResponse};
+                    use elle_hardware::sequential_flash_manager::{
+                        FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
+                    };
+
+                    FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
+                    let save_timeout = Timer::after(Duration::from_secs(5));
+                    match embassy_futures::select::select(
+                        FLASH_RESPONSE_SIGNAL.wait(),
+                        save_timeout,
+                    )
+                    .await
+                    {
+                        embassy_futures::select::Either::First(
+                            FlashResponse::PidProfileSaved,
+                        ) => {
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_PID_SAVED,
+                                "PID gains saved to flash"
+                            );
+                        }
+                        _ => {
+                            elle_hardware::elle_event!(
+                                warn,
+                                elle_hardware::event::EVT_PID_SAVE_FAILED,
+                                "PID gains flash save failed"
+                            );
+                        }
+                    }
+                }
 
                 // ULog recording controlled by RC switch
                 #[cfg(feature = "ulog-logging")]
@@ -568,8 +783,8 @@ async fn main(spawner: Spawner) {
                             &fc,
                         )
                         .await;
-                    } else {
-                        // Drain stale events when not recording
+                    } else if loop_counter % 77 == 0 {
+                        // Drain stale events when not recording (~1Hz)
                         while elle_hardware::event::ULOG_EVENT_CHANNEL
                             .try_receive()
                             .is_ok()
@@ -622,7 +837,9 @@ async fn main(spawner: Spawner) {
         use elle_hardware::sequential_flash_manager::{
             FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
         };
-        use rpc_app::{ULOG_ENABLED, ULOG_ITEM_LEN, ULOG_ITEM_SIGNAL, ULOG_OFFSET, ULOG_STATE};
+        use rpc_app::{
+            ULOG_ENABLED, ULOG_ITEM_LEN, ULOG_ITEM_SIGNAL, ULOG_OFFSET, ULOG_STATE, ULogState,
+        };
         use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
 
         info!("GROUND TEST MODE - RPC Control (postcard-RPC over RTT)");
@@ -638,6 +855,11 @@ async fn main(spawner: Spawner) {
         let mut rpc_mode = AttitudeMode::Manual;
         let mut rpc_pitch_setpoint_deg: f32 = 0.0;
         let mut rpc_roll_setpoint_deg: f32 = 0.0;
+
+        // Autotuner state (same pattern as flight mode)
+        let mut autotuner = Autotuner::new();
+        let mut autotune_tick: u32 = 0;
+        let mut rpc_save_pending: Option<[u8; 32]> = None;
 
         loop {
             ticker.next().await;
@@ -787,13 +1009,13 @@ async fn main(spawner: Spawner) {
                             FlashResponse::ULogData { data, len } => {
                                 ULOG_ITEM_LEN.store(len as u16, Ordering::Release);
                                 ULOG_ITEM_SIGNAL.signal((data, len));
-                                ULOG_STATE.store(2, Ordering::Release); // ULOG_READY
+                                ULOG_STATE.store(ULogState::Ready as u8, Ordering::Release);
                             }
                             FlashResponse::ULogEmpty => {
-                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY
+                                ULOG_STATE.store(ULogState::Empty as u8, Ordering::Release);
                             }
                             _ => {
-                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY on error
+                                ULOG_STATE.store(ULogState::Empty as u8, Ordering::Release);
                             }
                         }
                     }
@@ -807,13 +1029,13 @@ async fn main(spawner: Spawner) {
                             FlashResponse::ULogData { data, len } => {
                                 ULOG_ITEM_LEN.store(len as u16, Ordering::Release);
                                 ULOG_ITEM_SIGNAL.signal((data, len));
-                                ULOG_STATE.store(2, Ordering::Release); // ULOG_READY
+                                ULOG_STATE.store(ULogState::Ready as u8, Ordering::Release);
                             }
                             FlashResponse::ULogEmpty => {
-                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY
+                                ULOG_STATE.store(ULogState::Empty as u8, Ordering::Release);
                             }
                             _ => {
-                                ULOG_STATE.store(3, Ordering::Release); // ULOG_EMPTY on error
+                                ULOG_STATE.store(ULogState::Empty as u8, Ordering::Release);
                             }
                         }
                     }
@@ -823,7 +1045,7 @@ async fn main(spawner: Spawner) {
                         FLASH_REQUEST_SIGNAL.signal(FlashRequest::EraseULog);
                         let _ = FLASH_RESPONSE_SIGNAL.wait().await;
                         // Reset ULog transfer state
-                        ULOG_STATE.store(0, Ordering::Release); // ULOG_IDLE
+                        ULOG_STATE.store(ULogState::Idle as u8, Ordering::Release);
                         ULOG_OFFSET.store(0, Ordering::Release);
                         ULOG_ITEM_LEN.store(0, Ordering::Release);
                         elle_hardware::elle_event!(
@@ -831,6 +1053,123 @@ async fn main(spawner: Spawner) {
                             elle_hardware::event::EVT_ULOG_ERASED,
                             "ULog: flash erased"
                         );
+                    }
+                    RpcCommand::StartAutotune {
+                        axis,
+                        relay_deg_x10,
+                        num_cycles,
+                        rule,
+                    } => {
+                        if axis == 0xFF {
+                            // Magic value: save current PID gains to flash
+                            let gains = fc.get_pid_gains();
+                            let data = gains.to_bytes();
+                            FLASH_REQUEST_SIGNAL
+                                .signal(FlashRequest::SavePidProfile { data });
+                            let save_timeout = Timer::after(Duration::from_secs(5));
+                            match embassy_futures::select::select(
+                                FLASH_RESPONSE_SIGNAL.wait(),
+                                save_timeout,
+                            )
+                            .await
+                            {
+                                embassy_futures::select::Either::First(
+                                    FlashResponse::PidProfileSaved,
+                                ) => {
+                                    elle_hardware::elle_event!(
+                                        info,
+                                        elle_hardware::event::EVT_PID_SAVED,
+                                        "PID gains saved to flash (savepid)"
+                                    );
+                                }
+                                _ => {
+                                    elle_hardware::elle_event!(
+                                        warn,
+                                        elle_hardware::event::EVT_PID_SAVE_FAILED,
+                                        "PID gains flash save failed (savepid)"
+                                    );
+                                }
+                            }
+                        } else {
+                            use elle_control::autotune::TuningRule;
+                            if fc.is_armed()
+                                && fc.is_attitude_enabled()
+                                && !autotuner.is_active()
+                            {
+                                let at_axis = if axis == 0 {
+                                    AutotuneAxis::Pitch
+                                } else {
+                                    AutotuneAxis::Roll
+                                };
+                                let relay_deg = relay_deg_x10 as f32 / 10.0;
+                                let at_rule = match rule {
+                                    1 => TuningRule::ZieglerNichols,
+                                    2 => TuningRule::SomeOvershoot,
+                                    _ => TuningRule::TyreusLuyben,
+                                };
+                                let current_gains = fc.get_pid_gains();
+                                let test_gains = autotuner.start(
+                                    at_axis,
+                                    current_gains,
+                                    relay_deg,
+                                    num_cycles as usize,
+                                    at_rule,
+                                    autotune_tick,
+                                );
+                                fc.apply_saved_gains(&test_gains);
+                                elle_hardware::elle_event!(
+                                    info,
+                                    elle_hardware::event::EVT_AUTOTUNE_STARTED,
+                                    "Autotune STARTED via RPC (axis={})",
+                                    if axis == 0 { "pitch" } else { "roll" }
+                                );
+                            } else {
+                                info!(
+                                    "RPC: Autotune rejected (armed={} attitude={} active={})",
+                                    fc.is_armed(),
+                                    fc.is_attitude_enabled(),
+                                    autotuner.is_active()
+                                );
+                            }
+                        }
+                    }
+                    RpcCommand::AbortAutotune => {
+                        if let Some(saved) = autotuner.abort() {
+                            fc.apply_saved_gains(&saved);
+                            fc.clear_setpoint_override();
+                            elle_hardware::elle_event!(
+                                warn,
+                                elle_hardware::event::EVT_AUTOTUNE_ABORTED,
+                                "Autotune ABORTED via RPC"
+                            );
+                        }
+                    }
+                    RpcCommand::SavePidProfile { data } => {
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
+                        let save_timeout = Timer::after(Duration::from_secs(5));
+                        match embassy_futures::select::select(
+                            FLASH_RESPONSE_SIGNAL.wait(),
+                            save_timeout,
+                        )
+                        .await
+                        {
+                            embassy_futures::select::Either::First(
+                                FlashResponse::PidProfileSaved,
+                            ) => {
+                                elle_hardware::elle_event!(
+                                    info,
+                                    elle_hardware::event::EVT_PID_SAVED,
+                                    "PID gains saved to flash (RPC)"
+                                );
+                            }
+                            _ => {
+                                elle_hardware::elle_event!(
+                                    warn,
+                                    elle_hardware::event::EVT_PID_SAVE_FAILED,
+                                    "PID gains flash save failed (RPC)"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -856,17 +1195,96 @@ async fn main(spawner: Spawner) {
             let valid_attitude = validate_attitude(attitude);
             fc.update(&commands, valid_attitude.as_ref());
 
+            // Autotuner per-tick update
+            if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
+                let measurement_deg = match autotuner.axis() {
+                    AutotuneAxis::Pitch => att.pitch * (180.0 / core::f32::consts::PI),
+                    AutotuneAxis::Roll => att.roll * (180.0 / core::f32::consts::PI),
+                };
+                match autotuner.update(measurement_deg, autotune_tick) {
+                    AutotuneAction::None => {}
+                    AutotuneAction::SetpointOverride { pitch_deg, roll_deg } => {
+                        fc.set_setpoint_override(pitch_deg, roll_deg);
+                    }
+                    AutotuneAction::ApplyGains(gains) => {
+                        fc.apply_saved_gains(&gains);
+                    }
+                    AutotuneAction::RestoreGains(gains) => {
+                        fc.apply_saved_gains(&gains);
+                        fc.clear_setpoint_override();
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_AUTOTUNE_ESTOP,
+                            "Autotune safety abort (timeout/amplitude)"
+                        );
+                    }
+                    AutotuneAction::Completed(result) => {
+                        if let Some(gains) = autotuner.computed_gains() {
+                            fc.apply_saved_gains(&gains);
+                            rpc_save_pending = Some(gains.to_bytes());
+                        }
+                        fc.clear_setpoint_override();
+                        info!(
+                            "Autotune COMPLETE: Ku={} Tu={}ms kp={} ki={} kd={} amp={}cdeg cycles={}",
+                            (result.ku * 1000.0) as i32,
+                            (result.tu_s * 1000.0) as i32,
+                            (result.kp * 1000.0) as i32,
+                            (result.ki * 1000.0) as i32,
+                            (result.kd * 1000.0) as i32,
+                            (result.amplitude_deg * 100.0) as i32,
+                            result.cycles,
+                        );
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_AUTOTUNE_COMPLETE,
+                            "Autotune COMPLETE (RPC)"
+                        );
+                    }
+                }
+            }
+            autotune_tick += 1;
+
+            // Auto-save PID gains to flash after autotune completion
+            if let Some(data) = rpc_save_pending.take() {
+                FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
+                let save_timeout = Timer::after(Duration::from_secs(5));
+                match embassy_futures::select::select(
+                    FLASH_RESPONSE_SIGNAL.wait(),
+                    save_timeout,
+                )
+                .await
+                {
+                    embassy_futures::select::Either::First(
+                        FlashResponse::PidProfileSaved,
+                    ) => {
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_PID_SAVED,
+                            "PID gains auto-saved to flash"
+                        );
+                    }
+                    _ => {
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_PID_SAVE_FAILED,
+                            "PID gains auto-save failed"
+                        );
+                    }
+                }
+            }
+
             #[cfg(feature = "crsf-telemetry")]
             elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
                 elle_hardware::crsf_telemetry::CrsfFlightMode {
                     armed: fc.is_armed(),
                     failsafe: fc.is_failsafe(),
                     attitude_mode: fc.is_attitude_enabled(),
+                    autotuning: autotuner.is_active(),
                 },
             );
 
             // Publish flight state for RPC handlers
-            flight_state::FLIGHT_STATE.signal(flight_state::FlightState {
+            let fs = flight_state::FlightState {
                 armed: fc.is_armed(),
                 failsafe: fc.is_failsafe(),
                 mode: match fc.current_control_mode() {
@@ -874,12 +1292,14 @@ async fn main(spawner: Spawner) {
                     elle_system::ControlMode::Mixed => ControlMode::Mixed,
                     elle_system::ControlMode::Autopilot => ControlMode::Autopilot,
                 },
-            });
+            };
+            flight_state::FLIGHT_STATE.signal(fs);
+            flight_state::FLIGHT_STATE_CACHE.lock(|c| c.set(fs));
 
             // Publish controller output for RPC observability
             {
                 let out = fc.last_output();
-                flight_state::CONTROLLER_OUTPUT.signal(flight_state::ControllerOutput {
+                let co = flight_state::ControllerOutput {
                     pitch_correction: out.pitch_correction,
                     roll_correction: out.roll_correction,
                     pitch_setpoint_deg: out.pitch_setpoint_deg,
@@ -888,7 +1308,9 @@ async fn main(spawner: Spawner) {
                     elevon_right_us: out.elevon_right_us,
                     engine_left_us: out.engine_left_us,
                     engine_right_us: out.engine_right_us,
-                });
+                };
+                flight_state::CONTROLLER_OUTPUT.signal(co);
+                flight_state::CONTROLLER_OUTPUT_CACHE.lock(|c| c.set(co));
             }
 
             // Log flight data to ULog flash storage (only when recording is active)
@@ -903,8 +1325,8 @@ async fn main(spawner: Spawner) {
                     &fc,
                 )
                 .await;
-            } else {
-                // Drain stale events when not recording
+            } else if loop_counter % 77 == 0 {
+                // Drain stale events when not recording (~1Hz)
                 while elle_hardware::event::ULOG_EVENT_CHANNEL
                     .try_receive()
                     .is_ok()
@@ -939,6 +1361,7 @@ async fn main(spawner: Spawner) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[embassy_executor::task]
 async fn imu_task(
     _spawner: Spawner,

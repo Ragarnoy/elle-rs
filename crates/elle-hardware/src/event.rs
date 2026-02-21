@@ -79,6 +79,18 @@ pub const EVT_ATTITUDE_STALE: u16 = 80;
 pub const EVT_ULOG_RC_ON: u16 = 81;
 pub const EVT_ULOG_RC_OFF: u16 = 82;
 
+// Autotune (90–99)
+pub const EVT_AUTOTUNE_STARTED: u16 = 90;
+pub const EVT_AUTOTUNE_COMPLETE: u16 = 91;
+pub const EVT_AUTOTUNE_ABORTED: u16 = 92;
+pub const EVT_AUTOTUNE_ESTOP: u16 = 93;
+
+// PID profile persistence (100–109)
+pub const EVT_PID_SAVED: u16 = 100;
+pub const EVT_PID_SAVE_FAILED: u16 = 101;
+pub const EVT_PID_LOADED: u16 = 102;
+pub const EVT_PID_LOAD_EMPTY: u16 = 103;
+
 // ---------------------------------------------------------------------------
 // Macro
 // ---------------------------------------------------------------------------

@@ -29,6 +29,17 @@ pub enum RpcCommand {
     ReadULogChunk,
     PopAndPeekULog,
     EraseULog,
+    StartAutotune {
+        axis: u8,
+        relay_deg_x10: u8,
+        num_cycles: u8,
+        rule: u8,
+    },
+    AbortAutotune,
+    #[allow(dead_code)] // pre-wired for savepid TUI command
+    SavePidProfile {
+        data: [u8; 32],
+    },
 }
 
 /// Channel for RPC commands to flight controller

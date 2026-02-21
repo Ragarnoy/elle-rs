@@ -29,6 +29,12 @@ pub const ASYNC_READ_SIZE: usize = 4;
 ///     - 0x210000 - 0xFFFFFF: ULog storage (14,680,064 bytes ≈ 14MB)
 ///     - ULog capacity: ~14MB ÷ 6KB/s = ~2,446 seconds ≈ 40 minutes of flight logging
 ///
+/// PID profile flash region start (64KB for map storage)
+pub const PROFILE_FLASH_START: u32 = 0x200000;
+
+/// PID profile flash region end
+pub const PROFILE_FLASH_END: u32 = 0x210000;
+
 /// ULog flash region start
 pub const ULOG_FLASH_START: u32 = 0x210000;
 

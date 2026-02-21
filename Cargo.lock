@@ -1064,6 +1064,7 @@ dependencies = [
  "elle-rpc-icd",
  "elle-system",
  "embassy-executor",
+ "embassy-futures",
  "embassy-rp",
  "embassy-sync",
  "embassy-time",
