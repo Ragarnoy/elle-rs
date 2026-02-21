@@ -3,7 +3,7 @@
 //! Frame format: `[0xC8 | len | type | payload... | crc8_dvb_s2]`
 //! where `len` = payload_len + 2 (type + CRC bytes), CRC covers type + payload.
 
-use crate::imu::{AttitudeData, BARO_SIGNAL, MAG_SIGNAL};
+use crate::imu::{AttitudeData, BARO_CACHE, MAG_CACHE};
 use crc::{CRC_8_DVB_S2, Crc};
 use defmt::warn;
 use embassy_rp::uart::{Async, UartTx};
@@ -36,6 +36,7 @@ pub struct CrsfFlightMode {
     pub armed: bool,
     pub failsafe: bool,
     pub attitude_mode: bool,
+    pub autotuning: bool,
 }
 
 /// Lightweight GPS data for telemetry (avoids dependency on elle-rpc-icd).
@@ -80,6 +81,8 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
         b"!FS!\0"
     } else if !mode.armed {
         b"WAIT\0"
+    } else if mode.autotuning {
+        b"ATUN\0"
     } else if mode.attitude_mode {
         b"STAB\0"
     } else {
@@ -176,11 +179,12 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
 
     let mut last_attitude = AttitudeData::zero();
     let mut last_heading: f32 = 0.0; // magnetic heading from MMC5616WA (radians)
-    let mut last_baro_alt: f32 = 0.0; // barometric altitude from BMP390
+    let mut last_baro_alt: f32; // barometric altitude from BMP390
     let mut last_mode = CrsfFlightMode {
         armed: false,
         failsafe: false,
         attitude_mode: false,
+        autotuning: false,
     };
 
     #[cfg(feature = "gnss")]
@@ -200,16 +204,17 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         if let Some(att) = TELEMETRY_ATTITUDE.try_take() {
             last_attitude = att;
         }
-        if let Some(mag) = MAG_SIGNAL.try_take() {
-            MAG_SIGNAL.signal(mag); // put back for RPC handler
-            // Use f64 for atan2 to preserve full i32 count precision
-            last_heading = libm::atan2(mag.y as f64, mag.x as f64) as f32;
+        {
+            let mag = MAG_CACHE.lock(|c| c.get());
+            if mag.x != 0 || mag.y != 0 || mag.z != 0 {
+                last_heading = libm::atan2f(mag.y as f32, mag.x as f32);
+            }
         }
         if let Some(mode) = CRSF_FLIGHT_MODE.try_take() {
             last_mode = mode;
         }
-        if let Some(baro) = BARO_SIGNAL.try_take() {
-            BARO_SIGNAL.signal(baro); // put back for RPC handler
+        {
+            let baro = BARO_CACHE.lock(|c| c.get());
             last_baro_alt = baro.altitude_m;
         }
 

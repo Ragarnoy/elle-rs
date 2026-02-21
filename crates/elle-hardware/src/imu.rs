@@ -88,6 +88,12 @@ pub fn is_attitude_valid(attitude: &AttitudeData, max_age: embassy_time::Duratio
 /// Magnetometer data for RPC handler (populated by MMC5616WA)
 pub static MAG_SIGNAL: Signal<CriticalSectionRawMutex, MagReading> = Signal::new();
 
+/// Non-consuming magnetometer cache for RPC queries and telemetry.
+/// Written alongside `MAG_SIGNAL` by the IMU task; read (without consuming) by
+/// RPC handlers and CRSF telemetry so they never race with signal consumers.
+pub static MAG_CACHE: Mutex<CriticalSectionRawMutex, Cell<MagReading>> =
+    Mutex::new(Cell::new(MagReading { x: 0, y: 0, z: 0 }));
+
 /// Magnetometer reading (signed counts from MMC5616WA)
 #[derive(Clone, Copy, Debug, Format)]
 pub struct MagReading {
@@ -98,6 +104,17 @@ pub struct MagReading {
 
 /// Barometer data for RPC handler (populated by BMP390)
 pub static BARO_SIGNAL: Signal<CriticalSectionRawMutex, BaroReading> = Signal::new();
+
+/// Non-consuming barometer cache for RPC queries and telemetry.
+/// Written alongside `BARO_SIGNAL` by the IMU task; read (without consuming) by
+/// RPC handlers and CRSF telemetry so they never race with signal consumers.
+pub static BARO_CACHE: Mutex<CriticalSectionRawMutex, Cell<BaroReading>> = Mutex::new(Cell::new(
+    BaroReading {
+        pressure_hpa: 0.0,
+        temperature_c: 0.0,
+        altitude_m: 0.0,
+    },
+));
 
 /// Barometer reading from BMP390
 #[derive(Clone, Copy, Debug, Format)]
@@ -186,7 +203,7 @@ impl<'a> Imu<'a> {
             spi_dev: Some(spi_dev),
             ahrs: ahrs::Madgwick::new(
                 elle_config::AHRS_SAMPLE_PERIOD_US as f32 / 1_000_000.0, // sample period in seconds
-                0.033, // Madgwick beta (conservative)
+                elle_config::AHRS_BETA,
             ),
             mag: mmc5616wa::Mmc5616wa::new_default(mag_i2c),
             baro: None,
@@ -433,28 +450,30 @@ impl<'a> Imu<'a> {
                 }
             }
 
-            // 4. Read MMC5616WA at ~10 Hz (every 100 iterations at 1 kHz)
+            // 4. Read MMC5616WA at ~10 Hz
             mag_counter += 1;
-            if self.mag_ok && mag_counter >= 100 {
+            if self.mag_ok && mag_counter >= elle_config::MAG_READ_INTERVAL_TICKS {
                 mag_counter = 0;
                 match self.mag.read_magnetic() {
                     Ok(data) => {
                         self.last_mag =
                             nalgebra::Vector3::new(data.x as f32, data.y as f32, data.z as f32);
                         self.has_mag = true;
-                        MAG_SIGNAL.signal(MagReading {
+                        let reading = MagReading {
                             x: data.x,
                             y: data.y,
                             z: data.z,
-                        });
+                        };
+                        MAG_SIGNAL.signal(reading);
+                        MAG_CACHE.lock(|c| c.set(reading));
                     }
                     Err(e) => warn!("MMC5616WA: read error: {}", e),
                 }
             }
 
-            // 5. Read BMP390 at ~2 Hz (every 500 iterations at 1 kHz)
+            // 5. Read BMP390 at ~2 Hz
             baro_counter += 1;
-            if baro_counter >= 500 {
+            if baro_counter >= elle_config::BARO_READ_INTERVAL_TICKS {
                 baro_counter = 0;
                 if let Some(baro) = &mut self.baro {
                     match baro.measure() {
@@ -462,11 +481,13 @@ impl<'a> Imu<'a> {
                             use uom::si::length::meter;
                             use uom::si::pressure::hectopascal;
                             use uom::si::thermodynamic_temperature::degree_celsius;
-                            BARO_SIGNAL.signal(BaroReading {
+                            let reading = BaroReading {
                                 pressure_hpa: m.pressure.get::<hectopascal>(),
                                 temperature_c: m.temperature.get::<degree_celsius>(),
                                 altitude_m: m.altitude.get::<meter>(),
-                            });
+                            };
+                            BARO_SIGNAL.signal(reading);
+                            BARO_CACHE.lock(|c| c.set(reading));
                         }
                         Err(e) => warn!("BMP390: measure error: {}", e),
                     }
@@ -629,11 +650,13 @@ impl<'a> Imu<'a> {
                 mag_counter = 0;
                 match self.mag.read_magnetic() {
                     Ok(data) => {
-                        MAG_SIGNAL.signal(MagReading {
+                        let reading = MagReading {
                             x: data.x,
                             y: data.y,
                             z: data.z,
-                        });
+                        };
+                        MAG_SIGNAL.signal(reading);
+                        MAG_CACHE.lock(|c| c.set(reading));
                     }
                     Err(e) => {
                         warn!("MMC5616WA: read error: {}", e);
@@ -651,11 +674,13 @@ impl<'a> Imu<'a> {
                             use uom::si::length::meter;
                             use uom::si::pressure::hectopascal;
                             use uom::si::thermodynamic_temperature::degree_celsius;
-                            BARO_SIGNAL.signal(BaroReading {
+                            let reading = BaroReading {
                                 pressure_hpa: m.pressure.get::<hectopascal>(),
                                 temperature_c: m.temperature.get::<degree_celsius>(),
                                 altitude_m: m.altitude.get::<meter>(),
-                            });
+                            };
+                            BARO_SIGNAL.signal(reading);
+                            BARO_CACHE.lock(|c| c.set(reading));
                         }
                         Err(e) => warn!("BMP390: measure error: {}", e),
                     }
