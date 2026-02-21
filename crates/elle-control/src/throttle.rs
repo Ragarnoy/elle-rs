@@ -27,7 +27,7 @@ pub fn rc_to_pulse_us(rc_value: u16, min_us: u32, max_us: u32) -> u32 {
 
 /// Convert RC value to pulse width with custom range (fallback to calculation)
 #[must_use]
-pub fn rc_to_pulse_us_custom(rc_value: u16, min_us: u32, max_us: u32) -> u32 {
+pub const fn rc_to_pulse_us_custom(rc_value: u16, min_us: u32, max_us: u32) -> u32 {
     min_us + (rc_value as u32 * (max_us - min_us) / 2047)
 }
 

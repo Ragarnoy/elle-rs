@@ -286,7 +286,7 @@ fn draw_horizon(f: &mut Frame, area: Rect, state: &AppState) {
         .map(|c| (c.pitch_correction_cp as i32, c.roll_correction_cp as i32))
         .unwrap_or((0, 0));
 
-    let roll_rad = -roll_deg * std::f64::consts::PI / 180.0;
+    let roll_rad = -roll_deg.to_radians();
     let cos_r = roll_rad.cos();
     let sin_r = roll_rad.sin();
     let pitch_shift = -pitch_deg;
@@ -325,7 +325,7 @@ fn draw_horizon(f: &mut Frame, area: Rect, state: &AppState) {
                     x1: -ladder_half * cos_r + (y_off * sin_r).copysign(-1.0) * ladder_half / half_w,
                     y1: y_off - ladder_half * sin_r,
                     x2: ladder_half * cos_r + (y_off * sin_r).copysign(1.0) * ladder_half / half_w,
-                    y2: y_off + ladder_half * sin_r,
+                    y2: ladder_half.mul_add(sin_r, y_off),
                     color: Color::DarkGray,
                 });
                 // Simplified ladder: short horizontal segments at the pitch offset
@@ -502,7 +502,7 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
     }
 }
 
-fn log_code_text(code: u16) -> &'static str {
+const fn log_code_text(code: u16) -> &'static str {
     match code {
         // GNSS (1–9)
         1 => "GNSS: first GGA received",
@@ -543,6 +543,16 @@ fn log_code_text(code: u16) -> &'static str {
         80 => "Attitude data stale",
         81 => "ULog: RC switch ON",
         82 => "ULog: RC switch OFF",
+        // Autotune (90–99)
+        90 => "Autotune: started",
+        91 => "Autotune: complete",
+        92 => "Autotune: aborted (RC)",
+        93 => "Autotune: safety abort",
+        // PID profile persistence (100–109)
+        100 => "PID: saved to flash",
+        101 => "PID: save failed",
+        102 => "PID: loaded from flash",
+        103 => "PID: no saved profile",
         _ => "unknown",
     }
 }

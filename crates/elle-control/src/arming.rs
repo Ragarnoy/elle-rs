@@ -25,23 +25,23 @@ impl ArmingState {
         }
     }
 
-    pub fn signal_loss(&mut self) {
+    pub const fn signal_loss(&mut self) {
         self.armed = false;
         self.failsafe_active = true;
     }
 
-    pub fn signal_restored(&mut self) {
+    pub const fn signal_restored(&mut self) {
         self.failsafe_active = false;
     }
 
     /// Manual arm (for RTT/debug control)
-    pub fn arm(&mut self) {
+    pub const fn arm(&mut self) {
         self.armed = true;
         self.failsafe_active = false;
     }
 
     /// Manual disarm (for RTT/debug control)
-    pub fn disarm(&mut self) {
+    pub const fn disarm(&mut self) {
         self.armed = false;
     }
 }

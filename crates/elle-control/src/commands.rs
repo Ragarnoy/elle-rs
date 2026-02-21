@@ -54,7 +54,7 @@ pub struct NormalizedCommands {
     pub timestamp: Instant,
 }
 
-#[derive(Clone, Copy, Debug, Format, PartialEq)]
+#[derive(Clone, Copy, Debug, Format, PartialEq, Eq)]
 pub enum AttitudeMode {
     Manual,
     Mixed,
@@ -64,7 +64,7 @@ pub enum AttitudeMode {
 impl PilotCommands {
     #[must_use]
     #[inline]
-    pub fn timestamp(&self) -> Instant {
+    pub const fn timestamp(&self) -> Instant {
         match self {
             Self::Raw(r) => r.timestamp,
             Self::Normalized(n) => n.timestamp,
@@ -105,7 +105,7 @@ impl NormalizedCommands {
 
 // Helper functions
 #[must_use]
-pub fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
+pub const fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
     if ch5_value < MANUAL_MODE_THRESHOLD {
         AttitudeMode::Manual
     } else if ch5_value < MIXED_MODE_THRESHOLD {

@@ -77,6 +77,12 @@ pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 // IMU SPI parameters (ICM-42686-P)
 pub const IMU_SPI_FREQ: u32 = 1_000_000; // 1 MHz SPI clock
 pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
+/// Madgwick AHRS filter gain (higher = faster convergence, more noise)
+pub const AHRS_BETA: f32 = 0.033;
+/// Magnetometer read interval in IMU ticks (100 = 10Hz at 1kHz IMU rate)
+pub const MAG_READ_INTERVAL_TICKS: u32 = 100;
+/// Barometer read interval in IMU ticks (500 = 2Hz at 1kHz IMU rate)
+pub const BARO_READ_INTERVAL_TICKS: u32 = 500;
 
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
@@ -121,6 +127,12 @@ pub const ATTITUDE_PITCH_MIN_DEG: f32 = -15.0; // Min commandable pitch angle
 pub const ATTITUDE_PITCH_MAX_DEG: f32 = 25.0; // Max commandable pitch angle
 pub const ATTITUDE_ROLL_MIN_DEG: f32 = -45.0; // Min commandable roll angle (flying wings can roll more)
 pub const ATTITUDE_ROLL_MAX_DEG: f32 = 45.0; // Max commandable roll angle
+
+// Autotune RC switch (3-position on CH9)
+pub const AUTOTUNE_CH: usize = 8; // CH9 (0-indexed)
+pub const AUTOTUNE_OFF_THRESHOLD: u16 = 500; // Below = off
+pub const AUTOTUNE_PITCH_THRESHOLD: u16 = 1300; // Below = pitch, above = roll
+pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz
 
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)

@@ -74,6 +74,7 @@ impl AttitudeController {
     }
 
     /// Calculate attitude corrections (existing interface for compatibility)
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         desired_pitch: f32,
@@ -135,7 +136,7 @@ impl AttitudeController {
 
     /// Check if controller has been initialized
     #[must_use]
-    pub fn is_active(&self) -> bool {
+    pub const fn is_active(&self) -> bool {
         self.last_time.is_some()
     }
 }

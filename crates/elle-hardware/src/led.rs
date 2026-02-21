@@ -77,7 +77,7 @@ where
     }
 
     /// Apply brightness scaling to a color
-    fn scale_brightness(&self, color: RGB8) -> RGB8 {
+    const fn scale_brightness(&self, color: RGB8) -> RGB8 {
         RGB8 {
             r: (color.r as u16 * self.brightness as u16 / 100) as u8,
             g: (color.g as u16 * self.brightness as u16 / 100) as u8,
@@ -200,7 +200,7 @@ where
 }
 
 /// Helper function to generate rainbow colors
-fn wheel(mut wheel_pos: u8) -> RGB8 {
+const fn wheel(mut wheel_pos: u8) -> RGB8 {
     wheel_pos = 255 - wheel_pos;
     if wheel_pos < 85 {
         return RGB8 {

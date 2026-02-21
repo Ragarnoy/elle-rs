@@ -32,7 +32,7 @@ pub struct CrsfReceiver<'d> {
 
 impl<'d> CrsfReceiver<'d> {
     #[must_use]
-    pub fn new(rx: UartRx<'d, Async>) -> Self {
+    pub const fn new(rx: UartRx<'d, Async>) -> Self {
         let parser = Parser::new(ParserConfig::default());
         Self { uart: rx, parser }
     }

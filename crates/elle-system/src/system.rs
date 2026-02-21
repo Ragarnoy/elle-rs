@@ -1,5 +1,6 @@
 use defmt::{info, warn};
 use elle_config::*;
+use elle_control::SavedGains;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
 use elle_control::mixing::{
     elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
@@ -14,7 +15,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use free_flight_stabilization::FlightStabilizerConfig;
 
-#[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 pub enum ControlMode {
     Manual,    // Full manual control (~306)
     Mixed,     // Pilot + Autopilot blend (~1000)
@@ -89,6 +90,10 @@ pub struct FlightController<'a> {
     core1_health: CoreHealth,
     last_watchdog_kick: Instant,
     supervisor_enabled: bool,
+    // Config shadow for autotune gain readback
+    current_config: FlightStabilizerConfig<f32>,
+    // Setpoint override for autotune relay feedback
+    setpoint_override: Option<(f32, f32)>,
 }
 
 impl<'a> FlightController<'a> {
@@ -133,6 +138,8 @@ impl<'a> FlightController<'a> {
             core1_health: CoreHealth::default(),
             last_watchdog_kick: Instant::now(),
             supervisor_enabled: false,
+            current_config: config,
+            setpoint_override: None,
         }
     }
 
@@ -254,7 +261,7 @@ impl<'a> FlightController<'a> {
 
     /// Get supervisor status for monitoring
     #[must_use]
-    pub fn supervisor_status(&self) -> (bool, bool, u32) {
+    pub const fn supervisor_status(&self) -> (bool, bool, u32) {
         (
             self.supervisor_enabled,
             self.core1_health.is_healthy,
@@ -330,14 +337,22 @@ impl<'a> FlightController<'a> {
             || norm.attitude_mode == AttitudeMode::Autopilot)
             && self.arming.armed;
 
-        // Convert setpoints to radians and apply smoothing
-        let pitch_setpoint_rad = norm.pitch_setpoint_deg * core::f32::consts::PI / 180.0;
-        let roll_setpoint_rad = norm.roll_setpoint_deg * core::f32::consts::PI / 180.0;
+        // Apply setpoint override if active (used by autotuner)
+        let (pitch_sp_deg, roll_sp_deg) = match self.setpoint_override {
+            Some((p, r)) => (p, r),
+            None => (norm.pitch_setpoint_deg, norm.roll_setpoint_deg),
+        };
 
-        self.filtered_pitch_setpoint_rad +=
-            SETPOINT_FILTER_ALPHA * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
-        self.filtered_roll_setpoint_rad +=
-            SETPOINT_FILTER_ALPHA * (roll_setpoint_rad - self.filtered_roll_setpoint_rad);
+        // Convert setpoints to radians and apply smoothing
+        let pitch_setpoint_rad = pitch_sp_deg.to_radians();
+        let roll_setpoint_rad = roll_sp_deg.to_radians();
+
+        if norm.attitude_mode != AttitudeMode::Manual {
+            self.filtered_pitch_setpoint_rad +=
+                SETPOINT_FILTER_ALPHA * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
+            self.filtered_roll_setpoint_rad +=
+                SETPOINT_FILTER_ALPHA * (roll_setpoint_rad - self.filtered_roll_setpoint_rad);
+        }
 
         // Build control inputs from normalized commands
         let pilot_inputs = ControlInputs {
@@ -426,8 +441,8 @@ impl<'a> FlightController<'a> {
         self.last_output = ControllerOutputSnapshot {
             pitch_correction,
             roll_correction,
-            pitch_setpoint_deg: norm.pitch_setpoint_deg,
-            roll_setpoint_deg: norm.roll_setpoint_deg,
+            pitch_setpoint_deg: pitch_sp_deg,
+            roll_setpoint_deg: roll_sp_deg,
             elevon_left_us: elevon_outputs.left_us,
             elevon_right_us: elevon_outputs.right_us,
             engine_left_us: left_thrust,
@@ -457,36 +472,37 @@ impl<'a> FlightController<'a> {
     }
 
     #[must_use]
-    pub fn is_armed(&self) -> bool {
+    pub const fn is_armed(&self) -> bool {
         self.arming.armed
     }
 
     #[must_use]
-    pub fn is_failsafe(&self) -> bool {
+    pub const fn is_failsafe(&self) -> bool {
         self.arming.failsafe_active
     }
 
     #[must_use]
-    pub fn is_attitude_enabled(&self) -> bool {
+    pub const fn is_attitude_enabled(&self) -> bool {
         self.attitude_controller.enabled
     }
 
     #[must_use]
-    pub fn current_control_mode(&self) -> ControlMode {
+    pub const fn current_control_mode(&self) -> ControlMode {
         self.current_control_mode
     }
 
     /// Manual arm (for RTT/debug control)
-    pub fn arm(&mut self) {
+    pub const fn arm(&mut self) {
         self.arming.arm();
     }
 
     /// Manual disarm (for RTT/debug control)
-    pub fn disarm(&mut self) {
+    pub const fn disarm(&mut self) {
         self.arming.disarm();
     }
 
     /// Update PID gains at runtime (resets integral state)
+    #[allow(clippy::too_many_arguments)]
     pub fn set_pid_gains(
         &mut self,
         pitch_kp: f32,
@@ -511,12 +527,52 @@ impl<'a> FlightController<'a> {
         config.kp_yaw = 0.3;
         config.ki_yaw = 0.05;
         config.kd_yaw = 0.00015;
+        self.current_config = config;
         self.attitude_controller.update_config(config);
+    }
+
+    /// Apply PID gains from a SavedGains struct (used by autotuner)
+    pub fn apply_saved_gains(&mut self, gains: &SavedGains) {
+        self.set_pid_gains(
+            gains.pitch_kp,
+            gains.pitch_ki,
+            gains.pitch_kd,
+            gains.roll_kp,
+            gains.roll_ki,
+            gains.roll_kd,
+            gains.scale,
+            gains.i_limit,
+        );
+    }
+
+    /// Get current PID gains as a SavedGains snapshot
+    #[must_use]
+    pub const fn get_pid_gains(&self) -> SavedGains {
+        SavedGains {
+            pitch_kp: self.current_config.kp_pitch,
+            pitch_ki: self.current_config.ki_pitch,
+            pitch_kd: self.current_config.kd_pitch,
+            roll_kp: self.current_config.kp_roll,
+            roll_ki: self.current_config.ki_roll,
+            roll_kd: self.current_config.kd_roll,
+            scale: self.current_config.scale,
+            i_limit: self.current_config.i_limit,
+        }
+    }
+
+    /// Set attitude setpoint override (degrees). Used by autotuner.
+    pub const fn set_setpoint_override(&mut self, pitch_deg: f32, roll_deg: f32) {
+        self.setpoint_override = Some((pitch_deg, roll_deg));
+    }
+
+    /// Clear setpoint override, returning to normal RC/RPC control.
+    pub const fn clear_setpoint_override(&mut self) {
+        self.setpoint_override = None;
     }
 
     /// Get the last controller output snapshot
     #[must_use]
-    pub fn last_output(&self) -> &ControllerOutputSnapshot {
+    pub const fn last_output(&self) -> &ControllerOutputSnapshot {
         &self.last_output
     }
 }
@@ -781,27 +837,27 @@ pub fn debug_timing_test() {
 // No-op stubs when performance monitoring is disabled
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub fn update_control_loop_timing(_elapsed_us: u32) {}
+pub const fn update_control_loop_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub fn update_imu_timing(_elapsed_us: u32) {}
+pub const fn update_imu_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub fn update_led_timing(_elapsed_us: u32) {}
+pub const fn update_led_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub fn update_flash_timing(_elapsed_us: u32) {}
+pub const fn update_flash_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub fn update_ulog_timing(_elapsed_us: u32) {}
+pub const fn update_ulog_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub fn log_performance_summary() {}
+pub const fn log_performance_summary() {}
 
 // Dummy timing measurement when feature is disabled
 #[cfg(not(feature = "performance-monitoring"))]
@@ -812,14 +868,14 @@ impl TimingMeasurement {
     #[must_use]
     #[allow(clippy::inline_always)]
     #[inline(always)]
-    pub fn start() -> Self {
+    pub const fn start() -> Self {
         Self
     }
 
     #[must_use]
     #[allow(clippy::inline_always)]
     #[inline(always)]
-    pub fn elapsed_us(&self) -> u32 {
+    pub const fn elapsed_us(&self) -> u32 {
         0
     }
 }
