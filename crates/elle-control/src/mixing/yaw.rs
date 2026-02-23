@@ -46,35 +46,29 @@ pub fn calculate_differential_legacy(ch4_value: u16) -> DifferentialFactors {
     }
 }
 
-/// Apply differential factors to base engine thrust
+/// Apply differential factors to base engine thrust (DShot space)
 #[must_use]
 #[inline(always)]
-pub fn apply_differential_thrust(base_thrust: u32, factors: &DifferentialFactors) -> (u32, u32) {
-    if base_thrust > ENGINE_MIN_PULSE_US {
-        let thrust_range = base_thrust - ENGINE_MIN_PULSE_US;
-        let left = ENGINE_MIN_PULSE_US + ((thrust_range as f32 * factors.left_mult) as u32);
-        let right = ENGINE_MIN_PULSE_US + ((thrust_range as f32 * factors.right_mult) as u32);
-
-        (
-            left.clamp(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US),
-            right.clamp(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US),
-        )
-    } else {
-        (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+pub fn apply_differential_thrust(base_thrust: u16, factors: &DifferentialFactors) -> (u16, u16) {
+    if base_thrust == 0 {
+        return (0, 0);
     }
+    let left = ((base_thrust as f32 * factors.left_mult) as u16).min(DSHOT_THROTTLE_MAX);
+    let right = ((base_thrust as f32 * factors.right_mult) as u16).min(DSHOT_THROTTLE_MAX);
+    (left, right)
 }
 
-/// Ultra-fast differential thrust calculation directly from RC value to thrust values
+/// Ultra-fast differential thrust calculation directly from RC value to thrust values (DShot space)
 #[must_use]
 #[inline(always)]
-pub fn apply_differential_thrust_direct(base_thrust: u32, yaw_rc: u16) -> (u32, u32) {
+pub fn apply_differential_thrust_direct(base_thrust: u16, yaw_rc: u16) -> (u16, u16) {
     apply_differential_thrust_lut(base_thrust, yaw_rc)
 }
 
-/// Combined throttle curve + differential thrust calculation (maximum performance)
+/// Combined throttle curve + differential thrust calculation (maximum performance, DShot space)
 #[must_use]
 #[inline(always)]
-pub fn throttle_with_differential_lut(throttle_rc: u16, yaw_rc: u16) -> (u32, u32) {
+pub fn throttle_with_differential_lut(throttle_rc: u16, yaw_rc: u16) -> (u16, u16) {
     let base_thrust = throttle_curve_lut(throttle_rc);
     apply_differential_thrust_lut(base_thrust, yaw_rc)
 }

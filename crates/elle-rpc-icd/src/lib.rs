@@ -178,10 +178,10 @@ pub struct ControllerOutputResp {
     pub elevon_left_us: u16,
     /// Right elevon servo PWM microseconds
     pub elevon_right_us: u16,
-    /// Left engine PWM microseconds
-    pub engine_left_us: u16,
-    /// Right engine PWM microseconds
-    pub engine_right_us: u16,
+    /// Left engine DShot throttle (0-1999)
+    pub engine_left_dshot: u16,
+    /// Right engine DShot throttle (0-1999)
+    pub engine_right_dshot: u16,
 }
 
 /// Set PID gains (integer-scaled: x1000 for gains, x10000 for scale, x10 for i_limit)

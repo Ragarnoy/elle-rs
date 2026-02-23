@@ -4,6 +4,7 @@
 
 - [x] RPC autotune trigger (StartAutotune/AbortAutotune endpoints, TUI commands)
 - [x] Flash persistence for PID gains (MapStorage on 0x200000-0x20FFFF, boot-time load, auto-save on completion, `savepid` TUI command)
+- [x] DShot300 bidirectional motor protocol replacing PWM for engines (PIO1 left engine, PIO2 right engine, LED moved to PIO0 SM2)
 
 ## Notes
 
@@ -13,96 +14,64 @@
 
 ## Planned
 
-### 1. DShot Motor Protocol (replacing PWM for engines) — BLOCKING
+### 1. DShot Follow-Up: RPM Telemetry & Throttle Rework
 
-Hardware is being upgraded to DShot ESCs. PWM engines will no longer work.
-Steps 1-4 (unidirectional DShot TX) are required to fly again.
+DShot300 bidirectional is implemented via `embassy-dshot` crate. Both engines use
+`BidirDshotPio` (PIO1 for left, PIO2 for right). Elevon PWM remains on PIO0 SM0/SM1,
+LED moved to PIO0 SM2.
 
-#### Current motor output architecture
+#### Current architecture
 ```
-PIO0 SM0 -> PIN_12 (elevon_left)   — PWM, stays PWM
-PIO0 SM1 -> PIN_14 (elevon_right)  — PWM, stays PWM
-PIO0 SM2 -> PIN_11 (engine_left)   — PWM -> DShot
-PIO0 SM3 -> PIN_15 (engine_right)  — PWM -> DShot
-```
-
-`set_engines(left_us, right_us)` takes pulse widths in us (1000-1600).
-Throttle pipeline: RC 0-2047 -> `throttle_curve_lut` -> us -> `differential_thrust_lut` -> us pair.
-
-#### DShot protocol
-Digital protocol, each frame is 16 bits:
-- 11 bits: throttle value (0 = disarm, 48-2047 = throttle range)
-- 1 bit: telemetry request
-- 4 bits: CRC
-
-DShot300 = 53.3us/frame, DShot600 = 26.7us/frame. Both fit within the 13ms control loop.
-
-Key difference: DShot sends a **value** (0-2047) not a pulse width. The throttle LUTs
-would output 48-2047 directly, eliminating the intermediate us representation.
-
-#### PIO resource plan
-
-**Recommended: move engines to PIO1** (currently unused).
-- PIO0 SM0/SM1: elevon PWM (unchanged)
-- PIO1 SM0: engine_left DShot (PIN_11)
-- PIO1 SM1: engine_right DShot (PIN_15)
-
-Keeps motor protocol isolated from servo PWM. PIO1 has its own 32-slot instruction
-memory — important if bidir DShot needs ~25 instructions. Frees PIO0 SM2/SM3.
-
-#### Interface changes
-
-Current:
-```rust
-pub fn set_engines(&mut self, left_us: u32, right_us: u32)
+PIO0 SM0 -> PIN_12 (elevon_left)   — PWM
+PIO0 SM1 -> PIN_14 (elevon_right)  — PWM
+PIO0 SM2 -> PIN_10 (WS2812B LED)   — WS2812
+PIO1     -> PIN_11 (engine_left)   — BidirDShot300
+PIO2     -> PIN_15 (engine_right)  — BidirDShot300
 ```
 
-DShot:
-```rust
-pub fn set_engines(&mut self, left: u16, right: u16)  // 0-2047 DShot throttle value
-```
+The control path still uses µs internally (1000-1600) and `DshotEngines::set_throttle()`
+converts to DShot 0-1999 via `us_to_dshot_throttle()`. This works but is an unnecessary
+conversion step.
 
-Cleaner approach — `MotorOutput` trait with compile-time selection:
-```rust
-pub trait MotorOutput {
-    fn set_engines(&mut self, left: u16, right: u16);
-    async fn arm_sequence(&mut self);
-}
-```
+#### Remaining tasks
 
-`PwmMotors` and `DshotMotors` both implement it. Feature-gated, zero dynamic dispatch.
-`PwmOutputs` splits into `ServoOutputs` (elevons only) + `impl MotorOutput`.
+**1. RPM telemetry storage and display**
+- Add `RPM_CACHE` (Mutex-based, like `MAG_CACHE`/`BARO_CACHE`) in `elle-hardware`
+- Switch from `throttle_async()` (fire-and-forget) to `throttle_with_telemetry()` in the main loop
+- Store eRPM values in the cache after each DShot send
+- Add `GetRpmEndpoint` to RPC ICD + handler
+- Add RPM display to TUI dashboard
+- Log RPM to ULog (new message type)
+- CRSF telemetry RPM frame
 
-#### ESC init with DShot
-Simpler than PWM: send throttle value `0` for ~1 second. No min/idle/min dance.
+**2. Extended DShot telemetry (temperature, voltage, current)**
+- Send `ExtendedTelemetryEnable` command sequence during ESC arming
+- Use `read_extended_telemetry()` periodically
+- Store in a cache, expose via RPC, log to ULog
 
-Special DShot commands (values 0-47 are reserved):
-- 0 = disarm / motor stop
-- 1-5 = beep patterns
-- 6 = ESC info request
-- 7/8 = spin direction
-- 12 = save settings
+**3. ~~Throttle range rework (remove µs intermediate representation)~~ DONE**
+- Control path now outputs DShot 0-1999 directly
+- Removed `ENGINE_IDLE_PULSE_US`, `ENGINE_DSHOT_RANGE` constants
+- `THROTTLE_LUT` outputs `u16` DShot values, differential thrust works in DShot space
+- `DshotEngines::set_throttle()` takes `u16` directly — no conversion
 
-#### Implementation order
+**4. Closed-loop RPM control (governor mode)**
+- Instead of commanding raw DShot values, command target RPM per engine
+- Read eRPM telemetry back from bidirectional DShot (already supported by `BidirDshotPio`)
+- Per-engine PI loop: target RPM → DShot adjustment
+- Compensates for battery voltage sag (same DShot = less RPM as voltage drops)
+- More linear thrust response (thrust ∝ RPM²)
+- Better differential thrust precision (real RPM guarantee, not open-loop)
 
-**Must-have (to fly again):**
-
-1. Normal DShot TX — PIO1 program, get motor control working digitally
-2. Refactor PwmOutputs — split into `ServoOutputs` + `DshotMotors`
-3. Update throttle LUTs — output 48-2047 instead of 1000-1600us
-4. ESC init — simplify to "send 0 for 1 second"
-
-**Nice-to-have (later):**
-
-5. Bidir DShot RX — add RPM reception and GCR decoding
-6. RPM signal — wire into shared state (`RPM_SIGNAL`)
-7. RPM logging — ULog message + CRSF telemetry frame
-
-#### Notes
-- If the DShot crate doesn't materialize, the PIO program is small (~12 instructions
-  for TX, ~25 for bidir). Writing it with `pio_proc::pio_asm!` is feasible.
-- `ENGINE_RIGHT_OFFSET_US` trim goes away with DShot (digital protocol, no analog drift).
-  If motors still need individual trim, apply it as a DShot value offset instead.
+**Implementation sketch:**
+- Add `MOTOR_POLES` constant to `elle-config` (needed for eRPM → mechanical RPM)
+- Switch `set_throttle()` from `throttle_async()` (fire-and-forget) to reading telemetry response
+- Per-engine PI controller struct in `elle-hardware` or `elle-control` (target RPM, measured RPM, DShot output)
+- Open-loop startup ramp: below a threshold RPM or when telemetry is absent, pass DShot directly until telemetry starts reporting, then switch to closed-loop
+- Telemetry dropout handling: hold last DShot value, freeze integrator, don't wind up on CRC errors/timeouts
+- eRPM period encoding resolution check: the 3-bit shift + 9-bit base gets coarse at high RPM — verify usable range for your motors
+- `RPM_CACHE` for observability (RPC, TUI, ULog, CRSF telemetry)
+- Fallback: if telemetry is persistently absent (wiring issue, ESC doesn't support bidir), degrade gracefully to open-loop DShot
 
 ---
 
@@ -208,21 +177,17 @@ Low priority until navigation work reaches the outer control loops (heading/alti
 
 ---
 
-### 5. Bidirectional DShot (eRPM telemetry)
+### 5. RPM Telemetry Integration
 
-Depends on DShot TX (#1) being done first. Not needed to fly — purely observability and future closed-loop thrust control.
+Bidirectional DShot300 hardware layer is done (`embassy-dshot` BidirDshotPio). The ESCs
+respond with GCR-encoded eRPM after each frame. Currently using `throttle_async()`
+(fire-and-forget) — switching to reading telemetry enables RPM readback.
 
-After the FC sends a 16-bit frame, the ESC responds with a 21-bit GCR-encoded eRPM
-frame on the **same wire**. PIO handles both TX and RX by flipping pin direction
-mid-program.
-
-Timing per motor: ~53us TX + ~30us response + ~10us gap = 93us.
-Two motors sequentially: ~186us. Well within 13ms loop.
+See task 1.1 (storage/display) and task 1.4 (closed-loop RPM control) above.
 
 #### What RPM telemetry enables
 
 - **Motor health / failure detection**: Compare expected RPM vs actual. Prop damage = RPM too high, obstruction = RPM too low, ESC desync = RPM drops to zero.
-- **Thrust linearization**: Thrust is proportional to RPM squared. Close the loop for linear throttle response across battery voltage sag.
-- **Governor mode**: Hold constant RPM regardless of load/maneuver.
+- **Closed-loop RPM control (governor mode)**: Per-engine PI loop for consistent thrust across battery voltage sag and load changes. See task 1.4 for implementation plan.
 - **ULog recording**: Log RPM alongside attitude and commands.
 - **CRSF telemetry**: Send RPM to radio for OSD display.

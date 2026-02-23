@@ -68,6 +68,12 @@ cobs = { version = "0.5", default-features = false }
 crc = { version = "3", default-features = false }
 embedded-io = "0.7"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
+embassy-dshot = { path = "../dshot-pio", default-features = false, features = ["rp2350", "defmt"] }
+dshot-frame = "0.2.1"
+
+[patch.crates-io]
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git" }
 
 [profile.release]
 debug = 2

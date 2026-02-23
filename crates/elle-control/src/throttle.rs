@@ -2,10 +2,10 @@
 use elle_config::lut::*;
 use elle_config::*;
 
-/// Apply throttle curve for better low-end control using LUT
+/// Apply throttle curve for better low-end control using LUT (returns DShot 0-1999)
 #[must_use]
 #[inline(always)]
-pub fn throttle_curve(rc_value: u16) -> u32 {
+pub fn throttle_curve(rc_value: u16) -> u16 {
     throttle_curve_lut(rc_value)
 }
 
@@ -33,7 +33,7 @@ pub const fn rc_to_pulse_us_custom(rc_value: u16, min_us: u32, max_us: u32) -> u
 
 #[must_use]
 #[inline(always)]
-pub fn throttle_curve_fast(rc_value: u16) -> u32 {
+pub fn throttle_curve_fast(rc_value: u16) -> u16 {
     throttle_curve_lut(rc_value)
 }
 

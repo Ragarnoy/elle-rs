@@ -1,15 +1,13 @@
 use core::time::Duration;
 use elle_config::*;
 use embassy_rp::Peri;
-use embassy_rp::peripherals::{PIN_11, PIN_12, PIN_14, PIN_15, PIO0};
+use embassy_rp::peripherals::{PIN_12, PIN_14, PIO0};
 use embassy_rp::pio::{Common, StateMachine};
 use embassy_rp::pio_programs::pwm::{PioPwm, PioPwmProgram};
 
 pub struct PwmOutputs<'a> {
     pub elevon_left: PioPwm<'a, PIO0, 0>,
     pub elevon_right: PioPwm<'a, PIO0, 1>,
-    pub engine_left: PioPwm<'a, PIO0, 2>,
-    pub engine_right: PioPwm<'a, PIO0, 3>,
 }
 
 impl<'a> PwmOutputs<'a> {
@@ -17,35 +15,25 @@ impl<'a> PwmOutputs<'a> {
         common: &mut Common<'a, PIO0>,
         sm0: StateMachine<'a, PIO0, 0>,
         sm1: StateMachine<'a, PIO0, 1>,
-        sm2: StateMachine<'a, PIO0, 2>,
-        sm3: StateMachine<'a, PIO0, 3>,
         pins: &'a mut PwmPins,
     ) -> Self {
         let prg = PioPwmProgram::new(common);
 
         let mut elevon_left = PioPwm::new(common, sm0, pins.elevon_left.reborrow(), &prg);
         let mut elevon_right = PioPwm::new(common, sm1, pins.elevon_right.reborrow(), &prg);
-        let mut engine_left = PioPwm::new(common, sm2, pins.engine_left.reborrow(), &prg);
-        let mut engine_right = PioPwm::new(common, sm3, pins.engine_right.reborrow(), &prg);
 
         // Configure periods
         let period = Duration::from_micros(REFRESH_INTERVAL_US.into());
         elevon_left.set_period(period);
         elevon_right.set_period(period);
-        engine_left.set_period(period);
-        engine_right.set_period(period);
 
         // Start all outputs
         elevon_left.start();
         elevon_right.start();
-        engine_left.start();
-        engine_right.start();
 
         Self {
             elevon_left,
             elevon_right,
-            engine_left,
-            engine_right,
         }
     }
 
@@ -55,10 +43,6 @@ impl<'a> PwmOutputs<'a> {
             .write(Duration::from_micros(ELEVON_LEFT_CENTER_US.into()));
         self.elevon_right
             .write(Duration::from_micros(ELEVON_RIGHT_CENTER_US.into()));
-        self.engine_left
-            .write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
-        self.engine_right
-            .write(Duration::from_micros(ENGINE_MIN_PULSE_US.into()));
     }
 
     /// Set elevons without trim applied (legacy)
@@ -100,14 +84,6 @@ impl<'a> PwmOutputs<'a> {
             );
         }
     }
-
-    pub fn set_engines(&mut self, left_us: u32, right_us: u32) {
-        self.engine_left
-            .write(Duration::from_micros(left_us.into()));
-        self.engine_right.write(Duration::from_micros(
-            (right_us + ENGINE_RIGHT_OFFSET_US).into(),
-        ));
-    }
 }
 
 /// Apply trim adjustment to elevon position
@@ -123,6 +99,4 @@ fn apply_elevon_trim(base_us: u32, trim_us: i32) -> u32 {
 pub struct PwmPins<'a> {
     pub elevon_left: Peri<'a, PIN_12>,
     pub elevon_right: Peri<'a, PIN_14>,
-    pub engine_left: Peri<'a, PIN_11>,
-    pub engine_right: Peri<'a, PIN_15>,
 }

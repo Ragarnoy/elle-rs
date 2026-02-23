@@ -12,7 +12,7 @@ use elle_hardware::pwm::PwmOutputs;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant};
 use free_flight_stabilization::FlightStabilizerConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
@@ -68,8 +68,8 @@ pub struct ControllerOutputSnapshot {
     pub roll_setpoint_deg: f32,
     pub elevon_left_us: u32,
     pub elevon_right_us: u32,
-    pub engine_left_us: u32,
-    pub engine_right_us: u32,
+    pub engine_left_dshot: u16,
+    pub engine_right_dshot: u16,
 }
 
 pub struct FlightController<'a> {
@@ -143,32 +143,14 @@ impl<'a> FlightController<'a> {
         }
     }
 
-    pub async fn initialize_escs(&mut self) {
-        info!("ESC init: Starting");
-
-        // Hold at minimum
-        for _ in 0..200 {
-            self.pwm
-                .set_engines(ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US);
-            Timer::after(Duration::from_millis(10)).await;
-        }
-
-        // Brief idle pulse
-        info!("ESC init: Idle pulse");
-        for _ in 0..50 {
-            self.pwm
-                .set_engines(ENGINE_IDLE_PULSE_US, ENGINE_IDLE_PULSE_US);
-            Timer::after(Duration::from_millis(10)).await;
-        }
-
-        // Return to minimum
-        for _ in 0..100 {
-            self.pwm
-                .set_engines(ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US);
-            Timer::after(Duration::from_millis(10)).await;
-        }
-
-        info!("ESC init: Complete");
+    /// Get the last computed engine output values (DShot 0-1999).
+    /// The caller is responsible for sending these to the engines via DShot.
+    #[must_use]
+    pub const fn engine_output(&self) -> (u16, u16) {
+        (
+            self.last_output.engine_left_dshot,
+            self.last_output.engine_right_dshot,
+        )
     }
 
     /// Initialize supervisor components (watchdog and health monitoring)
@@ -311,7 +293,6 @@ impl<'a> FlightController<'a> {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn update_fast_path_raw(&mut self, channels: &[u16; 16]) {
-        // Existing ultra-fast path logic - UNCHANGED
         self.arming.update(channels[THROTTLE_CH], false);
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
@@ -321,10 +302,17 @@ impl<'a> FlightController<'a> {
         let (left_thrust, right_thrust) = if self.arming.armed {
             throttle_with_differential_lut(channels[THROTTLE_CH], channels[YAW_CH])
         } else {
-            (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+            (0, 0)
         };
 
-        self.pwm.set_engines(left_thrust, right_thrust);
+        // Store engine values — the async main loop sends them via DShot
+        self.last_output = ControllerOutputSnapshot {
+            elevon_left_us: elevon_outputs.left_us,
+            elevon_right_us: elevon_outputs.right_us,
+            engine_left_dshot: left_thrust,
+            engine_right_dshot: right_thrust,
+            ..self.last_output
+        };
     }
 
     fn update_normalized(&mut self, norm: &NormalizedCommands, attitude: Option<&AttitudeData>) {
@@ -432,10 +420,10 @@ impl<'a> FlightController<'a> {
         let (left_thrust, right_thrust) = if self.arming.armed {
             apply_differential_thrust_direct(base_thrust, yaw_rc)
         } else {
-            (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+            (0, 0)
         };
 
-        self.pwm.set_engines(left_thrust, right_thrust);
+        // Engine values stored in last_output — the async main loop sends them via DShot
 
         // Capture controller output snapshot
         self.last_output = ControllerOutputSnapshot {
@@ -445,8 +433,8 @@ impl<'a> FlightController<'a> {
             roll_setpoint_deg: roll_sp_deg,
             elevon_left_us: elevon_outputs.left_us,
             elevon_right_us: elevon_outputs.right_us,
-            engine_left_us: left_thrust,
-            engine_right_us: right_thrust,
+            engine_left_dshot: left_thrust,
+            engine_right_dshot: right_thrust,
         };
     }
 

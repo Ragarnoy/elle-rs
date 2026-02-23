@@ -259,7 +259,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
             )),
             Line::from(format!(
                 "  Elevon L={} R={}  Eng L={} R={}",
-                c.elevon_left_us, c.elevon_right_us, c.engine_left_us, c.engine_right_us,
+                c.elevon_left_us, c.elevon_right_us, c.engine_left_dshot, c.engine_right_dshot,
             )),
         ]
     } else {

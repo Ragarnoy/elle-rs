@@ -30,6 +30,7 @@ use elle_hardware::imu::{
 use elle_hardware::imu::{BARO_CACHE, MAG_CACHE};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
+    dshot::DshotEngines,
     pwm::{PwmOutputs, PwmPins},
     sequential_flash_manager::SequentialFlashManager,
 };
@@ -58,8 +59,8 @@ use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{
-    DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_8, PIN_9, PIN_10, PIO0, PIO1, SPI0,
-    UART0, UART1,
+    DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_8, PIN_9, PIN_10, PIO0, PIO1, PIO2,
+    SPI0, UART0, UART1,
 };
 use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
@@ -205,6 +206,7 @@ bind_interrupts!(
     struct Irqs {
         PIO0_IRQ_0 => PioIrqHandler<PIO0>;
         PIO1_IRQ_0 => PioIrqHandler<PIO1>;
+        PIO2_IRQ_0 => PioIrqHandler<PIO2>;
         UART0_IRQ => UartIrqHandler<UART0>;
         UART1_IRQ => UartIrqHandler<UART1>;
         POWMAN_IRQ_TIMER => embassy_rp::aon_timer::InterruptHandler;
@@ -271,15 +273,41 @@ async fn main(spawner: Spawner) {
     Timer::after_millis(10).await;
     spawner.spawn(flash_manager_task(flash).unwrap());
 
-    // Setup WS2812B LED on PIO1 (separate from PWM on PIO0)
-    info!("Core0: Setting up status LED");
-    let Pio {
-        common: led_common,
-        sm0: led_sm0,
-        ..
-    } = Pio::new(p.PIO1, Irqs);
+    // Setup PIO0: elevon PWM (SM0, SM1) + WS2812B LED (SM2)
+    info!("Core0: Setting up flight control hardware + LED on PIO0");
+    static PWM_PINS: StaticCell<PwmPins<'static>> = StaticCell::new();
+    let pwm_pins = PWM_PINS.init(PwmPins {
+        elevon_left: p.PIN_12,
+        elevon_right: p.PIN_14,
+    });
 
-    spawner.spawn(led_task(led_common, led_sm0, p.DMA_CH2, Irqs, p.PIN_10).unwrap());
+    let Pio {
+        mut common,
+        sm0,
+        sm1,
+        sm2: led_sm,
+        ..
+    } = Pio::new(p.PIO0, Irqs);
+    let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, pwm_pins);
+    pwm.set_safe_positions();
+
+    spawner.spawn(led_task(common, led_sm, p.DMA_CH2, Irqs, p.PIN_10).unwrap());
+
+    // Setup DShot300 engines on PIO1 (left, PIN_11) and PIO2 (right, PIN_15)
+    info!("Core0: Setting up DShot300 engines");
+    let engine_left = embassy_dshot::rp::BidirDshotPio::new(
+        p.PIO1,
+        Irqs,
+        p.PIN_11,
+        embassy_dshot::rp::DshotSpeed::DShot300,
+    );
+    let engine_right = embassy_dshot::rp::BidirDshotPio::new(
+        p.PIO2,
+        Irqs,
+        p.PIN_15,
+        embassy_dshot::rp::DshotSpeed::DShot300,
+    );
+    let mut engines = DshotEngines::new(engine_left, engine_right);
 
     #[cfg(feature = "rpc-control")]
     {
@@ -309,26 +337,6 @@ async fn main(spawner: Spawner) {
             })
         },
     );
-
-    info!("Core0: Setting up flight control hardware");
-    // Core0: Setup flight control hardware (PWM on PIO0)
-    let mut pwm_pins = PwmPins {
-        elevon_left: p.PIN_12,
-        elevon_right: p.PIN_14,
-        engine_left: p.PIN_11,
-        engine_right: p.PIN_15,
-    };
-
-    let Pio {
-        mut common,
-        sm0,
-        sm1,
-        sm2,
-        sm3,
-        ..
-    } = Pio::new(p.PIO0, Irqs);
-    let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, sm2, sm3, &mut pwm_pins);
-    pwm.set_safe_positions();
 
     // Always spawn CRSF receiver — use DMA_CH3 when rpc-control is enabled
     // (DMA_CH0 is reserved for GNSS in that configuration)
@@ -397,9 +405,9 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_millis(100)).await;
     }
 
-    // Initialize ESCs before entering synchronized start
-    info!("Core0: Initializing ESCs");
-    fc.initialize_escs().await;
+    // Arm ESCs via DShot (send MotorStop at ~1kHz for 2 seconds)
+    info!("Core0: Arming ESCs via DShot");
+    engines.arm(Duration::from_secs(2)).await;
 
     // Initialize supervisor components (but keep health monitoring disabled)
     info!("Core0: Initializing supervisor (watchdog only)");
@@ -560,6 +568,10 @@ async fn main(spawner: Spawner) {
                     );
                 }
                 fc.update(commands, valid_attitude.as_ref());
+
+                // Send engine commands via DShot
+                let (engine_l, engine_r) = fc.engine_output();
+                engines.set_throttle(engine_l, engine_r).await;
 
                 #[cfg(feature = "crsf-telemetry")]
                 elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
@@ -1169,6 +1181,10 @@ async fn main(spawner: Spawner) {
             let valid_attitude = validate_attitude(attitude);
             fc.update(&commands, valid_attitude.as_ref());
 
+            // Send engine commands via DShot
+            let (engine_l, engine_r) = fc.engine_output();
+            engines.set_throttle(engine_l, engine_r).await;
+
             // Autotuner per-tick update
             if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
                 let measurement_deg = match autotuner.axis() {
@@ -1280,8 +1296,8 @@ async fn main(spawner: Spawner) {
                     roll_setpoint_deg: out.roll_setpoint_deg,
                     elevon_left_us: out.elevon_left_us,
                     elevon_right_us: out.elevon_right_us,
-                    engine_left_us: out.engine_left_us,
-                    engine_right_us: out.engine_right_us,
+                    engine_left_dshot: out.engine_left_dshot,
+                    engine_right_dshot: out.engine_right_dshot,
                 };
                 flight_state::CONTROLLER_OUTPUT.signal(co);
                 flight_state::CONTROLLER_OUTPUT_CACHE.lock(|c| c.set(co));
@@ -1539,15 +1555,15 @@ async fn flash_manager_task(flash: Flash<'static, FLASH, Async, { FLASH_SIZE }>)
 
 #[embassy_executor::task]
 async fn led_task(
-    mut common: embassy_rp::pio::Common<'static, PIO1>,
-    sm0: embassy_rp::pio::StateMachine<'static, PIO1, 0>,
+    mut common: embassy_rp::pio::Common<'static, PIO0>,
+    sm2: embassy_rp::pio::StateMachine<'static, PIO0, 2>,
     dma: Peri<'static, DMA_CH2>,
     irq: Irqs,
     pin: Peri<'static, PIN_10>,
 ) {
     info!("Core0: LED task starting");
 
-    let mut led = StatusLed::new(&mut common, sm0, pin, dma, irq);
+    let mut led = StatusLed::new(&mut common, sm2, pin, dma, irq);
     let receiver: Receiver<'static, CriticalSectionRawMutex, LedPattern, 8> =
         LED_COMMAND_CHANNEL.receiver();
 

@@ -8,24 +8,32 @@ pub const RC_LUT_SIZE: usize = RC_MAX_VALUE + 1;
 // Differential thrust LUT size - covers full RC range
 pub const DIFF_LUT_SIZE: usize = RC_LUT_SIZE;
 
-/// Const function to generate throttle curve lookup table at compile time
-const fn generate_throttle_lut() -> [u32; RC_LUT_SIZE] {
-    let mut lut = [0u32; RC_LUT_SIZE];
+/// DShot throttle value where motors start spinning (equivalent to ENGINE_START_PULSE_US in µs space)
+const DSHOT_START_THROTTLE: u16 = ((ENGINE_START_PULSE_US - ENGINE_MIN_PULSE_US) as u32
+    * DSHOT_THROTTLE_MAX as u32
+    / (ENGINE_MAX_PULSE_US - ENGINE_MIN_PULSE_US) as u32) as u16;
+
+/// Const function to generate throttle curve lookup table at compile time.
+/// Output is in DShot space (0-1999) instead of µs.
+const fn generate_throttle_lut() -> [u16; RC_LUT_SIZE] {
+    let mut lut = [0u16; RC_LUT_SIZE];
     let mut i = 0;
 
     while i < RC_LUT_SIZE {
         let rc = i as u32;
 
         let value = if rc <= THROTTLE_DEADZONE {
-            ENGINE_MIN_PULSE_US
+            0
         } else if rc <= THROTTLE_START_POINT {
             let progress =
                 (rc - THROTTLE_DEADZONE) * 100 / (THROTTLE_START_POINT - THROTTLE_DEADZONE);
-            ENGINE_MIN_PULSE_US + (ENGINE_START_PULSE_US - ENGINE_MIN_PULSE_US) * progress / 100
+            (DSHOT_START_THROTTLE as u32 * progress / 100) as u16
         } else {
             let range = 2047 - THROTTLE_START_POINT;
             let position = rc - THROTTLE_START_POINT;
-            ENGINE_START_PULSE_US + position * (ENGINE_MAX_PULSE_US - ENGINE_START_PULSE_US) / range
+            (DSHOT_START_THROTTLE as u32
+                + position * (DSHOT_THROTTLE_MAX as u32 - DSHOT_START_THROTTLE as u32) / range)
+                as u16
         };
 
         lut[i] = value;
@@ -183,7 +191,7 @@ const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
 }
 
 // Pre-computed lookup tables - all generated at compile time
-pub static THROTTLE_LUT: [u32; RC_LUT_SIZE] = generate_throttle_lut();
+pub static THROTTLE_LUT: [u16; RC_LUT_SIZE] = generate_throttle_lut();
 pub static SERVO_LUT: [u32; RC_LUT_SIZE] =
     generate_servo_lut(SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
 pub static ENGINE_LUT: [u32; RC_LUT_SIZE] =
@@ -196,10 +204,10 @@ pub static NORMALIZED_LUT: [i32; RC_LUT_SIZE] = generate_normalized_lut(RC_CENTE
 pub static DIFFERENTIAL_LEGACY_LUT: [(u32, u32); DIFF_LUT_SIZE] = generate_differential_lut();
 pub static YAW_DIFFERENTIAL_LUT: [(i32, i32); RC_LUT_SIZE] = generate_yaw_differential_lut();
 
-/// Ultra-fast throttle curve lookup - single array access
+/// Ultra-fast throttle curve lookup - single array access (returns DShot 0-1999)
 #[must_use]
 #[inline(always)]
-pub fn throttle_curve_lut(rc_value: u16) -> u32 {
+pub fn throttle_curve_lut(rc_value: u16) -> u16 {
     unsafe {
         // SAFETY: We clamp the index to valid range
         *THROTTLE_LUT.get_unchecked((rc_value as usize).min(RC_MAX_VALUE))
@@ -272,42 +280,28 @@ pub fn channels_to_normalized_lut(channels: &[u16]) -> (f32, f32, f32, f32) {
     )
 }
 
-/// Apply differential thrust using pre-computed values (mixing mode)
+/// Apply differential thrust using pre-computed values (mixing mode, DShot space)
 #[must_use]
 #[inline(always)]
-pub fn apply_differential_thrust_lut(base_thrust: u32, yaw_rc: u16) -> (u32, u32) {
-    let (left_mult, right_mult) = calculate_yaw_differential_lut(yaw_rc);
-
-    if base_thrust > ENGINE_MIN_PULSE_US {
-        let thrust_range = base_thrust - ENGINE_MIN_PULSE_US;
-        let left = ENGINE_MIN_PULSE_US + ((thrust_range as f32 * left_mult) as u32);
-        let right = ENGINE_MIN_PULSE_US + ((thrust_range as f32 * right_mult) as u32);
-
-        (
-            left.clamp(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US),
-            right.clamp(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US),
-        )
-    } else {
-        (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+pub fn apply_differential_thrust_lut(base_thrust: u16, yaw_rc: u16) -> (u16, u16) {
+    if base_thrust == 0 {
+        return (0, 0);
     }
+    let (left_mult, right_mult) = calculate_yaw_differential_lut(yaw_rc);
+    let left = ((base_thrust as f32 * left_mult) as u16).min(DSHOT_THROTTLE_MAX);
+    let right = ((base_thrust as f32 * right_mult) as u16).min(DSHOT_THROTTLE_MAX);
+    (left, right)
 }
 
-/// Apply differential thrust using pre-computed values (legacy)
+/// Apply differential thrust using pre-computed values (legacy, DShot space)
 #[must_use]
 #[inline(always)]
-pub fn apply_differential_lut(base_thrust: u32, ch4_value: u16) -> (u32, u32) {
-    let (left_mult, right_mult) = calculate_differential_lut(ch4_value);
-
-    if base_thrust > ENGINE_MIN_PULSE_US {
-        let thrust_range = base_thrust - ENGINE_MIN_PULSE_US;
-        let left = ENGINE_MIN_PULSE_US + (thrust_range * left_mult / 100);
-        let right = ENGINE_MIN_PULSE_US + (thrust_range * right_mult / 100);
-
-        (
-            left.clamp(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US),
-            right.clamp(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US),
-        )
-    } else {
-        (ENGINE_MIN_PULSE_US, ENGINE_MIN_PULSE_US)
+pub fn apply_differential_lut(base_thrust: u16, ch4_value: u16) -> (u16, u16) {
+    if base_thrust == 0 {
+        return (0, 0);
     }
+    let (left_mult, right_mult) = calculate_differential_lut(ch4_value);
+    let left = ((base_thrust as u32 * left_mult / 100) as u16).min(DSHOT_THROTTLE_MAX);
+    let right = ((base_thrust as u32 * right_mult / 100) as u16).min(DSHOT_THROTTLE_MAX);
+    (left, right)
 }

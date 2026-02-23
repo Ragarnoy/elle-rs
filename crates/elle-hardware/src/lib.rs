@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod crsf;
+pub mod dshot;
 pub mod event;
 pub mod flash_constants;
 pub mod imu;

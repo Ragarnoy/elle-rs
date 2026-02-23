@@ -14,6 +14,7 @@ embassy-time = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-rp = { workspace = true }
 embassy-futures = { workspace = true }
+embassy-dshot = { workspace = true }
 
 icm426xx = { workspace = true }
 bmp390 = { workspace = true }

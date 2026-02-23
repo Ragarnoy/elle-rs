@@ -16,6 +16,7 @@ embassy-time = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-rp = { workspace = true }
 embassy-futures = { workspace = true }
+embassy-dshot = { workspace = true }
 embedded-hal-bus = { workspace = true }
 
 static_cell = { workspace = true }

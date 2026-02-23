@@ -19,7 +19,6 @@ pub const SERVO_CENTER_US: u32 = 1_500;
 pub const ENGINE_MIN_PULSE_US: u32 = 1_000; // Absolute minimum (motors off)
 pub const ENGINE_START_PULSE_US: u32 = 1_150; // Actual point where motors start spinning
 pub const ENGINE_MAX_PULSE_US: u32 = 1_600; // Maximum throttle
-pub const ENGINE_IDLE_PULSE_US: u32 = 1_100; // Idle throttle for init sequence
 
 // Throttle curve
 pub const THROTTLE_DEADZONE: u32 = 200; // RC values 0-200 = motors off
@@ -34,8 +33,8 @@ pub const DIFF_NEUTRAL_MIN: u16 = 1_000;
 pub const DIFF_NEUTRAL_MAX: u16 = 1_010;
 pub const DIFF_MAX_PERCENT: i32 = 20;
 
-// Engine sync tuning
-pub const ENGINE_RIGHT_OFFSET_US: u32 = 36;
+// DShot configuration
+pub const DSHOT_THROTTLE_MAX: u16 = 1999;
 
 // RC parameters (protocol-independent, values in 0–2047 range)
 pub const RC_TIMEOUT_MS: u64 = 300;
@@ -70,12 +69,12 @@ pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons fo
 pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon control
 
 // IMU parameters
-pub const IMU_I2C_FREQ: u32 = 200_000; // 200kHz I2C
+pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C fast mode (MMC5616WA + BMP390)
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
 // IMU SPI parameters (ICM-42686-P)
-pub const IMU_SPI_FREQ: u32 = 1_000_000; // 1 MHz SPI clock
+pub const IMU_SPI_FREQ: u32 = 8_000_000; // 8 MHz SPI clock (ICM-42686-P rated to 24 MHz reads)
 pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
 /// Madgwick AHRS filter gain (higher = faster convergence, more noise)
 pub const AHRS_BETA: f32 = 0.033;

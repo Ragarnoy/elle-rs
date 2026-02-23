@@ -312,8 +312,8 @@ fn handle_get_controller_output(
         roll_setpoint_cdeg: (out.roll_setpoint_deg * 100.0) as i16,
         elevon_left_us: out.elevon_left_us as u16,
         elevon_right_us: out.elevon_right_us as u16,
-        engine_left_us: out.engine_left_us as u16,
-        engine_right_us: out.engine_right_us as u16,
+        engine_left_dshot: out.engine_left_dshot,
+        engine_right_dshot: out.engine_right_dshot,
     }
 }
 
