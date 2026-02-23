@@ -30,7 +30,7 @@ use elle_hardware::imu::{
 use elle_hardware::imu::{BARO_CACHE, MAG_CACHE};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
-    dshot::DshotEngines,
+    dshot::{DSHOT_THROTTLE, dshot_task},
     pwm::{PwmOutputs, PwmPins},
     sequential_flash_manager::SequentialFlashManager,
 };
@@ -307,7 +307,7 @@ async fn main(spawner: Spawner) {
         p.PIN_15,
         embassy_dshot::rp::DshotSpeed::DShot300,
     );
-    let mut engines = DshotEngines::new(engine_left, engine_right);
+    spawner.spawn(dshot_task(engine_left, engine_right).unwrap());
 
     #[cfg(feature = "rpc-control")]
     {
@@ -404,10 +404,6 @@ async fn main(spawner: Spawner) {
         }
         Timer::after(Duration::from_millis(100)).await;
     }
-
-    // Arm ESCs via DShot (send MotorStop at ~1kHz for 2 seconds)
-    info!("Core0: Arming ESCs via DShot");
-    engines.arm(Duration::from_secs(2)).await;
 
     // Initialize supervisor components (but keep health monitoring disabled)
     info!("Core0: Initializing supervisor (watchdog only)");
@@ -571,7 +567,7 @@ async fn main(spawner: Spawner) {
 
                 // Send engine commands via DShot
                 let (engine_l, engine_r) = fc.engine_output();
-                engines.set_throttle(engine_l, engine_r).await;
+                DSHOT_THROTTLE.signal((engine_l, engine_r));
 
                 #[cfg(feature = "crsf-telemetry")]
                 elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
@@ -1183,7 +1179,7 @@ async fn main(spawner: Spawner) {
 
             // Send engine commands via DShot
             let (engine_l, engine_r) = fc.engine_output();
-            engines.set_throttle(engine_l, engine_r).await;
+            DSHOT_THROTTLE.signal((engine_l, engine_r));
 
             // Autotuner per-tick update
             if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
