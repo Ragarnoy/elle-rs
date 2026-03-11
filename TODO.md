@@ -40,8 +40,10 @@ PIO2     -> PIN_15 (engine_right)  — BidirDShot300
 - EDT frames (temp/voltage/current) stored in `EngineReading`, exposed via RPC, logged to ULog
 - Best-effort: if ESC doesn't support EDT, plain eRPM frames still work, EDT fields stay 0
 
-**2. CRSF telemetry RPM frame**
-- Send RPM to radio for OSD display (not yet implemented)
+**~~2. CRSF telemetry battery frame~~ DONE**
+- Battery Sensor frame (0x08) sends EDT voltage/current to radio OSD
+- 5th slot in 50Hz round-robin (~10Hz update), reads `ENGINE_CACHE` for both engines
+- Voltage: max of both engines (same battery), current: sum of both engines
 
 **3. Motor health / failure detection**
 - Compare expected RPM (governor target) vs actual

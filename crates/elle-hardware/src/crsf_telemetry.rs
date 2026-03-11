@@ -13,6 +13,7 @@ use embassy_time::{Duration, Ticker};
 
 const CRSF_SYNC_BYTE: u8 = 0xC8;
 const CRSF_FRAMETYPE_GPS: u8 = 0x02;
+const CRSF_FRAMETYPE_BATTERY: u8 = 0x08;
 const CRSF_FRAMETYPE_BARO: u8 = 0x09;
 const CRSF_FRAMETYPE_ATTITUDE: u8 = 0x1E;
 const CRSF_FRAMETYPE_FLIGHT_MODE: u8 = 0x21;
@@ -159,16 +160,43 @@ fn build_baro_frame(buf: &mut [u8; 8], altitude_m: f32) {
     buf[7] = CRC8.checksum(&buf[2..7]);
 }
 
+/// Build a CRSF Battery Sensor frame (type 0x08).
+/// Payload (8 bytes, big-endian):
+///   voltage:u16 (100mV/LSB) + current:u16 (100mA/LSB) + capacity:u24 (mAh) + remaining:u8 (%)
+///
+/// Voltage/current from EDT (averaged across both engines since they share the same battery).
+fn build_battery_frame(buf: &mut [u8; 12], voltage_mv: u32, current_ma: u32) {
+    // EDT voltage is in mV, CRSF wants 100mV units
+    let voltage_crsf = (voltage_mv / 100) as u16;
+    // EDT current is in mA, CRSF wants 100mA units. Sum both engines.
+    let current_crsf = (current_ma / 100) as u16;
+    let capacity: u32 = 0; // no mAh tracking yet
+    let remaining: u8 = 0; // no remaining % yet
+
+    buf[0] = CRSF_SYNC_BYTE;
+    buf[1] = 10; // 8 payload + type + crc
+    buf[2] = CRSF_FRAMETYPE_BATTERY;
+    buf[3..5].copy_from_slice(&voltage_crsf.to_be_bytes());
+    buf[5..7].copy_from_slice(&current_crsf.to_be_bytes());
+    // capacity is 24-bit big-endian
+    buf[7] = (capacity >> 16) as u8;
+    buf[8] = (capacity >> 8) as u8;
+    buf[9] = capacity as u8;
+    buf[10] = remaining;
+    buf[11] = CRC8.checksum(&buf[2..11]);
+}
+
 // ---------------------------------------------------------------------------
 // Telemetry task
 // ---------------------------------------------------------------------------
 
 /// CRSF telemetry transmit task.
 ///
-/// Runs at 50 Hz, round-robining through 3 frame types each tick:
-/// attitude → flight_mode → gps → … (~17 Hz each).
+/// Runs at 50 Hz, round-robining through 5 frame types each tick:
+/// attitude → flight_mode → gps → baro → battery (~10 Hz each).
 /// The GPS frame always carries magnetic heading from the MMC5616WA;
 /// when the `gnss` feature is enabled, it also carries position data.
+/// The battery frame carries EDT voltage/current from the ESCs (0 if EDT unsupported).
 #[embassy_executor::task]
 pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
     crate::elle_event!(
@@ -192,7 +220,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
 
     let mut ticker = Ticker::every(Duration::from_millis(20)); // 50 Hz
     let mut slot: u8 = 0;
-    let num_slots: u8 = 4; // attitude, flight_mode, gps, baro
+    let num_slots: u8 = 5; // attitude, flight_mode, gps, baro, battery
 
     let mut frame_count: u32 = 0;
     let mut error_count: u32 = 0;
@@ -264,6 +292,19 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
                 build_baro_frame(&mut buf, last_baro_alt);
                 if let Err(e) = tx.write(&buf).await {
                     warn!("CRSF TX baro error: {}", e);
+                    tx_ok = false;
+                }
+            }
+            4 => {
+                let eng = crate::dshot::ENGINE_CACHE.lock(|c| c.get());
+                // Use voltage from whichever engine has it (same battery),
+                // sum current from both engines
+                let voltage_mv = eng.left_voltage_mv.max(eng.right_voltage_mv);
+                let current_ma = eng.left_current_ma + eng.right_current_ma;
+                let mut buf = [0u8; 12];
+                build_battery_frame(&mut buf, voltage_mv, current_ma);
+                if let Err(e) = tx.write(&buf).await {
+                    warn!("CRSF TX battery error: {}", e);
                     tx_ok = false;
                 }
             }
