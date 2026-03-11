@@ -4,8 +4,8 @@
 
 use crate::format::{FLAG_BITS_MSG, InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader};
 use crate::messages::{
-    AttitudeMessage, BarometerMessage, CommandsMessage, GnssMessage, LogEventMessage,
-    MagnetometerMessage, MessageType, StatusMessage,
+    AttitudeMessage, BarometerMessage, CommandsMessage, EngineMessage, GnssMessage,
+    LogEventMessage, MagnetometerMessage, MessageType, StatusMessage,
 };
 use embassy_time::Instant;
 use heapless::Vec;
@@ -107,6 +107,9 @@ impl ULogWriter {
         self.buffer
             .extend_from_slice(LogEventMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(EngineMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
 
         // Write info messages (type 'I')
         self.write_info("char[] sys_name", sys_name)?;
@@ -190,6 +193,18 @@ impl ULogWriter {
     /// Write a GNSS data message
     pub fn write_gnss(&mut self, msg_id: u16, data: &GnssMessage) -> Result<(), WriteError> {
         let mut payload = [0u8; GnssMessage::SIZE + 2];
+        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
+        payload[2..].copy_from_slice(&data.to_bytes());
+        self.write_message(MessageType::Data, &payload)
+    }
+
+    /// Write an engine data message
+    pub fn write_engine(
+        &mut self,
+        msg_id: u16,
+        data: &EngineMessage,
+    ) -> Result<(), WriteError> {
+        let mut payload = [0u8; EngineMessage::SIZE + 2];
         payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
         payload[2..].copy_from_slice(&data.to_bytes());
         self.write_message(MessageType::Data, &payload)
