@@ -205,6 +205,12 @@ fn handle_get_engine(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Engine
         right_valid: eng.right_valid,
         left_target_erpm: eng.left_target_erpm,
         right_target_erpm: eng.right_target_erpm,
+        left_temperature: eng.left_temperature,
+        right_temperature: eng.right_temperature,
+        left_voltage_mv: eng.left_voltage_mv,
+        right_voltage_mv: eng.right_voltage_mv,
+        left_current_ma: eng.left_current_ma,
+        right_current_ma: eng.right_current_ma,
     }
 }
 

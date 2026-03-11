@@ -148,16 +148,7 @@ async fn log_flight_data(
     // Log engine data at 77Hz
     {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
-        let _ = logger
-            .log_engine(
-                eng.left_erpm,
-                eng.right_erpm,
-                eng.left_throttle,
-                eng.right_throttle,
-                eng.left_target_erpm,
-                eng.right_target_erpm,
-            )
-            .await;
+        let _ = logger.log_engine(&eng).await;
     }
 
     // Log status at reduced rate (7.7Hz - every 10th iteration)

@@ -137,7 +137,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(13), // attitude data + mag + heading + baro + gnss
-            Constraint::Length(3),  // controller output + engine
+            Constraint::Length(4),  // controller output + engine + EDT
             Constraint::Min(8),    // artificial horizon canvas
         ])
         .split(inner);
@@ -273,8 +273,21 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
             } else {
                 String::new()
             };
+            let edt = if e.left_voltage_mv > 0 || e.right_voltage_mv > 0 {
+                format!(
+                    "\n  EDT: {:.1}V {:.1}A {}°C | {:.1}V {:.1}A {}°C",
+                    e.left_voltage_mv as f32 / 1000.0,
+                    e.left_current_ma as f32 / 1000.0,
+                    e.left_temperature,
+                    e.right_voltage_mv as f32 / 1000.0,
+                    e.right_current_ma as f32 / 1000.0,
+                    e.right_temperature,
+                )
+            } else {
+                String::new()
+            };
             format!(
-                "  Eng L: {} eRPM{} (cmd:{}) | R: {} eRPM{} (cmd:{})",
+                "  Eng L: {} eRPM{} (cmd:{}) | R: {} eRPM{} (cmd:{}){edt}",
                 l_rpm, l_target, e.left_throttle, r_rpm, r_target, e.right_throttle,
             )
         } else {

@@ -139,7 +139,7 @@ pub struct BarometerResp {
     pub altitude_m: f32,
 }
 
-/// Engine telemetry response (DShot bidirectional RPM + throttle + governor targets)
+/// Engine telemetry response (DShot bidirectional RPM + throttle + governor + EDT)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct EngineResp {
     pub left_erpm: u32,
@@ -150,6 +150,15 @@ pub struct EngineResp {
     pub right_valid: bool,
     pub left_target_erpm: u32,
     pub right_target_erpm: u32,
+    /// ESC temperature in °C (from EDT)
+    pub left_temperature: u8,
+    pub right_temperature: u8,
+    /// Supply voltage in millivolts (from EDT)
+    pub left_voltage_mv: u32,
+    pub right_voltage_mv: u32,
+    /// Current draw in milliamps (from EDT)
+    pub left_current_ma: u32,
+    pub right_current_ma: u32,
 }
 
 /// `ULog` read chunk response

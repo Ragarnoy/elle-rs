@@ -1,12 +1,13 @@
 use core::cell::Cell;
 
 use elle_control::governor::RpmGovernor;
+use embassy_dshot::ExtendedTelemetry;
 use embassy_dshot::rp::BidirDshotPio;
 use embassy_rp::peripherals::{PIO1, PIO2};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Ticker};
+use embassy_time::{Duration, Ticker, Timer};
 
 /// Target eRPM per engine (left, right). Governor PI converts to DShot at 1kHz.
 pub static DSHOT_THROTTLE: Signal<CriticalSectionRawMutex, (u32, u32)> = Signal::new();
@@ -14,7 +15,10 @@ pub static DSHOT_THROTTLE: Signal<CriticalSectionRawMutex, (u32, u32)> = Signal:
 /// Consecutive bidir telemetry failure threshold before falling back to fire-and-forget.
 const BIDIR_FALLBACK_THRESHOLD: u16 = 100;
 
-/// Engine RPM + throttle snapshot from the DShot task.
+/// Number of times to send ExtendedTelemetryEnable command (DShot protocol requirement).
+const EDT_ENABLE_REPEAT: u8 = 6;
+
+/// Engine RPM + throttle + extended telemetry snapshot from the DShot task.
 #[derive(Clone, Copy, Default, defmt::Format)]
 pub struct EngineReading {
     pub left_erpm: u32,
@@ -25,6 +29,15 @@ pub struct EngineReading {
     pub right_valid: bool,
     pub left_target_erpm: u32,
     pub right_target_erpm: u32,
+    /// ESC temperature in °C (1°C/LSB, from EDT)
+    pub left_temperature: u8,
+    pub right_temperature: u8,
+    /// Supply voltage in millivolts (from EDT, 250mV/LSB)
+    pub left_voltage_mv: u32,
+    pub right_voltage_mv: u32,
+    /// Current draw in milliamps (from EDT, 1A/LSB)
+    pub left_current_ma: u32,
+    pub right_current_ma: u32,
 }
 
 /// Non-consuming cache for engine telemetry (Mutex<Cell<>> pattern).
@@ -38,6 +51,12 @@ pub static ENGINE_CACHE: Mutex<CriticalSectionRawMutex, Cell<EngineReading>> =
         right_valid: false,
         left_target_erpm: 0,
         right_target_erpm: 0,
+        left_temperature: 0,
+        right_temperature: 0,
+        left_voltage_mv: 0,
+        right_voltage_mv: 0,
+        left_current_ma: 0,
+        right_current_ma: 0,
     }));
 
 /// Per-engine bidir telemetry state for auto-fallback.
@@ -65,8 +84,31 @@ impl EngineState {
         if self.fail_count >= BIDIR_FALLBACK_THRESHOLD && self.bidir_enabled {
             self.bidir_enabled = false;
             self.governor.reset();
-            defmt::warn!("DShot: bidir fallback triggered after {} failures, governor reset", self.fail_count);
+            defmt::warn!(
+                "DShot: bidir fallback triggered after {} failures, governor reset",
+                self.fail_count
+            );
         }
+    }
+}
+
+/// Apply an extended telemetry reading to the left engine fields of an `EngineReading`.
+fn apply_edt_left(reading: &mut EngineReading, edt: &ExtendedTelemetry) {
+    match *edt {
+        ExtendedTelemetry::Temperature(t) => reading.left_temperature = t,
+        ExtendedTelemetry::Voltage(mv) => reading.left_voltage_mv = mv,
+        ExtendedTelemetry::Current(ma) => reading.left_current_ma = ma,
+        _ => {}
+    }
+}
+
+/// Apply an extended telemetry reading to the right engine fields of an `EngineReading`.
+fn apply_edt_right(reading: &mut EngineReading, edt: &ExtendedTelemetry) {
+    match *edt {
+        ExtendedTelemetry::Temperature(t) => reading.right_temperature = t,
+        ExtendedTelemetry::Voltage(mv) => reading.right_voltage_mv = mv,
+        ExtendedTelemetry::Current(ma) => reading.right_current_ma = ma,
+        _ => {}
     }
 }
 
@@ -81,18 +123,31 @@ impl<'a> DshotEngines<'a> {
         Self { left, right }
     }
 
-    /// Arm both ESCs by sending MotorStop at ~1kHz for the given duration.
+    /// Arm both ESCs and enable extended telemetry.
     async fn arm(&mut self, duration: Duration) {
         embassy_futures::join::join(
             self.left.arm_async(duration),
             self.right.arm_async(duration),
         )
         .await;
+
+        // Enable extended telemetry (must send command 6 times per DShot protocol)
+        for _ in 0..EDT_ENABLE_REPEAT {
+            embassy_futures::join::join(
+                self.left
+                    .send_command_async(embassy_dshot::Command::ExtendedTelemetryEnable),
+                self.right
+                    .send_command_async(embassy_dshot::Command::ExtendedTelemetryEnable),
+            )
+            .await;
+            Timer::after(Duration::from_micros(300)).await;
+        }
+        defmt::info!("DShot: extended telemetry enabled");
     }
 
-    /// Send throttle commands to both engines and return telemetry results.
+    /// Send throttle commands to both engines and return extended telemetry results.
     ///
-    /// Returns `(Option<u32>, Option<u32>)` — eRPM for each engine, or None on failure.
+    /// Returns `(Option<ExtendedTelemetry>, Option<ExtendedTelemetry>)` per engine.
     /// When bidir is disabled for an engine, uses fire-and-forget (no telemetry).
     async fn set_throttle(
         &mut self,
@@ -100,10 +155,9 @@ impl<'a> DshotEngines<'a> {
         right: u16,
         left_bidir: bool,
         right_bidir: bool,
-    ) -> (Option<u32>, Option<u32>) {
+    ) -> (Option<ExtendedTelemetry>, Option<ExtendedTelemetry>) {
         match (left == 0, right == 0) {
             (true, true) => {
-                // Both idle: send MotorStop concurrently
                 embassy_futures::join::join(
                     self.left
                         .send_command_async(embassy_dshot::Command::MotorStop),
@@ -113,71 +167,61 @@ impl<'a> DshotEngines<'a> {
                 .await;
                 (None, None)
             }
-            (false, false) => {
-                // Both active: choose bidir or fire-and-forget per engine
-                match (left_bidir, right_bidir) {
-                    (true, true) => {
-                        let (l_res, r_res) = embassy_futures::join::join(
-                            self.left.throttle_with_telemetry(left),
-                            self.right.throttle_with_telemetry(right),
-                        )
-                        .await;
-                        (
-                            l_res.ok().map(|t| t.erpm),
-                            r_res.ok().map(|t| t.erpm),
-                        )
-                    }
-                    (true, false) => {
-                        let (l_res, r_res) = embassy_futures::join::join(
-                            self.left.throttle_with_telemetry(left),
-                            self.right.throttle_async(right),
-                        )
-                        .await;
-                        if let Err(e) = &r_res {
-                            defmt::warn!("DShot right send error: {}", e);
-                        }
-                        (l_res.ok().map(|t| t.erpm), None)
-                    }
-                    (false, true) => {
-                        let (l_res, r_res) = embassy_futures::join::join(
-                            self.left.throttle_async(left),
-                            self.right.throttle_with_telemetry(right),
-                        )
-                        .await;
-                        if let Err(e) = &l_res {
-                            defmt::warn!("DShot left send error: {}", e);
-                        }
-                        (None, r_res.ok().map(|t| t.erpm))
-                    }
-                    (false, false) => {
-                        let (l_res, r_res) = embassy_futures::join::join(
-                            self.left.throttle_async(left),
-                            self.right.throttle_async(right),
-                        )
-                        .await;
-                        if let Err(e) = l_res {
-                            defmt::warn!("DShot left send error: {}", e);
-                        }
-                        if let Err(e) = r_res {
-                            defmt::warn!("DShot right send error: {}", e);
-                        }
-                        (None, None)
-                    }
+            (false, false) => match (left_bidir, right_bidir) {
+                (true, true) => {
+                    let (l_res, r_res) = embassy_futures::join::join(
+                        self.left.read_extended_telemetry(left),
+                        self.right.read_extended_telemetry(right),
+                    )
+                    .await;
+                    (l_res.ok(), r_res.ok())
                 }
-            }
+                (true, false) => {
+                    let (l_res, r_res) = embassy_futures::join::join(
+                        self.left.read_extended_telemetry(left),
+                        self.right.throttle_async(right),
+                    )
+                    .await;
+                    if let Err(e) = &r_res {
+                        defmt::warn!("DShot right send error: {}", e);
+                    }
+                    (l_res.ok(), None)
+                }
+                (false, true) => {
+                    let (l_res, r_res) = embassy_futures::join::join(
+                        self.left.throttle_async(left),
+                        self.right.read_extended_telemetry(right),
+                    )
+                    .await;
+                    if let Err(e) = &l_res {
+                        defmt::warn!("DShot left send error: {}", e);
+                    }
+                    (None, r_res.ok())
+                }
+                (false, false) => {
+                    let (l_res, r_res) = embassy_futures::join::join(
+                        self.left.throttle_async(left),
+                        self.right.throttle_async(right),
+                    )
+                    .await;
+                    if let Err(e) = l_res {
+                        defmt::warn!("DShot left send error: {}", e);
+                    }
+                    if let Err(e) = r_res {
+                        defmt::warn!("DShot right send error: {}", e);
+                    }
+                    (None, None)
+                }
+            },
             _ => {
-                // Mixed (rare with differential thrust): handle each side independently
-                let l_erpm = if left == 0 {
+                // Mixed: handle each side independently
+                let l_edt = if left == 0 {
                     self.left
                         .send_command_async(embassy_dshot::Command::MotorStop)
                         .await;
                     None
                 } else if left_bidir {
-                    self.left
-                        .throttle_with_telemetry(left)
-                        .await
-                        .ok()
-                        .map(|t| t.erpm)
+                    self.left.read_extended_telemetry(left).await.ok()
                 } else {
                     if let Err(e) = self.left.throttle_async(left).await {
                         defmt::warn!("DShot left send error: {}", e);
@@ -185,17 +229,13 @@ impl<'a> DshotEngines<'a> {
                     None
                 };
 
-                let r_erpm = if right == 0 {
+                let r_edt = if right == 0 {
                     self.right
                         .send_command_async(embassy_dshot::Command::MotorStop)
                         .await;
                     None
                 } else if right_bidir {
-                    self.right
-                        .throttle_with_telemetry(right)
-                        .await
-                        .ok()
-                        .map(|t| t.erpm)
+                    self.right.read_extended_telemetry(right).await.ok()
                 } else {
                     if let Err(e) = self.right.throttle_async(right).await {
                         defmt::warn!("DShot right send error: {}", e);
@@ -203,7 +243,7 @@ impl<'a> DshotEngines<'a> {
                     None
                 };
 
-                (l_erpm, r_erpm)
+                (l_edt, r_edt)
             }
         }
     }
@@ -243,7 +283,7 @@ pub async fn dshot_task(
             right_state.bidir_enabled && reading.right_valid,
         );
 
-        let (l_erpm, r_erpm) = engines
+        let (l_edt, r_edt) = engines
             .set_throttle(
                 left_dshot,
                 right_dshot,
@@ -255,34 +295,52 @@ pub async fn dshot_task(
         // Update left engine reading
         reading.left_throttle = left_dshot;
         reading.left_target_erpm = target.0;
-        if let Some(erpm) = l_erpm {
-            reading.left_erpm = erpm;
-            reading.left_valid = true;
-            left_state.record_success();
-        } else if left_dshot == 0 {
-            reading.left_erpm = 0;
-            reading.left_valid = true;
-        } else if left_state.bidir_enabled {
-            // Transient failure: hold last erpm, mark via state
-            left_state.record_failure();
-        } else {
-            reading.left_valid = false;
+        match l_edt {
+            Some(ExtendedTelemetry::Erpm { erpm, .. }) => {
+                reading.left_erpm = erpm;
+                reading.left_valid = true;
+                left_state.record_success();
+            }
+            Some(ref edt) => {
+                // EDT frame (temp/voltage/current) — eRPM stays at last known value
+                apply_edt_left(&mut reading, edt);
+                left_state.record_success();
+            }
+            None if left_dshot == 0 => {
+                reading.left_erpm = 0;
+                reading.left_valid = true;
+            }
+            None if left_state.bidir_enabled => {
+                left_state.record_failure();
+            }
+            None => {
+                reading.left_valid = false;
+            }
         }
 
         // Update right engine reading
         reading.right_throttle = right_dshot;
         reading.right_target_erpm = target.1;
-        if let Some(erpm) = r_erpm {
-            reading.right_erpm = erpm;
-            reading.right_valid = true;
-            right_state.record_success();
-        } else if right_dshot == 0 {
-            reading.right_erpm = 0;
-            reading.right_valid = true;
-        } else if right_state.bidir_enabled {
-            right_state.record_failure();
-        } else {
-            reading.right_valid = false;
+        match r_edt {
+            Some(ExtendedTelemetry::Erpm { erpm, .. }) => {
+                reading.right_erpm = erpm;
+                reading.right_valid = true;
+                right_state.record_success();
+            }
+            Some(ref edt) => {
+                apply_edt_right(&mut reading, edt);
+                right_state.record_success();
+            }
+            None if right_dshot == 0 => {
+                reading.right_erpm = 0;
+                reading.right_valid = true;
+            }
+            None if right_state.bidir_enabled => {
+                right_state.record_failure();
+            }
+            None => {
+                reading.right_valid = false;
+            }
         }
 
         ENGINE_CACHE.lock(|c| c.set(reading));

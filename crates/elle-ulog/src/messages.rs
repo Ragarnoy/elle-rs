@@ -464,42 +464,37 @@ impl GnssMessage {
     }
 }
 
-/// Engine data message - logs DShot engine RPM, throttle commands, and governor targets
+/// Engine data message - logs DShot engine RPM, throttle, governor targets, and EDT
 ///
-/// Format: "engine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm"
+/// Format: "engine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm;uint8_t left_temperature;uint8_t right_temperature;uint32_t left_voltage_mv;uint32_t right_voltage_mv;uint32_t left_current_ma;uint32_t right_current_ma"
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct EngineMessage {
-    /// Timestamp in microseconds
     pub timestamp: u64,
-    /// Left engine electrical RPM
     pub left_erpm: u32,
-    /// Right engine electrical RPM
     pub right_erpm: u32,
-    /// Left engine DShot throttle command (0-1999)
     pub left_throttle: u16,
-    /// Right engine DShot throttle command (0-1999)
     pub right_throttle: u16,
-    /// Left engine governor target eRPM (0 if open-loop)
     pub left_target_erpm: u32,
-    /// Right engine governor target eRPM (0 if open-loop)
     pub right_target_erpm: u32,
+    pub left_temperature: u8,
+    pub right_temperature: u8,
+    pub left_voltage_mv: u32,
+    pub right_voltage_mv: u32,
+    pub left_current_ma: u32,
+    pub right_current_ma: u32,
 }
 
 impl EngineMessage {
-    /// Format definition string for ULog
-    pub const FORMAT: &'static str = "engine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm";
+    pub const FORMAT: &'static str = "engine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm;uint8_t left_temperature;uint8_t right_temperature;uint32_t left_voltage_mv;uint32_t right_voltage_mv;uint32_t left_current_ma;uint32_t right_current_ma";
 
-    /// Message name
     pub const NAME: &'static str = "engine_data";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub const FORMAT_MSG: &'static [u8] = b"\xa9\x00Fengine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm";
+    pub const FORMAT_MSG: &'static [u8] = b"\x42\x01Fengine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm;uint8_t left_temperature;uint8_t right_temperature;uint32_t left_voltage_mv;uint32_t right_voltage_mv;uint32_t left_current_ma;uint32_t right_current_ma";
 
-    /// Size of the message in bytes
-    pub const SIZE: usize = 28; // 8 + 4 + 4 + 2 + 2 + 4 + 4
+    /// Size: 8 + 4+4 + 2+2 + 4+4 + 1+1 + 4+4 + 4+4 = 46
+    pub const SIZE: usize = 46;
 
-    /// Create a new engine message
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -510,6 +505,12 @@ impl EngineMessage {
         right_throttle: u16,
         left_target_erpm: u32,
         right_target_erpm: u32,
+        left_temperature: u8,
+        right_temperature: u8,
+        left_voltage_mv: u32,
+        right_voltage_mv: u32,
+        left_current_ma: u32,
+        right_current_ma: u32,
     ) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
@@ -519,10 +520,15 @@ impl EngineMessage {
             right_throttle,
             left_target_erpm,
             right_target_erpm,
+            left_temperature,
+            right_temperature,
+            left_voltage_mv,
+            right_voltage_mv,
+            left_current_ma,
+            right_current_ma,
         }
     }
 
-    /// Serialize to little-endian bytes
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
@@ -533,6 +539,12 @@ impl EngineMessage {
         buf[18..20].copy_from_slice(&self.right_throttle.to_le_bytes());
         buf[20..24].copy_from_slice(&self.left_target_erpm.to_le_bytes());
         buf[24..28].copy_from_slice(&self.right_target_erpm.to_le_bytes());
+        buf[28] = self.left_temperature;
+        buf[29] = self.right_temperature;
+        buf[30..34].copy_from_slice(&self.left_voltage_mv.to_le_bytes());
+        buf[34..38].copy_from_slice(&self.right_voltage_mv.to_le_bytes());
+        buf[38..42].copy_from_slice(&self.left_current_ma.to_le_bytes());
+        buf[42..46].copy_from_slice(&self.right_current_ma.to_le_bytes());
         buf
     }
 }

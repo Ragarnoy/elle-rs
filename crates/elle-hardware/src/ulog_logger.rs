@@ -387,16 +387,10 @@ impl ULogLogger {
         Ok(())
     }
 
-    /// Log engine data (RPM + throttle + governor targets)
-    #[allow(clippy::too_many_arguments)]
+    /// Log engine data from `EngineReading` cache snapshot
     pub async fn log_engine(
         &mut self,
-        left_erpm: u32,
-        right_erpm: u32,
-        left_throttle: u16,
-        right_throttle: u16,
-        left_target_erpm: u32,
-        right_target_erpm: u32,
+        eng: &crate::dshot::EngineReading,
     ) -> Result<(), ()> {
         if !self.initialized {
             return Err(());
@@ -406,12 +400,18 @@ impl ULogLogger {
 
         let msg = EngineMessage::new(
             Instant::now(),
-            left_erpm,
-            right_erpm,
-            left_throttle,
-            right_throttle,
-            left_target_erpm,
-            right_target_erpm,
+            eng.left_erpm,
+            eng.right_erpm,
+            eng.left_throttle,
+            eng.right_throttle,
+            eng.left_target_erpm,
+            eng.right_target_erpm,
+            eng.left_temperature,
+            eng.right_temperature,
+            eng.left_voltage_mv,
+            eng.right_voltage_mv,
+            eng.left_current_ma,
+            eng.right_current_ma,
         );
 
         self.writer.clear_buffer();

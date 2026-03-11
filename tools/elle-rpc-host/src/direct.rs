@@ -209,6 +209,17 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                 e.left_erpm, l_target, e.left_throttle, l_status,
                 e.right_erpm, r_target, e.right_throttle, r_status,
             );
+            if e.left_voltage_mv > 0 || e.right_voltage_mv > 0 {
+                println!(
+                    "  EDT L: {:.1}V {:.1}A {}°C | R: {:.1}V {:.1}A {}°C",
+                    e.left_voltage_mv as f32 / 1000.0,
+                    e.left_current_ma as f32 / 1000.0,
+                    e.left_temperature,
+                    e.right_voltage_mv as f32 / 1000.0,
+                    e.right_current_ma as f32 / 1000.0,
+                    e.right_temperature,
+                );
+            }
         }
     }
 
