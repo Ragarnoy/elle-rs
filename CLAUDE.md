@@ -65,17 +65,17 @@ The firmware uses postcard-rpc's `define_dispatch!` macro for type-safe dispatch
 No extra postcard-rpc features needed — the macro works with elle's own WireTx/WireRx.
 
 - **ICD**: `crates/elle-rpc-icd/src/lib.rs` — Uses `endpoints!`/`topics!` macros generating `ENDPOINT_LIST`, `TOPICS_IN_LIST`, `TOPICS_OUT_LIST`
-- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 27 blocking handler functions
+- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 28 blocking handler functions
 - **Server task**: `crates/elle-eagle/src/main.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
 
 ### RPC Protocol
 
-27 endpoints + 1 outgoing topic defined in the ICD:
+28 endpoints + 1 outgoing topic defined in the ICD:
 
 **Endpoints** (request/response):
 - Control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetAttitudeSetpoint
 - Safety: Arm, Disarm, EmergencyStop
-- Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels, GetControllerOutput
+- Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels, GetControllerOutput, GetEngine
 - ULog: StartULog, StopULog, ReadULogChunk, EraseULog, GetULogInfo
 - Autotune: StartAutotune, AbortAutotune
 - System: Ping, GetVersion, GetTime
@@ -91,6 +91,8 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 - **`MAG_CACHE`** / **`BARO_CACHE`** (`crates/elle-hardware/src/imu.rs`) — Mutex-based non-consuming caches alongside Signals for mag/baro data. Producers write both Signal and cache; consumers read cache (no signal race).
 - **`LogMsg`** (`crates/elle-eagle/src/log_channel.rs`) — Channel for firmware events → `log_publisher_task` → LogTopic
 - **`ULOG_ENABLED`** (`crates/elle-eagle/src/rpc_app.rs`) — AtomicBool flag controlling ULog recording in RPC mode. Set by StartULog/StopULog RPC commands.
+- **`DSHOT_THROTTLE`** (`crates/elle-hardware/src/dshot.rs`) — Signal carrying `(u16, u16)` throttle values from control loop to dedicated 1kHz DShot send task
+- **`ENGINE_CACHE`** (`crates/elle-hardware/src/dshot.rs`) — Mutex-based non-consuming cache for `EngineReading` (eRPM, throttle, validity per engine). Written by `dshot_task` at 1kHz, read by RPC handler and ULog logger.
 - **`ULogState`** / **`ULOG_ITEM_SIGNAL`** (`crates/elle-eagle/src/rpc_app.rs`) — `#[repr(u8)]` enum state machine (Idle→Reading→Ready→Empty) + Signal for ULog extraction, bridging blocking RPC handlers to async flash operations
 
 ### Host Tool (`tools/elle-rpc-host/`)
@@ -105,7 +107,7 @@ Key modules:
 - `tui/` — ratatui dashboard (mod.rs event loop, state.rs, ui.rs, commands.rs)
 - `direct.rs` — Single-command mode using HostClient
 
-TUI polling rates: attitude 10Hz, status 0.5Hz, magnetometer 5Hz, barometer 1Hz, GNSS 1Hz.
+TUI polling rates: attitude 10Hz, status 0.5Hz, magnetometer 5Hz, barometer 1Hz, GNSS 1Hz, engine 5Hz.
 
 **Important**: Host `probe.rs` reads from RTT up channel 1 (index 1), not channel 0 (which is defmt).
 
@@ -117,33 +119,42 @@ Three independent logging systems coexist, each serving a different purpose:
 |--------|-----------|------|-------------|----------|
 | **defmt** | RTT channel 0 | Event-driven | Only if host captures | Developer at debug probe |
 | **RPC LogTopic** | RTT channel 1 (postcard-RPC) | Event-driven (6 call sites) | No — streaming | Host TUI dashboard |
-| **ULog** | Flash storage | 77Hz attitude+commands, 7.7Hz status | Yes — survives power loss | Post-flight analysis |
+| **ULog** | Flash storage | 77Hz attitude+commands+engine, 7.7Hz status | Yes — survives power loss | Post-flight analysis |
 
 - defmt macros (`info!`, `warn!`, etc.) are always compiled in; the transport (`defmt-rtt`) is gated on `defmt-logging` (default on). Without the transport, macros become no-ops.
 - RPC LogTopic carries `(level: u8, code: u16)` — numeric event codes mapped to strings on the host side in `tui/ui.rs::log_code_text()`. ULog-related codes: 30=recording started, 31=init failed, 33=recording stopped, 34=flash erased.
-- ULog records full-fidelity flight data (attitude, commands, status, baro, mag) to flash via `elle-hardware::ULogLogger`. Always compiled in (no feature gate). Recording is explicitly started/stopped — in RPC mode via `ulog start`/`ulog stop` TUI commands, in flight mode via RC aux channel switch (CH7, threshold 1500).
+- ULog records full-fidelity flight data (attitude, commands, engine, status, baro, mag) to flash via `elle-hardware::ULogLogger`. Always compiled in (no feature gate). Recording is explicitly started/stopped — in RPC mode via `ulog start`/`ulog stop` TUI commands, in flight mode via RC aux channel switch (CH7, threshold 1500).
 
 ### Control Loop Architecture
 
-The firmware main loop runs at 77Hz (13ms ticker):
+The firmware main loop runs at 77Hz (13ms ticker). Engine output is decoupled: the control loop publishes throttle values via `DSHOT_THROTTLE` Signal, and a dedicated `dshot_task` resends them at ~1kHz. The DShot task also handles ESC arming on startup (2s MotorStop burst), eliminating any init gap.
+
+**DShot task** (`crates/elle-hardware/src/dshot.rs`):
+- Spawned on Core0 before supervisor init, takes ownership of PIO1+PIO2 engine peripherals
+- Arms ESCs (2s), then runs 1kHz ticker: `try_take()` from `DSHOT_THROTTLE`, resend current values
+- Uses `throttle_with_telemetry()` for bidirectional eRPM reading; writes `ENGINE_CACHE` every iteration
+- Per-engine auto-fallback: after 100 consecutive telemetry failures, switches to `throttle_async()` (fire-and-forget) and sets `valid=false`
+- Defaults to (0, 0) = MotorStop until the control loop publishes its first value
 
 **Flight mode** (default, no `rpc-control`):
 1. Reads CRSF/ELRS commands from dedicated receiver task
 2. Updates FlightController with attitude + pilot commands
-3. Autotune state machine (RC CH9 3-position switch with debounce)
-4. Failsafe check, LED pattern updates
-5. ULog recording controlled by RC aux channel switch (edge detection, CH7 > 1500 = on)
-6. Auto-saves PID gains to flash on autotune completion
+3. Publishes engine output via `DSHOT_THROTTLE` signal
+4. Autotune state machine (RC CH9 3-position switch with debounce)
+5. Failsafe check, LED pattern updates
+6. ULog recording controlled by RC aux channel switch (edge detection, CH7 > 1500 = on)
+7. Auto-saves PID gains to flash on autotune completion
 
 **RPC mode** (`rpc-control` feature):
 1. Reads RPC commands from `RPC_CMD_CHANNEL`
 2. Builds `PilotCommands::Normalized` from accumulated RPC state
 3. Updates FlightController with attitude data from IMU
-4. Autotune state machine (triggered via StartAutotune/AbortAutotune RPC)
-5. Publishes `FlightState` + `ControllerOutput` signals and caches for RPC query handlers
-6. Periodic LED pattern updates
-7. ULog recording gated on `ULOG_ENABLED` flag (set via StartULog/StopULog RPC commands)
-8. Handles ULog extraction commands (ReadULogChunk, PopAndPeekULog, EraseULog) via `FLASH_REQUEST_SIGNAL`
+4. Publishes engine output via `DSHOT_THROTTLE` signal
+5. Autotune state machine (triggered via StartAutotune/AbortAutotune RPC)
+6. Publishes `FlightState` + `ControllerOutput` signals and caches for RPC query handlers
+7. Periodic LED pattern updates
+8. ULog recording gated on `ULOG_ENABLED` flag (set via StartULog/StopULog RPC commands)
+9. Handles ULog extraction commands (ReadULogChunk, PopAndPeekULog, EraseULog) via `FLASH_REQUEST_SIGNAL`
 
 RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never directly control hardware.
 
@@ -203,6 +214,8 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Signal race fixes**: Replaced `try_take()`+`signal()` peek pattern with Mutex-based non-consuming caches (`MAG_CACHE`, `BARO_CACHE`, `FLIGHT_STATE_CACHE`, `CONTROLLER_OUTPUT_CACHE`)
 - **ULog always compiled in**: Removed `ulog-logging` feature gate. ULog support is always available; recording starts only when explicitly triggered (RC switch or TUI command).
 - **Code quality pass**: clippy pedantic/nursery fixes, f64→f32 atan2, named constants for magic numbers (AHRS_BETA, sensor rate ticks), `ULogState` enum replacing magic constants, event drain throttling, setpoint filter skip in Manual mode
+- **Dedicated 1kHz DShot send task**: Decoupled ESC frame sending from 77Hz control loop into `dshot_task` running at ~1kHz via `DSHOT_THROTTLE` Signal. Task owns PIO1+PIO2 engines, handles arming, and continuously resends latest throttle values. `DshotEngines` made private (concrete PIO1/PIO2 types, no longer generic).
+- **EDT RPM telemetry**: DShot task uses `throttle_with_telemetry()` for bidirectional eRPM reading. `ENGINE_CACHE` (Mutex<Cell<>>) carries `EngineReading` (eRPM, throttle, validity per engine). Auto-fallback to `throttle_async()` after 100 consecutive telemetry failures per engine. ULog `engine_data` message at 77Hz. `GetEngineEndpoint` RPC + TUI 5Hz polling + `direct engine` command.
 
 ### Known TODOs in Firmware
 - **`disable-imu` stub generates synthetic test data** (slow sine waves) — for debugging without ICM-42686 hardware
@@ -231,4 +244,4 @@ TUI commands:
 Computed gains are auto-saved to flash and auto-loaded on next boot.
 
 ### Next Steps
-See `TODO.md` for prioritized task list (DShot, mag calibration, waypoint navigation, pitot tube).
+See `TODO.md` for prioritized task list (mag calibration, waypoint navigation, pitot tube).

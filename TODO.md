@@ -5,6 +5,7 @@
 - [x] RPC autotune trigger (StartAutotune/AbortAutotune endpoints, TUI commands)
 - [x] Flash persistence for PID gains (MapStorage on 0x200000-0x20FFFF, boot-time load, auto-save on completion, `savepid` TUI command)
 - [x] DShot300 bidirectional motor protocol replacing PWM for engines (PIO1 left engine, PIO2 right engine, LED moved to PIO0 SM2)
+- [x] RPM telemetry storage and display (EDT bidir reading, `ENGINE_CACHE`, `GetEngineEndpoint` RPC, TUI 5Hz poll, `direct engine`, ULog `engine_data` at 77Hz, per-engine auto-fallback)
 
 ## Notes
 
@@ -35,14 +36,13 @@ conversion step.
 
 #### Remaining tasks
 
-**1. RPM telemetry storage and display**
-- Add `RPM_CACHE` (Mutex-based, like `MAG_CACHE`/`BARO_CACHE`) in `elle-hardware`
-- Switch from `throttle_async()` (fire-and-forget) to `throttle_with_telemetry()` in the main loop
-- Store eRPM values in the cache after each DShot send
-- Add `GetRpmEndpoint` to RPC ICD + handler
-- Add RPM display to TUI dashboard
-- Log RPM to ULog (new message type)
-- CRSF telemetry RPM frame
+**~~1. RPM telemetry storage and display~~ DONE**
+- `ENGINE_CACHE` (Mutex<Cell<EngineReading>>) in `elle-hardware::dshot`
+- `throttle_with_telemetry()` in `dshot_task` 1kHz loop with per-engine auto-fallback
+- `GetEngineEndpoint` RPC + `handle_get_engine` handler
+- TUI engine RPM display at 5Hz, `direct engine` command
+- ULog `engine_data` message at 77Hz
+- CRSF telemetry RPM frame (not yet — future work)
 
 **2. Extended DShot telemetry (temperature, voltage, current)**
 - Send `ExtendedTelemetryEnable` command sequence during ESC arming
@@ -63,15 +63,25 @@ conversion step.
 - More linear thrust response (thrust ∝ RPM²)
 - Better differential thrust precision (real RPM guarantee, not open-loop)
 
+**Control architecture: feedforward + PI (no throttle→RPM LUT needed)**
+```
+dshot_output = feedforward(target_rpm) + pi_correction
+             = (target_rpm / MAX_RPM) * DSHOT_MAX + pi.update(target_rpm - measured_rpm)
+```
+- Feedforward gives the PI loop a head start — converges in 1-2 frames instead of 5-10
+- No per-engine calibration or throttle→RPM LUT required: a LUT would be invalidated by battery voltage sag (~30% over a flight), airspeed (prop loading), temperature, and prop changes
+- `MAX_RPM` constant per motor/prop combo — measured once from telemetry, used for feedforward scaling and target sanity checks
+
 **Implementation sketch:**
 - Add `MOTOR_POLES` constant to `elle-config` (needed for eRPM → mechanical RPM)
-- Switch `set_throttle()` from `throttle_async()` (fire-and-forget) to reading telemetry response
-- Per-engine PI controller struct in `elle-hardware` or `elle-control` (target RPM, measured RPM, DShot output)
+- Add `MAX_RPM` constant (measured once per motor/prop combo)
+- ~~Switch `set_throttle()` from `throttle_async()` (fire-and-forget) to reading telemetry response~~ DONE
+- Per-engine PI controller struct in `elle-hardware` or `elle-control` (target RPM, measured RPM, DShot output, feedforward)
 - Open-loop startup ramp: below a threshold RPM or when telemetry is absent, pass DShot directly until telemetry starts reporting, then switch to closed-loop
 - Telemetry dropout handling: hold last DShot value, freeze integrator, don't wind up on CRC errors/timeouts
 - eRPM period encoding resolution check: the 3-bit shift + 9-bit base gets coarse at high RPM — verify usable range for your motors
-- `RPM_CACHE` for observability (RPC, TUI, ULog, CRSF telemetry)
-- Fallback: if telemetry is persistently absent (wiring issue, ESC doesn't support bidir), degrade gracefully to open-loop DShot
+- ~~`RPM_CACHE` for observability (RPC, TUI, ULog, CRSF telemetry)~~ DONE (`ENGINE_CACHE`)
+- ~~Fallback: if telemetry is persistently absent (wiring issue, ESC doesn't support bidir), degrade gracefully to open-loop DShot~~ DONE (auto-fallback after 100 failures)
 
 ---
 
@@ -177,17 +187,16 @@ Low priority until navigation work reaches the outer control loops (heading/alti
 
 ---
 
-### 5. RPM Telemetry Integration
+### 5. ~~RPM Telemetry Integration~~ DONE
 
-Bidirectional DShot300 hardware layer is done (`embassy-dshot` BidirDshotPio). The ESCs
-respond with GCR-encoded eRPM after each frame. Currently using `throttle_async()`
-(fire-and-forget) — switching to reading telemetry enables RPM readback.
+Bidirectional eRPM reading is implemented. The DShot task reads telemetry at 1kHz via
+`throttle_with_telemetry()`, stores in `ENGINE_CACHE`, and auto-falls back to
+`throttle_async()` after 100 consecutive failures per engine.
 
-See task 1.1 (storage/display) and task 1.4 (closed-loop RPM control) above.
+Exposed via: `GetEngineEndpoint` RPC, TUI 5Hz poll, `direct engine`, ULog `engine_data` 77Hz.
 
-#### What RPM telemetry enables
+#### Remaining RPM-related work
 
+- **CRSF telemetry RPM frame**: Send RPM to radio for OSD display (not yet implemented).
 - **Motor health / failure detection**: Compare expected RPM vs actual. Prop damage = RPM too high, obstruction = RPM too low, ESC desync = RPM drops to zero.
 - **Closed-loop RPM control (governor mode)**: Per-engine PI loop for consistent thrust across battery voltage sag and load changes. See task 1.4 for implementation plan.
-- **ULog recording**: Log RPM alongside attitude and commands.
-- **CRSF telemetry**: Send RPM to radio for OSD display.
