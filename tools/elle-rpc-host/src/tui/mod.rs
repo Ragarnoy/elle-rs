@@ -106,6 +106,7 @@ pub async fn run() -> Result<()> {
     let mut gnss_interval = tokio::time::interval(Duration::from_secs(1)); // 1Hz GNSS poll
     let mut rc_interval = tokio::time::interval(Duration::from_millis(50)); // 20Hz RC poll
     let mut ctrl_interval = tokio::time::interval(Duration::from_millis(100)); // 10Hz controller poll
+    let mut engine_interval = tokio::time::interval(Duration::from_millis(200)); // 5Hz engine poll
     let mut event_stream = crossterm::event::EventStream::new();
 
     let result = loop {
@@ -287,6 +288,17 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetControllerOutputEndpoint>(&()),
                 ).await {
                     state.push_controller_output(c);
+                    state.connected = true;
+                }
+            }
+
+            // Periodic engine telemetry poll
+            _ = engine_interval.tick(), if state.background_task.is_none() => {
+                if let Ok(Ok(e)) = tokio::time::timeout(
+                    Duration::from_millis(200),
+                    client.send_resp::<GetEngineEndpoint>(&()),
+                ).await {
+                    state.engine = Some(e);
                     state.connected = true;
                 }
             }
