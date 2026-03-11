@@ -3,6 +3,7 @@
 pub mod arming;
 pub mod autotune;
 pub mod commands;
+pub mod governor;
 pub mod mixing;
 pub mod pid;
 pub mod throttle;

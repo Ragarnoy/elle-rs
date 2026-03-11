@@ -50,6 +50,8 @@ pub enum DirectCommand {
     Mag,
     /// Read GNSS position fix
     Gnss,
+    /// Read engine RPM telemetry
+    Engine,
 }
 
 struct ProbeConnection {
@@ -185,6 +187,27 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             println!(
                 "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} hdop={:.1}",
                 g.latitude, g.longitude, g.altitude_m, g.fix_quality, g.num_satellites, g.hdop
+            );
+        }
+        DirectCommand::Engine => {
+            let e =
+                timeout(CMD_TIMEOUT, client.send_resp::<GetEngineEndpoint>(&())).await??;
+            let l_status = if e.left_valid { "OK" } else { "STALE" };
+            let r_status = if e.right_valid { "OK" } else { "STALE" };
+            let l_target = if e.left_target_erpm > 0 {
+                format!(" target:{}", e.left_target_erpm)
+            } else {
+                String::new()
+            };
+            let r_target = if e.right_target_erpm > 0 {
+                format!(" target:{}", e.right_target_erpm)
+            } else {
+                String::new()
+            };
+            println!(
+                "Engine L: {} eRPM{} (cmd:{}) [{}] | R: {} eRPM{} (cmd:{}) [{}]",
+                e.left_erpm, l_target, e.left_throttle, l_status,
+                e.right_erpm, r_target, e.right_throttle, r_status,
             );
         }
     }

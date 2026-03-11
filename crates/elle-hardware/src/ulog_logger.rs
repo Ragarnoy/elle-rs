@@ -24,6 +24,7 @@ pub struct ULogLogger {
     barometer_msg_id: Option<u16>,
     magnetometer_msg_id: Option<u16>,
     gnss_msg_id: Option<u16>,
+    engine_msg_id: Option<u16>,
     log_event_msg_id: Option<u16>,
     /// Log start time
     start_time: Option<Instant>,
@@ -43,6 +44,7 @@ impl ULogLogger {
             barometer_msg_id: None,
             magnetometer_msg_id: None,
             gnss_msg_id: None,
+            engine_msg_id: None,
             log_event_msg_id: None,
             start_time: None,
         }
@@ -62,8 +64,8 @@ impl ULogLogger {
 
         // Import ULog types
         use elle_ulog::{
-            AttitudeMessage, BarometerMessage, CommandsMessage, GnssMessage, LogEventMessage,
-            MagnetometerMessage, StatusMessage,
+            AttitudeMessage, BarometerMessage, CommandsMessage, EngineMessage, GnssMessage,
+            LogEventMessage, MagnetometerMessage, StatusMessage,
         };
 
         let start_time = Instant::now();
@@ -108,6 +110,11 @@ impl ULogLogger {
                 .add_subscription(GnssMessage::NAME)
                 .map_err(|_| ())?,
         );
+        self.engine_msg_id = Some(
+            self.writer
+                .add_subscription(EngineMessage::NAME)
+                .map_err(|_| ())?,
+        );
         self.log_event_msg_id = Some(
             self.writer
                 .add_subscription(LogEventMessage::NAME)
@@ -115,13 +122,14 @@ impl ULogLogger {
         );
 
         info!(
-            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, event={}",
+            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}",
             self.attitude_msg_id.unwrap(),
             self.commands_msg_id.unwrap(),
             self.status_msg_id.unwrap(),
             self.barometer_msg_id.unwrap(),
             self.magnetometer_msg_id.unwrap(),
             self.gnss_msg_id.unwrap(),
+            self.engine_msg_id.unwrap(),
             self.log_event_msg_id.unwrap()
         );
 
@@ -366,6 +374,49 @@ impl ULogLogger {
         self.writer.clear_buffer();
         self.writer
             .write_gnss(self.gnss_msg_id.unwrap(), &msg)
+            .map_err(|_| ())?;
+
+        self.buffer
+            .extend_from_slice(self.writer.buffer())
+            .map_err(|_| ())?;
+
+        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+            self.flush().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Log engine data (RPM + throttle + governor targets)
+    #[allow(clippy::too_many_arguments)]
+    pub async fn log_engine(
+        &mut self,
+        left_erpm: u32,
+        right_erpm: u32,
+        left_throttle: u16,
+        right_throttle: u16,
+        left_target_erpm: u32,
+        right_target_erpm: u32,
+    ) -> Result<(), ()> {
+        if !self.initialized {
+            return Err(());
+        }
+
+        use elle_ulog::EngineMessage;
+
+        let msg = EngineMessage::new(
+            Instant::now(),
+            left_erpm,
+            right_erpm,
+            left_throttle,
+            right_throttle,
+            left_target_erpm,
+            right_target_erpm,
+        );
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_engine(self.engine_msg_id.unwrap(), &msg)
             .map_err(|_| ())?;
 
         self.buffer

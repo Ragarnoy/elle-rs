@@ -194,6 +194,20 @@ fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Bar
     }
 }
 
+fn handle_get_engine(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> EngineResp {
+    let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
+    EngineResp {
+        left_erpm: eng.left_erpm,
+        right_erpm: eng.right_erpm,
+        left_throttle: eng.left_throttle,
+        right_throttle: eng.right_throttle,
+        left_valid: eng.left_valid,
+        right_valid: eng.right_valid,
+        left_target_erpm: eng.left_target_erpm,
+        right_target_erpm: eng.right_target_erpm,
+    }
+}
+
 fn handle_start_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     match ctx.cmd_sender.try_send(RpcCommand::StartULog) {
         Ok(()) => AckResp::ok(),
@@ -426,6 +440,7 @@ postcard_rpc::define_dispatch! {
         | GetVersionEndpoint        | blocking  | handle_get_version        |
         | GetMagnetometerEndpoint   | blocking  | handle_get_magnetometer   |
         | GetBarometerEndpoint      | blocking  | handle_get_barometer      |
+        | GetEngineEndpoint         | blocking  | handle_get_engine         |
         | GetGnssEndpoint           | blocking  | handle_get_gnss           |
         | GetRcChannelsEndpoint     | blocking  | handle_get_rc_channels    |
         | StartULogEndpoint         | blocking  | handle_start_ulog         |

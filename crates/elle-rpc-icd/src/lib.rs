@@ -139,6 +139,19 @@ pub struct BarometerResp {
     pub altitude_m: f32,
 }
 
+/// Engine telemetry response (DShot bidirectional RPM + throttle + governor targets)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct EngineResp {
+    pub left_erpm: u32,
+    pub right_erpm: u32,
+    pub left_throttle: u16,
+    pub right_throttle: u16,
+    pub left_valid: bool,
+    pub right_valid: bool,
+    pub left_target_erpm: u32,
+    pub right_target_erpm: u32,
+}
+
 /// `ULog` read chunk response
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct ULogReadResp {
@@ -271,6 +284,7 @@ endpoints! {
     | GetVersionEndpoint        | ()                | VersionResp       | "elle/sys/version"    |
     | GetMagnetometerEndpoint   | ()                | MagnetometerResp  | "elle/query/mag"      |
     | GetBarometerEndpoint      | ()                | BarometerResp     | "elle/query/baro"     |
+    | GetEngineEndpoint         | ()                | EngineResp        | "elle/query/engine"   |
     | GetGnssEndpoint           | ()                | GnssResp          | "elle/query/gnss"     |
     | GetRcChannelsEndpoint     | ()                | RcChannelsResp    | "elle/query/rc"       |
     | StartULogEndpoint         | ()                | AckResp           | "elle/ulog/start"     |

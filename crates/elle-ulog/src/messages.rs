@@ -464,6 +464,79 @@ impl GnssMessage {
     }
 }
 
+/// Engine data message - logs DShot engine RPM, throttle commands, and governor targets
+///
+/// Format: "engine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct EngineMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Left engine electrical RPM
+    pub left_erpm: u32,
+    /// Right engine electrical RPM
+    pub right_erpm: u32,
+    /// Left engine DShot throttle command (0-1999)
+    pub left_throttle: u16,
+    /// Right engine DShot throttle command (0-1999)
+    pub right_throttle: u16,
+    /// Left engine governor target eRPM (0 if open-loop)
+    pub left_target_erpm: u32,
+    /// Right engine governor target eRPM (0 if open-loop)
+    pub right_target_erpm: u32,
+}
+
+impl EngineMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str = "engine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm";
+
+    /// Message name
+    pub const NAME: &'static str = "engine_data";
+
+    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    pub const FORMAT_MSG: &'static [u8] = b"\xa9\x00Fengine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 28; // 8 + 4 + 4 + 2 + 2 + 4 + 4
+
+    /// Create a new engine message
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        timestamp: Instant,
+        left_erpm: u32,
+        right_erpm: u32,
+        left_throttle: u16,
+        right_throttle: u16,
+        left_target_erpm: u32,
+        right_target_erpm: u32,
+    ) -> Self {
+        Self {
+            timestamp: timestamp.as_micros(),
+            left_erpm,
+            right_erpm,
+            left_throttle,
+            right_throttle,
+            left_target_erpm,
+            right_target_erpm,
+        }
+    }
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.left_erpm.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.right_erpm.to_le_bytes());
+        buf[16..18].copy_from_slice(&self.left_throttle.to_le_bytes());
+        buf[18..20].copy_from_slice(&self.right_throttle.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.left_target_erpm.to_le_bytes());
+        buf[24..28].copy_from_slice(&self.right_target_erpm.to_le_bytes());
+        buf
+    }
+}
+
 /// Log event message — compact discrete event for ULog flash
 ///
 /// Format: "log_event:uint64_t timestamp;uint8_t level;uint16_t code"
@@ -611,4 +684,13 @@ const _: () = {
         "LogEventMessage FORMAT_MSG msg_size mismatch"
     );
     assert!(LogEventMessage::FORMAT_MSG.len() == 3 + LogEventMessage::FORMAT.len());
+
+    // EngineMessage
+    let encoded =
+        EngineMessage::FORMAT_MSG[0] as usize | (EngineMessage::FORMAT_MSG[1] as usize) << 8;
+    assert!(
+        encoded == EngineMessage::FORMAT.len(),
+        "EngineMessage FORMAT_MSG msg_size mismatch"
+    );
+    assert!(EngineMessage::FORMAT_MSG.len() == 3 + EngineMessage::FORMAT.len());
 };

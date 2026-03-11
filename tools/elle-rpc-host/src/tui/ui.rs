@@ -137,7 +137,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(13), // attitude data + mag + heading + baro + gnss
-            Constraint::Length(2),  // controller output
+            Constraint::Length(3),  // controller output + engine
             Constraint::Min(8),    // artificial horizon canvas
         ])
         .split(inner);
@@ -251,6 +251,36 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         } else {
             String::new()
         };
+
+        let engine_line = if let Some(e) = state.engine {
+            let l_rpm = if e.left_valid {
+                format!("{}", e.left_erpm)
+            } else {
+                "STALE".into()
+            };
+            let r_rpm = if e.right_valid {
+                format!("{}", e.right_erpm)
+            } else {
+                "STALE".into()
+            };
+            let l_target = if e.left_target_erpm > 0 {
+                format!("\u{2192}{}", e.left_target_erpm)
+            } else {
+                String::new()
+            };
+            let r_target = if e.right_target_erpm > 0 {
+                format!("\u{2192}{}", e.right_target_erpm)
+            } else {
+                String::new()
+            };
+            format!(
+                "  Eng L: {} eRPM{} (cmd:{}) | R: {} eRPM{} (cmd:{})",
+                l_rpm, l_target, e.left_throttle, r_rpm, r_target, e.right_throttle,
+            )
+        } else {
+            "  Eng: ---".into()
+        };
+
         vec![
             Line::from(format!(
                 "  PID: P={:+.3} R={:+.3}{err_str}",
@@ -261,6 +291,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                 "  Elevon L={} R={}  Eng L={} R={}",
                 c.elevon_left_us, c.elevon_right_us, c.engine_left_dshot, c.engine_right_dshot,
             )),
+            Line::from(engine_line),
         ]
     } else {
         vec![Line::from("  Controller: ---")]

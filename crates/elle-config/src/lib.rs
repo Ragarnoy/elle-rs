@@ -140,3 +140,11 @@ pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (d
 // Mixed mode control blending
 pub const MIXED_MODE_AUTOPILOT_WEIGHT: f32 = 0.6; // 60% autopilot, 40% pilot in mixed mode
 
+// Governor mode (closed-loop RPM control)
+pub const MOTOR_POLES: u8 = 14;
+pub const MAX_RPM: u32 = 45_000;
+pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 315,000
+pub const GOVERNOR_KP: f32 = 0.5;
+pub const GOVERNOR_KI: f32 = 0.1;
+pub const GOVERNOR_DT: f32 = 0.001; // 1ms (1kHz task rate)
+

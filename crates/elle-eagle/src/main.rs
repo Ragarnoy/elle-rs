@@ -145,6 +145,21 @@ async fn log_flight_data(
         }
     }
 
+    // Log engine data at 77Hz
+    {
+        let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
+        let _ = logger
+            .log_engine(
+                eng.left_erpm,
+                eng.right_erpm,
+                eng.left_throttle,
+                eng.right_throttle,
+                eng.left_target_erpm,
+                eng.right_target_erpm,
+            )
+            .await;
+    }
+
     // Log status at reduced rate (7.7Hz - every 10th iteration)
     if loop_counter.is_multiple_of(10) {
         let imu_status = IMU_STATUS.try_read();
@@ -565,9 +580,11 @@ async fn main(spawner: Spawner) {
                 }
                 fc.update(commands, valid_attitude.as_ref());
 
-                // Send engine commands via DShot
+                // Send engine commands via DShot (governor converts eRPM target to DShot)
                 let (engine_l, engine_r) = fc.engine_output();
-                DSHOT_THROTTLE.signal((engine_l, engine_r));
+                let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+                let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+                DSHOT_THROTTLE.signal((l_erpm, r_erpm));
 
                 #[cfg(feature = "crsf-telemetry")]
                 elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
@@ -1177,9 +1194,11 @@ async fn main(spawner: Spawner) {
             let valid_attitude = validate_attitude(attitude);
             fc.update(&commands, valid_attitude.as_ref());
 
-            // Send engine commands via DShot
+            // Send engine commands via DShot (governor converts eRPM target to DShot)
             let (engine_l, engine_r) = fc.engine_output();
-            DSHOT_THROTTLE.signal((engine_l, engine_r));
+            let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+            let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+            DSHOT_THROTTLE.signal((l_erpm, r_erpm));
 
             // Autotuner per-tick update
             if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
