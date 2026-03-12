@@ -90,7 +90,7 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 - **`ATTITUDE`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<AttitudeData>` — pitch/roll/yaw from AHRS at 1kHz, consumed by control loop via `try_take()`
 - **`MAG`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<MagReading>` — magnetometer XYZ counts at 10Hz, read by CRSF telemetry and RPC via `read_cached()`
 - **`BARO`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<BaroReading>` — pressure/temp/altitude at 2Hz, read by CRSF telemetry and RPC via `read_cached()`
-- **`FLIGHT_STATE`** (`crates/elle-eagle/src/flight_state.rs`) — `SignalCache<FlightState>` — `{ armed, failsafe, mode }`, published by RPC control loop, read by `handle_get_status`
+- **`FLIGHT_STATE`** (`crates/elle-eagle/src/flight_state.rs`) — `SignalCache<FlightState>` — `{ armed, failsafe, mode, rc_age_ms }`, published by both control loops, read by `handle_get_status`
 - **`CONTROLLER_OUTPUT`** (`crates/elle-eagle/src/flight_state.rs`) — `SignalCache<ControllerOutput>` — PID corrections/setpoints/servo μs, published by RPC control loop
 - **`RpcCommand`** (`crates/elle-eagle/src/rpc_handlers.rs`) — Enum + channel for RPC handler → main loop communication (includes ULog, autotune, PID save commands)
 - **`LogMsg`** (`crates/elle-eagle/src/log_channel.rs`) — Channel for firmware events → `log_publisher_task` → LogTopic
@@ -223,6 +223,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Code quality pass**: clippy pedantic/nursery fixes, f64→f32 atan2, named constants for magic numbers (AHRS_BETA, sensor rate ticks), `ULogState` enum replacing magic constants, event drain throttling, setpoint filter skip in Manual mode
 - **Dedicated 1kHz DShot send task**: Decoupled ESC frame sending from 77Hz control loop into `dshot_task` running at ~1kHz via `DSHOT_THROTTLE` Signal. Task owns PIO1+PIO2 engines, handles arming, and continuously resends latest throttle values. `DshotEngines` made private (concrete PIO1/PIO2 types, no longer generic).
 - **EDT RPM telemetry**: DShot task uses `throttle_with_telemetry()` for bidirectional eRPM reading. `ENGINE_CACHE` (Mutex<Cell<>>) carries `EngineReading` (eRPM, throttle, validity per engine). Auto-fallback to `throttle_async()` after 100 consecutive telemetry failures per engine. ULog `engine_data` message at 77Hz. `GetEngineEndpoint` RPC + TUI 5Hz polling + `direct engine` command.
+- **Failsafe state machine**: `RcLinkState` enum (Ok/Warning/Lost) replaces simple threshold check. `RC_WARNING_MS=200` → `RC_TIMEOUT_MS=300` two-stage detection. Events (codes 13-15) fire on transitions only, not every iteration. `signal_restored()` clears failsafe on recovery. `rc_age_ms` in `StatusResp`, `FlightState`, ULog `system_status`. LED warning pattern (FastBlink/orange) at Warning, RapidFlash/orange at Lost.
 
 ### Known TODOs in Firmware
 - **`disable-imu` stub generates synthetic test data** (slow sine waves) — for debugging without ICM-42686 hardware

@@ -40,6 +40,9 @@ pub const EVT_GNSS_UART_ERROR: u16 = 3;
 pub const EVT_MOTORS_ARMED: u16 = 10;
 pub const EVT_MOTORS_DISARMED: u16 = 11;
 pub const EVT_EMERGENCY_STOP: u16 = 12;
+pub const EVT_RC_WARNING: u16 = 13;
+pub const EVT_RC_SIGNAL_LOST: u16 = 14;
+pub const EVT_RC_RESTORED: u16 = 15;
 
 // CRSF telemetry (20–29)
 pub const EVT_CRSF_TX_STARTED: u16 = 20;

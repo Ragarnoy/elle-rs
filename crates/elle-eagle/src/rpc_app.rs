@@ -114,6 +114,7 @@ fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Status
         mode: state.mode,
         imu_calibrated: imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
         imu_error_count: imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
+        rc_age_ms: state.rc_age_ms,
     }
 }
 

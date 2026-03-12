@@ -6,12 +6,14 @@ pub struct FlightState {
     pub armed: bool,
     pub failsafe: bool,
     pub mode: ControlMode,
+    pub rc_age_ms: u16,
 }
 
 pub static FLIGHT_STATE: SignalCache<FlightState> = SignalCache::new(FlightState {
     armed: false,
     failsafe: false,
     mode: ControlMode::Manual,
+    rc_age_ms: 0,
 });
 
 /// Controller output snapshot published from the main loop for RPC observability

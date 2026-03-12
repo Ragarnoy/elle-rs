@@ -136,7 +136,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(13), // attitude data + mag + heading + baro + gnss
+            Constraint::Length(14), // attitude data + mag + heading + baro + gnss + rc age
             Constraint::Length(4),  // controller output + engine + EDT
             Constraint::Min(8),    // artificial horizon canvas
         ])
@@ -173,6 +173,23 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
             )
         })
         .unwrap_or_else(|| "  IMU: ---".into());
+
+    let rc_age_spans: Vec<Span> = if let Some(s) = state.status {
+        let age = s.rc_age_ms;
+        let color = if age < 100 {
+            Color::Green
+        } else if age < 200 {
+            Color::Yellow
+        } else {
+            Color::Red
+        };
+        vec![
+            Span::raw("  RC age: "),
+            Span::styled(format!("{}ms", age), Style::default().fg(color)),
+        ]
+    } else {
+        vec![Span::styled("  RC age: ---", Style::default().fg(Color::Gray))]
+    };
 
     let (mag_line, heading_line) = if let Some(m) = state.magnetometer {
         let heading = (m.y as f64).atan2(m.x as f64).to_degrees();
@@ -238,6 +255,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         Line::from(gnss_alt_line),
         Line::from(perf_line),
         Line::from(imu_line),
+        Line::from(rc_age_spans),
     ];
 
     f.render_widget(Paragraph::new(attitude_text), chunks[0]);
@@ -556,6 +574,9 @@ const fn log_code_text(code: u16) -> &'static str {
         10 => "Motors ARMED",
         11 => "Motors DISARMED",
         12 => "EMERGENCY STOP",
+        13 => "RC: signal warning",
+        14 => "RC: SIGNAL LOST",
+        15 => "RC: signal restored",
         // CRSF telemetry TX (20–29)
         20 => "CRSF TX: telemetry started",
         21 => "CRSF TX: first second OK",

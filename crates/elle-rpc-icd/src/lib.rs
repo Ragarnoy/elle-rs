@@ -78,6 +78,7 @@ pub struct StatusResp {
     pub mode: ControlMode,
     pub imu_calibrated: bool,
     pub imu_error_count: u32,
+    pub rc_age_ms: u16,
 }
 
 /// Attitude data response (scaled integers for efficiency)

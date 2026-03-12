@@ -37,6 +37,7 @@ pub const DIFF_MAX_PERCENT: i32 = 20;
 pub const DSHOT_THROTTLE_MAX: u16 = 1999;
 
 // RC parameters (protocol-independent, values in 0–2047 range)
+pub const RC_WARNING_MS: u64 = 200;
 pub const RC_TIMEOUT_MS: u64 = 300;
 pub const RC_CENTER: u16 = 1024; // CRSF center 992 scaled to 0–2047
 

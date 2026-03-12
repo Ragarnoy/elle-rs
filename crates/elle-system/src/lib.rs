@@ -6,7 +6,7 @@ pub mod system;
 pub mod rpc;
 
 // Re-export main types
-pub use system::{ControlMode, CoreHealth, FlightController};
+pub use system::{ControlMode, CoreHealth, FlightController, RcLinkState};
 
 // Re-export supervisor signals and task
 pub use system::{

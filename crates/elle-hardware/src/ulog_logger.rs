@@ -252,6 +252,7 @@ impl ULogLogger {
         calibrated: bool,
         armed: bool,
         cpu_load: f32,
+        rc_age_ms: u16,
     ) -> Result<(), ()> {
         if !self.initialized {
             return Err(());
@@ -266,6 +267,7 @@ impl ULogLogger {
             calibrated,
             armed,
             cpu_load,
+            rc_age_ms,
         );
 
         // Clear writer and write message

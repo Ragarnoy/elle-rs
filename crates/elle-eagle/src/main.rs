@@ -190,6 +190,7 @@ async fn log_flight_data(
                 imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
                 fc.is_armed(),
                 0.0, // CPU load - could calculate from timing data
+                fc.rc_signal_age_ms(),
             )
             .await;
     }
@@ -873,14 +874,18 @@ async fn main(spawner: Spawner) {
 
                 let imu_status = IMU_STATUS.read().await;
 
-                let led_pattern = if fc.is_armed() {
+                let led_pattern = if fc.is_failsafe() {
+                    LedPattern::RapidFlash(colors::ORANGE)
+                } else if fc.is_armed()
+                    && fc.rc_link_state() == elle_system::RcLinkState::Warning
+                {
+                    LedPattern::FastBlink(colors::ORANGE)
+                } else if fc.is_armed() {
                     if fc.is_attitude_enabled() {
                         LedPattern::Pulse(colors::CYAN)
                     } else {
                         LedPattern::DoubleBlink(colors::GREEN)
                     }
-                } else if fc.is_failsafe() {
-                    LedPattern::RapidFlash(colors::ORANGE)
                 } else if imu_status.calibrated {
                     LedPattern::Solid(colors::GREEN)
                 } else {
@@ -1361,6 +1366,7 @@ async fn main(spawner: Spawner) {
                     elle_system::ControlMode::Mixed => ControlMode::Mixed,
                     elle_system::ControlMode::Autopilot => ControlMode::Autopilot,
                 },
+                rc_age_ms: fc.rc_signal_age_ms(),
             };
             flight_state::FLIGHT_STATE.publish(fs);
 
@@ -1410,10 +1416,14 @@ async fn main(spawner: Spawner) {
                 loop_counter = 0;
 
                 let imu_status = IMU_STATUS.read().await;
-                let led_pattern = if fc.is_armed() {
-                    LedPattern::DoubleBlink(colors::PURPLE)
-                } else if fc.is_failsafe() {
+                let led_pattern = if fc.is_failsafe() {
                     LedPattern::RapidFlash(colors::ORANGE)
+                } else if fc.is_armed()
+                    && fc.rc_link_state() == elle_system::RcLinkState::Warning
+                {
+                    LedPattern::FastBlink(colors::ORANGE)
+                } else if fc.is_armed() {
+                    LedPattern::DoubleBlink(colors::PURPLE)
                 } else if imu_status.calibrated {
                     LedPattern::Solid(colors::PURPLE)
                 } else {

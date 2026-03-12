@@ -218,7 +218,7 @@ impl CommandsMessage {
 
 /// System status message - logs performance and health metrics
 ///
-/// Format: "system_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load"
+/// Format: "system_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load;uint16_t rc_age_ms"
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct StatusMessage {
@@ -234,21 +234,22 @@ pub struct StatusMessage {
     pub armed: u8,
     /// CPU load percentage [0.0, 100.0]
     pub cpu_load: f32,
+    /// RC signal age in milliseconds
+    pub rc_age_ms: u16,
 }
 
 impl StatusMessage {
     /// Format definition string for ULog
-    pub const FORMAT: &'static str = "system_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load";
+    pub const FORMAT: &'static str = "system_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load;uint16_t rc_age_ms";
 
     /// Message name
     pub const NAME: &'static str = "system_status";
 
     /// Pre-serialized format definition message (header + payload, computed at compile time)
-    /// msg_size = 122 bytes (format string length)
-    pub const FORMAT_MSG: &'static [u8] = b"\x7a\x00Fsystem_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load";
+    pub const FORMAT_MSG: &'static [u8] = b"\x8d\x00Fsystem_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load;uint16_t rc_age_ms";
 
     /// Size of the message in bytes
-    pub const SIZE: usize = 22; // 8 + 4 + 4 + 1 + 1 + 4
+    pub const SIZE: usize = 24; // 8 + 4 + 4 + 1 + 1 + 4 + 2
 
     /// Create a new status message
     #[must_use]
@@ -259,6 +260,7 @@ impl StatusMessage {
         calibrated: bool,
         armed: bool,
         cpu_load: f32,
+        rc_age_ms: u16,
     ) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
@@ -267,6 +269,7 @@ impl StatusMessage {
             calibrated: calibrated as u8,
             armed: armed as u8,
             cpu_load,
+            rc_age_ms,
         }
     }
 
@@ -280,6 +283,7 @@ impl StatusMessage {
         buf[16] = self.calibrated;
         buf[17] = self.armed;
         buf[18..22].copy_from_slice(&self.cpu_load.to_le_bytes());
+        buf[22..24].copy_from_slice(&self.rc_age_ms.to_le_bytes());
         buf
     }
 }

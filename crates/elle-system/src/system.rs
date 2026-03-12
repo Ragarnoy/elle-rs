@@ -1,5 +1,6 @@
 use defmt::{info, warn};
 use elle_config::*;
+use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
 use elle_control::SavedGains;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
 use elle_control::mixing::{
@@ -20,6 +21,13 @@ pub enum ControlMode {
     Manual,    // Full manual control (~306)
     Mixed,     // Pilot + Autopilot blend (~1000)
     Autopilot, // Full autopilot control (~1694)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+pub enum RcLinkState {
+    Ok,
+    Warning,
+    Lost,
 }
 
 /// Core health monitoring structure
@@ -94,6 +102,8 @@ pub struct FlightController<'a> {
     current_config: FlightStabilizerConfig<f32>,
     // Setpoint override for autotune relay feedback
     setpoint_override: Option<(f32, f32)>,
+    // RC link state machine
+    rc_link_state: RcLinkState,
 }
 
 impl<'a> FlightController<'a> {
@@ -140,6 +150,7 @@ impl<'a> FlightController<'a> {
             supervisor_enabled: false,
             current_config: config,
             setpoint_override: None,
+            rc_link_state: RcLinkState::Ok,
         }
     }
 
@@ -448,10 +459,53 @@ impl<'a> FlightController<'a> {
     }
 
     pub fn check_failsafe(&mut self) {
-        if self.last_packet_time.elapsed() > Duration::from_millis(RC_TIMEOUT_MS) {
-            self.arming.signal_loss();
-            self.attitude_controller.reset(); // Reset PID on signal loss
-            self.apply_failsafe();
+        let age = self.last_packet_time.elapsed();
+        let new_state = if age > Duration::from_millis(RC_TIMEOUT_MS) {
+            RcLinkState::Lost
+        } else if age > Duration::from_millis(RC_WARNING_MS) {
+            RcLinkState::Warning
+        } else {
+            RcLinkState::Ok
+        };
+
+        if new_state == self.rc_link_state {
+            return;
+        }
+
+        let old_state = self.rc_link_state;
+        self.rc_link_state = new_state;
+
+        match (old_state, new_state) {
+            (_, RcLinkState::Ok) => {
+                // Restored — clear failsafe but do NOT re-arm (pilot must throttle-low arm)
+                self.arming.signal_restored();
+                elle_hardware::elle_event!(
+                    info,
+                    EVT_RC_RESTORED,
+                    "RC signal restored"
+                );
+            }
+            (RcLinkState::Ok, RcLinkState::Warning) => {
+                elle_hardware::elle_event!(
+                    warn,
+                    EVT_RC_WARNING,
+                    "RC signal warning ({}ms)",
+                    age.as_millis()
+                );
+            }
+            (_, RcLinkState::Lost) => {
+                self.arming.signal_loss();
+                self.attitude_controller.reset();
+                self.apply_failsafe();
+                elle_hardware::elle_event!(
+                    error,
+                    EVT_RC_SIGNAL_LOST,
+                    "RC SIGNAL LOST ({}ms)",
+                    age.as_millis()
+                );
+            }
+            // Warning→Warning already handled by early return
+            _ => {}
         }
     }
 
@@ -467,6 +521,17 @@ impl<'a> FlightController<'a> {
     #[must_use]
     pub const fn is_failsafe(&self) -> bool {
         self.arming.failsafe_active
+    }
+
+    #[must_use]
+    pub const fn rc_link_state(&self) -> RcLinkState {
+        self.rc_link_state
+    }
+
+    #[must_use]
+    pub fn rc_signal_age_ms(&self) -> u16 {
+        let age = self.last_packet_time.elapsed().as_millis();
+        if age > u16::MAX as u64 { u16::MAX } else { age as u16 }
     }
 
     #[must_use]
