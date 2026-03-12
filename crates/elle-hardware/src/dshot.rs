@@ -18,46 +18,60 @@ const BIDIR_FALLBACK_THRESHOLD: u16 = 100;
 /// Number of times to send ExtendedTelemetryEnable command (DShot protocol requirement).
 const EDT_ENABLE_REPEAT: u8 = 6;
 
+/// Per-engine telemetry snapshot.
+#[derive(Clone, Copy, Default, defmt::Format)]
+pub struct EngineUnitReading {
+    pub erpm: u32,
+    pub throttle: u16,
+    pub valid: bool,
+    pub target_erpm: u32,
+    /// ESC temperature in °C (1°C/LSB, from EDT)
+    pub temperature: u8,
+    /// Supply voltage in millivolts (from EDT, 250mV/LSB)
+    pub voltage_mv: u32,
+    /// Current draw in milliamps (from EDT, 1A/LSB)
+    pub current_ma: u32,
+}
+
+impl EngineUnitReading {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            erpm: 0, throttle: 0, valid: false, target_erpm: 0,
+            temperature: 0, voltage_mv: 0, current_ma: 0,
+        }
+    }
+
+    fn apply_edt(&mut self, edt: &ExtendedTelemetry) {
+        match *edt {
+            ExtendedTelemetry::Temperature(t) => self.temperature = t,
+            ExtendedTelemetry::Voltage(mv) => self.voltage_mv = mv,
+            ExtendedTelemetry::Current(ma) => self.current_ma = ma,
+            _ => {}
+        }
+    }
+}
+
 /// Engine RPM + throttle + extended telemetry snapshot from the DShot task.
 #[derive(Clone, Copy, Default, defmt::Format)]
 pub struct EngineReading {
-    pub left_erpm: u32,
-    pub right_erpm: u32,
-    pub left_throttle: u16,
-    pub right_throttle: u16,
-    pub left_valid: bool,
-    pub right_valid: bool,
-    pub left_target_erpm: u32,
-    pub right_target_erpm: u32,
-    /// ESC temperature in °C (1°C/LSB, from EDT)
-    pub left_temperature: u8,
-    pub right_temperature: u8,
-    /// Supply voltage in millivolts (from EDT, 250mV/LSB)
-    pub left_voltage_mv: u32,
-    pub right_voltage_mv: u32,
-    /// Current draw in milliamps (from EDT, 1A/LSB)
-    pub left_current_ma: u32,
-    pub right_current_ma: u32,
+    pub left: EngineUnitReading,
+    pub right: EngineUnitReading,
+}
+
+impl EngineReading {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            left: EngineUnitReading::new(),
+            right: EngineUnitReading::new(),
+        }
+    }
 }
 
 /// Non-consuming cache for engine telemetry (Mutex<Cell<>> pattern).
 pub static ENGINE_CACHE: Mutex<CriticalSectionRawMutex, Cell<EngineReading>> =
-    Mutex::new(Cell::new(EngineReading {
-        left_erpm: 0,
-        right_erpm: 0,
-        left_throttle: 0,
-        right_throttle: 0,
-        left_valid: false,
-        right_valid: false,
-        left_target_erpm: 0,
-        right_target_erpm: 0,
-        left_temperature: 0,
-        right_temperature: 0,
-        left_voltage_mv: 0,
-        right_voltage_mv: 0,
-        left_current_ma: 0,
-        right_current_ma: 0,
-    }));
+    Mutex::new(Cell::new(EngineReading::new()));
 
 /// Per-engine bidir telemetry state for auto-fallback.
 struct EngineState {
@@ -92,23 +106,36 @@ impl EngineState {
     }
 }
 
-/// Apply an extended telemetry reading to the left engine fields of an `EngineReading`.
-fn apply_edt_left(reading: &mut EngineReading, edt: &ExtendedTelemetry) {
-    match *edt {
-        ExtendedTelemetry::Temperature(t) => reading.left_temperature = t,
-        ExtendedTelemetry::Voltage(mv) => reading.left_voltage_mv = mv,
-        ExtendedTelemetry::Current(ma) => reading.left_current_ma = ma,
-        _ => {}
-    }
-}
-
-/// Apply an extended telemetry reading to the right engine fields of an `EngineReading`.
-fn apply_edt_right(reading: &mut EngineReading, edt: &ExtendedTelemetry) {
-    match *edt {
-        ExtendedTelemetry::Temperature(t) => reading.right_temperature = t,
-        ExtendedTelemetry::Voltage(mv) => reading.right_voltage_mv = mv,
-        ExtendedTelemetry::Current(ma) => reading.right_current_ma = ma,
-        _ => {}
+/// Update a single engine's reading from DShot telemetry result.
+fn update_engine_unit(
+    unit: &mut EngineUnitReading,
+    state: &mut EngineState,
+    edt: Option<ExtendedTelemetry>,
+    dshot_value: u16,
+    target: u32,
+) {
+    unit.throttle = dshot_value;
+    unit.target_erpm = target;
+    match edt {
+        Some(ExtendedTelemetry::Erpm { erpm, .. }) => {
+            unit.erpm = erpm;
+            unit.valid = true;
+            state.record_success();
+        }
+        Some(ref edt) => {
+            unit.apply_edt(edt);
+            state.record_success();
+        }
+        None if dshot_value == 0 => {
+            unit.erpm = 0;
+            unit.valid = true;
+        }
+        None if state.bidir_enabled => {
+            state.record_failure();
+        }
+        None => {
+            unit.valid = false;
+        }
     }
 }
 
@@ -274,13 +301,13 @@ pub async fn dshot_task(
         // Governor PI converts eRPM targets to DShot values
         let left_dshot = left_state.governor.update(
             target.0,
-            reading.left_erpm,
-            left_state.bidir_enabled && reading.left_valid,
+            reading.left.erpm,
+            left_state.bidir_enabled && reading.left.valid,
         );
         let right_dshot = right_state.governor.update(
             target.1,
-            reading.right_erpm,
-            right_state.bidir_enabled && reading.right_valid,
+            reading.right.erpm,
+            right_state.bidir_enabled && reading.right.valid,
         );
 
         let (l_edt, r_edt) = engines
@@ -292,56 +319,8 @@ pub async fn dshot_task(
             )
             .await;
 
-        // Update left engine reading
-        reading.left_throttle = left_dshot;
-        reading.left_target_erpm = target.0;
-        match l_edt {
-            Some(ExtendedTelemetry::Erpm { erpm, .. }) => {
-                reading.left_erpm = erpm;
-                reading.left_valid = true;
-                left_state.record_success();
-            }
-            Some(ref edt) => {
-                // EDT frame (temp/voltage/current) — eRPM stays at last known value
-                apply_edt_left(&mut reading, edt);
-                left_state.record_success();
-            }
-            None if left_dshot == 0 => {
-                reading.left_erpm = 0;
-                reading.left_valid = true;
-            }
-            None if left_state.bidir_enabled => {
-                left_state.record_failure();
-            }
-            None => {
-                reading.left_valid = false;
-            }
-        }
-
-        // Update right engine reading
-        reading.right_throttle = right_dshot;
-        reading.right_target_erpm = target.1;
-        match r_edt {
-            Some(ExtendedTelemetry::Erpm { erpm, .. }) => {
-                reading.right_erpm = erpm;
-                reading.right_valid = true;
-                right_state.record_success();
-            }
-            Some(ref edt) => {
-                apply_edt_right(&mut reading, edt);
-                right_state.record_success();
-            }
-            None if right_dshot == 0 => {
-                reading.right_erpm = 0;
-                reading.right_valid = true;
-            }
-            None if right_state.bidir_enabled => {
-                right_state.record_failure();
-            }
-            None => {
-                reading.right_valid = false;
-            }
-        }
+        update_engine_unit(&mut reading.left, &mut left_state, l_edt, left_dshot, target.0);
+        update_engine_unit(&mut reading.right, &mut right_state, r_edt, right_dshot, target.1);
 
         ENGINE_CACHE.lock(|c| c.set(reading));
         ticker.next().await;

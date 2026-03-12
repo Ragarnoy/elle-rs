@@ -38,8 +38,11 @@ pub const PROFILE_FLASH_END: u32 = 0x210000;
 /// ULog flash region start
 pub const ULOG_FLASH_START: u32 = 0x210000;
 
-/// ULog flash region end (end of flash)
+/// ULog flash region end (end of flash, inclusive)
 pub const ULOG_FLASH_END: u32 = 0xFFFFFF;
+
+/// ULog flash region end (exclusive, for range-based APIs like sequential-storage)
+pub const ULOG_FLASH_END_EXCL: u32 = 0x1000000;
 
 /// ULog flash region size (~14MB)
 pub const ULOG_FLASH_SIZE: usize = (ULOG_FLASH_END - ULOG_FLASH_START + 1) as usize;

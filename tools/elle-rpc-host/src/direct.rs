@@ -52,6 +52,21 @@ pub enum DirectCommand {
     Gnss,
     /// Read engine RPM telemetry
     Engine,
+    /// Magnetometer calibration
+    MagCal {
+        #[command(subcommand)]
+        action: MagCalAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum MagCalAction {
+    /// Start calibration (rotate board for ~30s)
+    Start,
+    /// Clear calibration (zero offsets)
+    Clear,
+    /// Get calibration status and offsets
+    Status,
 }
 
 struct ProbeConnection {
@@ -189,35 +204,70 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                 g.latitude, g.longitude, g.altitude_m, g.fix_quality, g.num_satellites, g.hdop
             );
         }
+        DirectCommand::MagCal { action } => match action {
+            MagCalAction::Start => {
+                let ack =
+                    timeout(CMD_TIMEOUT, client.send_resp::<StartMagCalEndpoint>(&())).await??;
+                if ack.success {
+                    println!("Mag cal started — rotate board in all orientations for ~30s");
+                } else {
+                    println!("Failed: {}", ack.error_code);
+                }
+            }
+            MagCalAction::Clear => {
+                let ack =
+                    timeout(CMD_TIMEOUT, client.send_resp::<ClearMagCalEndpoint>(&())).await??;
+                if ack.success {
+                    println!("Mag cal cleared (offsets zeroed)");
+                } else {
+                    println!("Failed: {}", ack.error_code);
+                }
+            }
+            MagCalAction::Status => {
+                let cal =
+                    timeout(CMD_TIMEOUT, client.send_resp::<GetMagCalEndpoint>(&())).await??;
+                let status = if cal.collecting {
+                    format!("COLLECTING ({} samples)", cal.samples)
+                } else if cal.calibrated {
+                    "CALIBRATED".into()
+                } else {
+                    "UNCALIBRATED".into()
+                };
+                println!(
+                    "Mag cal: {} | Offsets: X={:.0} Y={:.0} Z={:.0}",
+                    status, cal.offset_x, cal.offset_y, cal.offset_z
+                );
+            }
+        },
         DirectCommand::Engine => {
             let e =
                 timeout(CMD_TIMEOUT, client.send_resp::<GetEngineEndpoint>(&())).await??;
-            let l_status = if e.left_valid { "OK" } else { "STALE" };
-            let r_status = if e.right_valid { "OK" } else { "STALE" };
-            let l_target = if e.left_target_erpm > 0 {
-                format!(" target:{}", e.left_target_erpm)
+            let l_status = if e.left.valid { "OK" } else { "STALE" };
+            let r_status = if e.right.valid { "OK" } else { "STALE" };
+            let l_target = if e.left.target_erpm > 0 {
+                format!(" target:{}", e.left.target_erpm)
             } else {
                 String::new()
             };
-            let r_target = if e.right_target_erpm > 0 {
-                format!(" target:{}", e.right_target_erpm)
+            let r_target = if e.right.target_erpm > 0 {
+                format!(" target:{}", e.right.target_erpm)
             } else {
                 String::new()
             };
             println!(
                 "Engine L: {} eRPM{} (cmd:{}) [{}] | R: {} eRPM{} (cmd:{}) [{}]",
-                e.left_erpm, l_target, e.left_throttle, l_status,
-                e.right_erpm, r_target, e.right_throttle, r_status,
+                e.left.erpm, l_target, e.left.throttle, l_status,
+                e.right.erpm, r_target, e.right.throttle, r_status,
             );
-            if e.left_voltage_mv > 0 || e.right_voltage_mv > 0 {
+            if e.left.voltage_mv > 0 || e.right.voltage_mv > 0 {
                 println!(
                     "  EDT L: {:.1}V {:.1}A {}°C | R: {:.1}V {:.1}A {}°C",
-                    e.left_voltage_mv as f32 / 1000.0,
-                    e.left_current_ma as f32 / 1000.0,
-                    e.left_temperature,
-                    e.right_voltage_mv as f32 / 1000.0,
-                    e.right_current_ma as f32 / 1000.0,
-                    e.right_temperature,
+                    e.left.voltage_mv as f32 / 1000.0,
+                    e.left.current_ma as f32 / 1000.0,
+                    e.left.temperature,
+                    e.right.voltage_mv as f32 / 1000.0,
+                    e.right.current_ma as f32 / 1000.0,
+                    e.right.temperature,
                 );
             }
         }

@@ -3,7 +3,7 @@
 //! Frame format: `[0xC8 | len | type | payload... | crc8_dvb_s2]`
 //! where `len` = payload_len + 2 (type + CRC bytes), CRC covers type + payload.
 
-use crate::imu::{AttitudeData, BARO_CACHE, MAG_CACHE};
+use crate::imu::{AttitudeData, BARO, MAG};
 use crc::{CRC_8_DVB_S2, Crc};
 use defmt::warn;
 use embassy_rp::uart::{Async, UartTx};
@@ -24,7 +24,7 @@ static CRC8: Crc<u8> = Crc::<u8>::new(&CRC_8_DVB_S2);
 // Signals
 // ---------------------------------------------------------------------------
 
-/// Dedicated attitude signal for the telemetry task (separate from ATTITUDE_SIGNAL
+/// Dedicated attitude signal for the telemetry task (separate from ATTITUDE
 /// which is consumed by try_take in the control loop).
 pub static TELEMETRY_ATTITUDE: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
 
@@ -233,7 +233,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
             last_attitude = att;
         }
         {
-            let mag = MAG_CACHE.lock(|c| c.get());
+            let mag = MAG.read_cached();
             if mag.x != 0 || mag.y != 0 || mag.z != 0 {
                 last_heading = libm::atan2f(mag.y as f32, mag.x as f32);
             }
@@ -242,7 +242,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
             last_mode = mode;
         }
         {
-            let baro = BARO_CACHE.lock(|c| c.get());
+            let baro = BARO.read_cached();
             last_baro_alt = baro.altitude_m;
         }
 
@@ -299,8 +299,8 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
                 let eng = crate::dshot::ENGINE_CACHE.lock(|c| c.get());
                 // Use voltage from whichever engine has it (same battery),
                 // sum current from both engines
-                let voltage_mv = eng.left_voltage_mv.max(eng.right_voltage_mv);
-                let current_ma = eng.left_current_ma + eng.right_current_ma;
+                let voltage_mv = eng.left.voltage_mv.max(eng.right.voltage_mv);
+                let current_ma = eng.left.current_ma + eng.right.current_ma;
                 let mut buf = [0u8; 12];
                 build_battery_frame(&mut buf, voltage_mv, current_ma);
                 if let Err(e) = tx.write(&buf).await {

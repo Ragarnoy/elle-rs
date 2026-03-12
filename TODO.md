@@ -9,6 +9,7 @@
 - [x] Throttle range rework (removed µs intermediate, control path outputs DShot 0-1999 directly)
 - [x] Governor mode: closed-loop RPM control via per-engine PI in 1kHz DShot task (feedforward + anti-windup, telemetry-loss fallback, target eRPM observability in ICD/ULog/TUI)
 - [x] Extended DShot telemetry (EDT): ESC temperature, voltage, current via `read_extended_telemetry()`, best-effort (0 if unsupported)
+- [x] Magnetometer hard-iron calibration: min/max tracking over 300 samples, flash persistence (MapStorage key=2), auto-load on boot, TUI/direct CLI commands, cross-core signals
 
 ## Notes
 
@@ -51,79 +52,11 @@ PIO2     -> PIN_15 (engine_right)  — BidirDShot300
 
 ---
 
-### 2. Magnetometer Hard-Iron Calibration
-
-#### Problem
-The MMC5616WA magnetometer feeds raw counts into the Madgwick AHRS for yaw/heading.
-Without hard-iron calibration, permanent magnetic fields on the PCB (traces, battery,
-motor wires, screws) offset the readings, causing a constant heading bias.
-
-Currently yaw=0 is arbitrary at startup (gyro-only 6-DOF), then the Madgwick filter
-gradually converges toward magnetic north once `has_mag` flips true (~100ms into the
-run loop). The convergence speed depends on beta (currently 0.033 — conservative).
-
-#### What hard-iron calibration does
-1. Raw mag XYZ plotted over all orientations should form a sphere centered at (0,0,0)
-2. PCB magnetic fields shift the sphere off-center by (offset_x, offset_y, offset_z)
-3. Calibration finds those offsets, then subtracts them before feeding into AHRS
-
-#### Implementation plan
-
-**1. Calibration data structure**
-Replace the BNO055-specific `CalibrationData` in `sequential_flash_manager.rs`:
-- Current: `profile_data: [u8; BNO055_CALIB_SIZE]` + `quality: CalibrationLevels`
-- New: `mag_offset: [f32; 3]` (12 bytes) + optional `mag_scale: [f32; 3]` (soft-iron)
-- Update `BNO055_CALIB_SIZE` -> `MAG_CALIB_SIZE` in `elle-config`
-- Update `CalibrationKey` identifier (change from 0x42 to avoid loading stale BNO055 data)
-
-**2. Calibration routine (in `imu.rs`)**
-Add a `calibrate_mag()` method to `Imu`:
-- Enter calibration mode (could be triggered via RPC `SaveCalibration` command)
-- Collect raw mag samples for ~30 seconds while user rotates the board
-- Track min/max per axis: `min_x, max_x, min_y, max_y, min_z, max_z`
-- Compute offsets: `offset_x = (max_x + min_x) / 2`, same for Y and Z
-- Store offsets via `request_save_calibration()` flash API
-
-**3. Apply offsets in run loop**
-In `imu.rs` `run()`, mag read section:
-```rust
-self.last_mag = nalgebra::Vector3::new(
-    data.x as f32 - self.mag_offset.x,
-    data.y as f32 - self.mag_offset.y,
-    data.z as f32 - self.mag_offset.z,
-);
-```
-
-**4. Load on boot**
-In `imu.rs` `initialize()`, after mag init succeeds:
-- Call `request_load_calibration()` to read offsets from flash
-- If found, populate `self.mag_offset`
-- If not found, use zero offsets (uncalibrated, still works but biased)
-
-**5. Wire up RPC commands**
-The `SaveCalibration` and `ClearCalibration` RPC commands already exist in the ICD
-but are logged-and-ignored. Wire them to:
-- `SaveCalibration` -> trigger `calibrate_mag()` routine
-- `ClearCalibration` -> erase stored offsets, reset to zero
-
-#### Files to modify
-- `crates/elle-config/src/lib.rs` — rename `BNO055_CALIB_SIZE`, add `MAG_CALIB_SIZE`
-- `crates/elle-config/src/profile.rs` — update `FlashRequest`/`FlashResponse` types
-- `crates/elle-hardware/src/sequential_flash_manager.rs` — new `CalibrationData` format
-- `crates/elle-hardware/src/imu.rs` — add `mag_offset` field, `calibrate_mag()`, apply offsets
-- `crates/elle-eagle/src/rpc_handlers.rs` — wire `SaveCalibration`/`ClearCalibration`
-
-#### Soft-iron calibration (future, lower priority)
-Soft-iron distortion (nearby ferromagnetic material squashes the sphere into an
-ellipsoid) requires a 3x3 correction matrix instead of just offsets. More complex
-to compute (needs ellipsoid fitting), usually less impactful than hard-iron.
-Not needed for initial heading accuracy.
-
----
-
-### 3. Waypoint Navigation
+### 2. Waypoint Navigation
 
 Full autonomous navigation system. See [docs/NAVIGATION_PLAN.md](docs/NAVIGATION_PLAN.md) for the detailed plan.
+
+**Stub crate created** at `crates/elle-nav/` with deps (sguaba, nalgebra). Not in workspace members yet — add when implementation begins.
 
 **Build order summary:**
 
@@ -142,7 +75,7 @@ Full autonomous navigation system. See [docs/NAVIGATION_PLAN.md](docs/NAVIGATION
 
 ---
 
-### 4. Pitot Tube / Airspeed Sensor
+### 3. Pitot Tube / Airspeed Sensor
 
 Required for safe autonomous navigation. Without it, GPS groundspeed is the only speed
 reference, which breaks down in wind (headwind climb can stall even within pitch limits).

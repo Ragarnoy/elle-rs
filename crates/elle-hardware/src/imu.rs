@@ -3,13 +3,13 @@
 //! When the `disable-imu` feature is enabled, this module provides stub implementations
 //! that return synthetic attitude data for debugging without hardware.
 
-use core::cell::Cell;
 use defmt::*;
 use elle_error::ElleResult;
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Instant;
+
+use crate::signal_cache::SignalCache;
 
 // ============================================================================
 // COMMON TYPES AND STATICS (available in both modes)
@@ -67,14 +67,10 @@ impl ImuStatus {
     }
 }
 
-/// Shared attitude data between cores/tasks
-pub static ATTITUDE_SIGNAL: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
-
-/// Non-consuming attitude cache for RPC queries.
-/// Written alongside `ATTITUDE_SIGNAL` by the IMU task; read (without consuming) by
-/// RPC handlers so they never race with the control loop's `try_take()`.
-pub static ATTITUDE_CACHE: Mutex<CriticalSectionRawMutex, Cell<AttitudeData>> =
-    Mutex::new(Cell::new(AttitudeData::zero()));
+/// Shared attitude data between cores/tasks.
+/// Use `publish()` to update, `read_cached()` for non-consuming reads (RPC handlers),
+/// `try_take()`/`wait()` for the primary async consumer (control loop).
+pub static ATTITUDE: SignalCache<AttitudeData> = SignalCache::new(AttitudeData::zero());
 
 /// Global signal for Core 1 (IMU) heartbeat
 pub static CORE1_HEARTBEAT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -85,14 +81,8 @@ pub fn is_attitude_valid(attitude: &AttitudeData, max_age: embassy_time::Duratio
     attitude.timestamp != Instant::from_ticks(0) && attitude.timestamp.elapsed() < max_age
 }
 
-/// Magnetometer data for RPC handler (populated by MMC5616WA)
-pub static MAG_SIGNAL: Signal<CriticalSectionRawMutex, MagReading> = Signal::new();
-
-/// Non-consuming magnetometer cache for RPC queries and telemetry.
-/// Written alongside `MAG_SIGNAL` by the IMU task; read (without consuming) by
-/// RPC handlers and CRSF telemetry so they never race with signal consumers.
-pub static MAG_CACHE: Mutex<CriticalSectionRawMutex, Cell<MagReading>> =
-    Mutex::new(Cell::new(MagReading { x: 0, y: 0, z: 0 }));
+/// Magnetometer data (populated by MMC5616WA).
+pub static MAG: SignalCache<MagReading> = SignalCache::new(MagReading { x: 0, y: 0, z: 0 });
 
 /// Magnetometer reading (signed counts from MMC5616WA)
 #[derive(Clone, Copy, Debug, Format)]
@@ -102,19 +92,12 @@ pub struct MagReading {
     pub z: i32,
 }
 
-/// Barometer data for RPC handler (populated by BMP390)
-pub static BARO_SIGNAL: Signal<CriticalSectionRawMutex, BaroReading> = Signal::new();
-
-/// Non-consuming barometer cache for RPC queries and telemetry.
-/// Written alongside `BARO_SIGNAL` by the IMU task; read (without consuming) by
-/// RPC handlers and CRSF telemetry so they never race with signal consumers.
-pub static BARO_CACHE: Mutex<CriticalSectionRawMutex, Cell<BaroReading>> = Mutex::new(Cell::new(
-    BaroReading {
-        pressure_hpa: 0.0,
-        temperature_c: 0.0,
-        altitude_m: 0.0,
-    },
-));
+/// Barometer data (populated by BMP390).
+pub static BARO: SignalCache<BaroReading> = SignalCache::new(BaroReading {
+    pressure_hpa: 0.0,
+    temperature_c: 0.0,
+    altitude_m: 0.0,
+});
 
 /// Barometer reading from BMP390
 #[derive(Clone, Copy, Debug, Format)]
@@ -123,6 +106,16 @@ pub struct BaroReading {
     pub temperature_c: f32,
     pub altitude_m: f32,
 }
+
+/// Cross-core: Core0 signals loaded offsets at boot → Core1 IMU applies them
+pub static MAG_CALIBRATION_SIGNAL: Signal<CriticalSectionRawMutex, (f32, f32, f32)> = Signal::new();
+
+/// Main loop signals "start calibration" → IMU begins min/max tracking
+pub static MAG_CAL_START_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// IMU signals result back → main loop saves to flash. None = failed (insufficient rotation).
+pub static MAG_CAL_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, Option<(f32, f32, f32)>> =
+    Signal::new();
 
 /// Channel for LED pattern updates
 pub static LED_COMMAND_CHANNEL: embassy_sync::channel::Channel<
@@ -188,6 +181,11 @@ pub struct Imu<'a> {
     has_mag: bool,
     mag_ok: bool,
     error_threshold: u32,
+    mag_offset: nalgebra::Vector3<f32>,
+    mag_cal_active: bool,
+    mag_cal_min: [f32; 3],
+    mag_cal_max: [f32; 3],
+    mag_cal_samples: u32,
 }
 
 #[cfg(not(feature = "disable-imu"))]
@@ -214,6 +212,11 @@ impl<'a> Imu<'a> {
             has_mag: false,
             mag_ok: false,
             error_threshold: 10,
+            mag_offset: nalgebra::Vector3::zeros(),
+            mag_cal_active: false,
+            mag_cal_min: [f32::MAX; 3],
+            mag_cal_max: [f32::MIN; 3],
+            mag_cal_samples: 0,
         }
     }
 
@@ -399,8 +402,7 @@ impl<'a> Imu<'a> {
                         timestamp: Instant::now(),
                     };
 
-                    ATTITUDE_SIGNAL.signal(attitude);
-                    ATTITUDE_CACHE.lock(|c| c.set(attitude));
+                    ATTITUDE.publish(attitude);
                     #[cfg(feature = "crsf-telemetry")]
                     crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
@@ -440,8 +442,7 @@ impl<'a> Imu<'a> {
                     if consecutive_errors >= self.error_threshold {
                         let mut failed = self.last_attitude;
                         failed.timestamp = Instant::from_ticks(0);
-                        ATTITUDE_SIGNAL.signal(failed);
-                        ATTITUDE_CACHE.lock(|c| c.set(failed));
+                        ATTITUDE.publish(failed);
                         #[cfg(feature = "crsf-telemetry")]
                         crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(failed);
                         Timer::after(Duration::from_secs(1)).await;
@@ -450,22 +451,84 @@ impl<'a> Imu<'a> {
                 }
             }
 
+            // Check for loaded mag cal offsets from Core0
+            if let Some((ox, oy, oz)) = MAG_CALIBRATION_SIGNAL.try_take() {
+                self.mag_offset = nalgebra::Vector3::new(ox, oy, oz);
+                info!(
+                    "Core1: Mag cal offsets applied: ({}, {}, {})",
+                    ox as i32, oy as i32, oz as i32
+                );
+            }
+
+            // Check for calibration start request
+            if MAG_CAL_START_SIGNAL.try_take().is_some() {
+                self.mag_cal_active = true;
+                self.mag_cal_min = [f32::MAX; 3];
+                self.mag_cal_max = [f32::MIN; 3];
+                self.mag_cal_samples = 0;
+                info!("Core1: Mag calibration started — rotate board in all orientations");
+            }
+
             // 4. Read MMC5616WA at ~10 Hz
             mag_counter += 1;
             if self.mag_ok && mag_counter >= elle_config::MAG_READ_INTERVAL_TICKS {
                 mag_counter = 0;
                 match self.mag.read_magnetic() {
                     Ok(data) => {
-                        self.last_mag =
-                            nalgebra::Vector3::new(data.x as f32, data.y as f32, data.z as f32);
-                        self.has_mag = true;
+                        let raw = [data.x as f32, data.y as f32, data.z as f32];
+
+                        // Publish raw counts for diagnostics
                         let reading = MagReading {
                             x: data.x,
                             y: data.y,
                             z: data.z,
                         };
-                        MAG_SIGNAL.signal(reading);
-                        MAG_CACHE.lock(|c| c.set(reading));
+                        MAG.publish(reading);
+
+                        // Calibration min/max tracking
+                        if self.mag_cal_active {
+                            for (i, &val) in raw.iter().enumerate() {
+                                if val < self.mag_cal_min[i] {
+                                    self.mag_cal_min[i] = val;
+                                }
+                                if val > self.mag_cal_max[i] {
+                                    self.mag_cal_max[i] = val;
+                                }
+                            }
+                            self.mag_cal_samples += 1;
+
+                            // After 300 samples (~30s at 10Hz): compute and validate
+                            if self.mag_cal_samples >= 300 {
+                                const MIN_RANGE: f32 = 5000.0;
+                                let ranges_ok = (0..3).all(|i| {
+                                    (self.mag_cal_max[i] - self.mag_cal_min[i]) >= MIN_RANGE
+                                });
+
+                                if ranges_ok {
+                                    let ox = (self.mag_cal_min[0] + self.mag_cal_max[0]) / 2.0;
+                                    let oy = (self.mag_cal_min[1] + self.mag_cal_max[1]) / 2.0;
+                                    let oz = (self.mag_cal_min[2] + self.mag_cal_max[2]) / 2.0;
+                                    self.mag_offset = nalgebra::Vector3::new(ox, oy, oz);
+                                    info!(
+                                        "Core1: Mag cal complete: offsets ({}, {}, {})",
+                                        ox as i32, oy as i32, oz as i32
+                                    );
+                                    MAG_CAL_RESULT_SIGNAL.signal(Some((ox, oy, oz)));
+                                } else {
+                                    warn!("Core1: Mag cal FAILED — insufficient rotation");
+                                    MAG_CAL_RESULT_SIGNAL.signal(None);
+                                }
+                                self.mag_cal_active = false;
+                            }
+                        }
+
+                        // Apply offsets before feeding AHRS
+                        self.last_mag = nalgebra::Vector3::new(
+                            raw[0] - self.mag_offset[0],
+                            raw[1] - self.mag_offset[1],
+                            raw[2] - self.mag_offset[2],
+                        );
+                        self.has_mag = true;
                     }
                     Err(e) => warn!("MMC5616WA: read error: {}", e),
                 }
@@ -486,8 +549,7 @@ impl<'a> Imu<'a> {
                                 temperature_c: m.temperature.get::<degree_celsius>(),
                                 altitude_m: m.altitude.get::<meter>(),
                             };
-                            BARO_SIGNAL.signal(reading);
-                            BARO_CACHE.lock(|c| c.set(reading));
+                            BARO.publish(reading);
                         }
                         Err(e) => warn!("BMP390: measure error: {}", e),
                     }
@@ -639,8 +701,7 @@ impl<'a> Imu<'a> {
             tick = tick.wrapping_add(1);
 
             // Signal synthetic attitude data
-            ATTITUDE_SIGNAL.signal(attitude);
-            ATTITUDE_CACHE.lock(|c| c.set(attitude));
+            ATTITUDE.publish(attitude);
             #[cfg(feature = "crsf-telemetry")]
             crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
@@ -655,8 +716,7 @@ impl<'a> Imu<'a> {
                             y: data.y,
                             z: data.z,
                         };
-                        MAG_SIGNAL.signal(reading);
-                        MAG_CACHE.lock(|c| c.set(reading));
+                        MAG.publish(reading);
                     }
                     Err(e) => {
                         warn!("MMC5616WA: read error: {}", e);
@@ -679,8 +739,7 @@ impl<'a> Imu<'a> {
                                 temperature_c: m.temperature.get::<degree_celsius>(),
                                 altitude_m: m.altitude.get::<meter>(),
                             };
-                            BARO_SIGNAL.signal(reading);
-                            BARO_CACHE.lock(|c| c.set(reading));
+                            BARO.publish(reading);
                         }
                         Err(e) => warn!("BMP390: measure error: {}", e),
                     }

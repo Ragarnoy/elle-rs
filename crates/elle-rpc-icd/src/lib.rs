@@ -139,26 +139,37 @@ pub struct BarometerResp {
     pub altitude_m: f32,
 }
 
-/// Engine telemetry response (DShot bidirectional RPM + throttle + governor + EDT)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
-pub struct EngineResp {
-    pub left_erpm: u32,
-    pub right_erpm: u32,
-    pub left_throttle: u16,
-    pub right_throttle: u16,
-    pub left_valid: bool,
-    pub right_valid: bool,
-    pub left_target_erpm: u32,
-    pub right_target_erpm: u32,
+/// Per-engine telemetry (DShot bidirectional RPM + throttle + governor + EDT)
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct EngineUnit {
+    pub erpm: u32,
+    pub throttle: u16,
+    pub valid: bool,
+    pub target_erpm: u32,
     /// ESC temperature in °C (from EDT)
-    pub left_temperature: u8,
-    pub right_temperature: u8,
+    pub temperature: u8,
     /// Supply voltage in millivolts (from EDT)
-    pub left_voltage_mv: u32,
-    pub right_voltage_mv: u32,
+    pub voltage_mv: u32,
     /// Current draw in milliamps (from EDT)
-    pub left_current_ma: u32,
-    pub right_current_ma: u32,
+    pub current_ma: u32,
+}
+
+/// Engine telemetry response (left + right engines)
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct EngineResp {
+    pub left: EngineUnit,
+    pub right: EngineUnit,
+}
+
+/// Magnetometer calibration status response
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
+pub struct MagCalResp {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub offset_z: f32,
+    pub calibrated: bool,
+    pub collecting: bool,
+    pub samples: u16,
 }
 
 /// `ULog` read chunk response
@@ -307,6 +318,9 @@ endpoints! {
     | SetAttitudeSetpointEndpoint | SetAttitudeSetpointReq | AckResp      | "elle/ctrl/setpoint"  |
     | StartAutotuneEndpoint   | StartAutotuneReq  | AckResp           | "elle/ctrl/atune/start" |
     | AbortAutotuneEndpoint   | ()                | AckResp           | "elle/ctrl/atune/abort" |
+    | StartMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/start"    |
+    | ClearMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/clear"    |
+    | GetMagCalEndpoint       | ()                | MagCalResp        | "elle/cal/mag/get"      |
 }
 
 // ============================================================================

@@ -97,6 +97,16 @@ impl<'a> SequentialFlashManager<'a> {
                     let response = self.load_pid_profile_internal().await;
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
+
+                FlashRequest::SaveMagCal { data } => {
+                    let response = self.save_mag_cal_internal(&data).await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::LoadMagCal => {
+                    let response = self.load_mag_cal_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
             }
 
             // Small yield to ensure other tasks can run
@@ -118,7 +128,7 @@ impl<'a> SequentialFlashManager<'a> {
         self.ulog_buffer[..len].copy_from_slice(&data[..len]);
 
         let flash = self.take_flash();
-        let config = QueueConfig::new(ULOG_FLASH_START..0x1000000);
+        let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         let result = queue.push(&self.ulog_buffer[..len], false).await;
@@ -147,7 +157,7 @@ impl<'a> SequentialFlashManager<'a> {
     /// Peek at the oldest ULog entry without removing it
     async fn peek_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.take_flash();
-        let config = QueueConfig::new(ULOG_FLASH_START..0x1000000);
+        let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         let result = queue.peek(&mut self.ulog_buffer).await;
@@ -179,7 +189,7 @@ impl<'a> SequentialFlashManager<'a> {
     /// Pop the oldest ULog entry from the queue
     async fn pop_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.take_flash();
-        let config = QueueConfig::new(ULOG_FLASH_START..0x1000000);
+        let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         let result = queue.pop(&mut self.ulog_buffer).await;
@@ -276,11 +286,83 @@ impl<'a> SequentialFlashManager<'a> {
         }
     }
 
+    /// Save mag calibration offsets to flash map storage (key=2, 12 bytes)
+    async fn save_mag_cal_internal(&mut self, data: &[u8; 12]) -> FlashResponse {
+        let flash = self.take_flash();
+        let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
+        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
+
+        let mut data_buffer = [0u8; 128];
+        let key: u8 = 2;
+        let value: &[u8] = data.as_slice();
+        let result = map.store_item(&mut data_buffer, &key, &value).await;
+
+        let (flash, _cache) = map.destroy();
+        self.put_flash(flash);
+
+        match result {
+            Ok(_) => {
+                info!("Flash: Mag cal saved");
+                FlashResponse::MagCalSaved
+            }
+            Err(e) => {
+                warn!("Flash: Mag cal save failed: {:?}", Debug2Format(&e));
+                FlashResponse::MagCalSaveFailed
+            }
+        }
+    }
+
+    /// Load mag calibration offsets from flash map storage (key=2, 12 bytes)
+    async fn load_mag_cal_internal(&mut self) -> FlashResponse {
+        let flash = self.take_flash();
+        let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
+        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
+
+        let mut data_buffer = [0u8; 128];
+        let key: u8 = 2;
+        let result: Result<Option<&[u8]>, _> =
+            map.fetch_item(&mut data_buffer, &key).await;
+
+        let response = match result {
+            Ok(Some(slice)) if slice.len() == 12 => {
+                let mut out = [0u8; 12];
+                out.copy_from_slice(slice);
+                Some(out)
+            }
+            Ok(Some(slice)) => {
+                warn!(
+                    "Flash: Mag cal wrong size ({}), expected 12",
+                    slice.len()
+                );
+                None
+            }
+            Ok(None) => None,
+            Err(e) => {
+                warn!("Flash: Mag cal load failed: {:?}", Debug2Format(&e));
+                None
+            }
+        };
+
+        let (flash, _cache) = map.destroy();
+        self.put_flash(flash);
+
+        match response {
+            Some(data) => {
+                info!("Flash: Mag cal loaded");
+                FlashResponse::MagCalLoaded { data }
+            }
+            None => {
+                info!("Flash: No mag cal stored");
+                FlashResponse::MagCalEmpty
+            }
+        }
+    }
+
     /// Erase the entire ULog flash region
     async fn erase_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.flash.as_mut().expect("flash not available");
         let mut addr = ULOG_FLASH_START;
-        let end = 0x1000000u32;
+        let end = crate::flash_constants::ULOG_FLASH_END_EXCL;
         const ERASE_CHUNK: u32 = 64 * 1024; // 64KB per iteration
 
         while addr < end {

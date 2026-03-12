@@ -18,6 +18,10 @@ pub enum FlashRequest {
         data: [u8; 32],
     },
     LoadPidProfile,
+    SaveMagCal {
+        data: [u8; 12],
+    },
+    LoadMagCal,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -39,4 +43,10 @@ pub enum FlashResponse {
         data: [u8; 32],
     },
     PidProfileEmpty,
+    MagCalSaved,
+    MagCalSaveFailed,
+    MagCalLoaded {
+        data: [u8; 12],
+    },
+    MagCalEmpty,
 }

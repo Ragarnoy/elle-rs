@@ -1,0 +1,16 @@
+[package]
+name = "elle-nav"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+elle-config = { workspace = true }
+elle-control = { workspace = true }
+defmt = { workspace = true }
+nalgebra = { workspace = true }
+libm = { workspace = true }
+sguaba = { version = "0.10", default-features = false, features = ["libm", "serde"] }
+
+[lib]
+test = false
+bench = false

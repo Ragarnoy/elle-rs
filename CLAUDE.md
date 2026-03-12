@@ -32,7 +32,7 @@ Key feature flags for elle-eagle:
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
 - `gnss` — SAM-M10Q GNSS receiver support (requires `rpc-control`)
-- `crsf-telemetry` — CRSF telemetry TX to radio via PIN_20/UART1 TX (attitude, flight mode, GPS, baro altitude)
+- `crsf-telemetry` — CRSF telemetry TX to radio via PIN_20/UART1 TX (attitude, flight mode, GPS, baro altitude, battery voltage/current)
 
 ULog flash recording is always compiled in (no feature gate). Recording is idle until explicitly started.
 
@@ -85,14 +85,18 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 
 ### Shared State
 
-- **`FlightState`** / **`FLIGHT_STATE_CACHE`** (`crates/elle-eagle/src/flight_state.rs`) — Signal + Mutex cache carrying `{ armed, failsafe, mode }`, published by the RPC control loop after each `fc.update()`, read by `handle_get_status` via cache
-- **`ControllerOutput`** / **`CONTROLLER_OUTPUT_CACHE`** (`crates/elle-eagle/src/flight_state.rs`) — Signal + Mutex cache for PID output observability (corrections, setpoints, servo μs)
+**`SignalCache<T>`** (`crates/elle-hardware/src/signal_cache.rs`) — Generic wrapper combining `Signal<CriticalSectionRawMutex, T>` + `Mutex<CriticalSectionRawMutex, Cell<T>>` for publish/subscribe with non-consuming cache reads. Methods: `publish()`, `read_cached()`, `try_take()`, `wait()`, `signal_only()`. Used throughout the firmware for inter-task communication.
+
+- **`ATTITUDE`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<AttitudeData>` — pitch/roll/yaw from AHRS at 1kHz, consumed by control loop via `try_take()`
+- **`MAG`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<MagReading>` — magnetometer XYZ counts at 10Hz, read by CRSF telemetry and RPC via `read_cached()`
+- **`BARO`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<BaroReading>` — pressure/temp/altitude at 2Hz, read by CRSF telemetry and RPC via `read_cached()`
+- **`FLIGHT_STATE`** (`crates/elle-eagle/src/flight_state.rs`) — `SignalCache<FlightState>` — `{ armed, failsafe, mode }`, published by RPC control loop, read by `handle_get_status`
+- **`CONTROLLER_OUTPUT`** (`crates/elle-eagle/src/flight_state.rs`) — `SignalCache<ControllerOutput>` — PID corrections/setpoints/servo μs, published by RPC control loop
 - **`RpcCommand`** (`crates/elle-eagle/src/rpc_handlers.rs`) — Enum + channel for RPC handler → main loop communication (includes ULog, autotune, PID save commands)
-- **`MAG_CACHE`** / **`BARO_CACHE`** (`crates/elle-hardware/src/imu.rs`) — Mutex-based non-consuming caches alongside Signals for mag/baro data. Producers write both Signal and cache; consumers read cache (no signal race).
 - **`LogMsg`** (`crates/elle-eagle/src/log_channel.rs`) — Channel for firmware events → `log_publisher_task` → LogTopic
 - **`ULOG_ENABLED`** (`crates/elle-eagle/src/rpc_app.rs`) — AtomicBool flag controlling ULog recording in RPC mode. Set by StartULog/StopULog RPC commands.
-- **`DSHOT_THROTTLE`** (`crates/elle-hardware/src/dshot.rs`) — Signal carrying `(u16, u16)` throttle values from control loop to dedicated 1kHz DShot send task
-- **`ENGINE_CACHE`** (`crates/elle-hardware/src/dshot.rs`) — Mutex-based non-consuming cache for `EngineReading` (eRPM, throttle, validity per engine). Written by `dshot_task` at 1kHz, read by RPC handler and ULog logger.
+- **`DSHOT_THROTTLE`** (`crates/elle-hardware/src/dshot.rs`) — Signal carrying `(u32, u32)` eRPM target values from control loop to dedicated 1kHz DShot send task (governor converts to DShot commands)
+- **`ENGINE_CACHE`** (`crates/elle-hardware/src/dshot.rs`) — Mutex-based non-consuming cache for `EngineReading` (`{ left: EngineUnitReading, right: EngineUnitReading }` — per-engine eRPM, throttle, validity, EDT temperature/voltage/current). Written by `dshot_task` at 1kHz, read by RPC handler, CRSF telemetry, and ULog logger.
 - **`ULogState`** / **`ULOG_ITEM_SIGNAL`** (`crates/elle-eagle/src/rpc_app.rs`) — `#[repr(u8)]` enum state machine (Idle→Reading→Ready→Empty) + Signal for ULog extraction, bridging blocking RPC handlers to async flash operations
 
 ### Host Tool (`tools/elle-rpc-host/`)
@@ -199,7 +203,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - MMC5616WA magnetometer wired into `disable-imu` stub — reads at ~10 Hz, populates `MAG_SIGNAL` for TUI/RPC. Always-on (no feature gate), the chip is physically on the board.
 - BMP390 barometer driver integrated via `embedded-hal-bus::RefCellDevice` for I2C0 bus sharing with MMC5616WA. Polls at ~2 Hz, populates `BARO_SIGNAL`. Init tries both addresses (0x77, 0x76). Always-on (no feature gate).
 - I2C bus sharing: I2C0 wrapped in `RefCell` + `StaticCell`, creates `RefCellDevice` handles for MMC5616WA and BMP390. Safe because both run in a single task on Core1.
-- CRSF telemetry expanded to 4 slots: attitude → flight_mode → GPS → baro (~12.5 Hz each at 50 Hz tick)
+- CRSF telemetry expanded to 5 slots: attitude → flight_mode → GPS → baro → battery (~10 Hz each at 50 Hz tick)
 - `GetBarometerEndpoint` RPC endpoint returns pressure (hPa), temperature (°C), barometric altitude (m)
 - Host TUI displays barometer data (pressure, temperature, altitude) at 1 Hz poll rate
 - **ICM-42686-P IMU integrated via SPI0** — replaced BNO055 (I2C) with ICM-42686 (SPI) + Madgwick AHRS sensor fusion. Renamed `BnoImu` → `Imu`. Removed `bno055`/`mint` deps, added `icm426xx`/`ahrs`/`nalgebra`.
@@ -211,7 +215,10 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **RPC autotune endpoints**: StartAutotune/AbortAutotune RPC endpoints + TUI commands (`autotune pitch`, `autotune roll`, `autotune abort`, `savepid`)
 - **Relay-based autotuner** (`crates/elle-control/src/autotune.rs`): Oscillation detection, Tyreus-Luyben/Ziegler-Nichols/SomeOvershoot tuning rules, safety timeout/amplitude limits
 - **Flash PID persistence**: `SavedGains` serialized to flash via sequential-storage MapStorage. Auto-loads on boot with f32 validation (finite + range checks). Auto-saves on autotune completion.
-- **Signal race fixes**: Replaced `try_take()`+`signal()` peek pattern with Mutex-based non-consuming caches (`MAG_CACHE`, `BARO_CACHE`, `FLIGHT_STATE_CACHE`, `CONTROLLER_OUTPUT_CACHE`)
+- **`SignalCache<T>` abstraction**: Replaced 5 separate Signal+Mutex<Cell<>> pairs (`ATTITUDE`, `MAG`, `BARO`, `FLIGHT_STATE`, `CONTROLLER_OUTPUT`) with unified `SignalCache<T>` wrapper in `elle-hardware/src/signal_cache.rs`. Single `publish()` call replaces dual signal+cache writes.
+- **`EngineUnit` restructure**: Replaced 14 flat `left_`/`right_` fields in `EngineReading` (firmware) and `EngineResp` (ICD) with per-engine `EngineUnitReading`/`EngineUnit` sub-structs. Unified `apply_edt_left`/`apply_edt_right` into `EngineUnitReading::apply_edt()`, consolidated duplicated left/right telemetry update blocks into `update_engine_unit()`.
+- **RPC handler deduplication**: `send_cmd()` helper in `rpc_app.rs` (14 firmware handlers), `handle_ack()` helper in `tui/commands.rs` (14 host handlers), `save_pid_to_flash()` in `main.rs` (4 flash save sites), `mark_poll_success()` in `tui/state.rs` (8 polling branches)
+- **Named constants**: `RAD_TO_CDEG` replacing 6 magic `5729.578` literals, `ULOG_FLASH_END_EXCL` replacing 5 hardcoded `0x1000000` values
 - **ULog always compiled in**: Removed `ulog-logging` feature gate. ULog support is always available; recording starts only when explicitly triggered (RC switch or TUI command).
 - **Code quality pass**: clippy pedantic/nursery fixes, f64→f32 atan2, named constants for magic numbers (AHRS_BETA, sensor rate ticks), `ULogState` enum replacing magic constants, event drain throttling, setpoint filter skip in Manual mode
 - **Dedicated 1kHz DShot send task**: Decoupled ESC frame sending from 77Hz control loop into `dshot_task` running at ~1kHz via `DSHOT_THROTTLE` Signal. Task owns PIO1+PIO2 engines, handles arming, and continuously resends latest throttle values. `DshotEngines` made private (concrete PIO1/PIO2 types, no longer generic).
@@ -243,5 +250,30 @@ TUI commands:
 
 Computed gains are auto-saved to flash and auto-loaded on next boot.
 
+### Magnetometer Hard-Iron Calibration
+
+Compensates PCB hard-iron offsets on the MMC5616WA magnetometer by tracking min/max readings over all orientations, then subtracting the midpoint (hard-iron bias). Uses flash MapStorage key=2 for persistence (same infrastructure as PID gains, key=1).
+
+**Calibration flow:**
+1. `mag cal start` → firmware resets min/max trackers, collects 300 mag samples (~30s at 10Hz)
+2. User rotates board through all orientations during collection
+3. After 300 samples: validates axis ranges (≥5000 counts each), computes offsets, auto-saves to flash
+4. Offsets are subtracted from raw mag counts before feeding AHRS (raw counts still available in MAG_CACHE for diagnostics)
+
+**TUI commands:**
+- `mag cal start` — start calibration (rotate board for ~30s)
+- `mag cal clear` — clear calibration (zero offsets, clear flash)
+- `mag cal` — show calibration status and offsets
+
+**Direct CLI:** `direct mag-cal start|clear|status`
+
+**Cross-core signals:** `MAG_CAL_START_SIGNAL` (Core0→Core1 start), `MAG_CAL_RESULT_SIGNAL` (Core1→Core0 result), `MAG_CALIBRATION_SIGNAL` (Core0→Core1 loaded offsets at boot)
+
+**Statics for RPC visibility:** `MAG_CAL_OFFSET`, `MAG_CAL_STATUS` (0=uncalibrated, 1=collecting, 2=calibrated), `MAG_CAL_SAMPLES`
+
+**Event codes:** 110–116 (started, complete, failed, saved, cleared, loaded, load empty)
+
+Offsets auto-load on boot and survive power cycles. The `disable-imu` stub skips calibration (no AHRS in stub mode).
+
 ### Next Steps
-See `TODO.md` for prioritized task list (mag calibration, waypoint navigation, pitot tube).
+See `TODO.md` for prioritized task list (waypoint navigation, pitot tube).

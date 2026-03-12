@@ -253,42 +253,42 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         };
 
         let engine_line = if let Some(e) = state.engine {
-            let l_rpm = if e.left_valid {
-                format!("{}", e.left_erpm)
+            let l_rpm = if e.left.valid {
+                format!("{}", e.left.erpm)
             } else {
                 "STALE".into()
             };
-            let r_rpm = if e.right_valid {
-                format!("{}", e.right_erpm)
+            let r_rpm = if e.right.valid {
+                format!("{}", e.right.erpm)
             } else {
                 "STALE".into()
             };
-            let l_target = if e.left_target_erpm > 0 {
-                format!("\u{2192}{}", e.left_target_erpm)
+            let l_target = if e.left.target_erpm > 0 {
+                format!("\u{2192}{}", e.left.target_erpm)
             } else {
                 String::new()
             };
-            let r_target = if e.right_target_erpm > 0 {
-                format!("\u{2192}{}", e.right_target_erpm)
+            let r_target = if e.right.target_erpm > 0 {
+                format!("\u{2192}{}", e.right.target_erpm)
             } else {
                 String::new()
             };
-            let edt = if e.left_voltage_mv > 0 || e.right_voltage_mv > 0 {
+            let edt = if e.left.voltage_mv > 0 || e.right.voltage_mv > 0 {
                 format!(
                     "\n  EDT: {:.1}V {:.1}A {}°C | {:.1}V {:.1}A {}°C",
-                    e.left_voltage_mv as f32 / 1000.0,
-                    e.left_current_ma as f32 / 1000.0,
-                    e.left_temperature,
-                    e.right_voltage_mv as f32 / 1000.0,
-                    e.right_current_ma as f32 / 1000.0,
-                    e.right_temperature,
+                    e.left.voltage_mv as f32 / 1000.0,
+                    e.left.current_ma as f32 / 1000.0,
+                    e.left.temperature,
+                    e.right.voltage_mv as f32 / 1000.0,
+                    e.right.current_ma as f32 / 1000.0,
+                    e.right.temperature,
                 )
             } else {
                 String::new()
             };
             format!(
                 "  Eng L: {} eRPM{} (cmd:{}) | R: {} eRPM{} (cmd:{}){edt}",
-                l_rpm, l_target, e.left_throttle, r_rpm, r_target, e.right_throttle,
+                l_rpm, l_target, e.left.throttle, r_rpm, r_target, e.right.throttle,
             )
         } else {
             "  Eng: ---".into()
@@ -597,6 +597,14 @@ const fn log_code_text(code: u16) -> &'static str {
         101 => "PID: save failed",
         102 => "PID: loaded from flash",
         103 => "PID: no saved profile",
+        // Mag calibration (110–119)
+        110 => "Mag cal: started",
+        111 => "Mag cal: complete",
+        112 => "Mag cal: failed",
+        113 => "Mag cal: saved to flash",
+        114 => "Mag cal: cleared",
+        115 => "Mag cal: loaded from flash",
+        116 => "Mag cal: no saved cal",
         _ => "unknown",
     }
 }

@@ -9,9 +9,9 @@ pub const RC_LUT_SIZE: usize = RC_MAX_VALUE + 1;
 pub const DIFF_LUT_SIZE: usize = RC_LUT_SIZE;
 
 /// DShot throttle value where motors start spinning (equivalent to ENGINE_START_PULSE_US in µs space)
-const DSHOT_START_THROTTLE: u16 = ((ENGINE_START_PULSE_US - ENGINE_MIN_PULSE_US) as u32
+const DSHOT_START_THROTTLE: u16 = ((ENGINE_START_PULSE_US - ENGINE_MIN_PULSE_US)
     * DSHOT_THROTTLE_MAX as u32
-    / (ENGINE_MAX_PULSE_US - ENGINE_MIN_PULSE_US) as u32) as u16;
+    / (ENGINE_MAX_PULSE_US - ENGINE_MIN_PULSE_US)) as u16;
 
 /// Const function to generate throttle curve lookup table at compile time.
 /// Output is in DShot space (0-1999) instead of µs.

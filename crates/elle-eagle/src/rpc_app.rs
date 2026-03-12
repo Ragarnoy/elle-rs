@@ -2,17 +2,22 @@
 //!
 //! Replaces the hand-rolled dispatch_rpc_request() with macro-generated dispatch.
 
+use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 use defmt::info;
 use elle_config::profile::ULOG_CHUNK_SIZE;
 use elle_rpc_icd::*;
 use embassy_rp::aon_timer::AonTimer;
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Sender;
 use embassy_sync::signal::Signal;
 use postcard_rpc::header::VarHeader;
 
 use crate::rpc_handlers::RpcCommand;
+
+/// Radians to centidegrees: (180/PI) * 100
+const RAD_TO_CDEG: f32 = 5729.578;
 
 // ULog recording enable flag (checked by main loop before logging)
 pub static ULOG_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -38,6 +43,15 @@ pub static ULOG_OFFSET: AtomicU16 = AtomicU16::new(0);
 /// Total length of current item
 pub static ULOG_ITEM_LEN: AtomicU16 = AtomicU16::new(0);
 
+// Mag calibration observability statics
+/// Mag cal offsets (readable by GetMagCal handler)
+pub static MAG_CAL_OFFSET: Mutex<CriticalSectionRawMutex, Cell<(f32, f32, f32)>> =
+    Mutex::new(Cell::new((0.0, 0.0, 0.0)));
+/// 0=uncalibrated, 1=collecting, 2=calibrated
+pub static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(0);
+/// Number of calibration samples collected so far
+pub static MAG_CAL_SAMPLES: AtomicU16 = AtomicU16::new(0);
+
 /// Context passed to all RPC handlers
 pub struct RpcContext {
     pub cmd_sender: Sender<'static, CriticalSectionRawMutex, RpcCommand, 16>,
@@ -45,27 +59,30 @@ pub struct RpcContext {
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// Helpers
 // ---------------------------------------------------------------------------
 
-fn handle_set_throttle(ctx: &mut RpcContext, _hdr: VarHeader, req: SetThrottleReq) -> AckResp {
-    match ctx
-        .cmd_sender
-        .try_send(RpcCommand::SetThrottle(req.percent))
-    {
+/// Send an RpcCommand via the context channel, returning AckResp.
+fn send_cmd(ctx: &mut RpcContext, cmd: RpcCommand) -> AckResp {
+    match ctx.cmd_sender.try_send(cmd) {
         Ok(()) => AckResp::ok(),
         Err(_) => AckResp::error(1),
     }
 }
 
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+fn handle_set_throttle(ctx: &mut RpcContext, _hdr: VarHeader, req: SetThrottleReq) -> AckResp {
+    send_cmd(ctx, RpcCommand::SetThrottle(req.percent))
+}
+
 fn handle_set_elevons(ctx: &mut RpcContext, _hdr: VarHeader, req: SetElevonsReq) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::SetElevons {
+    send_cmd(ctx, RpcCommand::SetElevons {
         left: req.left,
         right: req.right,
-    }) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    })
 }
 
 fn handle_set_control_mode(
@@ -73,36 +90,24 @@ fn handle_set_control_mode(
     _hdr: VarHeader,
     req: SetControlModeReq,
 ) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::SetMode(req.mode)) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    send_cmd(ctx, RpcCommand::SetMode(req.mode))
 }
 
 fn handle_arm(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::Arm) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    send_cmd(ctx, RpcCommand::Arm)
 }
 
 fn handle_disarm(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::Disarm) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    send_cmd(ctx, RpcCommand::Disarm)
 }
 
 fn handle_emergency_stop(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::EmergencyStop) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    send_cmd(ctx, RpcCommand::EmergencyStop)
 }
 
 fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> StatusResp {
     let imu_status = elle_hardware::imu::IMU_STATUS.try_read();
-    let state = crate::flight_state::FLIGHT_STATE_CACHE.lock(|c| c.get());
+    let state = crate::flight_state::FLIGHT_STATE.read_cached();
     StatusResp {
         armed: state.armed,
         failsafe: state.failsafe,
@@ -113,14 +118,14 @@ fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Status
 }
 
 fn handle_get_attitude(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AttitudeResp {
-    let att = elle_hardware::imu::ATTITUDE_CACHE.lock(|c| c.get());
+    let att = elle_hardware::imu::ATTITUDE.read_cached();
     AttitudeResp {
-        pitch_cdeg: (att.pitch * 5729.578) as i16,
-        roll_cdeg: (att.roll * 5729.578) as i16,
-        yaw_cdeg: (att.yaw * 5729.578) as i16,
-        pitch_rate_cdeg: (att.pitch_rate * 5729.578) as i16,
-        roll_rate_cdeg: (att.roll_rate * 5729.578) as i16,
-        yaw_rate_cdeg: (att.yaw_rate * 5729.578) as i16,
+        pitch_cdeg: (att.pitch * RAD_TO_CDEG) as i16,
+        roll_cdeg: (att.roll * RAD_TO_CDEG) as i16,
+        yaw_cdeg: (att.yaw * RAD_TO_CDEG) as i16,
+        pitch_rate_cdeg: (att.pitch_rate * RAD_TO_CDEG) as i16,
+        roll_rate_cdeg: (att.roll_rate * RAD_TO_CDEG) as i16,
+        yaw_rate_cdeg: (att.yaw_rate * RAD_TO_CDEG) as i16,
     }
 }
 
@@ -168,7 +173,7 @@ fn handle_get_version(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Versi
 }
 
 fn handle_get_magnetometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagnetometerResp {
-    let mag = elle_hardware::imu::MAG_CACHE.lock(|c| c.get());
+    let mag = elle_hardware::imu::MAG.read_cached();
     MagnetometerResp {
         x: mag.x,
         y: mag.y,
@@ -186,7 +191,7 @@ fn handle_get_rc_channels(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> R
 }
 
 fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> BarometerResp {
-    let baro = elle_hardware::imu::BARO_CACHE.lock(|c| c.get());
+    let baro = elle_hardware::imu::BARO.read_cached();
     BarometerResp {
         pressure_hpa: baro.pressure_hpa,
         temperature_c: baro.temperature_c,
@@ -197,35 +202,33 @@ fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Bar
 fn handle_get_engine(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> EngineResp {
     let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
     EngineResp {
-        left_erpm: eng.left_erpm,
-        right_erpm: eng.right_erpm,
-        left_throttle: eng.left_throttle,
-        right_throttle: eng.right_throttle,
-        left_valid: eng.left_valid,
-        right_valid: eng.right_valid,
-        left_target_erpm: eng.left_target_erpm,
-        right_target_erpm: eng.right_target_erpm,
-        left_temperature: eng.left_temperature,
-        right_temperature: eng.right_temperature,
-        left_voltage_mv: eng.left_voltage_mv,
-        right_voltage_mv: eng.right_voltage_mv,
-        left_current_ma: eng.left_current_ma,
-        right_current_ma: eng.right_current_ma,
+        left: EngineUnit {
+            erpm: eng.left.erpm,
+            throttle: eng.left.throttle,
+            valid: eng.left.valid,
+            target_erpm: eng.left.target_erpm,
+            temperature: eng.left.temperature,
+            voltage_mv: eng.left.voltage_mv,
+            current_ma: eng.left.current_ma,
+        },
+        right: EngineUnit {
+            erpm: eng.right.erpm,
+            throttle: eng.right.throttle,
+            valid: eng.right.valid,
+            target_erpm: eng.right.target_erpm,
+            temperature: eng.right.temperature,
+            voltage_mv: eng.right.voltage_mv,
+            current_ma: eng.right.current_ma,
+        },
     }
 }
 
 fn handle_start_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::StartULog) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    send_cmd(ctx, RpcCommand::StartULog)
 }
 
 fn handle_stop_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::StopULog) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    send_cmd(ctx, RpcCommand::StopULog)
 }
 
 fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogReadResp {
@@ -297,10 +300,7 @@ fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> UL
 
 fn handle_erase_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     info!("RPC: ULog erase requested");
-    match ctx.cmd_sender.try_send(RpcCommand::EraseULog) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    send_cmd(ctx, RpcCommand::EraseULog)
 }
 
 fn handle_get_ulog_info(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogInfoResp {
@@ -324,7 +324,7 @@ fn handle_get_controller_output(
     _hdr: VarHeader,
     _req: (),
 ) -> ControllerOutputResp {
-    let out = crate::flight_state::CONTROLLER_OUTPUT_CACHE.lock(|c| c.get());
+    let out = crate::flight_state::CONTROLLER_OUTPUT.read_cached();
     ControllerOutputResp {
         pitch_correction_cp: (out.pitch_correction * 10000.0) as i16,
         roll_correction_cp: (out.roll_correction * 10000.0) as i16,
@@ -342,7 +342,7 @@ fn handle_set_pid_gains(
     _hdr: VarHeader,
     req: SetPidGainsReq,
 ) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::SetPidGains {
+    send_cmd(ctx, RpcCommand::SetPidGains {
         pitch_kp: req.pitch_kp_x1000 as f32 / 1000.0,
         pitch_ki: req.pitch_ki_x1000 as f32 / 1000.0,
         pitch_kd: req.pitch_kd_x1000 as f32 / 1000.0,
@@ -351,10 +351,7 @@ fn handle_set_pid_gains(
         roll_kd: req.roll_kd_x1000 as f32 / 1000.0,
         scale: req.scale_x10000 as f32 / 10000.0,
         i_limit: req.i_limit_x10 as f32 / 10.0,
-    }) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    })
 }
 
 fn handle_set_attitude_setpoint(
@@ -362,13 +359,10 @@ fn handle_set_attitude_setpoint(
     _hdr: VarHeader,
     req: SetAttitudeSetpointReq,
 ) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::SetAttitudeSetpoint {
+    send_cmd(ctx, RpcCommand::SetAttitudeSetpoint {
         pitch_deg: req.pitch_cdeg as f32 / 100.0,
         roll_deg: req.roll_cdeg as f32 / 100.0,
-    }) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    })
 }
 
 fn handle_start_autotune(
@@ -376,21 +370,37 @@ fn handle_start_autotune(
     _hdr: VarHeader,
     req: StartAutotuneReq,
 ) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::StartAutotune {
+    send_cmd(ctx, RpcCommand::StartAutotune {
         axis: req.axis,
         relay_deg_x10: req.relay_deg_x10,
         num_cycles: req.num_cycles,
         rule: req.rule,
-    }) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
-    }
+    })
 }
 
 fn handle_abort_autotune(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
-    match ctx.cmd_sender.try_send(RpcCommand::AbortAutotune) {
-        Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
+    send_cmd(ctx, RpcCommand::AbortAutotune)
+}
+
+fn handle_start_mag_cal(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    send_cmd(ctx, RpcCommand::StartMagCal)
+}
+
+fn handle_clear_mag_cal(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    send_cmd(ctx, RpcCommand::ClearMagCal)
+}
+
+fn handle_get_mag_cal(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagCalResp {
+    let (ox, oy, oz) = MAG_CAL_OFFSET.lock(|c| c.get());
+    let status = MAG_CAL_STATUS.load(Ordering::Relaxed);
+    let samples = MAG_CAL_SAMPLES.load(Ordering::Relaxed);
+    MagCalResp {
+        offset_x: ox,
+        offset_y: oy,
+        offset_z: oz,
+        calibrated: status == 2,
+        collecting: status == 1,
+        samples,
     }
 }
 
@@ -460,6 +470,9 @@ postcard_rpc::define_dispatch! {
         | SetAttitudeSetpointEndpoint | blocking | handle_set_attitude_setpoint |
         | StartAutotuneEndpoint     | blocking  | handle_start_autotune       |
         | AbortAutotuneEndpoint     | blocking  | handle_abort_autotune       |
+        | StartMagCalEndpoint       | blocking  | handle_start_mag_cal        |
+        | ClearMagCalEndpoint       | blocking  | handle_clear_mag_cal        |
+        | GetMagCalEndpoint         | blocking  | handle_get_mag_cal          |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

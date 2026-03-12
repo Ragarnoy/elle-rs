@@ -11,6 +11,20 @@ use super::state::AppState;
 
 const CMD_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Common handler for RPC commands that return `AckResp`.
+fn handle_ack(
+    result: Result<Result<AckResp, impl std::fmt::Display>, tokio::time::error::Elapsed>,
+    name: &str,
+    success_msg: String,
+) -> CommandResult {
+    match result {
+        Ok(Ok(ack)) if ack.success => CommandResult::Ok(success_msg),
+        Ok(Ok(ack)) => CommandResult::Err(format!("{name} failed (error: {})", ack.error_code)),
+        Ok(Err(e)) => CommandResult::Err(format!("{name} failed: {e}")),
+        Err(_) => CommandResult::Err(format!("{name} timeout")),
+    }
+}
+
 pub enum CommandResult {
     Ok(String),
     Err(String),
@@ -176,12 +190,28 @@ pub async fn execute(
             }
         }
         "savepid" => cmd_savepid(client).await,
+        "mag" => {
+            if parts.len() >= 2 && parts[1].to_lowercase() == "cal" {
+                if parts.len() >= 3 {
+                    match parts[2].to_lowercase().as_str() {
+                        "start" => cmd_mag_cal_start(client).await,
+                        "clear" => cmd_mag_cal_clear(client).await,
+                        _ => CommandResult::Err("Usage: mag cal [start|clear]".into()),
+                    }
+                } else {
+                    cmd_mag_cal_status(client).await
+                }
+            } else {
+                CommandResult::Err("Usage: mag cal [start|clear]".into())
+            }
+        }
         "help" | "?" => CommandResult::Ok(
             "query: ping perf time | \
              safety: arm disarm estop | \
              ctrl: thr <0-100> elv <L> <R> mode <man|mix|auto> pid <8 floats> sp <P> <R> | \
              autotune: autotune <pitch|roll> [deg] [cycles] [tl|zn|so] | autotune abort | \
-             savepid | ulog: ulog <info|start|stop|extract|erase> | quit"
+             savepid | ulog: ulog <info|start|stop|extract|erase> | \
+             mag cal [start|clear] | quit"
                 .into(),
         ),
         other => CommandResult::Unknown(other.into()),
@@ -211,72 +241,45 @@ async fn cmd_perf(client: &HostClient<WireError>, state: &mut AppState) -> Comma
 }
 
 async fn cmd_arm(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<ArmEndpoint>(&())).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("ARMED".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Arm failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Arm failed: {e}")),
-        Err(_) => CommandResult::Err("Arm timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<ArmEndpoint>(&())).await,
+        "Arm", "ARMED".into(),
+    )
 }
 
 async fn cmd_disarm(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<DisarmEndpoint>(&())).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("DISARMED".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Disarm failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Disarm failed: {e}")),
-        Err(_) => CommandResult::Err("Disarm timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<DisarmEndpoint>(&())).await,
+        "Disarm", "DISARMED".into(),
+    )
 }
 
 async fn cmd_estop(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<EmergencyStopEndpoint>(&())).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("EMERGENCY STOP EXECUTED".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("E-Stop failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("E-Stop failed: {e}")),
-        Err(_) => CommandResult::Err("E-Stop timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<EmergencyStopEndpoint>(&())).await,
+        "E-Stop", "EMERGENCY STOP EXECUTED".into(),
+    )
 }
 
 async fn cmd_throttle(client: &HostClient<WireError>, percent: u8) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<SetThrottleEndpoint>(&SetThrottleReq { percent }),
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<SetThrottleEndpoint>(&SetThrottleReq { percent })).await,
+        "Throttle", format!("Throttle: {percent}%"),
     )
-    .await
-    {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!("Throttle: {percent}%")),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Throttle failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Throttle failed: {e}")),
-        Err(_) => CommandResult::Err("Throttle timeout".into()),
-    }
 }
 
 async fn cmd_elevon(client: &HostClient<WireError>, left: i8, right: i8) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<SetElevonsEndpoint>(&SetElevonsReq { left, right }),
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<SetElevonsEndpoint>(&SetElevonsReq { left, right })).await,
+        "Elevon", format!("Elevons: L={left} R={right}"),
     )
-    .await
-    {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!("Elevons: L={left} R={right}")),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Elevon failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Elevon failed: {e}")),
-        Err(_) => CommandResult::Err("Elevon timeout".into()),
-    }
 }
 
 async fn cmd_mode(client: &HostClient<WireError>, mode: ControlMode) -> CommandResult {
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<SetControlModeEndpoint>(&SetControlModeReq { mode }),
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<SetControlModeEndpoint>(&SetControlModeReq { mode })).await,
+        "Mode", format!("Mode: {mode:?}"),
     )
-    .await
-    {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!("Mode: {mode:?}")),
-        Ok(Ok(ack)) => CommandResult::Err(format!("Mode failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("Mode failed: {e}")),
-        Err(_) => CommandResult::Err("Mode timeout".into()),
-    }
 }
 
 
@@ -317,14 +320,11 @@ async fn cmd_set_pid_gains(
         scale_x10000: (scale * 10000.0) as i16,
         i_limit_x10: (ilimit * 10.0) as i16,
     };
-    match timeout(CMD_TIMEOUT, client.send_resp::<SetPidGainsEndpoint>(&req)).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!(
-            "PID: P({pkp}/{pki}/{pkd}) R({rkp}/{rki}/{rkd}) scale={scale} ilim={ilimit}"
-        )),
-        Ok(Ok(ack)) => CommandResult::Err(format!("PID set failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("PID set failed: {e}")),
-        Err(_) => CommandResult::Err("PID set timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<SetPidGainsEndpoint>(&req)).await,
+        "PID set",
+        format!("PID: P({pkp}/{pki}/{pkd}) R({rkp}/{rki}/{rkd}) scale={scale} ilim={ilimit}"),
+    )
 }
 
 async fn cmd_set_attitude_setpoint(
@@ -336,21 +336,11 @@ async fn cmd_set_attitude_setpoint(
         pitch_cdeg: (pitch_deg * 100.0) as i16,
         roll_cdeg: (roll_deg * 100.0) as i16,
     };
-    match timeout(
-        CMD_TIMEOUT,
-        client.send_resp::<SetAttitudeSetpointEndpoint>(&req),
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<SetAttitudeSetpointEndpoint>(&req)).await,
+        "Setpoint",
+        format!("Setpoint: P={pitch_deg}° R={roll_deg}°"),
     )
-    .await
-    {
-        Ok(Ok(ack)) if ack.success => {
-            CommandResult::Ok(format!("Setpoint: P={pitch_deg}° R={roll_deg}°"))
-        }
-        Ok(Ok(ack)) => {
-            CommandResult::Err(format!("Setpoint failed (error: {})", ack.error_code))
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Setpoint failed: {e}")),
-        Err(_) => CommandResult::Err("Setpoint timeout".into()),
-    }
 }
 
 async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {
@@ -377,21 +367,17 @@ async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {
 }
 
 async fn cmd_ulog_start(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<StartULogEndpoint>(&())).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("ULog recording started".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("ULog start failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("ULog start failed: {e}")),
-        Err(_) => CommandResult::Err("ULog start timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<StartULogEndpoint>(&())).await,
+        "ULog start", "ULog recording started".into(),
+    )
 }
 
 async fn cmd_ulog_stop(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<StopULogEndpoint>(&())).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("ULog recording stopped".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("ULog stop failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("ULog stop failed: {e}")),
-        Err(_) => CommandResult::Err("ULog stop timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<StopULogEndpoint>(&())).await,
+        "ULog stop", "ULog recording stopped".into(),
+    )
 }
 
 /// Background ULog extraction — runs in a spawned tokio task, returns a status string.
@@ -489,15 +475,11 @@ async fn cmd_ulog_extract_bg(client: &HostClient<WireError>, filename: &str) -> 
 }
 
 async fn cmd_ulog_erase(client: &HostClient<WireError>) -> CommandResult {
-    // Erase can take a while (~14MB of flash), use longer timeout
     const ERASE_TIMEOUT: Duration = Duration::from_secs(30);
-
-    match timeout(ERASE_TIMEOUT, client.send_resp::<EraseULogEndpoint>(&())).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("ULog flash erased".into()),
-        Ok(Ok(ack)) => CommandResult::Err(format!("ULog erase failed (error: {})", ack.error_code)),
-        Ok(Err(e)) => CommandResult::Err(format!("ULog erase failed: {e}")),
-        Err(_) => CommandResult::Err("ULog erase timeout (30s)".into()),
-    }
+    handle_ack(
+        timeout(ERASE_TIMEOUT, client.send_resp::<EraseULogEndpoint>(&())).await,
+        "ULog erase", "ULog flash erased".into(),
+    )
 }
 
 async fn cmd_autotune_start(
@@ -520,43 +502,64 @@ async fn cmd_autotune_start(
         2 => "SomeOvershoot",
         _ => "TyreusLuyben",
     };
-    match timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok(format!(
-            "Autotune started: {axis_name} relay={relay_deg}° cycles={cycles} rule={rule_name}"
-        )),
-        Ok(Ok(ack)) => {
-            CommandResult::Err(format!("Autotune start failed (error: {})", ack.error_code))
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Autotune start failed: {e}")),
-        Err(_) => CommandResult::Err("Autotune start timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await,
+        "Autotune start",
+        format!("Autotune started: {axis_name} relay={relay_deg}° cycles={cycles} rule={rule_name}"),
+    )
 }
 
 async fn cmd_autotune_abort(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<AbortAutotuneEndpoint>(&())).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("Autotune aborted".into()),
-        Ok(Ok(ack)) => {
-            CommandResult::Err(format!("Autotune abort failed (error: {})", ack.error_code))
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Autotune abort failed: {e}")),
-        Err(_) => CommandResult::Err("Autotune abort timeout".into()),
-    }
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<AbortAutotuneEndpoint>(&())).await,
+        "Autotune abort", "Autotune aborted".into(),
+    )
 }
 
 async fn cmd_savepid(client: &HostClient<WireError>) -> CommandResult {
-    // Send StartAutotune with axis=0xFF — firmware interprets this as "save current PID to flash"
     let req = StartAutotuneReq {
         axis: 0xFF, // Magic value = save current PID gains to flash
         relay_deg_x10: 0,
         num_cycles: 0,
         rule: 0,
     };
-    match timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await {
-        Ok(Ok(ack)) if ack.success => CommandResult::Ok("PID gains save requested".into()),
-        Ok(Ok(ack)) => {
-            CommandResult::Err(format!("PID save failed (error: {})", ack.error_code))
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await,
+        "PID save", "PID gains save requested".into(),
+    )
+}
+
+async fn cmd_mag_cal_start(client: &HostClient<WireError>) -> CommandResult {
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<StartMagCalEndpoint>(&())).await,
+        "Mag cal start",
+        "Mag cal started — rotate board in all orientations for ~30s".into(),
+    )
+}
+
+async fn cmd_mag_cal_clear(client: &HostClient<WireError>) -> CommandResult {
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<ClearMagCalEndpoint>(&())).await,
+        "Mag cal clear", "Mag cal cleared (offsets zeroed)".into(),
+    )
+}
+
+async fn cmd_mag_cal_status(client: &HostClient<WireError>) -> CommandResult {
+    match timeout(CMD_TIMEOUT, client.send_resp::<GetMagCalEndpoint>(&())).await {
+        Ok(Ok(cal)) => {
+            let status = if cal.collecting {
+                format!("COLLECTING ({} samples)", cal.samples)
+            } else if cal.calibrated {
+                "CALIBRATED".into()
+            } else {
+                "UNCALIBRATED".into()
+            };
+            CommandResult::Ok(format!(
+                "Mag cal: {} | Offsets: X={:.0} Y={:.0} Z={:.0}",
+                status, cal.offset_x, cal.offset_y, cal.offset_z
+            ))
         }
-        Ok(Err(e)) => CommandResult::Err(format!("PID save failed: {e}")),
-        Err(_) => CommandResult::Err("PID save timeout".into()),
+        Ok(Err(e)) => CommandResult::Err(format!("Mag cal status failed: {e}")),
+        Err(_) => CommandResult::Err("Mag cal status timeout".into()),
     }
 }

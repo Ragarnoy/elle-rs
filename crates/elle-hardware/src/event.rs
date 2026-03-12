@@ -91,6 +91,15 @@ pub const EVT_PID_SAVE_FAILED: u16 = 101;
 pub const EVT_PID_LOADED: u16 = 102;
 pub const EVT_PID_LOAD_EMPTY: u16 = 103;
 
+// Mag calibration (110–119)
+pub const EVT_MAG_CAL_STARTED: u16 = 110;
+pub const EVT_MAG_CAL_COMPLETE: u16 = 111;
+pub const EVT_MAG_CAL_FAILED: u16 = 112;
+pub const EVT_MAG_CAL_SAVED: u16 = 113;
+pub const EVT_MAG_CAL_CLEARED: u16 = 114;
+pub const EVT_MAG_CAL_LOADED: u16 = 115;
+pub const EVT_MAG_CAL_LOAD_EMPTY: u16 = 116;
+
 // ---------------------------------------------------------------------------
 // Macro
 // ---------------------------------------------------------------------------

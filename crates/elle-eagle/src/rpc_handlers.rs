@@ -40,6 +40,8 @@ pub enum RpcCommand {
     SavePidProfile {
         data: [u8; 32],
     },
+    StartMagCal,
+    ClearMagCal,
 }
 
 /// Channel for RPC commands to flight controller

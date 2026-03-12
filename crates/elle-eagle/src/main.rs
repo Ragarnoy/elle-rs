@@ -25,9 +25,9 @@ use elle_config::{
 use elle_control::commands::PilotCommands;
 use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains};
 use elle_hardware::imu::{
-    ATTITUDE_SIGNAL, AttitudeData, IMU_STATUS, Imu, LED_COMMAND_CHANNEL, is_attitude_valid,
+    ATTITUDE, AttitudeData, IMU_STATUS, Imu, LED_COMMAND_CHANNEL, is_attitude_valid,
 };
-use elle_hardware::imu::{BARO_CACHE, MAG_CACHE};
+use elle_hardware::imu::{BARO, MAG};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
     dshot::{DSHOT_THROTTLE, dshot_task},
@@ -77,6 +77,35 @@ use static_cell::StaticCell;
 #[inline]
 fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
     attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
+}
+
+/// Save PID gains to flash with timeout. Returns true on success.
+async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
+    use elle_config::profile::{FlashRequest, FlashResponse};
+    use elle_hardware::sequential_flash_manager::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+
+    FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
+    let save_timeout = Timer::after(Duration::from_secs(5));
+    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), save_timeout).await {
+        embassy_futures::select::Either::First(FlashResponse::PidProfileSaved) => {
+            elle_hardware::elle_event!(
+                info,
+                elle_hardware::event::EVT_PID_SAVED,
+                "PID gains saved to flash ({})",
+                context
+            );
+            true
+        }
+        _ => {
+            elle_hardware::elle_event!(
+                warn,
+                elle_hardware::event::EVT_PID_SAVE_FAILED,
+                "PID gains flash save failed ({})",
+                context
+            );
+            false
+        }
+    }
 }
 
 /// Log flight data to ULog flash storage
@@ -167,7 +196,7 @@ async fn log_flight_data(
 
     // Log barometer at ~2Hz (every 38 iterations)
     if loop_counter.is_multiple_of(38) {
-        let baro = BARO_CACHE.lock(|c| c.get());
+        let baro = BARO.read_cached();
         let _ = logger
             .log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m)
             .await;
@@ -175,7 +204,7 @@ async fn log_flight_data(
 
     // Log magnetometer at ~10Hz (every 8 iterations)
     if loop_counter.is_multiple_of(8) {
-        let mag = MAG_CACHE.lock(|c| c.get());
+        let mag = MAG.read_cached();
         let _ = logger
             .log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32)
             .await;
@@ -485,6 +514,66 @@ async fn main(spawner: Spawner) {
         }
     }
 
+    // Boot-time mag cal load from flash
+    {
+        use elle_config::profile::{FlashRequest, FlashResponse};
+        use elle_hardware::sequential_flash_manager::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+
+        info!("Core0: Loading mag calibration from flash");
+        FLASH_REQUEST_SIGNAL.signal(FlashRequest::LoadMagCal);
+        let load_timeout = Timer::after(Duration::from_secs(2));
+        match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), load_timeout).await {
+            embassy_futures::select::Either::First(FlashResponse::MagCalLoaded { data }) => {
+                // Deserialize 3x f32 from 12 bytes (little-endian)
+                let ox = f32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                let oy = f32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+                let oz = f32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+
+                // Validate: finite and reasonable range (raw counts, max ~65535)
+                if ox.is_finite()
+                    && oy.is_finite()
+                    && oz.is_finite()
+                    && ox.abs() < 100_000.0
+                    && oy.abs() < 100_000.0
+                    && oz.abs() < 100_000.0
+                    && (ox != 0.0 || oy != 0.0 || oz != 0.0)
+                {
+                    elle_hardware::imu::MAG_CALIBRATION_SIGNAL.signal((ox, oy, oz));
+                    info!(
+                        "Core0: Mag cal loaded ({}, {}, {})",
+                        ox as i32, oy as i32, oz as i32
+                    );
+                    #[cfg(feature = "rpc-control")]
+                    {
+                        rpc_app::MAG_CAL_OFFSET.lock(|c| c.set((ox, oy, oz)));
+                        rpc_app::MAG_CAL_STATUS.store(2, core::sync::atomic::Ordering::Relaxed);
+                    }
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_MAG_CAL_LOADED,
+                        "Mag cal loaded from flash"
+                    );
+                } else {
+                    warn!("Mag cal: invalid data in flash, ignoring");
+                }
+            }
+            embassy_futures::select::Either::First(FlashResponse::MagCalEmpty) => {
+                info!("Core0: No mag cal saved, using zero offsets");
+                elle_hardware::elle_event!(
+                    info,
+                    elle_hardware::event::EVT_MAG_CAL_LOAD_EMPTY,
+                    "No mag cal in flash"
+                );
+            }
+            embassy_futures::select::Either::First(_) => {
+                warn!("Core0: Unexpected flash response for mag cal load");
+            }
+            embassy_futures::select::Either::Second(_) => {
+                warn!("Core0: Mag cal load timeout, using zero offsets");
+            }
+        }
+    }
+
     info!("Core0: Starting main control loop");
 
     // Test timing precision (only when performance monitoring is enabled)
@@ -534,7 +623,7 @@ async fn main(spawner: Spawner) {
             let _supervisor_healthy = fc.supervisor_check();
 
             // Get latest attitude data (non-blocking)
-            let attitude = ATTITUDE_SIGNAL.try_take();
+            let attitude = ATTITUDE.try_take();
 
             // Check for latest RC commands from dedicated CRSF receiver task (non-blocking)
             if let Some(commands) = RC_COMMANDS.try_take() {
@@ -713,36 +802,7 @@ async fn main(spawner: Spawner) {
 
                 // Auto-save PID gains to flash after autotune completion
                 if let Some(data) = save_pending.take() {
-                    use elle_config::profile::{FlashRequest, FlashResponse};
-                    use elle_hardware::sequential_flash_manager::{
-                        FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
-                    };
-
-                    FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
-                    let save_timeout = Timer::after(Duration::from_secs(5));
-                    match embassy_futures::select::select(
-                        FLASH_RESPONSE_SIGNAL.wait(),
-                        save_timeout,
-                    )
-                    .await
-                    {
-                        embassy_futures::select::Either::First(
-                            FlashResponse::PidProfileSaved,
-                        ) => {
-                            elle_hardware::elle_event!(
-                                info,
-                                elle_hardware::event::EVT_PID_SAVED,
-                                "PID gains saved to flash"
-                            );
-                        }
-                        _ => {
-                            elle_hardware::elle_event!(
-                                warn,
-                                elle_hardware::event::EVT_PID_SAVE_FAILED,
-                                "PID gains flash save failed"
-                            );
-                        }
-                    }
+                    save_pid_to_flash(data, "autotune").await;
                 }
 
                 // ULog recording controlled by RC switch
@@ -873,7 +933,7 @@ async fn main(spawner: Spawner) {
             let _supervisor_healthy = fc.supervisor_check();
 
             // Get latest attitude data
-            let attitude = ATTITUDE_SIGNAL.try_take();
+            let attitude = ATTITUDE.try_take();
 
             // Process all pending RPC commands
             while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
@@ -1053,33 +1113,7 @@ async fn main(spawner: Spawner) {
                         if axis == 0xFF {
                             // Magic value: save current PID gains to flash
                             let gains = fc.get_pid_gains();
-                            let data = gains.to_bytes();
-                            FLASH_REQUEST_SIGNAL
-                                .signal(FlashRequest::SavePidProfile { data });
-                            let save_timeout = Timer::after(Duration::from_secs(5));
-                            match embassy_futures::select::select(
-                                FLASH_RESPONSE_SIGNAL.wait(),
-                                save_timeout,
-                            )
-                            .await
-                            {
-                                embassy_futures::select::Either::First(
-                                    FlashResponse::PidProfileSaved,
-                                ) => {
-                                    elle_hardware::elle_event!(
-                                        info,
-                                        elle_hardware::event::EVT_PID_SAVED,
-                                        "PID gains saved to flash (savepid)"
-                                    );
-                                }
-                                _ => {
-                                    elle_hardware::elle_event!(
-                                        warn,
-                                        elle_hardware::event::EVT_PID_SAVE_FAILED,
-                                        "PID gains flash save failed (savepid)"
-                                    );
-                                }
-                            }
+                            save_pid_to_flash(gains.to_bytes(), "savepid").await;
                         } else {
                             use elle_control::autotune::TuningRule;
                             if fc.is_armed()
@@ -1135,31 +1169,37 @@ async fn main(spawner: Spawner) {
                         }
                     }
                     RpcCommand::SavePidProfile { data } => {
-                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
+                        save_pid_to_flash(data, "RPC").await;
+                    }
+                    RpcCommand::StartMagCal => {
+                        elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
+                        rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
+                        rpc_app::MAG_CAL_SAMPLES.store(0, Ordering::Relaxed);
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_MAG_CAL_STARTED,
+                            "Mag calibration started"
+                        );
+                    }
+                    RpcCommand::ClearMagCal => {
+                        // Save zeros to flash
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data: [0; 12] });
                         let save_timeout = Timer::after(Duration::from_secs(5));
-                        match embassy_futures::select::select(
+                        let _ = embassy_futures::select::select(
                             FLASH_RESPONSE_SIGNAL.wait(),
                             save_timeout,
                         )
-                        .await
-                        {
-                            embassy_futures::select::Either::First(
-                                FlashResponse::PidProfileSaved,
-                            ) => {
-                                elle_hardware::elle_event!(
-                                    info,
-                                    elle_hardware::event::EVT_PID_SAVED,
-                                    "PID gains saved to flash (RPC)"
-                                );
-                            }
-                            _ => {
-                                elle_hardware::elle_event!(
-                                    warn,
-                                    elle_hardware::event::EVT_PID_SAVE_FAILED,
-                                    "PID gains flash save failed (RPC)"
-                                );
-                            }
-                        }
+                        .await;
+                        // Signal zero offsets to IMU
+                        elle_hardware::imu::MAG_CALIBRATION_SIGNAL.signal((0.0, 0.0, 0.0));
+                        rpc_app::MAG_CAL_STATUS.store(0, Ordering::Relaxed);
+                        rpc_app::MAG_CAL_OFFSET.lock(|c| c.set((0.0, 0.0, 0.0)));
+                        rpc_app::MAG_CAL_SAMPLES.store(0, Ordering::Relaxed);
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_MAG_CAL_CLEARED,
+                            "Mag calibration cleared"
+                        );
                     }
                 }
             }
@@ -1242,32 +1282,65 @@ async fn main(spawner: Spawner) {
 
             // Auto-save PID gains to flash after autotune completion
             if let Some(data) = rpc_save_pending.take() {
-                FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
-                let save_timeout = Timer::after(Duration::from_secs(5));
-                match embassy_futures::select::select(
-                    FLASH_RESPONSE_SIGNAL.wait(),
-                    save_timeout,
-                )
-                .await
-                {
-                    embassy_futures::select::Either::First(
-                        FlashResponse::PidProfileSaved,
-                    ) => {
+                save_pid_to_flash(data, "autotune").await;
+            }
+
+            // Poll mag calibration result from IMU task
+            if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
+                match result {
+                    Some((ox, oy, oz)) => {
+                        // Serialize offsets to 12 bytes (3x f32 little-endian)
+                        let mut data = [0u8; 12];
+                        data[0..4].copy_from_slice(&ox.to_le_bytes());
+                        data[4..8].copy_from_slice(&oy.to_le_bytes());
+                        data[8..12].copy_from_slice(&oz.to_le_bytes());
+
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data });
+                        let save_timeout = Timer::after(Duration::from_secs(5));
+                        match embassy_futures::select::select(
+                            FLASH_RESPONSE_SIGNAL.wait(),
+                            save_timeout,
+                        )
+                        .await
+                        {
+                            embassy_futures::select::Either::First(
+                                FlashResponse::MagCalSaved,
+                            ) => {
+                                elle_hardware::elle_event!(
+                                    info,
+                                    elle_hardware::event::EVT_MAG_CAL_SAVED,
+                                    "Mag cal saved to flash"
+                                );
+                            }
+                            _ => {
+                                elle_hardware::elle_event!(
+                                    warn,
+                                    elle_hardware::event::EVT_MAG_CAL_FAILED,
+                                    "Mag cal flash save failed"
+                                );
+                            }
+                        }
+                        rpc_app::MAG_CAL_STATUS.store(2, Ordering::Relaxed);
+                        rpc_app::MAG_CAL_OFFSET.lock(|c| c.set((ox, oy, oz)));
                         elle_hardware::elle_event!(
                             info,
-                            elle_hardware::event::EVT_PID_SAVED,
-                            "PID gains auto-saved to flash"
+                            elle_hardware::event::EVT_MAG_CAL_COMPLETE,
+                            "Mag calibration complete"
                         );
                     }
-                    _ => {
+                    None => {
+                        rpc_app::MAG_CAL_STATUS.store(0, Ordering::Relaxed);
                         elle_hardware::elle_event!(
                             warn,
-                            elle_hardware::event::EVT_PID_SAVE_FAILED,
-                            "PID gains auto-save failed"
+                            elle_hardware::event::EVT_MAG_CAL_FAILED,
+                            "Mag calibration failed (insufficient rotation)"
                         );
                     }
                 }
             }
+
+            // Update mag cal sample count for RPC visibility
+            // (read from IMU side if collecting — approximated via status check)
 
             #[cfg(feature = "crsf-telemetry")]
             elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
@@ -1289,8 +1362,7 @@ async fn main(spawner: Spawner) {
                     elle_system::ControlMode::Autopilot => ControlMode::Autopilot,
                 },
             };
-            flight_state::FLIGHT_STATE.signal(fs);
-            flight_state::FLIGHT_STATE_CACHE.lock(|c| c.set(fs));
+            flight_state::FLIGHT_STATE.publish(fs);
 
             // Publish controller output for RPC observability
             {
@@ -1305,8 +1377,7 @@ async fn main(spawner: Spawner) {
                     engine_left_dshot: out.engine_left_dshot,
                     engine_right_dshot: out.engine_right_dshot,
                 };
-                flight_state::CONTROLLER_OUTPUT.signal(co);
-                flight_state::CONTROLLER_OUTPUT_CACHE.lock(|c| c.set(co));
+                flight_state::CONTROLLER_OUTPUT.publish(co);
             }
 
             // Log flight data to ULog flash storage (only when recording is active)

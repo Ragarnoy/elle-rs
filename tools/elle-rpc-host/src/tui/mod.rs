@@ -226,8 +226,7 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetStatusEndpoint>(&()),
                 ).await {
                     state.status = Some(s);
-                    state.last_poll = Some(std::time::Instant::now());
-                    state.connected = true;
+                    state.mark_poll_success();
                 }
                 if let Ok(Ok(info)) = tokio::time::timeout(
                     Duration::from_secs(1),
@@ -244,7 +243,7 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetMagnetometerEndpoint>(&()),
                 ).await {
                     state.magnetometer = Some(m);
-                    state.connected = true;
+                    state.mark_poll_success();
                 }
             }
 
@@ -255,7 +254,7 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetBarometerEndpoint>(&()),
                 ).await {
                     state.barometer = Some(b);
-                    state.connected = true;
+                    state.mark_poll_success();
                 }
             }
 
@@ -266,7 +265,7 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetGnssEndpoint>(&()),
                 ).await {
                     state.gnss = Some(g);
-                    state.connected = true;
+                    state.mark_poll_success();
                 }
             }
 
@@ -277,7 +276,7 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetRcChannelsEndpoint>(&()),
                 ).await {
                     state.rc_channels = Some(rc);
-                    state.connected = true;
+                    state.mark_poll_success();
                 }
             }
 
@@ -288,7 +287,7 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetControllerOutputEndpoint>(&()),
                 ).await {
                     state.push_controller_output(c);
-                    state.connected = true;
+                    state.mark_poll_success();
                 }
             }
 
@@ -299,7 +298,7 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetEngineEndpoint>(&()),
                 ).await {
                     state.engine = Some(e);
-                    state.connected = true;
+                    state.mark_poll_success();
                 }
             }
         }

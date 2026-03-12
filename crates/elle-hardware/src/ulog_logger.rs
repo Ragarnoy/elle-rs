@@ -400,18 +400,18 @@ impl ULogLogger {
 
         let msg = EngineMessage::new(
             Instant::now(),
-            eng.left_erpm,
-            eng.right_erpm,
-            eng.left_throttle,
-            eng.right_throttle,
-            eng.left_target_erpm,
-            eng.right_target_erpm,
-            eng.left_temperature,
-            eng.right_temperature,
-            eng.left_voltage_mv,
-            eng.right_voltage_mv,
-            eng.left_current_ma,
-            eng.right_current_ma,
+            eng.left.erpm,
+            eng.right.erpm,
+            eng.left.throttle,
+            eng.right.throttle,
+            eng.left.target_erpm,
+            eng.right.target_erpm,
+            eng.left.temperature,
+            eng.right.temperature,
+            eng.left.voltage_mv,
+            eng.right.voltage_mv,
+            eng.left.current_ma,
+            eng.right.current_ma,
         );
 
         self.writer.clear_buffer();
