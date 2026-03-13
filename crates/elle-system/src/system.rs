@@ -104,6 +104,8 @@ pub struct FlightController<'a> {
     setpoint_override: Option<(f32, f32)>,
     // RC link state machine
     rc_link_state: RcLinkState,
+    // When true, arming is only via explicit arm()/disarm() — skips throttle-low auto-arm
+    explicit_arming_only: bool,
 }
 
 impl<'a> FlightController<'a> {
@@ -151,6 +153,7 @@ impl<'a> FlightController<'a> {
             current_config: config,
             setpoint_override: None,
             rc_link_state: RcLinkState::Ok,
+            explicit_arming_only: false,
         }
     }
 
@@ -327,9 +330,11 @@ impl<'a> FlightController<'a> {
     }
 
     fn update_normalized(&mut self, norm: &NormalizedCommands, attitude: Option<&AttitudeData>) {
-        // Convert throttle back to RC-equivalent for arming check
-        let throttle_rc_equiv = (norm.throttle * 2047.0) as u16;
-        self.arming.update(throttle_rc_equiv, false);
+        // Throttle-low auto-arm for RC input; skipped in RPC mode (explicit arm/disarm)
+        if !self.explicit_arming_only {
+            let throttle_rc_equiv = (norm.throttle * 2047.0) as u16;
+            self.arming.update(throttle_rc_equiv, false);
+        }
 
         // Enable attitude controller based on mode
         self.attitude_controller.enabled = (norm.attitude_mode == AttitudeMode::Mixed
@@ -425,7 +430,9 @@ impl<'a> FlightController<'a> {
         self.pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
-        let base_thrust = throttle_curve_lut((final_inputs.throttle * 2047.0) as u16);
+        // Linear DShot mapping for normalized commands — the RC throttle curve
+        // has a deadzone/ramp designed for stick input, not a 0-100% command.
+        let base_thrust = (final_inputs.throttle * DSHOT_THROTTLE_MAX as f32) as u16;
         let yaw_rc = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
 
         let (left_thrust, right_thrust) = if self.arming.armed {
@@ -542,6 +549,11 @@ impl<'a> FlightController<'a> {
     #[must_use]
     pub const fn current_control_mode(&self) -> ControlMode {
         self.current_control_mode
+    }
+
+    /// Disable throttle-low auto-arming (RPC mode uses explicit arm/disarm only)
+    pub const fn set_explicit_arming(&mut self, enabled: bool) {
+        self.explicit_arming_only = enabled;
     }
 
     /// Manual arm (for RTT/debug control)

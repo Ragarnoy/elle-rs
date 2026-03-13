@@ -4,8 +4,9 @@ use embassy_time::{Duration, Instant};
 
 // Import LUT functions and channel indices for decoding
 use elle_config::{
-    ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH, PITCH_CH, ROLL_CH,
-    THROTTLE_CH, YAW_CH, rc_to_normalized,
+    ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH,
+    DSHOT_THROTTLE_MAX, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH, rc_to_normalized,
+    throttle_curve_lut,
 };
 
 /// Commands can be raw (fast path) or normalized (semantic)
@@ -29,7 +30,9 @@ impl RawCommands {
     #[must_use]
     pub fn to_normalized(&self) -> NormalizedCommands {
         NormalizedCommands {
-            throttle: (self.channels[THROTTLE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
+            throttle: (throttle_curve_lut(self.channels[THROTTLE_CH]) as f32
+                / DSHOT_THROTTLE_MAX as f32)
+                .clamp(0.0, 1.0),
             pitch: rc_to_normalized(self.channels[PITCH_CH]),
             roll: rc_to_normalized(self.channels[ROLL_CH]),
             yaw: rc_to_normalized(self.channels[YAW_CH]),

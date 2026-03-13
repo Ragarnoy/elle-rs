@@ -914,6 +914,9 @@ async fn main(spawner: Spawner) {
         info!("GROUND TEST MODE - RPC Control (postcard-RPC over RTT)");
         info!("WARNING: This mode requires programmer connection");
 
+        // RPC mode: arming is via explicit arm/disarm commands only
+        fc.set_explicit_arming(true);
+
         // Ticker for consistent control loop timing
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
 
