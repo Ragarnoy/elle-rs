@@ -208,7 +208,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - Host TUI displays barometer data (pressure, temperature, altitude) at 1 Hz poll rate
 - **ICM-42686-P IMU integrated via SPI0** — replaced BNO055 (I2C) with ICM-42686 (SPI) + Madgwick AHRS sensor fusion. Renamed `BnoImu` → `Imu`. Removed `bno055`/`mint` deps, added `icm426xx`/`ahrs`/`nalgebra`.
 - **AHRS sensor fusion**: `ahrs` crate (Madgwick filter) fuses ICM accel+gyro at 1 kHz with MMC5616WA mag at 10 Hz for 9-DOF attitude estimation. Falls back to 6-DOF (no mag) until first mag reading.
-- **SPI0 pin assignments**: MISO=PIN_0, CS=PIN_1, SCLK=PIN_2, MOSI=PIN_3, INT1=PIN_5 (unused — FIFO polled)
+- **SPI0 pin assignments**: MISO=PIN_0, CS=PIN_1, SCLK=PIN_2, MOSI=PIN_3, INT1=PIN_5 (DATA_RDY — polled via `is_low()`)
 - **Blocking SPI on Core1**: Uses blocking SPI (polled, no DMA) since DMA interrupt handlers are registered on Core0's NVIC. 24-byte FIFO read at 1 MHz SPI takes ~200µs.
 - **I2C bus always RefCell-wrapped**: Both real and stub paths now use `RefCell<I2c>` for I2C0, since mag+baro share the bus.
 
@@ -224,6 +224,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Dedicated 1kHz DShot send task**: Decoupled ESC frame sending from 77Hz control loop into `dshot_task` running at ~1kHz via `DSHOT_THROTTLE` Signal. Task owns PIO1+PIO2 engines, handles arming, and continuously resends latest throttle values. `DshotEngines` made private (concrete PIO1/PIO2 types, no longer generic).
 - **EDT RPM telemetry**: DShot task uses `throttle_with_telemetry()` for bidirectional eRPM reading. `ENGINE_CACHE` (Mutex<Cell<>>) carries `EngineReading` (eRPM, throttle, validity per engine). Auto-fallback to `throttle_async()` after 100 consecutive telemetry failures per engine. ULog `engine_data` message at 77Hz. `GetEngineEndpoint` RPC + TUI 5Hz polling + `direct engine` command.
 - **Failsafe state machine**: `RcLinkState` enum (Ok/Warning/Lost) replaces simple threshold check. `RC_WARNING_MS=200` → `RC_TIMEOUT_MS=300` two-stage detection. Events (codes 13-15) fire on transitions only, not every iteration. `signal_restored()` clears failsafe on recovery. `rc_age_ms` in `StatusResp`, `FlightState`, ULog `system_status`. LED warning pattern (FastBlink/orange) at Warning, RapidFlash/orange at Lost.
+- **Interrupt-driven IMU reads**: INT1 (PIN_5) configured for DATA_RDY (`ui_drdy_int1_en=1`). `Imu::run()` polls `int1.is_low()` + `yield_now()` instead of FIFO polling with 500µs sleep. Eliminates wasted SPI reads, gives deterministic attitude latency. Async GPIO not used (Core1 lacks IRQ infrastructure). INT2 (GPIO4) free for crash detection SMD interrupt.
 
 ### Known TODOs in Firmware
 - **`disable-imu` stub generates synthetic test data** (slow sine waves) — for debugging without ICM-42686 hardware

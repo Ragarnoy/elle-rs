@@ -11,6 +11,7 @@
 - [x] Extended DShot telemetry (EDT): ESC temperature, voltage, current via `read_extended_telemetry()`, best-effort (0 if unsupported)
 - [x] Magnetometer hard-iron calibration: min/max tracking over 300 samples, flash persistence (MapStorage key=2), auto-load on boot, TUI/direct CLI commands, cross-core signals
 - [x] Failsafe improvements: `RcLinkState` state machine (Ok→Warning→Lost), transition-based events (codes 13-15), `rc_age_ms` in StatusResp/FlightState/ULog, signal restoration, LED warning pattern (FastBlink/orange)
+- [x] Interrupt-driven IMU reads: INT1 (PIN_5) DATA_RDY replaces 500µs FIFO polling — deterministic latency, no wasted SPI reads, true CPU sleep between samples
 
 ## Notes
 
@@ -47,7 +48,20 @@ PIO2     -> PIN_15 (engine_right)  — BidirDShot300
 - 5th slot in 50Hz round-robin (~10Hz update), reads `ENGINE_CACHE` for both engines
 - Voltage: max of both engines (same battery), current: sum of both engines
 
-**3. Motor health / failure detection (anomaly alerting on governor state)**
+**3. Motor beep feedback via DShot commands (~1.5h)**
+- DShot commands 1-5 (Beep1-Beep5) play tones through the motors — no buzzer hardware needed
+- **Ground-only**: beep commands replace throttle on the wire, cannot be sent while motors spin
+- `dshot_task` needs a `DSHOT_COMMAND` signal: when throttle is zero and a beep is requested, pause throttle loop, send beep via `send_command_repeated_async` (10 frames, ~10ms), resume
+- Use cases:
+  - Arming confirmation (short beep pattern after arm sequence completes)
+  - Disarm confirmation
+  - Lost model alarm (continuous beep after failsafe + disarm + timeout, e.g. 30s)
+  - Low battery warning on the ground (periodic beep when disarmed + voltage below threshold)
+  - Calibration complete / error feedback
+- Safety: ignore beep requests if throttle > 0 or motors armed
+- Event codes 130+ for beep triggers
+
+**4. Motor health / failure detection (anomaly alerting on governor state)**
 - Governor already compares target vs actual RPM — this is a thin alerting layer on top
 - Detect uncorrectable conditions: DShot saturated at max but RPM still low (obstruction/dying motor), DShot at minimum but RPM overshooting (prop damage/blade loss), RPM drops to zero while DShot > 0 (ESC desync), sustained integrator windup
 - Event codes + optional `health: u8` field in `EngineUnit` ICD for RPC/ULog visibility
@@ -79,41 +93,86 @@ Incremental improvements for safe real-world flight. Grouped by theme.
 - LED warning: FastBlink(orange) when armed+warning, RapidFlash(orange) on lost
 - TUI displays RC age with color coding (green <100ms, yellow <200ms, red >=200ms)
 
+**5. Crash detection / auto-disarm (~2-3h)**
+- Use ICM-42686 hardware APEX features for zero-CPU-cost impact detection
+- **INT1 = GPIO5, INT2 = GPIO4** — both wired, currently unused (FIFO polled)
+- **Wake-on-Motion (WoM)**: ICM compares accel samples against a programmable threshold internally; fires interrupt on exceedance. Configure via `SMD_CONFIG` register (`wom_mode`, `wom_int_mode`) + WoM threshold register. No firmware polling needed — GPIO interrupt wakes handler.
+- **Significant Motion Detection (SMD)**: two WoM events within 1s (short) or 3s (long) = confirmed impact, not just a bump. `smd_mode` in `SMD_CONFIG`, status in `INT_STATUS3.smd_int`.
+- **Implementation**: configure WoM threshold (~4-8g), enable SMD short mode, route SMD interrupt to INT1. On Core1 (IMU task), `embassy_rp::gpio::Input::wait_for_*()` on GPIO5 → read `INT_STATUS3` to confirm `smd_int` → signal Core0 via a static Signal → auto-disarm + event code + DShot MotorStop.
+- **Safety**: only act when armed. Threshold must be high enough to ignore normal flight loads (banking, gusts) but catch ground impact. Configurable threshold in `elle-config`.
+- **Driver work**: `icm426xx` already has `SMD_CONFIG` and `INT_STATUS3` register defs. May need to add INT_SOURCE6 (Bank 4) for routing WoM/SMD to INT1, or poll `INT_STATUS3` from the existing 1kHz IMU loop as a simpler alternative.
+- Event codes 140+ (crash detected, auto-disarm)
+- Expose `crash_detected: bool` in `FlightState` / ULog for post-flight analysis
+
+**6. Ground level reference / AGL datum (~30min)**
+- RPC endpoint `SetGroundLevel` captures current barometric altitude as ground reference
+- TUI command: `set ground` (or auto-set on arm if no explicit set)
+- Store as static `GROUND_ALT_M: Mutex<Cell<f32>>`, compute AGL = `baro_alt - ground_alt`
+- Expose `agl_m` in `StatusResp` and ULog `system_status` for post-flight analysis
+- Prerequisite for nav safety layers (minimum AGL floor, upset recovery)
+
 #### Observability
 
-**4. Battery mAh consumption tracking (~1.5h)**
+**7. Battery mAh consumption tracking (~1.5h)**
 - Integrate EDT current over time in `dshot_task` (already runs at 1kHz)
 - Fill the hardcoded-zero CRSF battery capacity/remaining% fields
 - Expose consumed mAh via RPC (extend `EngineResp` or new endpoint)
 - Battery capacity constant in `elle-config`
 
-**5. Flight timer + boot counter (~1h)**
+**8. Flight timer + boot counter (~1h)**
 - Armed duration since boot in `StatusResp` (use AON timer)
 - Persistent boot counter in flash (MapStorage key=3)
 - Flight timer in ULog status message
 
-**6. LED state mapping (~30min)**
+**9. LED state mapping (~30min)**
 - Autotune active → distinct pattern (e.g., FastBlink/Yellow)
 - ULog recording → distinct pattern (e.g., SlowBlink/Red)
 - Low battery warning → pattern overlay
 - Currently only armed/failsafe/calibration have LED feedback
 
+**10. SD card flight logger via SPI1 (~4-5h)**
+- Hardware SPI1 (free): MISO=PIN_24, CS=PIN_25, SCK=PIN_26, MOSI=PIN_27
+- Async SPI on Core0 — DMA works here (unlike Core1 IMU SPI0)
+- FAT32 via `embedded-sdmmc` crate — files readable on any computer, no extraction tool needed
+- SD card slot on board (unsoldered, needs populating)
+- Init sequence: CMD0→CMD8→ACMD41, then CMD24/CMD25 block writes
+
+**Logging strategy: SD as primary, flash as crash blackbox**
+- **SD (primary)**: Full-rate ULog stream (attitude 77Hz, commands 77Hz, engine 77Hz, status 7.7Hz, baro/mag/events). Dedicated `sd_logger_task` receives ULog chunks via channel, writes .ulg files. Buffer 8-16KB to absorb SD write stalls (50-250ms). Unlimited capacity, no wear concern.
+- **Flash (blackbox)**: Reduced to safety-critical subset only — status + events at ~1-2Hz. Tiny data volume, negligible wear, survives power loss and SD failure/ejection. Enough to reconstruct what happened in a crash.
+- Current full-fidelity flash logging is the main source of wear and capacity pressure. Dropping to events-only makes flash practically unlimited.
+- Graceful SD failure: if SD init fails or write errors accumulate, fall back to flash-only full-rate logging (current behavior).
+
 #### Usability
 
-**7. Servo trim via RPC + flash persistence (~1.5h)**
+**11. Servo trim via RPC + flash persistence (~1.5h)**
 - `SetTrimReq { left_us: i16, right_us: i16 }` endpoint with range validation
 - Store in flash (MapStorage key=4), auto-load on boot (same pattern as PID gains)
 - TUI commands: `trim left 10`, `trim right -5`
 - Eliminates recompile for trim adjustment
 
-**8. Expo curves on pitch/roll/yaw (~1.5h)**
+**12. Expo curves on pitch/roll/yaw (~1.5h)**
 - Compile-time LUT generation for common expo values (0%, 20%, 40%)
 - Configurable per-axis via `elle-config` constant or runtime RPC
 - Significantly improves stick feel — linear input is too aggressive near center
 
-**9. Wire RPC SetControlMode handler (~20min)**
+**13. Wire RPC SetControlMode handler (~20min)**
 - Endpoint exists in ICD but handler is not implemented
 - Trivial: send `RpcCommand::SetMode` through command channel
+
+**14. Control loop rate increase (~1h, after first flight)**
+- Current: 77Hz (13ms). Estimated CPU usage ~3-4%, massive margin available.
+- Target: ~150-200Hz. Needs real timing data from `performance-monitoring` feature to confirm budget.
+- Benefits: fresher derivative term, smoother integral accumulation, better disturbance rejection.
+- Servo limit: elevons are 50Hz PWM, so commands oversample — but PID still benefits from faster sensing.
+- **Requires PID gain adjustment**: Ki and Kd scale with dt. Either retune or apply proportional correction (halve dt → halve Ki, double Kd). Update `CONTROL_LOOP_DT` constant.
+- Do this after first flight, not before — current gains are tuned for 13ms dt.
+
+**~~15. Interrupt-driven IMU reads via DATA_RDY on INT1~~ DONE**
+- INT1 (GPIO5) configured for DATA_RDY: `ui_drdy_int1_en=1` in INT_SOURCE0
+- `Imu::run()` polls `int1.is_low()` + `yield_now()` (async GPIO not available on Core1)
+- PIN_5 passed from `imu_task` → `Imu::new()` as `Input::new(int1_pin, Pull::None)`
+- Frees INT2 (GPIO4) for crash detection (#5) SMD interrupt routing
 
 ---
 
@@ -132,9 +191,16 @@ Full autonomous navigation system. See [docs/NAVIGATION_PLAN.md](docs/NAVIGATION
 5. Waypoint sequencing — chain multiple points
 6. L1 path following — smoother path tracking
 7. Loiter / RTL modes
-8. Safety layers — geofence, failsafes, stall protection
+8. Safety layers — geofence, failsafes, stall protection, upset recovery, minimum AGL floor
 9. Mission upload protocol — RPC endpoints + TUI commands
 10. TECS — total energy control (replaces separate speed + altitude PIDs)
+
+**Safety layers detail (step 8):**
+- **Minimum AGL floor**: If AGL (from ground level reference) drops below threshold, override pitch setpoint to safe climb angle + minimum throttle. Requires working PID + ground level datum.
+- **Upset recovery**: If bank >60° or pitch < -30°, override setpoints to wings-level + slight climb regardless of pilot input. The PID is the recovery mechanism, not something you disable.
+- **PID output rate limiter**: Clamp correction rate-of-change (e.g. max 20°/s) so bad gains produce sluggish-but-safe output instead of oscillation.
+- **Oscillation detection**: Count PID output sign reversals; if excessive, reduce authority gradually rather than hard-disable.
+- Geofence, stall protection, RTL-on-failsafe.
 
 **Key dependency**: Pitot tube / airspeed sensor for safe autonomous flight in wind.
 
