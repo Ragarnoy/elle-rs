@@ -7,7 +7,7 @@ use elle_config::profile::ULOG_CHUNK_SIZE;
 use embassy_time::Instant;
 use heapless::Vec;
 
-use crate::sequential_flash_manager::request_write_ulog;
+use crate::sequential_flash_manager::{request_write_ulog, request_write_ulog_blocking};
 
 /// ULog logger state
 pub struct ULogLogger {
@@ -137,7 +137,7 @@ impl ULogLogger {
         let data = self.writer.buffer();
         if !data.is_empty() {
             info!("Flushing {} bytes of ULog header to flash", data.len());
-            let success = request_write_ulog(data).await;
+            let success = request_write_ulog_blocking(data).await;
             if !success {
                 error!("Failed to write ULog header to flash");
                 return Err(());
@@ -190,7 +190,7 @@ impl ULogLogger {
 
         // Flush if buffer is getting full
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
@@ -238,7 +238,7 @@ impl ULogLogger {
 
         // Flush if buffer is getting full
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
@@ -283,7 +283,7 @@ impl ULogLogger {
 
         // Flush if buffer is getting full
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
@@ -314,7 +314,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
@@ -340,7 +340,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
@@ -383,7 +383,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
@@ -426,7 +426,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
@@ -452,24 +452,26 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
-            self.flush().await?;
+            self.flush()?;
         }
 
         Ok(())
     }
 
-    /// Flush buffered data to flash
-    pub async fn flush(&mut self) -> Result<(), ()> {
+    /// Flush buffered data to flash (fire-and-forget — returns immediately)
+    pub fn flush(&mut self) -> Result<(), ()> {
         if self.buffer.is_empty() {
             return Ok(());
         }
 
-        let success = request_write_ulog(&self.buffer).await;
+        let success = request_write_ulog(&self.buffer);
         if success {
             self.buffer.clear();
             Ok(())
         } else {
-            error!("ULog flush failed");
+            error!("ULog flush: channel full, data dropped");
+            // Clear buffer anyway to avoid re-sending stale data on next flush
+            self.buffer.clear();
             Err(())
         }
     }

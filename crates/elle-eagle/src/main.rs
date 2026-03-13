@@ -830,7 +830,7 @@ async fn main(spawner: Spawner) {
                     }
                 } else if !switch_on && ulog_recording {
                     // Switch just turned off — flush and stop
-                    let _ = ulog_logger.flush().await;
+                    let _ = ulog_logger.flush();
                     ulog_recording = false;
                     elle_hardware::elle_event!(
                         info,
@@ -1051,7 +1051,7 @@ async fn main(spawner: Spawner) {
                     }
                     RpcCommand::StopULog => {
                         ULOG_ENABLED.store(false, Ordering::Release);
-                        let _ = ulog_logger.flush().await;
+                        let _ = ulog_logger.flush();
                         elle_hardware::elle_event!(
                             info,
                             elle_hardware::event::EVT_ULOG_STOPPED,

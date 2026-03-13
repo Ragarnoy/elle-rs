@@ -5,6 +5,7 @@ use elle_error::{ElleResult, FlashError};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
@@ -14,7 +15,17 @@ use sequential_storage::queue::{QueueConfig, QueueStorage};
 
 use crate::flash_constants::{PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_START};
 
-/// Inter-core communication signals for flash operations
+/// Fire-and-forget ULog write request (buffered channel, non-blocking send)
+pub struct ULogWriteRequest {
+    pub data: [u8; ULOG_CHUNK_SIZE],
+    pub len: usize,
+}
+
+/// Buffered channel for fire-and-forget ULog writes (4 slots = 4 × 4KB = 16KB)
+pub static ULOG_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, ULogWriteRequest, 4> =
+    Channel::new();
+
+/// Inter-core communication signals for flash operations (non-ULog-write ops)
 pub static FLASH_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, FlashRequest> = Signal::new();
 pub static FLASH_RESPONSE_SIGNAL: Signal<CriticalSectionRawMutex, FlashResponse> = Signal::new();
 
@@ -58,55 +69,69 @@ impl<'a> SequentialFlashManager<'a> {
         info!("Core0: Sequential flash manager started and waiting for requests");
 
         loop {
-            let request = FLASH_REQUEST_SIGNAL.wait().await;
-
-            match request {
-                FlashRequest::WriteULog { data, len } => {
-                    let response = match self.write_ulog_internal(&data[..len]).await {
-                        Ok(_) => FlashResponse::ULogWriteSuccess,
-                        Err(e) => {
-                            warn!("Flash: ULog write failed: {}", e);
-                            FlashResponse::ULogWriteFailed
-                        }
-                    };
-                    FLASH_RESPONSE_SIGNAL.signal(response);
+            // Select between fire-and-forget ULog writes and signal-based flash ops
+            match embassy_futures::select::select(
+                ULOG_WRITE_CHANNEL.receive(),
+                FLASH_REQUEST_SIGNAL.wait(),
+            )
+            .await
+            {
+                // Fire-and-forget ULog write from channel (no response needed)
+                embassy_futures::select::Either::First(req) => {
+                    if let Err(e) = self.write_ulog_internal(&req.data[..req.len]).await {
+                        warn!("Flash: ULog write failed: {}", e);
+                    }
                 }
 
-                FlashRequest::PeekULog => {
-                    let response = self.peek_ulog_internal().await;
-                    FLASH_RESPONSE_SIGNAL.signal(response);
-                }
+                // Signal-based flash operations (response required)
+                embassy_futures::select::Either::Second(request) => match request {
+                    FlashRequest::WriteULogBlocking { data, len } => {
+                        let response = match self.write_ulog_internal(&data[..len]).await {
+                            Ok(_) => FlashResponse::ULogWriteSuccess,
+                            Err(e) => {
+                                warn!("Flash: ULog write failed: {}", e);
+                                FlashResponse::ULogWriteFailed
+                            }
+                        };
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
 
-                FlashRequest::PopULog => {
-                    let response = self.pop_ulog_internal().await;
-                    FLASH_RESPONSE_SIGNAL.signal(response);
-                }
+                    FlashRequest::PeekULog => {
+                        let response = self.peek_ulog_internal().await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
 
-                FlashRequest::EraseULog => {
-                    info!("Flash: erasing ULog region");
-                    let response = self.erase_ulog_internal().await;
-                    FLASH_RESPONSE_SIGNAL.signal(response);
-                }
+                    FlashRequest::PopULog => {
+                        let response = self.pop_ulog_internal().await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
 
-                FlashRequest::SavePidProfile { data } => {
-                    let response = self.save_pid_profile_internal(&data).await;
-                    FLASH_RESPONSE_SIGNAL.signal(response);
-                }
+                    FlashRequest::EraseULog => {
+                        info!("Flash: erasing ULog region");
+                        let response = self.erase_ulog_internal().await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
 
-                FlashRequest::LoadPidProfile => {
-                    let response = self.load_pid_profile_internal().await;
-                    FLASH_RESPONSE_SIGNAL.signal(response);
-                }
+                    FlashRequest::SavePidProfile { data } => {
+                        let response = self.save_pid_profile_internal(&data).await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
 
-                FlashRequest::SaveMagCal { data } => {
-                    let response = self.save_mag_cal_internal(&data).await;
-                    FLASH_RESPONSE_SIGNAL.signal(response);
-                }
+                    FlashRequest::LoadPidProfile => {
+                        let response = self.load_pid_profile_internal().await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
 
-                FlashRequest::LoadMagCal => {
-                    let response = self.load_mag_cal_internal().await;
-                    FLASH_RESPONSE_SIGNAL.signal(response);
-                }
+                    FlashRequest::SaveMagCal { data } => {
+                        let response = self.save_mag_cal_internal(&data).await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
+
+                    FlashRequest::LoadMagCal => {
+                        let response = self.load_mag_cal_internal().await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
+                },
             }
 
             // Small yield to ensure other tasks can run
@@ -392,8 +417,9 @@ impl<'a> SequentialFlashManager<'a> {
     }
 }
 
-/// Request ULog write from any core
-pub async fn request_write_ulog(data: &[u8]) -> bool {
+/// Fire-and-forget ULog write — returns immediately, data is queued for async flash write.
+/// Returns `false` if the channel is full (data dropped) or input is invalid.
+pub fn request_write_ulog(data: &[u8]) -> bool {
     if data.is_empty() || data.len() > ULOG_CHUNK_SIZE {
         warn!("Flash: invalid ULog data size: {}", data.len());
         return false;
@@ -402,7 +428,30 @@ pub async fn request_write_ulog(data: &[u8]) -> bool {
     let mut buffer = [0u8; ULOG_CHUNK_SIZE];
     buffer[..data.len()].copy_from_slice(data);
 
-    FLASH_REQUEST_SIGNAL.signal(FlashRequest::WriteULog {
+    match ULOG_WRITE_CHANNEL.try_send(ULogWriteRequest {
+        data: buffer,
+        len: data.len(),
+    }) {
+        Ok(()) => true,
+        Err(_) => {
+            warn!("Flash: ULog write channel full, data dropped");
+            false
+        }
+    }
+}
+
+/// Blocking ULog write — waits for flash confirmation. Used only for ULog header writes
+/// where data integrity is critical (called once during initialization).
+pub async fn request_write_ulog_blocking(data: &[u8]) -> bool {
+    if data.is_empty() || data.len() > ULOG_CHUNK_SIZE {
+        warn!("Flash: invalid ULog data size: {}", data.len());
+        return false;
+    }
+
+    let mut buffer = [0u8; ULOG_CHUNK_SIZE];
+    buffer[..data.len()].copy_from_slice(data);
+
+    FLASH_REQUEST_SIGNAL.signal(FlashRequest::WriteULogBlocking {
         data: buffer,
         len: data.len(),
     });

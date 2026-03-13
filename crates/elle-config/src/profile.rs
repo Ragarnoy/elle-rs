@@ -5,9 +5,11 @@ pub const ULOG_CHUNK_SIZE: usize = 4096;
 
 // Flash operation requests and responses
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)] // WriteULog needs 4KB buffer for inter-core transfer
+#[allow(clippy::large_enum_variant)] // WriteULogBlocking needs 4KB buffer for inter-core transfer
 pub enum FlashRequest {
-    WriteULog {
+    /// Blocking ULog write via Signal path — used only for header init where confirmation is needed.
+    /// Regular ULog data writes use the fire-and-forget ULOG_WRITE_CHANNEL instead.
+    WriteULogBlocking {
         data: [u8; ULOG_CHUNK_SIZE],
         len: usize,
     },
