@@ -261,7 +261,7 @@ impl<'a> Imu<'a> {
         }
 
         // Configure INT1 for DATA_RDY instead of FIFO threshold.
-        // The driver init already set INT_CONFIG (push-pull, active-low, pulsed)
+        // The driver init already set INT_CONFIG (push-pull, active-high, latched)
         // and INT_CONFIG1 (int_async_reset=0). We just need to switch the source.
         {
             let icm = self.icm.as_mut().unwrap();
@@ -388,7 +388,7 @@ impl<'a> Imu<'a> {
                 embassy_futures::yield_now().await;
             }
 
-            // 1. Read ICM-42686 FIFO sample (guaranteed to have data after INT1 low)
+            // 1. Read ICM-42686 FIFO sample (guaranteed to have data after INT1 high)
             match icm.read_sample() {
                 Ok(Some((sample, _more))) => {
                     consecutive_errors = 0;
