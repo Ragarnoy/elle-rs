@@ -15,6 +15,10 @@ pub static DSHOT_THROTTLE: Signal<CriticalSectionRawMutex, (u32, u32)> = Signal:
 /// Consecutive bidir telemetry failure threshold before falling back to fire-and-forget.
 const BIDIR_FALLBACK_THRESHOLD: u16 = 100;
 
+/// Timeout for a single bidir telemetry read. DShot300 frame + response takes ~120µs;
+/// 2ms is generous but prevents indefinite hangs if the ESC doesn't respond.
+const BIDIR_READ_TIMEOUT: Duration = Duration::from_millis(2);
+
 /// Number of times to send ExtendedTelemetryEnable command (DShot protocol requirement).
 const EDT_ENABLE_REPEAT: u8 = 6;
 
@@ -176,6 +180,8 @@ impl<'a> DshotEngines<'a> {
     ///
     /// Returns `(Option<ExtendedTelemetry>, Option<ExtendedTelemetry>)` per engine.
     /// When bidir is disabled for an engine, uses fire-and-forget (no telemetry).
+    /// Bidir reads are wrapped with a timeout to prevent the task from hanging
+    /// if ESCs don't respond (e.g. bidir DShot not supported/wired).
     async fn set_throttle(
         &mut self,
         left: u16,
@@ -194,84 +200,65 @@ impl<'a> DshotEngines<'a> {
                 .await;
                 (None, None)
             }
-            (false, false) => match (left_bidir, right_bidir) {
-                (true, true) => {
-                    let (l_res, r_res) = embassy_futures::join::join(
-                        self.left.read_extended_telemetry(left),
-                        self.right.read_extended_telemetry(right),
-                    )
-                    .await;
-                    (l_res.ok(), r_res.ok())
-                }
-                (true, false) => {
-                    let (l_res, r_res) = embassy_futures::join::join(
-                        self.left.read_extended_telemetry(left),
-                        self.right.throttle_async(right),
-                    )
-                    .await;
-                    if let Err(e) = &r_res {
-                        defmt::warn!("DShot right send error: {}", e);
-                    }
-                    (l_res.ok(), None)
-                }
-                (false, true) => {
-                    let (l_res, r_res) = embassy_futures::join::join(
-                        self.left.throttle_async(left),
-                        self.right.read_extended_telemetry(right),
-                    )
-                    .await;
-                    if let Err(e) = &l_res {
-                        defmt::warn!("DShot left send error: {}", e);
-                    }
-                    (None, r_res.ok())
-                }
-                (false, false) => {
-                    let (l_res, r_res) = embassy_futures::join::join(
-                        self.left.throttle_async(left),
-                        self.right.throttle_async(right),
-                    )
-                    .await;
-                    if let Err(e) = l_res {
-                        defmt::warn!("DShot left send error: {}", e);
-                    }
-                    if let Err(e) = r_res {
-                        defmt::warn!("DShot right send error: {}", e);
-                    }
-                    (None, None)
-                }
-            },
             _ => {
-                // Mixed: handle each side independently
-                let l_edt = if left == 0 {
-                    self.left
-                        .send_command_async(embassy_dshot::Command::MotorStop)
-                        .await;
-                    None
-                } else if left_bidir {
-                    self.left.read_extended_telemetry(left).await.ok()
-                } else {
-                    if let Err(e) = self.left.throttle_async(left).await {
-                        defmt::warn!("DShot left send error: {}", e);
-                    }
-                    None
-                };
-
-                let r_edt = if right == 0 {
-                    self.right
-                        .send_command_async(embassy_dshot::Command::MotorStop)
-                        .await;
-                    None
-                } else if right_bidir {
-                    self.right.read_extended_telemetry(right).await.ok()
-                } else {
-                    if let Err(e) = self.right.throttle_async(right).await {
-                        defmt::warn!("DShot right send error: {}", e);
-                    }
-                    None
-                };
-
+                let l_edt = self.send_one_engine_left(left, left_bidir).await;
+                let r_edt = self.send_one_engine_right(right, right_bidir).await;
                 (l_edt, r_edt)
             }
+        }
+    }
+
+    /// Send throttle to left engine with optional bidir telemetry + timeout.
+    async fn send_one_engine_left(
+        &mut self,
+        value: u16,
+        bidir: bool,
+    ) -> Option<ExtendedTelemetry> {
+        if value == 0 {
+            self.left
+                .send_command_async(embassy_dshot::Command::MotorStop)
+                .await;
+            return None;
+        }
+        if !bidir {
+            let _ = self.left.throttle_async(value).await;
+            return None;
+        }
+        match embassy_time::with_timeout(
+            BIDIR_READ_TIMEOUT,
+            self.left.read_extended_telemetry(value),
+        )
+        .await
+        {
+            Ok(Ok(edt)) => Some(edt),
+            _ => None,
+        }
+    }
+
+    /// Send throttle to right engine with optional bidir telemetry + timeout.
+    async fn send_one_engine_right(
+        &mut self,
+        value: u16,
+        bidir: bool,
+    ) -> Option<ExtendedTelemetry> {
+        if value == 0 {
+            self.right
+                .send_command_async(embassy_dshot::Command::MotorStop)
+                .await;
+            return None;
+        }
+        if !bidir {
+            let _ = self.right.throttle_async(value).await;
+            return None;
+        }
+        match embassy_time::with_timeout(
+            BIDIR_READ_TIMEOUT,
+            self.right.read_extended_telemetry(value),
+        )
+        .await
+        {
+            Ok(Ok(edt)) => Some(edt),
+            _ => None,
         }
     }
 }
