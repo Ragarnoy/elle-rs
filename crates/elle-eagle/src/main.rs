@@ -59,8 +59,8 @@ use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{
-    DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_8, PIN_9, PIN_10, PIO0, PIO1, PIO2,
-    SPI0, UART0, UART1,
+    DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_5, PIN_8, PIN_9, PIN_10, PIO0, PIO1,
+    PIO2, SPI0, UART0, UART1,
 };
 use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
@@ -366,7 +366,7 @@ async fn main(spawner: Spawner) {
                 spawner.spawn(
                     imu_task(
                         spawner, p.I2C0, p.PIN_8, p.PIN_9, p.SPI0, p.PIN_0, p.PIN_1, p.PIN_2,
-                        p.PIN_3,
+                        p.PIN_3, p.PIN_5,
                     )
                     .unwrap(),
                 );
@@ -1451,6 +1451,8 @@ async fn imu_task(
     #[allow(unused_variables)] spi_cs: Peri<'static, PIN_1>,
     #[allow(unused_variables)] spi_sck: Peri<'static, PIN_2>,
     #[allow(unused_variables)] spi_mosi: Peri<'static, PIN_3>,
+    // INT1 (DATA_RDY interrupt) — unused in disable-imu stub
+    #[allow(unused_variables)] int1_pin: Peri<'static, PIN_5>,
 ) {
     info!("Core1: IMU task starting");
 
@@ -1471,7 +1473,7 @@ async fn imu_task(
 
     #[cfg(not(feature = "disable-imu"))]
     let mut imu = {
-        use embassy_rp::gpio::{Level, Output};
+        use embassy_rp::gpio::{Input, Level, Output, Pull};
         use embassy_rp::spi as rp_spi;
         use embedded_hal_bus::spi::ExclusiveDevice;
 
@@ -1484,8 +1486,9 @@ async fn imu_task(
         let spi_bus = rp_spi::Spi::new_blocking(spi, spi_sck, spi_mosi, spi_miso, spi_config);
         let cs = Output::new(spi_cs, Level::High);
         let spi_dev = ExclusiveDevice::new(spi_bus, cs, embassy_time::Delay).unwrap();
+        let int1 = Input::new(int1_pin, Pull::None);
 
-        Imu::new(spi_dev, i2c_ref, led_sender)
+        Imu::new(spi_dev, i2c_ref, led_sender, int1)
     };
 
     // Initialize sensors

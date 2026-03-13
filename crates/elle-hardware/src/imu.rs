@@ -143,7 +143,7 @@ use core::cell::RefCell;
 #[cfg(not(feature = "disable-imu"))]
 use elle_error::ImuError;
 #[cfg(not(feature = "disable-imu"))]
-use embassy_rp::gpio::Output;
+use embassy_rp::gpio::{Input, Output};
 #[cfg(not(feature = "disable-imu"))]
 use embassy_rp::i2c;
 #[cfg(not(feature = "disable-imu"))]
@@ -176,6 +176,7 @@ pub struct Imu<'a> {
     baro: Option<bmp390::sync::Bmp390<SharedI2c<'a>>>,
     i2c_bus: &'a RefCell<I2cBus<'a>>,
     led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
+    int1: Input<'a>,
     last_attitude: AttitudeData,
     last_mag: nalgebra::Vector3<f32>,
     has_mag: bool,
@@ -194,6 +195,7 @@ impl<'a> Imu<'a> {
         spi_dev: SpiDev<'a>,
         i2c_bus: &'a RefCell<I2cBus<'a>>,
         led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
+        int1: Input<'a>,
     ) -> Self {
         let mag_i2c = I2cRefCellDevice::new(i2c_bus);
         Self {
@@ -207,6 +209,7 @@ impl<'a> Imu<'a> {
             baro: None,
             i2c_bus,
             led_sender,
+            int1,
             last_attitude: AttitudeData::zero(),
             last_mag: nalgebra::Vector3::zeros(),
             has_mag: false,
@@ -255,6 +258,23 @@ impl<'a> Imu<'a> {
                 );
                 return Err(ImuError::InitializationFailed.into());
             }
+        }
+
+        // Configure INT1 for DATA_RDY instead of FIFO threshold.
+        // The driver init already set INT_CONFIG (push-pull, active-low, pulsed)
+        // and INT_CONFIG1 (int_async_reset=0). We just need to switch the source.
+        {
+            let icm = self.icm.as_mut().unwrap();
+            let mut bank0 = icm.ll().bank::<0>();
+            // Disable FIFO threshold interrupt, enable data-ready interrupt.
+            // INT1 is already configured as push-pull, active-high, latched
+            // (driver defaults). Latched = stays asserted until INT_STATUS read,
+            // which read_sample() does as part of its SPI transaction.
+            bank0
+                .int_source0()
+                .modify(|_, w| w.fifo_ths_int1_en(0).ui_drdy_int1_en(1))
+                .map_err(|_| ImuError::InitializationFailed)?;
+            info!("ICM-42686: INT1 configured for DATA_RDY (active-high, latched)");
         }
 
         // Mark IMU as initialized — ICM-42686 is factory-calibrated
@@ -345,9 +365,10 @@ impl<'a> Imu<'a> {
         Ok(())
     }
 
-    /// Run continuous IMU reading with AHRS sensor fusion at 1 kHz
+    /// Run continuous IMU reading with AHRS sensor fusion at 1 kHz.
+    /// Polls INT1 pin (DATA_RDY, active-high, latched) — no async GPIO IRQ needed on Core1.
     pub async fn run(&mut self) -> ! {
-        info!("Core1: Starting ICM-42686 + AHRS fusion loop");
+        info!("Core1: Starting ICM-42686 + AHRS fusion loop (INT1 poll)");
 
         let icm = self.icm.as_mut().expect("ICM not initialized");
 
@@ -361,7 +382,13 @@ impl<'a> Imu<'a> {
         let mut baro_counter: u32 = 0;
 
         loop {
-            // 1. Read ICM-42686 FIFO sample
+            // Wait for DATA_RDY: INT1 goes high when new sample is ready
+            // (active-high, latched — cleared on INT_STATUS read inside read_sample).
+            while self.int1.is_low() {
+                embassy_futures::yield_now().await;
+            }
+
+            // 1. Read ICM-42686 FIFO sample (guaranteed to have data after INT1 low)
             match icm.read_sample() {
                 Ok(Some((sample, _more))) => {
                     consecutive_errors = 0;
@@ -416,8 +443,7 @@ impl<'a> Imu<'a> {
                     }
                 }
                 Ok(None) => {
-                    // FIFO empty — yield until next sample arrives
-                    Timer::after(Duration::from_micros(500)).await;
+                    // Shouldn't happen with INT1 DATA_RDY — but yield just in case
                 }
                 Err(icm426xx::Error::FifoOverflow) => {
                     // FIFO overflowed — flush and restart
@@ -556,8 +582,6 @@ impl<'a> Imu<'a> {
                 }
             }
 
-            // Yield to other tasks briefly (only when FIFO had data — busy-drain)
-            embassy_futures::yield_now().await;
         }
     }
 }
