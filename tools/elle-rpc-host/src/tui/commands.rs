@@ -7,9 +7,87 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
-use super::state::AppState;
-
 const CMD_TIMEOUT: Duration = Duration::from_secs(2);
+
+// ── Single source of truth for command names, aliases, and subcommands ──────
+// Add new commands here — tab completion and help are derived automatically.
+
+struct CmdDef {
+    /// Primary name (used in match dispatch)
+    name: &'static str,
+    /// Alternative names (e.g. "thr" for "throttle")
+    aliases: &'static [&'static str],
+    /// Known subcommands for tab completion (e.g. "start", "stop")
+    subs: &'static [&'static str],
+}
+
+const COMMANDS: &[CmdDef] = &[
+    CmdDef { name: "arm",      aliases: &[],                subs: &[] },
+    CmdDef { name: "autotune", aliases: &["atune"],         subs: &["pitch", "roll", "abort"] },
+    CmdDef { name: "disarm",   aliases: &[],                subs: &[] },
+    CmdDef { name: "elevon",   aliases: &["elv"],           subs: &[] },
+    CmdDef { name: "estop",    aliases: &["stop"],          subs: &[] },
+    CmdDef { name: "help",     aliases: &["?"],             subs: &[] },
+    CmdDef { name: "mag",      aliases: &[],                subs: &["cal", "cal start", "cal clear"] },
+    CmdDef { name: "mode",     aliases: &[],                subs: &["manual", "mixed", "auto"] },
+    CmdDef { name: "pid",      aliases: &[],                subs: &[] },
+    CmdDef { name: "quit",     aliases: &["q", "exit"],     subs: &[] },
+    CmdDef { name: "savepid",  aliases: &[],                subs: &[] },
+    CmdDef { name: "setpoint", aliases: &["sp"],            subs: &[] },
+    CmdDef { name: "throttle", aliases: &["thr"],           subs: &[] },
+    CmdDef { name: "ulog",     aliases: &[],                subs: &["info", "start", "stop", "extract", "erase"] },
+];
+
+/// Resolve a user-typed command to its canonical name via the COMMANDS table.
+fn resolve_command(input: &str) -> Option<&'static str> {
+    COMMANDS.iter()
+        .find(|c| c.name == input || c.aliases.contains(&input))
+        .map(|c| c.name)
+}
+
+/// Tab-complete the given input. Returns the completed string (may be unchanged).
+pub fn tab_complete(input: &str) -> String {
+    let lower = input.to_lowercase();
+
+    // Build all completable strings from the COMMANDS table
+    let mut candidates: Vec<String> = Vec::new();
+    for cmd in COMMANDS {
+        // Primary name and aliases as top-level candidates
+        candidates.push(cmd.name.to_string());
+        for alias in cmd.aliases {
+            candidates.push((*alias).to_string());
+        }
+        // "name sub" for each subcommand
+        for sub in cmd.subs {
+            candidates.push(format!("{} {sub}", cmd.name));
+        }
+    }
+
+    let matches: Vec<&str> = candidates
+        .iter()
+        .filter(|c| c.starts_with(&lower) && c.as_str() != lower)
+        .map(String::as_str)
+        .collect();
+
+    match matches.len() {
+        0 => input.to_string(),
+        1 => format!("{} ", matches[0]),
+        _ => {
+            // Complete to longest common prefix
+            let mut prefix = matches[0].to_string();
+            for m in &matches[1..] {
+                while !m.starts_with(prefix.as_str()) {
+                    prefix.pop();
+                }
+            }
+            if prefix.len() > input.len() {
+                prefix
+            } else {
+                input.to_string()
+            }
+        }
+    }
+}
 
 /// Common handler for RPC commands that return `AckResp`.
 fn handle_ack(
@@ -37,7 +115,6 @@ pub enum CommandResult {
 pub async fn execute(
     input: &str,
     client: &HostClient<WireError>,
-    state: &mut AppState,
 ) -> CommandResult {
     let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.is_empty() {
@@ -45,14 +122,14 @@ pub async fn execute(
     }
 
     let cmd = parts[0].to_lowercase();
-    match cmd.as_str() {
-        "q" | "quit" | "exit" => CommandResult::Quit,
-        "ping" => cmd_ping(client).await,
-        "perf" => cmd_perf(client, state).await,
-        "arm" => cmd_arm(client).await,
-        "disarm" => cmd_disarm(client).await,
-        "estop" | "stop" => cmd_estop(client).await,
-        "throttle" | "thr" => {
+    let canonical = resolve_command(&cmd);
+
+    match canonical {
+        Some("quit") => CommandResult::Quit,
+        Some("arm") => cmd_arm(client).await,
+        Some("disarm") => cmd_disarm(client).await,
+        Some("estop") => cmd_estop(client).await,
+        Some("throttle") => {
             if parts.len() < 2 {
                 return CommandResult::Err("Usage: throttle <0-100>".into());
             }
@@ -61,7 +138,7 @@ pub async fn execute(
                 _ => CommandResult::Err("Throttle must be 0-100".into()),
             }
         }
-        "elevon" | "elv" => {
+        Some("elevon") => {
             if parts.len() < 3 {
                 return CommandResult::Err("Usage: elevon <left> <right>".into());
             }
@@ -74,7 +151,7 @@ pub async fn execute(
                 _ => CommandResult::Err("Elevon values must be -100 to 100".into()),
             }
         }
-        "mode" => {
+        Some("mode") => {
             if parts.len() < 2 {
                 return CommandResult::Err("Usage: mode <manual|mixed|auto>".into());
             }
@@ -85,7 +162,7 @@ pub async fn execute(
                 _ => CommandResult::Err("Mode must be: manual, mixed, or auto".into()),
             }
         }
-        "ulog" => {
+        Some("ulog") => {
             if parts.len() < 2 {
                 return CommandResult::Err(
                     "Usage: ulog <info|start|stop|extract [file]|erase>".into(),
@@ -116,7 +193,7 @@ pub async fn execute(
                 ),
             }
         }
-        "pid" => {
+        Some("pid") => {
             if parts.len() < 9 {
                 return CommandResult::Err(
                     "Usage: pid <Pkp> <Pki> <Pkd> <Rkp> <Rki> <Rkd> <scale> <ilimit>".into(),
@@ -142,7 +219,7 @@ pub async fn execute(
                 None => CommandResult::Err("All PID arguments must be valid floats".into()),
             }
         }
-        "setpoint" | "sp" => {
+        Some("setpoint") => {
             if parts.len() < 3 {
                 return CommandResult::Err("Usage: setpoint <pitch_deg> <roll_deg>".into());
             }
@@ -153,8 +230,7 @@ pub async fn execute(
                 _ => CommandResult::Err("Setpoint values must be valid floats".into()),
             }
         }
-        "time" => cmd_time(client).await,
-        "autotune" | "atune" => {
+        Some("autotune") => {
             if parts.len() < 2 {
                 return CommandResult::Err(
                     "Usage: autotune <pitch|roll> [relay_deg] [cycles] [tl|zn|so] | autotune abort"
@@ -189,8 +265,8 @@ pub async fn execute(
                 ),
             }
         }
-        "savepid" => cmd_savepid(client).await,
-        "mag" => {
+        Some("savepid") => cmd_savepid(client).await,
+        Some("mag") => {
             if parts.len() >= 2 && parts[1].to_lowercase() == "cal" {
                 if parts.len() >= 3 {
                     match parts[2].to_lowercase().as_str() {
@@ -205,38 +281,15 @@ pub async fn execute(
                 CommandResult::Err("Usage: mag cal [start|clear]".into())
             }
         }
-        "help" | "?" => CommandResult::Ok(
-            "query: ping perf time | \
-             safety: arm disarm estop | \
-             ctrl: thr <0-100> elv <L> <R> mode <man|mix|auto> pid <8 floats> sp <P> <R> | \
-             autotune: autotune <pitch|roll> [deg] [cycles] [tl|zn|so] | autotune abort | \
-             savepid | ulog: ulog <info|start|stop|extract|erase> | \
-             mag cal [start|clear] | quit"
-                .into(),
-        ),
-        other => CommandResult::Unknown(other.into()),
-    }
-}
-
-async fn cmd_ping(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<PingEndpoint>(&())).await {
-        Ok(Ok(_)) => CommandResult::Ok("Pong!".into()),
-        Ok(Err(e)) => CommandResult::Err(format!("Ping failed: {e}")),
-        Err(_) => CommandResult::Err("Ping timeout".into()),
-    }
-}
-
-async fn cmd_perf(client: &HostClient<WireError>, state: &mut AppState) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<GetPerformanceEndpoint>(&())).await {
-        Ok(Ok(p)) => {
-            state.performance = Some(p);
-            CommandResult::Ok(format!(
-                "Loop: {}us avg / {}us max | IMU: {}us avg",
-                p.control_loop_avg_us, p.control_loop_max_us, p.imu_avg_us,
-            ))
+        Some("help") => {
+            // Generate help from COMMANDS table
+            let names: Vec<&str> = COMMANDS.iter()
+                .filter(|c| c.name != "help" && c.name != "quit")
+                .map(|c| c.name)
+                .collect();
+            CommandResult::Ok(format!("{} | help | quit", names.join(" ")))
         }
-        Ok(Err(e)) => CommandResult::Err(format!("Perf failed: {e}")),
-        Err(_) => CommandResult::Err("Perf timeout".into()),
+        _ => CommandResult::Unknown(cmd),
     }
 }
 
@@ -282,21 +335,6 @@ async fn cmd_mode(client: &HostClient<WireError>, mode: ControlMode) -> CommandR
     )
 }
 
-
-async fn cmd_time(client: &HostClient<WireError>) -> CommandResult {
-    match timeout(CMD_TIMEOUT, client.send_resp::<GetTimeEndpoint>(&())).await {
-        Ok(Ok(ms)) => {
-            let dt = chrono::DateTime::from_timestamp_millis(ms as i64);
-            let time_str = match dt {
-                Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-                None => "invalid".into(),
-            };
-            CommandResult::Ok(format!("{time_str} ({ms})"))
-        }
-        Ok(Err(e)) => CommandResult::Err(format!("Time failed: {e}")),
-        Err(_) => CommandResult::Err("Time timeout".into()),
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_set_pid_gains(

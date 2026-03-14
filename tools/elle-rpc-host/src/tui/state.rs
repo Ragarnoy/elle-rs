@@ -34,6 +34,9 @@ pub struct AppState {
     // Engine telemetry
     pub engine: Option<EngineResp>,
 
+    // Device uptime (polled)
+    pub device_time_ms: Option<u64>,
+
     // ULog recording state (polled from device)
     pub ulog_recording: bool,
 
@@ -73,6 +76,7 @@ impl AppState {
             rc_channels: None,
             controller_output: None,
             engine: None,
+            device_time_ms: None,
             ulog_recording: false,
             attitude_history: VecDeque::with_capacity(ATTITUDE_HISTORY),
             pid_history: VecDeque::with_capacity(ATTITUDE_HISTORY),

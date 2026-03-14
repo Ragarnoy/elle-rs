@@ -88,7 +88,29 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
         Span::styled(" REC", Style::default().fg(Color::DarkGray))
     };
 
-    let header = Paragraph::new(Line::from(vec![
+    // Device uptime — format as HH:MM:SS
+    let time_str = state
+        .device_time_ms
+        .map(|ms| {
+            let secs = ms / 1000;
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            let s = secs % 60;
+            format!("T+{h:02}:{m:02}:{s:02}")
+        })
+        .unwrap_or_else(|| "T+--:--:--".into());
+
+    // Render the block first, then split its inner area
+    let block = Block::default().borders(Borders::ALL);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let header_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(time_str.len() as u16 + 1)])
+        .split(inner);
+
+    let left = Paragraph::new(Line::from(vec![
         Span::styled(
             " elle monitor ",
             Style::default()
@@ -107,10 +129,16 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
         rec_span,
         Span::raw(" | "),
         Span::styled(connected_text, connected_style),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
+    ]));
 
-    f.render_widget(header, area);
+    let right = Paragraph::new(Line::from(Span::styled(
+        format!("{time_str} "),
+        Style::default().fg(Color::Gray),
+    )))
+    .alignment(ratatui::layout::Alignment::Right);
+
+    f.render_widget(left, header_cols[0]);
+    f.render_widget(right, header_cols[1]);
 }
 
 fn draw_main(f: &mut Frame, area: Rect, state: &AppState) {

@@ -130,7 +130,7 @@ pub async fn run() -> Result<()> {
                             state.command_input.clear();
                             if !input.trim().is_empty() {
                                 state.push_command_history(input.clone());
-                                match commands::execute(&input, &client, &mut state).await {
+                                match commands::execute(&input, &client).await {
                                     CommandResult::Ok(msg) => {
                                         if !msg.is_empty() {
                                             state.set_status_message(msg);
@@ -155,6 +155,9 @@ pub async fn run() -> Result<()> {
                         (KeyCode::Char(c), _) => {
                             state.command_input.push(c);
                             state.history_index = None;
+                        }
+                        (KeyCode::Tab, _) => {
+                            state.command_input = commands::tab_complete(&state.command_input);
                         }
                         (KeyCode::Backspace, _) => {
                             state.command_input.pop();
@@ -219,7 +222,7 @@ pub async fn run() -> Result<()> {
                 }
             }
 
-            // Periodic status + ULog info poll
+            // Periodic status + ULog info + time + perf poll
             _ = status_interval.tick(), if state.background_task.is_none() => {
                 if let Ok(Ok(s)) = tokio::time::timeout(
                     Duration::from_secs(1),
@@ -233,6 +236,18 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetULogInfoEndpoint>(&()),
                 ).await {
                     state.ulog_recording = info.recording;
+                }
+                if let Ok(Ok(ms)) = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    client.send_resp::<GetTimeEndpoint>(&()),
+                ).await {
+                    state.device_time_ms = Some(ms);
+                }
+                if let Ok(Ok(p)) = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    client.send_resp::<GetPerformanceEndpoint>(&()),
+                ).await {
+                    state.performance = Some(p);
                 }
             }
 
