@@ -293,6 +293,68 @@ pub fn apply_differential_thrust_lut(base_thrust: u16, yaw_rc: u16) -> (u16, u16
     (left, right)
 }
 
+// ============================================================================
+// Governor feedforward LUT — eRPM → DShot estimate
+// ============================================================================
+
+/// Measured eRPM→DShot mapping (averaged from both engines under EDF load, 4S).
+/// Pairs are (eRPM, DShot), sorted by eRPM.
+/// Data from rpm_range sweep test with 200-sample settle + 500-sample measurement per step.
+const GOVERNOR_FF_TABLE: [(u32, u16); 11] = [
+    (6_184, 48),     // avg(915,852) RPM × 7
+    (19_177, 148),   // avg(2764,2715) RPM × 7
+    (37_044, 298),   // avg(5314,5270) RPM × 7
+    (53_991, 448),   // avg(7746,7680) RPM × 7
+    (70_508, 598),   // avg(10101,10044) RPM × 7
+    (87_777, 748),   // avg(12584,12495) RPM × 7
+    (103_100, 898),  // avg(14794,14663) RPM × 7
+    (116_284, 1048), // avg(16662,16562) RPM × 7
+    (127_932, 1198), // avg(18338,18214) RPM × 7
+    (140_284, 1348), // avg(20121,19960) RPM × 7
+    (149_800, 1473), // right engine saturation (MAX_ERPM)
+    // Above this the right engine is voltage-limited; left can go slightly higher
+    // but governor caps at MAX_ERPM to keep thrust symmetric.
+];
+
+/// Governor feedforward: estimate DShot output for a target eRPM using measured LUT.
+/// Piecewise linear interpolation between measured data points.
+/// Returns DShot 0–1999.
+#[must_use]
+pub fn governor_feedforward(target_erpm: u32) -> u16 {
+    if target_erpm == 0 {
+        return 0;
+    }
+
+    let table = &GOVERNOR_FF_TABLE;
+
+    // Below the first entry: extrapolate linearly from origin
+    if target_erpm <= table[0].0 {
+        return ((target_erpm as u32 * table[0].1 as u32) / table[0].0) as u16;
+    }
+
+    // Above the last entry: clamp to max DShot
+    let last = table[table.len() - 1];
+    if target_erpm >= last.0 {
+        return last.1.min(DSHOT_THROTTLE_MAX);
+    }
+
+    // Linear search (table is small, ~12 entries — faster than binary search on MCU)
+    let mut i = 1;
+    while i < table.len() {
+        if target_erpm <= table[i].0 {
+            let (erpm_lo, dshot_lo) = table[i - 1];
+            let (erpm_hi, dshot_hi) = table[i];
+            let range_erpm = erpm_hi - erpm_lo;
+            let range_dshot = dshot_hi as u32 - dshot_lo as u32;
+            let offset = target_erpm - erpm_lo;
+            return (dshot_lo as u32 + offset * range_dshot / range_erpm) as u16;
+        }
+        i += 1;
+    }
+
+    last.1
+}
+
 /// Apply differential thrust using pre-computed values (legacy, DShot space)
 #[must_use]
 #[inline(always)]

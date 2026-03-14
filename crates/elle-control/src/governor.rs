@@ -1,7 +1,8 @@
 use elle_config::{
     DSHOT_THROTTLE_MAX, GOVERNOR_DEADBAND_ERPM, GOVERNOR_DT, GOVERNOR_ERPM_MAX_JUMP,
-    GOVERNOR_KI, GOVERNOR_KP, MAX_ERPM,
+    GOVERNOR_KI, GOVERNOR_KP,
 };
+use elle_config::lut::governor_feedforward;
 
 /// Per-engine PI controller for RPM governing.
 /// Converts target eRPM to DShot output using feedforward + PI correction.
@@ -28,8 +29,8 @@ impl RpmGovernor {
             return 0;
         }
 
-        // Feedforward: linear estimate
-        let ff = (target_erpm as f32 / MAX_ERPM as f32) * DSHOT_THROTTLE_MAX as f32;
+        // Feedforward: measured LUT (piecewise linear interpolation)
+        let ff = governor_feedforward(target_erpm) as f32;
 
         if !valid {
             // No telemetry — use feedforward only, freeze integrator

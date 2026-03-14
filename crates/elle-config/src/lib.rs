@@ -143,16 +143,16 @@ pub const MIXED_MODE_AUTOPILOT_WEIGHT: f32 = 0.6; // 60% autopilot, 40% pilot in
 
 // Motor specs: 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
-// Unloaded at 4S: 5000 × 16.8 = 84,000 RPM; loaded with EDF: ~21,400 RPM (~25%)
-// Motor saturates at DShot ~1448 (voltage-limited under EDF load)
+// Left engine saturates at ~21,865 RPM (DShot ~1498), right at ~21,430 RPM (DShot ~1473)
+// MAX_RPM capped at slower engine (right) to avoid asymmetric thrust
 pub const MOTOR_POLES: u8 = 14;
-pub const MAX_RPM: u32 = 21_400; // Measured: 21,375 RPM at DShot 1448 (4S/16.5V)
+pub const MAX_RPM: u32 = 21_400; // Measured: right engine saturation under EDF load (4S)
 pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 149,800
 /// Governor PI gains — normalized to eRPM scale.
-/// Kp=0.003 means ~4.6 DShot counts per 1000 eRPM error (1999/131600 ≈ 0.015 baseline).
-/// Kp too high → throttle oscillation (yoyo). Start conservative.
-pub const GOVERNOR_KP: f32 = 0.003;
-pub const GOVERNOR_KI: f32 = 0.001;
+/// Kp=0.01 gives ~14 DShot counts per 1000 eRPM error — fast enough to reduce
+/// overshoot settling time without oscillation.
+pub const GOVERNOR_KP: f32 = 0.01;
+pub const GOVERNOR_KI: f32 = 0.002;
 pub const GOVERNOR_DT: f32 = 0.001; // 1ms (1kHz task rate)
 pub const GOVERNOR_DEADBAND_ERPM: f32 = 500.0; // Ignore errors below this (absorbs EDT noise)
 pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000; // Reject telemetry jumps larger than this
