@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cobs::{decode_vec, encode_vec};
 use probe_rs::probe::list::Lister;
 use probe_rs::rtt::{Rtt, ScanRegion};
@@ -26,11 +26,11 @@ pub fn connect() -> Result<(Session, Rtt)> {
     let probe = probes[0].open()?;
     let mut session = probe.attach("RP235x", Permissions::default())?;
 
+    // Attach RTT without halting the core to avoid corrupting PIO/ESC state.
+    // SWD can read target memory while the core is running on Cortex-M.
     let rtt = {
         let mut core = session.core(0)?;
-        core.halt(Duration::from_millis(500))
-            .context("Failed to halt core")?;
-        eprintln!("Core halted, attaching to RTT...");
+        eprintln!("Scanning for RTT control block (no halt)...");
 
         let rtt;
         loop {
@@ -41,14 +41,11 @@ pub fn connect() -> Result<(Session, Rtt)> {
                 }
                 Err(_e) => {
                     eprintln!("RTT not ready, retrying...");
-                    core.run().unwrap();
                     std::thread::sleep(Duration::from_millis(500));
-                    core.halt(Duration::from_millis(500)).unwrap();
                 }
             }
         }
 
-        core.run().unwrap();
         eprintln!("RTT attached at {:#010x}", rtt.ptr());
         rtt
     };
