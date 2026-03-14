@@ -5,7 +5,7 @@ connect_under_reset = false
 
 [default.flashing]
 enabled = true
-restore_unwritten_bytes = false
+restore_unwritten_bytes = true
 
 [default.reset]
 enabled = true
@@ -40,7 +40,7 @@ connect_under_reset = false
 
 [debug.flashing]
 enabled = true
-restore_unwritten_bytes = false
+restore_unwritten_bytes = true
 
 [debug.reset]
 enabled = true
@@ -76,7 +76,7 @@ connect_under_reset = false
 [gdb.flashing]
 enabled = true
 halt_afterwards = true
-restore_unwritten_bytes = false
+restore_unwritten_bytes = true
 
 [gdb.reset]
 enabled = true
@@ -96,7 +96,7 @@ connect_under_reset = false
 
 [release.flashing]
 enabled = true
-restore_unwritten_bytes = false
+restore_unwritten_bytes = true
 
 [release.reset]
 enabled = true
