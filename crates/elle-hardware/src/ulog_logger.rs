@@ -3,7 +3,7 @@
 //! Provides a high-level interface for logging flight data to flash using ULog format.
 
 use defmt::*;
-use elle_config::profile::ULOG_WRITE_CHUNK_SIZE;
+use elle_config::profile::{ULOG_LOGGER_BUFFER_SIZE, ULOG_WRITE_CHUNK_SIZE};
 use embassy_time::Instant;
 use heapless::Vec;
 
@@ -13,8 +13,9 @@ use crate::sequential_flash_manager::{request_write_ulog, request_write_ulog_blo
 pub struct ULogLogger {
     /// Reusable ULog writer (avoids 4KB allocation per log call)
     writer: elle_ulog::ULogWriter,
-    /// Internal buffer for collecting log data
-    buffer: Vec<u8, ULOG_WRITE_CHUNK_SIZE>,
+    /// Internal buffer for collecting log data before flushing to channel.
+    /// Larger than channel chunk size to reduce flush frequency.
+    buffer: Vec<u8, ULOG_LOGGER_BUFFER_SIZE>,
     /// Whether the logger has been initialized
     initialized: bool,
     /// Message IDs for subscriptions
@@ -189,7 +190,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -237,7 +238,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -282,7 +283,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -313,7 +314,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -339,7 +340,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -382,7 +383,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -425,7 +426,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -451,29 +452,35 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
             self.flush()?;
         }
 
         Ok(())
     }
 
-    /// Flush buffered data to flash (fire-and-forget — returns immediately)
+    /// Flush buffered data to flash (fire-and-forget — returns immediately).
+    /// Splits the buffer into ULOG_WRITE_CHUNK_SIZE messages for the channel.
     pub fn flush(&mut self) -> Result<(), ()> {
         if self.buffer.is_empty() {
             return Ok(());
         }
 
-        let success = request_write_ulog(&self.buffer);
-        if success {
-            self.buffer.clear();
-            Ok(())
-        } else {
-            error!("ULog flush: channel full, data dropped");
-            // Clear buffer anyway to avoid re-sending stale data on next flush
-            self.buffer.clear();
-            Err(())
+        let mut all_ok = true;
+        for chunk in self.buffer.chunks(ULOG_WRITE_CHUNK_SIZE) {
+            if !request_write_ulog(chunk) {
+                all_ok = false;
+                break; // Channel full — remaining data will be lost
+            }
         }
+
+        if !all_ok {
+            error!("ULog flush: channel full, data dropped");
+        }
+
+        // Clear buffer regardless to avoid re-sending stale data
+        self.buffer.clear();
+        if all_ok { Ok(()) } else { Err(()) }
     }
 
     /// Check if the logger has been initialized
@@ -485,13 +492,13 @@ impl ULogLogger {
     /// Check if the logger needs flushing
     #[must_use]
     pub fn needs_flush(&self) -> bool {
-        self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE / 2)
+        self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE / 2)
     }
 
     /// Get the buffer fill percentage
     #[must_use]
     pub fn buffer_fill_percent(&self) -> u8 {
-        ((self.buffer.len() * 100) / ULOG_WRITE_CHUNK_SIZE) as u8
+        ((self.buffer.len() * 100) / ULOG_LOGGER_BUFFER_SIZE) as u8
     }
 }
 

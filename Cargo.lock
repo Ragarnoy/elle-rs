@@ -1098,6 +1098,7 @@ version = "0.1.0"
 dependencies = [
  "ahrs",
  "bmp390",
+ "cortex-m",
  "crc",
  "crsf",
  "defmt 1.0.1",

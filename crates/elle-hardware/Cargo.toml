@@ -29,6 +29,7 @@ embedded-storage-async = "0.4"
 
 crc = { workspace = true, optional = true }
 
+cortex-m = "0.7"
 defmt = { workspace = true }
 libm = { workspace = true }
 ahrs = { workspace = true }

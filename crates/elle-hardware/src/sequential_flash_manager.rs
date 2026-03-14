@@ -1,8 +1,10 @@
 use core::sync::atomic::{AtomicU32, Ordering};
+use cortex_m::peripheral::NVIC;
 use defmt::*;
 use elle_config::profile::{FlashRequest, FlashResponse, ULOG_CHUNK_SIZE, ULOG_WRITE_CHUNK_SIZE};
 use elle_error::{ElleResult, FlashError};
 use embassy_rp::flash::{Async, Flash};
+use embassy_rp::interrupt;
 use embassy_rp::peripherals::FLASH;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -14,6 +16,28 @@ use sequential_storage::map::{MapConfig, MapStorage};
 use sequential_storage::queue::{QueueConfig, QueueStorage};
 
 use crate::flash_constants::{PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_START};
+
+/// Mask SIO_IRQ_FIFO on Core0 before flash operations.
+///
+/// With `executor-interrupt` enabled, embassy registers a `SIO_IRQ_FIFO` handler
+/// on Core0 that processes both `PEND_IRQ_TOKEN` and `PAUSE_TOKEN`. During flash
+/// operations, `in_ram()` calls `pause_core1()` which polls the FIFO for Core1's
+/// acknowledgment. If the interrupt handler fires first, it consumes the token
+/// and enters the pause loop *on Core0*, deadlocking both cores (HardFault).
+///
+/// Masking the interrupt on Core0's NVIC before flash ops prevents this race.
+/// Core1's handler is unaffected (NVIC is per-core).
+fn mask_sio_fifo() {
+    NVIC::mask(interrupt::SIO_IRQ_FIFO);
+}
+
+/// Unmask SIO_IRQ_FIFO on Core0 after flash operations complete.
+///
+/// # Safety
+/// Only call after a corresponding `mask_sio_fifo()`.
+unsafe fn unmask_sio_fifo() {
+    unsafe { NVIC::unmask(interrupt::SIO_IRQ_FIFO) };
+}
 
 /// Fire-and-forget ULog write request (buffered channel, non-blocking send).
 /// Uses smaller chunk size (512B) to avoid 4KB stack allocations in the write path.
@@ -78,8 +102,23 @@ impl<'a> SequentialFlashManager<'a> {
             .await
             {
                 // Fire-and-forget ULog write from channel (no response needed)
+                // Batch: drain all pending channel messages into ulog_buffer, push once
                 embassy_futures::select::Either::First(req) => {
-                    if let Err(e) = self.write_ulog_internal(&req.data[..req.len]).await {
+                    let mut total = req.len.min(ULOG_CHUNK_SIZE);
+                    self.ulog_buffer[..total].copy_from_slice(&req.data[..total]);
+
+                    // Drain remaining pending messages into the same buffer
+                    while let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() {
+                        let len = extra.len.min(ULOG_WRITE_CHUNK_SIZE);
+                        if total + len > ULOG_CHUNK_SIZE {
+                            break; // Buffer full, leave extra for next iteration
+                        }
+                        self.ulog_buffer[total..total + len]
+                            .copy_from_slice(&extra.data[..len]);
+                        total += len;
+                    }
+
+                    if let Err(e) = self.write_ulog_batched(total).await {
                         warn!("Flash: ULog write failed: {}", e);
                     }
                 }
@@ -129,9 +168,12 @@ impl<'a> SequentialFlashManager<'a> {
         }
     }
 
-    /// Write ULog data to flash using sequential-storage queue
-    async fn write_ulog_internal(&mut self, data: &[u8]) -> ElleResult<()> {
-        if data.is_empty() {
+    /// Write batched ULog data to flash using sequential-storage queue.
+    /// Data must already be in `self.ulog_buffer[..len]`.
+    /// Batches multiple channel messages into a single `queue.push()` call,
+    /// reducing the number of `in_ram()` pause/resume cycles.
+    async fn write_ulog_batched(&mut self, len: usize) -> ElleResult<()> {
+        if len == 0 {
             return Ok(());
         }
 
@@ -139,14 +181,13 @@ impl<'a> SequentialFlashManager<'a> {
             self.ulog_initialized = true;
         }
 
-        let len = data.len().min(ULOG_WRITE_CHUNK_SIZE);
-        self.ulog_buffer[..len].copy_from_slice(&data[..len]);
-
         let flash = self.take_flash();
         let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
+        mask_sio_fifo();
         let result = queue.push(&self.ulog_buffer[..len], false).await;
+        unsafe { unmask_sio_fifo() };
 
         let (flash, _cache) = queue.destroy();
         self.put_flash(flash);
@@ -175,7 +216,9 @@ impl<'a> SequentialFlashManager<'a> {
         let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
+        mask_sio_fifo();
         let result = queue.peek(&mut self.ulog_buffer).await;
+        unsafe { unmask_sio_fifo() };
 
         // Copy data before destroying queue (result borrows ulog_buffer)
         let response = match result {
@@ -207,7 +250,9 @@ impl<'a> SequentialFlashManager<'a> {
         let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
+        mask_sio_fifo();
         let result = queue.pop(&mut self.ulog_buffer).await;
+        unsafe { unmask_sio_fifo() };
 
         let response = match result {
             Ok(Some(data)) => {
@@ -237,7 +282,9 @@ impl<'a> SequentialFlashManager<'a> {
         let mut data_buffer = [0u8; 128];
         let key: u8 = 1;
         let value: &[u8] = data.as_slice();
+        mask_sio_fifo();
         let result = map.store_item(&mut data_buffer, &key, &value).await;
+        unsafe { unmask_sio_fifo() };
 
         let (flash, _cache) = map.destroy();
         self.put_flash(flash);
@@ -262,8 +309,10 @@ impl<'a> SequentialFlashManager<'a> {
 
         let mut data_buffer = [0u8; 128];
         let key: u8 = 1;
+        mask_sio_fifo();
         let result: Result<Option<&[u8]>, _> =
             map.fetch_item(&mut data_buffer, &key).await;
+        unsafe { unmask_sio_fifo() };
 
         // Copy data out before destroying map (result borrows data_buffer via the slice)
         let response = match result {
@@ -310,7 +359,9 @@ impl<'a> SequentialFlashManager<'a> {
         let mut data_buffer = [0u8; 128];
         let key: u8 = 2;
         let value: &[u8] = data.as_slice();
+        mask_sio_fifo();
         let result = map.store_item(&mut data_buffer, &key, &value).await;
+        unsafe { unmask_sio_fifo() };
 
         let (flash, _cache) = map.destroy();
         self.put_flash(flash);
@@ -335,8 +386,10 @@ impl<'a> SequentialFlashManager<'a> {
 
         let mut data_buffer = [0u8; 128];
         let key: u8 = 2;
+        mask_sio_fifo();
         let result: Result<Option<&[u8]>, _> =
             map.fetch_item(&mut data_buffer, &key).await;
+        unsafe { unmask_sio_fifo() };
 
         let response = match result {
             Ok(Some(slice)) if slice.len() == 12 => {
@@ -382,11 +435,14 @@ impl<'a> SequentialFlashManager<'a> {
 
         while addr < end {
             let chunk_end = (addr + ERASE_CHUNK).min(end);
+            mask_sio_fifo();
             match flash.erase(addr, chunk_end).await {
                 Ok(_) => {
+                    unsafe { unmask_sio_fifo() };
                     addr = chunk_end;
                 }
                 Err(e) => {
+                    unsafe { unmask_sio_fifo() };
                     crate::elle_event!(
                         error,
                         crate::event::EVT_FLASH_ULOG_ERASE_FAILED,

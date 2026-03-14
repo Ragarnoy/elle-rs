@@ -230,7 +230,7 @@ pub fn init_rtt_rpc() -> RttChannels {
             }
             1: {
                 size: 1024,
-                mode: ChannelMode::NoBlockSkip,
+                mode: ChannelMode::BlockIfFull,
                 name: "rpc_tx"
             }
         }

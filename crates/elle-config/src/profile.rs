@@ -3,9 +3,15 @@ pub const FLASH_SIZE: usize = 16 * 1024 * 1024; // 16MB total flash (128 Mbit)
 /// Maximum ULog chunk size for flash reads/extraction
 pub const ULOG_CHUNK_SIZE: usize = 4096;
 
-/// ULog write chunk size — smaller than read chunks to avoid 4KB stack allocations
-/// in the fire-and-forget write path. Header writes are split into multiple chunks.
+/// ULog write chunk size for channel messages. Each channel message carries up to
+/// this many bytes. The flash manager batches multiple messages into a single
+/// `queue.push()` to minimize `in_ram()` pause/resume cycles.
 pub const ULOG_WRITE_CHUNK_SIZE: usize = 512;
+
+/// ULog logger internal buffer size. Larger buffer = fewer flushes = fewer channel
+/// messages = more data batched per flash write. At ~133 bytes/iteration (77Hz),
+/// a 2KB buffer flushes roughly every 11 iterations (~7 flushes/sec).
+pub const ULOG_LOGGER_BUFFER_SIZE: usize = 2048;
 
 // Flash operation requests and responses
 #[derive(Debug)]

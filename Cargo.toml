@@ -34,7 +34,7 @@ sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt"] }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "executor-thread"] }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "executor-thread", "executor-interrupt"] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
 
 # External dependencies - Hardware drivers
