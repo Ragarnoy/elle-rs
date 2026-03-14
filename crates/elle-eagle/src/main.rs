@@ -14,14 +14,14 @@ use elle_config::{
     IMU_MAX_AGE_MS,
 };
 
-#[cfg(not(feature = "rpc-control"))]
+#[cfg(any(not(feature = "rpc-control"), feature = "rc"))]
 use defmt::debug;
-#[cfg(not(feature = "rpc-control"))]
+#[cfg(any(not(feature = "rpc-control"), feature = "rc"))]
 use elle_config::{
     ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH, PITCH_CH, ROLL_CH,
     THROTTLE_CH, YAW_CH,
 };
-#[cfg(not(feature = "rpc-control"))]
+#[cfg(any(not(feature = "rpc-control"), feature = "rc"))]
 use elle_control::commands::PilotCommands;
 use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains};
 use elle_hardware::imu::{
@@ -115,7 +115,7 @@ async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
 /// - Attitude: 77Hz (every call)
 /// - Commands: 77Hz (every call)
 /// - Status: 7.7Hz (every 10th call)
-async fn log_flight_data(
+fn log_flight_data(
     logger: &mut ULogLogger,
     attitude: Option<&AttitudeData>,
     commands: &elle_control::commands::PilotCommands,
@@ -130,86 +130,74 @@ async fn log_flight_data(
 
     // Log attitude data at 77Hz
     if let Some(att) = attitude {
-        let _ = logger
-            .log_attitude(
-                att.pitch,
-                att.roll,
-                att.yaw,
-                att.pitch_rate,
-                att.roll_rate,
-                att.yaw_rate,
-            )
-            .await;
+        let _ = logger.log_attitude(
+            att.pitch,
+            att.roll,
+            att.yaw,
+            att.pitch_rate,
+            att.roll_rate,
+            att.yaw_rate,
+        );
     }
 
     // Log commands at 77Hz
     // Convert to normalized for consistent logging
     match commands {
         PilotCommands::Normalized(norm) => {
-            let _ = logger
-                .log_commands(
-                    norm.throttle,
-                    norm.pitch,
-                    norm.roll,
-                    norm.yaw,
-                    norm.attitude_mode as u8,
-                    norm.pitch_setpoint_deg,
-                    norm.roll_setpoint_deg,
-                )
-                .await;
+            let _ = logger.log_commands(
+                norm.throttle,
+                norm.pitch,
+                norm.roll,
+                norm.yaw,
+                norm.attitude_mode as u8,
+                norm.pitch_setpoint_deg,
+                norm.roll_setpoint_deg,
+            );
         }
         PilotCommands::Raw(raw) => {
             // Convert raw to normalized for logging
             let norm = raw.to_normalized();
-            let _ = logger
-                .log_commands(
-                    norm.throttle,
-                    norm.pitch,
-                    norm.roll,
-                    norm.yaw,
-                    norm.attitude_mode as u8,
-                    norm.pitch_setpoint_deg,
-                    norm.roll_setpoint_deg,
-                )
-                .await;
+            let _ = logger.log_commands(
+                norm.throttle,
+                norm.pitch,
+                norm.roll,
+                norm.yaw,
+                norm.attitude_mode as u8,
+                norm.pitch_setpoint_deg,
+                norm.roll_setpoint_deg,
+            );
         }
     }
 
     // Log engine data at 77Hz
     {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
-        let _ = logger.log_engine(&eng).await;
+        let _ = logger.log_engine(&eng);
     }
 
     // Log status at reduced rate (7.7Hz - every 10th iteration)
     if loop_counter.is_multiple_of(10) {
         let imu_status = IMU_STATUS.try_read();
-        let _ = logger
-            .log_status(
-                loop_timer_us,
-                imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
-                imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
-                fc.is_armed(),
-                0.0, // CPU load - could calculate from timing data
-                fc.rc_signal_age_ms(),
-            )
-            .await;
+        let _ = logger.log_status(
+            loop_timer_us,
+            imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
+            imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
+            fc.is_armed(),
+            0.0, // CPU load - could calculate from timing data
+            fc.rc_signal_age_ms(),
+        );
     }
 
     // Log barometer at ~2Hz (every 38 iterations)
     if loop_counter.is_multiple_of(38) {
         let baro = BARO.read_cached();
-        let _ = logger
-            .log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m)
-            .await;
+        let _ = logger.log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m);
     }
 
     // Log magnetometer at ~10Hz (every 8 iterations)
     if loop_counter.is_multiple_of(8) {
         let mag = MAG.read_cached();
-        let _ = logger
-            .log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32)
-            .await;
+        let _ = logger.log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32);
     }
 
     // Log GNSS at ~1Hz (every 77 iterations) — feature-gated
@@ -218,21 +206,19 @@ async fn log_flight_data(
         && let Some(gnss) = gnss_signal::GNSS_SIGNAL.try_take()
     {
         gnss_signal::GNSS_SIGNAL.signal(gnss); // put back for other readers
-        let _ = logger
-            .log_gnss(
-                gnss.latitude,
-                gnss.longitude,
-                gnss.altitude_m,
-                gnss.fix_quality,
-                gnss.num_satellites,
-                gnss.hdop,
-            )
-            .await;
+        let _ = logger.log_gnss(
+            gnss.latitude,
+            gnss.longitude,
+            gnss.altitude_m,
+            gnss.fix_quality,
+            gnss.num_satellites,
+            gnss.hdop,
+        );
     }
 
     // Drain event channel into ULog
     while let Ok((level, code)) = elle_hardware::event::ULOG_EVENT_CHANNEL.try_receive() {
-        let _ = logger.log_event(level, code).await;
+        let _ = logger.log_event(level, code);
     }
 
     // Update performance monitoring
@@ -848,8 +834,7 @@ async fn main(spawner: Spawner) {
                         loop_counter,
                         loop_timer.elapsed_us(),
                         &fc,
-                    )
-                    .await;
+                    );
                 } else if loop_counter.is_multiple_of(77) {
                     // Drain stale events when not recording (~1Hz)
                     while elle_hardware::event::ULOG_EVENT_CHANNEL
@@ -903,7 +888,11 @@ async fn main(spawner: Spawner) {
     {
         use core::sync::atomic::Ordering;
         use elle_config::profile::{FlashRequest, FlashResponse};
-        use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+        #[cfg(not(feature = "rc"))]
+        use elle_control::commands::AttitudeMode;
+        use elle_control::commands::NormalizedCommands;
+        #[cfg(not(feature = "rc"))]
+        use elle_control::commands::PilotCommands;
         use elle_hardware::sequential_flash_manager::{
             FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
         };
@@ -912,22 +901,37 @@ async fn main(spawner: Spawner) {
         };
         use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
 
+        #[cfg(feature = "rc")]
+        info!("RPC MONITORING MODE - RC/CRSF flight control + RPC observability");
+        #[cfg(not(feature = "rc"))]
         info!("GROUND TEST MODE - RPC Control (postcard-RPC over RTT)");
         info!("WARNING: This mode requires programmer connection");
 
-        // RPC mode: arming is via explicit arm/disarm commands only
+        // RPC mode without RC: arming is via explicit arm/disarm commands only
+        // With RC: use RC-based arming (throttle-low auto-arm)
+        #[cfg(not(feature = "rc"))]
         fc.set_explicit_arming(true);
 
         // Ticker for consistent control loop timing
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
 
-        // RPC commands accumulator (updated by RPC handlers)
+        // RPC commands accumulator (updated by RPC handlers, unused when rc feature is active)
+        #[cfg(not(feature = "rc"))]
         let mut rpc_throttle: f32 = 0.0;
+        #[cfg(not(feature = "rc"))]
         let mut rpc_elevon_left: f32 = 0.0;
+        #[cfg(not(feature = "rc"))]
         let mut rpc_elevon_right: f32 = 0.0;
+        #[cfg(not(feature = "rc"))]
         let mut rpc_mode = AttitudeMode::Manual;
+        #[cfg(not(feature = "rc"))]
         let mut rpc_pitch_setpoint_deg: f32 = 0.0;
+        #[cfg(not(feature = "rc"))]
         let mut rpc_roll_setpoint_deg: f32 = 0.0;
+
+        // RC mode: track last commands from CRSF receiver
+        #[cfg(feature = "rc")]
+        let mut last_commands: Option<PilotCommands> = None;
 
         // Autotuner state (same pattern as flight mode)
         let mut autotuner = Autotuner::new();
@@ -947,13 +951,20 @@ async fn main(spawner: Spawner) {
             // Process all pending RPC commands
             while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
                 match cmd {
+                    #[cfg(not(feature = "rc"))]
                     RpcCommand::SetThrottle(percent) => {
                         rpc_throttle = (percent as f32 / 100.0).clamp(0.0, 1.0);
                     }
+                    #[cfg(feature = "rc")]
+                    RpcCommand::SetThrottle(_) => {} // Ignored in RC mode
+                    #[cfg(not(feature = "rc"))]
                     RpcCommand::SetElevons { left, right } => {
                         rpc_elevon_left = (left as f32 / 100.0).clamp(-1.0, 1.0);
                         rpc_elevon_right = (right as f32 / 100.0).clamp(-1.0, 1.0);
                     }
+                    #[cfg(feature = "rc")]
+                    RpcCommand::SetElevons { .. } => {} // Ignored in RC mode
+                    #[cfg(not(feature = "rc"))]
                     RpcCommand::SetMode(mode) => {
                         rpc_mode = match mode {
                             ControlMode::Manual => AttitudeMode::Manual,
@@ -966,6 +977,8 @@ async fn main(spawner: Spawner) {
                             ControlMode::Autopilot => "Autopilot",
                         });
                     }
+                    #[cfg(feature = "rc")]
+                    RpcCommand::SetMode(_) => {} // Ignored in RC mode
                     RpcCommand::Arm => {
                         fc.arm();
                         elle_hardware::elle_event!(
@@ -988,9 +1001,12 @@ async fn main(spawner: Spawner) {
                             elle_hardware::event::EVT_EMERGENCY_STOP,
                             "RPC: EMERGENCY STOP"
                         );
-                        rpc_throttle = 0.0;
-                        rpc_elevon_left = 0.0;
-                        rpc_elevon_right = 0.0;
+                        #[cfg(not(feature = "rc"))]
+                        {
+                            rpc_throttle = 0.0;
+                            rpc_elevon_left = 0.0;
+                            rpc_elevon_right = 0.0;
+                        }
                         fc.disarm();
                         fc.apply_failsafe();
                     }
@@ -1020,6 +1036,7 @@ async fn main(spawner: Spawner) {
                             (i_limit * 10.0) as i32,
                         );
                     }
+                    #[cfg(not(feature = "rc"))]
                     RpcCommand::SetAttitudeSetpoint {
                         pitch_deg,
                         roll_deg,
@@ -1032,6 +1049,8 @@ async fn main(spawner: Spawner) {
                             (roll_deg * 100.0) as i32,
                         );
                     }
+                    #[cfg(feature = "rc")]
+                    RpcCommand::SetAttitudeSetpoint { .. } => {} // Ignored in RC mode
                     RpcCommand::StartULog => {
                         let mut ok = ulog_logger.is_initialized();
                         if !ok {
@@ -1213,32 +1232,63 @@ async fn main(spawner: Spawner) {
                 }
             }
 
-            // Poll CRSF receiver and update RC signal for RPC handler
-            if let Some(PilotCommands::Raw(raw)) = RC_COMMANDS.try_take().as_ref() {
-                rc_signal::RC_SIGNAL.signal(raw.channels);
-            }
+            // Build pilot commands — from CRSF receiver (rc feature) or RPC accumulators
+            #[cfg(feature = "rc")]
+            let commands = {
+                if let Some(commands) = RC_COMMANDS.try_take() {
+                    if let PilotCommands::Raw(raw) = &commands {
+                        rc_signal::RC_SIGNAL.signal(raw.channels);
+                        // Debug logging (~8Hz)
+                        if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10) {
+                            debug!(
+                                "RC: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
+                                raw.channels[ROLL_CH],
+                                raw.channels[PITCH_CH],
+                                raw.channels[THROTTLE_CH],
+                                raw.channels[YAW_CH],
+                                raw.channels[ATTITUDE_ENABLE_CH],
+                                raw.channels[ATTITUDE_PITCH_SETPOINT_CH],
+                                raw.channels[ATTITUDE_ROLL_SETPOINT_CH]
+                            );
+                        }
+                    }
+                    last_commands = Some(commands);
+                }
+                last_commands.clone()
+            };
 
-            // Build pilot commands from RPC state
-            let commands = PilotCommands::Normalized(NormalizedCommands {
-                throttle: rpc_throttle,
-                pitch: (rpc_elevon_left + rpc_elevon_right) / 2.0, // Mixed
-                roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,  // Mixed
-                yaw: 0.0,
-                attitude_mode: rpc_mode,
-                pitch_setpoint_deg: rpc_pitch_setpoint_deg,
-                roll_setpoint_deg: rpc_roll_setpoint_deg,
-                timestamp: Instant::now(),
-            });
+            #[cfg(not(feature = "rc"))]
+            let commands = {
+                if let Some(PilotCommands::Raw(raw)) = RC_COMMANDS.try_take().as_ref() {
+                    rc_signal::RC_SIGNAL.signal(raw.channels);
+                }
+                Some(PilotCommands::Normalized(NormalizedCommands {
+                    throttle: rpc_throttle,
+                    pitch: (rpc_elevon_left + rpc_elevon_right) / 2.0,
+                    roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,
+                    yaw: 0.0,
+                    attitude_mode: rpc_mode,
+                    pitch_setpoint_deg: rpc_pitch_setpoint_deg,
+                    roll_setpoint_deg: rpc_roll_setpoint_deg,
+                    timestamp: Instant::now(),
+                }))
+            };
 
             // Update flight controller
             let valid_attitude = validate_attitude(attitude);
-            fc.update(&commands, valid_attitude.as_ref());
+            if let Some(ref commands) = commands {
+                fc.update(commands, valid_attitude.as_ref());
+            }
 
             // Send engine commands via DShot (governor converts eRPM target to DShot)
             let (engine_l, engine_r) = fc.engine_output();
             let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
             let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
             DSHOT_THROTTLE.signal((l_erpm, r_erpm));
+
+            // Check for RC signal loss (only relevant when RC is the command source)
+            #[cfg(feature = "rc")]
+            fc.check_failsafe();
 
             // Autotuner per-tick update
             if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
@@ -1391,16 +1441,17 @@ async fn main(spawner: Spawner) {
             }
 
             // Log flight data to ULog flash storage (only when recording is active)
+            let neutral = PilotCommands::Normalized(NormalizedCommands::neutral());
+            let ulog_commands = commands.as_ref().unwrap_or(&neutral);
             if ULOG_ENABLED.load(Ordering::Acquire) {
                 log_flight_data(
                     &mut ulog_logger,
                     valid_attitude.as_ref(),
-                    &commands,
+                    ulog_commands,
                     loop_counter,
                     loop_timer.elapsed_us(),
                     &fc,
-                )
-                .await;
+                );
             } else if loop_counter.is_multiple_of(77) {
                 // Drain stale events when not recording (~1Hz)
                 while elle_hardware::event::ULOG_EVENT_CHANNEL

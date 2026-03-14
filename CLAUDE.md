@@ -23,12 +23,14 @@ Target is RP2350 (`thumbv8m.main-none-eabihf`), configured in `.cargo/config.tom
 ```sh
 cd crates/elle-eagle
 cargo build --release                                              # default features (CRSF/ELRS flight mode)
-cargo build --release --no-default-features --features rpc-control # with RPC server (ground test mode)
-cargo run --release --no-default-features --features rpc-control   # flash via probe-rs
+cargo build --release --no-default-features --features rpc-control    # with RPC server (ground test mode)
+cargo build --release --no-default-features --features rpc-control,rc # RPC monitoring + RC flight control
+cargo run --release --no-default-features --features rpc-control      # flash via probe-rs
 ```
 
 Key feature flags for elle-eagle:
 - `rpc-control` — postcard-RPC server over RTT (ground test mode). **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`); build with `--no-default-features --features rpc-control`
+- `rc` — RC/CRSF flight control in RPC mode. When combined with `rpc-control`, pilot commands come from the RC transmitter instead of RPC accumulators. The TUI still provides full monitoring. Mitigates a build-specific DShot PIO issue in the RPC binary (see memory).
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
 - `gnss` — SAM-M10Q GNSS receiver support (requires `rpc-control`)

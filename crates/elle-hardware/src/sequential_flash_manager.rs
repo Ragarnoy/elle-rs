@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use defmt::*;
-use elle_config::profile::{FlashRequest, FlashResponse, ULOG_CHUNK_SIZE};
+use elle_config::profile::{FlashRequest, FlashResponse, ULOG_CHUNK_SIZE, ULOG_WRITE_CHUNK_SIZE};
 use elle_error::{ElleResult, FlashError};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
@@ -15,14 +15,15 @@ use sequential_storage::queue::{QueueConfig, QueueStorage};
 
 use crate::flash_constants::{PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_START};
 
-/// Fire-and-forget ULog write request (buffered channel, non-blocking send)
+/// Fire-and-forget ULog write request (buffered channel, non-blocking send).
+/// Uses smaller chunk size (512B) to avoid 4KB stack allocations in the write path.
 pub struct ULogWriteRequest {
-    pub data: [u8; ULOG_CHUNK_SIZE],
+    pub data: [u8; ULOG_WRITE_CHUNK_SIZE],
     pub len: usize,
 }
 
-/// Buffered channel for fire-and-forget ULog writes (4 slots = 4 × 4KB = 16KB)
-pub static ULOG_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, ULogWriteRequest, 4> =
+/// Buffered channel for fire-and-forget ULog writes (8 slots × 512B = 4KB)
+pub static ULOG_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, ULogWriteRequest, 8> =
     Channel::new();
 
 /// Inter-core communication signals for flash operations (non-ULog-write ops)
@@ -85,17 +86,6 @@ impl<'a> SequentialFlashManager<'a> {
 
                 // Signal-based flash operations (response required)
                 embassy_futures::select::Either::Second(request) => match request {
-                    FlashRequest::WriteULogBlocking { data, len } => {
-                        let response = match self.write_ulog_internal(&data[..len]).await {
-                            Ok(_) => FlashResponse::ULogWriteSuccess,
-                            Err(e) => {
-                                warn!("Flash: ULog write failed: {}", e);
-                                FlashResponse::ULogWriteFailed
-                            }
-                        };
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
                     FlashRequest::PeekULog => {
                         let response = self.peek_ulog_internal().await;
                         FLASH_RESPONSE_SIGNAL.signal(response);
@@ -149,7 +139,7 @@ impl<'a> SequentialFlashManager<'a> {
             self.ulog_initialized = true;
         }
 
-        let len = data.len().min(ULOG_CHUNK_SIZE);
+        let len = data.len().min(ULOG_WRITE_CHUNK_SIZE);
         self.ulog_buffer[..len].copy_from_slice(&data[..len]);
 
         let flash = self.take_flash();
@@ -420,12 +410,12 @@ impl<'a> SequentialFlashManager<'a> {
 /// Fire-and-forget ULog write — returns immediately, data is queued for async flash write.
 /// Returns `false` if the channel is full (data dropped) or input is invalid.
 pub fn request_write_ulog(data: &[u8]) -> bool {
-    if data.is_empty() || data.len() > ULOG_CHUNK_SIZE {
+    if data.is_empty() || data.len() > ULOG_WRITE_CHUNK_SIZE {
         warn!("Flash: invalid ULog data size: {}", data.len());
         return false;
     }
 
-    let mut buffer = [0u8; ULOG_CHUNK_SIZE];
+    let mut buffer = [0u8; ULOG_WRITE_CHUNK_SIZE];
     buffer[..data.len()].copy_from_slice(data);
 
     match ULOG_WRITE_CHANNEL.try_send(ULogWriteRequest {
@@ -440,37 +430,34 @@ pub fn request_write_ulog(data: &[u8]) -> bool {
     }
 }
 
-/// Blocking ULog write — waits for flash confirmation. Used only for ULog header writes
-/// where data integrity is critical (called once during initialization).
+/// Blocking ULog write — waits until data is queued for flash write.
+/// Splits large payloads (e.g. ULog header) into ULOG_WRITE_CHUNK_SIZE chunks.
+/// Used for ULog header writes during initialization.
 pub async fn request_write_ulog_blocking(data: &[u8]) -> bool {
-    if data.is_empty() || data.len() > ULOG_CHUNK_SIZE {
-        warn!("Flash: invalid ULog data size: {}", data.len());
+    if data.is_empty() {
+        warn!("Flash: empty ULog data");
         return false;
     }
 
-    let mut buffer = [0u8; ULOG_CHUNK_SIZE];
-    buffer[..data.len()].copy_from_slice(data);
+    for chunk in data.chunks(ULOG_WRITE_CHUNK_SIZE) {
+        let mut req = ULogWriteRequest {
+            data: [0u8; ULOG_WRITE_CHUNK_SIZE],
+            len: chunk.len(),
+        };
+        req.data[..chunk.len()].copy_from_slice(chunk);
 
-    FLASH_REQUEST_SIGNAL.signal(FlashRequest::WriteULogBlocking {
-        data: buffer,
-        len: data.len(),
-    });
-
-    let timeout = Timer::after(Duration::from_secs(10));
-
-    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
-        embassy_futures::select::Either::First(response) => match response {
-            FlashResponse::ULogWriteSuccess => true,
-            FlashResponse::ULogWriteFailed => false,
-            _ => false,
-        },
-        embassy_futures::select::Either::Second(_) => {
-            crate::elle_event!(
-                error,
-                crate::event::EVT_FLASH_ULOG_WRITE_TIMEOUT,
-                "Flash: timeout waiting for ULog write"
-            );
-            false
+        let timeout = Timer::after(Duration::from_secs(10));
+        match embassy_futures::select::select(ULOG_WRITE_CHANNEL.send(req), timeout).await {
+            embassy_futures::select::Either::First(()) => {}
+            embassy_futures::select::Either::Second(_) => {
+                crate::elle_event!(
+                    error,
+                    crate::event::EVT_FLASH_ULOG_WRITE_TIMEOUT,
+                    "Flash: timeout waiting for ULog write channel"
+                );
+                return false;
+            }
         }
     }
+    true
 }

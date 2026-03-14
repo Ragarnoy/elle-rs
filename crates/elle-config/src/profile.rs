@@ -1,18 +1,15 @@
 pub const FLASH_SIZE: usize = 16 * 1024 * 1024; // 16MB total flash (128 Mbit)
 
-/// Maximum ULog chunk size for flash writes
+/// Maximum ULog chunk size for flash reads/extraction
 pub const ULOG_CHUNK_SIZE: usize = 4096;
+
+/// ULog write chunk size — smaller than read chunks to avoid 4KB stack allocations
+/// in the fire-and-forget write path. Header writes are split into multiple chunks.
+pub const ULOG_WRITE_CHUNK_SIZE: usize = 512;
 
 // Flash operation requests and responses
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)] // WriteULogBlocking needs 4KB buffer for inter-core transfer
 pub enum FlashRequest {
-    /// Blocking ULog write via Signal path — used only for header init where confirmation is needed.
-    /// Regular ULog data writes use the fire-and-forget ULOG_WRITE_CHANNEL instead.
-    WriteULogBlocking {
-        data: [u8; ULOG_CHUNK_SIZE],
-        len: usize,
-    },
     PeekULog,
     PopULog,
     EraseULog,
@@ -29,8 +26,6 @@ pub enum FlashRequest {
 #[derive(Clone, Copy, Debug)]
 #[allow(clippy::large_enum_variant)] // Intentional: no_std + Copy, transferred via Signal
 pub enum FlashResponse {
-    ULogWriteSuccess,
-    ULogWriteFailed,
     ULogData {
         data: [u8; ULOG_CHUNK_SIZE],
         len: usize,

@@ -3,7 +3,7 @@
 //! Provides a high-level interface for logging flight data to flash using ULog format.
 
 use defmt::*;
-use elle_config::profile::ULOG_CHUNK_SIZE;
+use elle_config::profile::ULOG_WRITE_CHUNK_SIZE;
 use embassy_time::Instant;
 use heapless::Vec;
 
@@ -14,7 +14,7 @@ pub struct ULogLogger {
     /// Reusable ULog writer (avoids 4KB allocation per log call)
     writer: elle_ulog::ULogWriter,
     /// Internal buffer for collecting log data
-    buffer: Vec<u8, ULOG_CHUNK_SIZE>,
+    buffer: Vec<u8, ULOG_WRITE_CHUNK_SIZE>,
     /// Whether the logger has been initialized
     initialized: bool,
     /// Message IDs for subscriptions
@@ -152,7 +152,7 @@ impl ULogLogger {
     }
 
     /// Log attitude data
-    pub async fn log_attitude(
+    pub fn log_attitude(
         &mut self,
         pitch: f32,
         roll: f32,
@@ -189,7 +189,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -198,7 +198,7 @@ impl ULogLogger {
 
     /// Log commands data
     #[allow(clippy::too_many_arguments)]
-    pub async fn log_commands(
+    pub fn log_commands(
         &mut self,
         throttle: f32,
         pitch: f32,
@@ -237,7 +237,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -245,7 +245,7 @@ impl ULogLogger {
     }
 
     /// Log system status
-    pub async fn log_status(
+    pub fn log_status(
         &mut self,
         loop_time_us: u32,
         imu_errors: u32,
@@ -282,7 +282,7 @@ impl ULogLogger {
             .map_err(|_| ())?;
 
         // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -290,7 +290,7 @@ impl ULogLogger {
     }
 
     /// Log barometer data
-    pub async fn log_barometer(
+    pub fn log_barometer(
         &mut self,
         pressure_hpa: f32,
         temperature_c: f32,
@@ -313,7 +313,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -321,7 +321,7 @@ impl ULogLogger {
     }
 
     /// Log magnetometer data
-    pub async fn log_magnetometer(&mut self, mag_x: f32, mag_y: f32, mag_z: f32) -> Result<(), ()> {
+    pub fn log_magnetometer(&mut self, mag_x: f32, mag_y: f32, mag_z: f32) -> Result<(), ()> {
         if !self.initialized {
             return Err(());
         }
@@ -339,7 +339,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -348,7 +348,7 @@ impl ULogLogger {
 
     /// Log GNSS data
     #[allow(clippy::too_many_arguments)]
-    pub async fn log_gnss(
+    pub fn log_gnss(
         &mut self,
         latitude: f32,
         longitude: f32,
@@ -382,7 +382,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -390,7 +390,7 @@ impl ULogLogger {
     }
 
     /// Log engine data from `EngineReading` cache snapshot
-    pub async fn log_engine(
+    pub fn log_engine(
         &mut self,
         eng: &crate::dshot::EngineReading,
     ) -> Result<(), ()> {
@@ -425,7 +425,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -433,7 +433,7 @@ impl ULogLogger {
     }
 
     /// Log a discrete event (level + code)
-    pub async fn log_event(&mut self, level: u8, code: u16) -> Result<(), ()> {
+    pub fn log_event(&mut self, level: u8, code: u16) -> Result<(), ()> {
         if !self.initialized {
             return Err(());
         }
@@ -451,7 +451,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ())?;
 
-        if self.buffer.len() > (ULOG_CHUNK_SIZE * 3 / 4) {
+        if self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE * 3 / 4) {
             self.flush()?;
         }
 
@@ -485,13 +485,13 @@ impl ULogLogger {
     /// Check if the logger needs flushing
     #[must_use]
     pub fn needs_flush(&self) -> bool {
-        self.buffer.len() > (ULOG_CHUNK_SIZE / 2)
+        self.buffer.len() > (ULOG_WRITE_CHUNK_SIZE / 2)
     }
 
     /// Get the buffer fill percentage
     #[must_use]
     pub fn buffer_fill_percent(&self) -> u8 {
-        ((self.buffer.len() * 100) / ULOG_CHUNK_SIZE) as u8
+        ((self.buffer.len() * 100) / ULOG_WRITE_CHUNK_SIZE) as u8
     }
 }
 

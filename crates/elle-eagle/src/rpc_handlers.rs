@@ -3,6 +3,7 @@ use embassy_sync::channel::Channel;
 
 /// Commands sent from RPC handlers to flight controller
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // Some variant fields unused when `rc` feature ignores RPC flight commands
 pub enum RpcCommand {
     SetThrottle(u8),
     SetElevons { left: i8, right: i8 },
