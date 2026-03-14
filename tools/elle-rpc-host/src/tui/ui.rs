@@ -88,17 +88,17 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
         Span::styled(" REC", Style::default().fg(Color::DarkGray))
     };
 
-    // Device uptime — format as HH:MM:SS
+    // Device wall clock — AON timer is seeded with compile-time Unix epoch
     let time_str = state
         .device_time_ms
         .map(|ms| {
-            let secs = ms / 1000;
-            let h = secs / 3600;
-            let m = (secs % 3600) / 60;
-            let s = secs % 60;
-            format!("T+{h:02}:{m:02}:{s:02}")
+            let total_secs = (ms / 1000) as i64;
+            let h = ((total_secs % 86400) / 3600) as u32;
+            let m = ((total_secs % 3600) / 60) as u32;
+            let s = (total_secs % 60) as u32;
+            format!("{h:02}:{m:02}:{s:02}")
         })
-        .unwrap_or_else(|| "T+--:--:--".into());
+        .unwrap_or_else(|| "--:--:--".into());
 
     // Render the block first, then split its inner area
     let block = Block::default().borders(Borders::ALL);
@@ -298,49 +298,53 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
             String::new()
         };
 
-        let engine_line = if let Some(e) = state.engine {
-            let l_rpm = if e.left.valid {
-                format!("{}", e.left.erpm)
+        const POLE_PAIRS: u32 = 7; // 14-pole motor
+        let (engine_line, edt_line) = if let Some(e) = state.engine {
+            let l_rpm_str = if e.left.valid {
+                let rpm = e.left.erpm / POLE_PAIRS;
+                format!("{rpm} RPM")
             } else {
                 "STALE".into()
             };
-            let r_rpm = if e.right.valid {
-                format!("{}", e.right.erpm)
+            let r_rpm_str = if e.right.valid {
+                let rpm = e.right.erpm / POLE_PAIRS;
+                format!("{rpm} RPM")
             } else {
                 "STALE".into()
             };
             let l_target = if e.left.target_erpm > 0 {
-                format!("\u{2192}{}", e.left.target_erpm)
+                format!("\u{2192}{}", e.left.target_erpm / POLE_PAIRS)
             } else {
                 String::new()
             };
             let r_target = if e.right.target_erpm > 0 {
-                format!("\u{2192}{}", e.right.target_erpm)
+                format!("\u{2192}{}", e.right.target_erpm / POLE_PAIRS)
             } else {
                 String::new()
             };
-            let edt = if e.left.voltage_mv > 0 || e.right.voltage_mv > 0 {
-                format!(
-                    "\n  EDT: {:.1}V {:.1}A {}°C | {:.1}V {:.1}A {}°C",
+            let edt_line = if e.left.voltage_mv > 0 || e.right.voltage_mv > 0 {
+                Some(format!(
+                    "  EDT: {:.1}V {:.1}A {}°C | {:.1}V {:.1}A {}°C",
                     e.left.voltage_mv as f32 / 1000.0,
                     e.left.current_ma as f32 / 1000.0,
                     e.left.temperature,
                     e.right.voltage_mv as f32 / 1000.0,
                     e.right.current_ma as f32 / 1000.0,
                     e.right.temperature,
-                )
+                ))
             } else {
-                String::new()
+                None
             };
-            format!(
-                "  Eng L: {} eRPM{} (cmd:{}) | R: {} eRPM{} (cmd:{}){edt}",
-                l_rpm, l_target, e.left.throttle, r_rpm, r_target, e.right.throttle,
-            )
+            let eng = format!(
+                "  Eng L: {l_rpm_str}{l_target} (cmd:{}) | R: {r_rpm_str}{r_target} (cmd:{})",
+                e.left.throttle, e.right.throttle,
+            );
+            (eng, edt_line)
         } else {
-            "  Eng: ---".into()
+            ("  Eng: ---".into(), None)
         };
 
-        vec![
+        let mut lines = vec![
             Line::from(format!(
                 "  PID: P={:+.3} R={:+.3}{err_str}",
                 c.pitch_correction_cp as f32 / 10000.0,
@@ -351,7 +355,11 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                 c.elevon_left_us, c.elevon_right_us, c.engine_left_dshot, c.engine_right_dshot,
             )),
             Line::from(engine_line),
-        ]
+        ];
+        if let Some(edt) = edt_line {
+            lines.push(Line::from(edt));
+        }
+        lines
     } else {
         vec![Line::from("  Controller: ---")]
     };
