@@ -30,12 +30,12 @@ elle-rpc-icd = { path = "crates/elle-rpc-icd" }
 mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt"] }
 sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
 
-# External dependencies - Embassy ecosystem
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git" }
-embassy-rp = { version = "0.9.0", git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa"] }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git" }
+# External dependencies - Embassy ecosystem (pinned to git HEAD for multicore executor support)
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt"] }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "executor-thread", "executor-interrupt"] }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
 
 # External dependencies - Hardware drivers
 icm426xx = { path = "../icm426xx", default-features = false, features = ["defmt"] }
@@ -48,32 +48,32 @@ free-flight-stabilization = { git = "https://github.com/AeroRust/free-flight-sta
 # External dependencies - System libraries
 cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
-defmt-rtt = "1.0.0"
-panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+defmt-rtt = "1.1"
+panic-probe = { version = "1.0", features = ["print-defmt"] }
 libm = "0.2.15"
-static_cell = "2.1.1"
-rtt-target = { version = "0.6.1", features = ["defmt"] }
-thiserror = { version = "2.0.17", default-features = false }
-sequential-storage = { version = "7.1.0", default-features = false }
+static_cell = "2.1"
+rtt-target = { version = "0.6", features = ["defmt"] }
+thiserror = { version = "2.0", default-features = false }
+sequential-storage = { version = "7.1", default-features = false }
 heapless = { version = "0.9", features = ["serde"] }
 postcard = { version = "1.1", default-features = false }
 postcard-rpc = { version = "0.12", default-features = false }
 postcard-schema = { version = "0.2", default-features = false, features = ["derive", "heapless-v0_9"] }
 bmp390 = { version = "0.4", default-features = false, features = ["sync"] }
-embedded-hal-bus = { version = "0.3.0", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false }
 ahrs = { version = "0.8", default-features = false }
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
 uom = { version = "0.36.0", default-features = false, features = ["f32", "si"] }
 cobs = { version = "0.5", default-features = false }
-crc = { version = "3", default-features = false }
+crc = { version = "3.4", default-features = false }
 embedded-io = "0.7"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 embassy-dshot = { path = "../dshot-pio", default-features = false, features = ["rp2350", "defmt"] }
-dshot-frame = "0.2.1"
+dshot-frame = "0.2"
 
 [patch.crates-io]
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
 
 [profile.release]
 debug = 2

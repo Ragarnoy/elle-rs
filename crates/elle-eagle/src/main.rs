@@ -53,7 +53,8 @@ use elle_system::{
     TimingMeasurement, log_performance_summary, supervisor_task, update_control_loop_timing,
     update_led_timing, update_ulog_timing,
 };
-use embassy_executor::{Executor, Spawner};
+use embassy_executor::Spawner;
+use embassy_rp::executor::Executor;
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
@@ -280,7 +281,7 @@ pub mod gnss_signal {
 #[cfg(feature = "rpc-control")]
 mod rpc_handlers;
 
-#[embassy_executor::main]
+#[embassy_executor::main(executor = "Executor", entry = "cortex_m_rt::entry")]
 async fn main(spawner: Spawner) {
     let mut config =
         embassy_rp::config::Config::new(ClockConfig::system_freq(200_000_000).unwrap());

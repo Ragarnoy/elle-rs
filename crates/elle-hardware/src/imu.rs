@@ -384,9 +384,8 @@ impl<'a> Imu<'a> {
         loop {
             // Wait for DATA_RDY: INT1 goes high when new sample is ready
             // (active-high, latched — cleared on INT_STATUS read inside read_sample).
-            while self.int1.is_low() {
-                embassy_futures::yield_now().await;
-            }
+            // Uses true async GPIO (embassy-rp multicore executor enables cross-core IRQ wakeup).
+            self.int1.wait_for_high().await;
 
             // 1. Read ICM-42686 FIFO sample (guaranteed to have data after INT1 high)
             match icm.read_sample() {
