@@ -1,6 +1,27 @@
 #![allow(clippy::inline_always)]
 use crate::*;
 
+/// Const-compatible clamp for i32 (stable Rust `i32::clamp` is not const).
+const fn const_clamp_i32(v: i32, lo: i32, hi: i32) -> i32 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+/// Compute reduction percentage, clamped to `[0, max_percent]`.
+const fn compute_reduction(amount: i32, max_range: i32, max_percent: i32) -> i32 {
+    let raw = if max_range > 0 {
+        amount * max_percent / max_range
+    } else {
+        max_percent
+    };
+    if raw < max_percent { raw } else { max_percent }
+}
+
 /// RC value range (0-2047, so we need 2048 entries)
 pub const RC_MAX_VALUE: usize = 2047;
 pub const RC_LUT_SIZE: usize = RC_MAX_VALUE + 1;
@@ -59,24 +80,17 @@ const fn generate_servo_lut(min_us: u32, max_us: u32) -> [u32; RC_LUT_SIZE] {
 }
 
 /// Const function to generate normalized value lookup table
-/// Using fixed-point arithmetic (multiplied by 1024) for integer math
+/// Values are (rc - center), clamped to [-1024, 1024]; divide by 1024.0 for [-1.0, 1.0]
 const fn generate_normalized_lut(center: u16) -> [i32; RC_LUT_SIZE] {
     let mut lut = [0i32; RC_LUT_SIZE];
     let mut i = 0;
 
     while i < RC_LUT_SIZE {
         let rc = i as i32;
-        // Fixed-point math: multiply by 1024 for precision
-        let normalized_fp = ((rc - center as i32) * 1024) / 1024;
+        let normalized_fp = rc - center as i32;
 
         // Clamp to -1024 to 1024 (representing -1.0 to 1.0)
-        lut[i] = if normalized_fp < -1024 {
-            -1024
-        } else if normalized_fp > 1024 {
-            1024
-        } else {
-            normalized_fp
-        };
+        lut[i] = const_clamp_i32(normalized_fp, -1024, 1024);
 
         i += 1;
     }
@@ -97,30 +111,12 @@ const fn generate_differential_lut() -> [(u32, u32); DIFF_LUT_SIZE] {
         } else if ch4_value < DIFF_NEUTRAL_MIN {
             let amount = (DIFF_NEUTRAL_MIN - ch4_value) as i32;
             let max_range = (DIFF_NEUTRAL_MIN - 300) as i32;
-            let reduction = if max_range > 0 {
-                amount * DIFF_MAX_PERCENT / max_range
-            } else {
-                DIFF_MAX_PERCENT
-            };
-            let reduction = if reduction < DIFF_MAX_PERCENT {
-                reduction
-            } else {
-                DIFF_MAX_PERCENT
-            };
+            let reduction = compute_reduction(amount, max_range, DIFF_MAX_PERCENT);
             ((100 - reduction) as u32, 100)
         } else {
             let amount = (ch4_value - DIFF_NEUTRAL_MAX) as i32;
             let max_range = (1700 - DIFF_NEUTRAL_MAX) as i32;
-            let reduction = if max_range > 0 {
-                amount * DIFF_MAX_PERCENT / max_range
-            } else {
-                DIFF_MAX_PERCENT
-            };
-            let reduction = if reduction < DIFF_MAX_PERCENT {
-                reduction
-            } else {
-                DIFF_MAX_PERCENT
-            };
+            let reduction = compute_reduction(amount, max_range, DIFF_MAX_PERCENT);
             (100, (100 - reduction) as u32)
         };
 
@@ -139,16 +135,9 @@ const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
     while i < RC_LUT_SIZE {
         let rc_value = i as u16;
 
-        // Convert to normalized yaw input using fixed-point math
         let center = RC_CENTER as i32;
-        let normalized_fp = ((rc_value as i32 - center) * 1024) / 1024;
-        let yaw_input_fp = if normalized_fp < -1024 {
-            -1024
-        } else if normalized_fp > 1024 {
-            1024
-        } else {
-            normalized_fp
-        };
+        let normalized_fp = rc_value as i32 - center;
+        let yaw_input_fp = const_clamp_i32(normalized_fp, -1024, 1024);
 
         // Apply YAW_TO_DIFF_GAIN (assuming 1.0 for now, can be adjusted)
         let yaw_factor_fp = yaw_input_fp; // * YAW_TO_DIFF_GAIN in fixed point
@@ -168,20 +157,8 @@ const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
         };
 
         // Clamp to 0.8-1.0 range (819 to 1024 in fixed point)
-        let left_final = if left_mult_fp < 819 {
-            819
-        } else if left_mult_fp > 1024 {
-            1024
-        } else {
-            left_mult_fp
-        };
-        let right_final = if right_mult_fp < 819 {
-            819
-        } else if right_mult_fp > 1024 {
-            1024
-        } else {
-            right_mult_fp
-        };
+        let left_final = const_clamp_i32(left_mult_fp, 819, 1024);
+        let right_final = const_clamp_i32(right_mult_fp, 819, 1024);
 
         lut[i] = (left_final, right_final);
         i += 1;
@@ -325,31 +302,28 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
         return 0;
     }
 
-    let table = &GOVERNOR_FF_TABLE;
-
     // Below the first entry: extrapolate linearly from origin
-    if target_erpm <= table[0].0 {
-        return ((target_erpm as u32 * table[0].1 as u32) / table[0].0) as u16;
+    if target_erpm <= GOVERNOR_FF_TABLE[0].0 {
+        return ((target_erpm * GOVERNOR_FF_TABLE[0].1 as u32) / GOVERNOR_FF_TABLE[0].0)
+            as u16;
     }
 
     // Above the last entry: clamp to max DShot
-    let last = table[table.len() - 1];
+    let last = GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1];
     if target_erpm >= last.0 {
         return last.1.min(DSHOT_THROTTLE_MAX);
     }
 
     // Linear search (table is small, ~12 entries — faster than binary search on MCU)
-    let mut i = 1;
-    while i < table.len() {
-        if target_erpm <= table[i].0 {
-            let (erpm_lo, dshot_lo) = table[i - 1];
-            let (erpm_hi, dshot_hi) = table[i];
+    for i in 1..GOVERNOR_FF_TABLE.len() {
+        if target_erpm <= GOVERNOR_FF_TABLE[i].0 {
+            let (erpm_lo, dshot_lo) = GOVERNOR_FF_TABLE[i - 1];
+            let (erpm_hi, dshot_hi) = GOVERNOR_FF_TABLE[i];
             let range_erpm = erpm_hi - erpm_lo;
             let range_dshot = dshot_hi as u32 - dshot_lo as u32;
             let offset = target_erpm - erpm_lo;
             return (dshot_lo as u32 + offset * range_dshot / range_erpm) as u16;
         }
-        i += 1;
     }
 
     last.1

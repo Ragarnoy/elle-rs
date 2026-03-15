@@ -66,7 +66,6 @@ pub struct SequentialFlashManager<'a> {
     /// so we move flash into QueueStorage and back via destroy().
     flash: Option<FlashDevice<'a>>,
     ulog_buffer: [u8; ULOG_CHUNK_SIZE],
-    ulog_initialized: bool,
 }
 
 impl<'a> SequentialFlashManager<'a> {
@@ -75,7 +74,6 @@ impl<'a> SequentialFlashManager<'a> {
         Self {
             flash: Some(flash),
             ulog_buffer: [0; ULOG_CHUNK_SIZE],
-            ulog_initialized: false,
         }
     }
 
@@ -177,10 +175,6 @@ impl<'a> SequentialFlashManager<'a> {
             return Ok(());
         }
 
-        if !self.ulog_initialized {
-            self.ulog_initialized = true;
-        }
-
         let flash = self.take_flash();
         let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
@@ -273,15 +267,13 @@ impl<'a> SequentialFlashManager<'a> {
         response
     }
 
-    /// Save PID profile to flash map storage
-    async fn save_pid_profile_internal(&mut self, data: &[u8; 32]) -> FlashResponse {
+    /// Save a value to flash map storage by key.
+    async fn save_to_map(&mut self, key: u8, value: &[u8]) -> bool {
         let flash = self.take_flash();
         let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
         let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
 
         let mut data_buffer = [0u8; 128];
-        let key: u8 = 1;
-        let value: &[u8] = data.as_slice();
         mask_sio_fifo();
         let result = map.store_item(&mut data_buffer, &key, &value).await;
         unsafe { unmask_sio_fifo() };
@@ -289,48 +281,34 @@ impl<'a> SequentialFlashManager<'a> {
         let (flash, _cache) = map.destroy();
         self.put_flash(flash);
 
-        match result {
-            Ok(_) => {
-                info!("Flash: PID profile saved");
-                FlashResponse::PidProfileSaved
-            }
-            Err(e) => {
-                warn!("Flash: PID profile save failed: {:?}", Debug2Format(&e));
-                FlashResponse::PidProfileSaveFailed
-            }
-        }
+        result.is_ok()
     }
 
-    /// Load PID profile from flash map storage
-    async fn load_pid_profile_internal(&mut self) -> FlashResponse {
+    /// Load a value from flash map storage by key, returning up to `N` bytes.
+    async fn load_from_map<const N: usize>(&mut self, key: u8) -> Option<[u8; N]> {
         let flash = self.take_flash();
         let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
         let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
 
         let mut data_buffer = [0u8; 128];
-        let key: u8 = 1;
         mask_sio_fifo();
         let result: Result<Option<&[u8]>, _> =
             map.fetch_item(&mut data_buffer, &key).await;
         unsafe { unmask_sio_fifo() };
 
-        // Copy data out before destroying map (result borrows data_buffer via the slice)
-        let response = match result {
-            Ok(Some(slice)) if slice.len() == 32 => {
-                let mut out = [0u8; 32];
+        let loaded = match result {
+            Ok(Some(slice)) if slice.len() == N => {
+                let mut out = [0u8; N];
                 out.copy_from_slice(slice);
                 Some(out)
             }
             Ok(Some(slice)) => {
-                warn!(
-                    "Flash: PID profile wrong size ({}), expected 32",
-                    slice.len()
-                );
+                warn!("Flash: key {} wrong size ({}), expected {}", key, slice.len(), N);
                 None
             }
             Ok(None) => None,
             Err(e) => {
-                warn!("Flash: PID profile load failed: {:?}", Debug2Format(&e));
+                warn!("Flash: key {} load failed: {:?}", key, Debug2Format(&e));
                 None
             }
         };
@@ -338,7 +316,23 @@ impl<'a> SequentialFlashManager<'a> {
         let (flash, _cache) = map.destroy();
         self.put_flash(flash);
 
-        match response {
+        loaded
+    }
+
+    /// Save PID profile to flash map storage
+    async fn save_pid_profile_internal(&mut self, data: &[u8; 32]) -> FlashResponse {
+        if self.save_to_map(1, data.as_slice()).await {
+            info!("Flash: PID profile saved");
+            FlashResponse::PidProfileSaved
+        } else {
+            warn!("Flash: PID profile save failed");
+            FlashResponse::PidProfileSaveFailed
+        }
+    }
+
+    /// Load PID profile from flash map storage
+    async fn load_pid_profile_internal(&mut self) -> FlashResponse {
+        match self.load_from_map::<32>(1).await {
             Some(data) => {
                 info!("Flash: PID profile loaded");
                 FlashResponse::PidProfileLoaded { data }
@@ -352,69 +346,18 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Save mag calibration offsets to flash map storage (key=2, 12 bytes)
     async fn save_mag_cal_internal(&mut self, data: &[u8; 12]) -> FlashResponse {
-        let flash = self.take_flash();
-        let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
-        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
-
-        let mut data_buffer = [0u8; 128];
-        let key: u8 = 2;
-        let value: &[u8] = data.as_slice();
-        mask_sio_fifo();
-        let result = map.store_item(&mut data_buffer, &key, &value).await;
-        unsafe { unmask_sio_fifo() };
-
-        let (flash, _cache) = map.destroy();
-        self.put_flash(flash);
-
-        match result {
-            Ok(_) => {
-                info!("Flash: Mag cal saved");
-                FlashResponse::MagCalSaved
-            }
-            Err(e) => {
-                warn!("Flash: Mag cal save failed: {:?}", Debug2Format(&e));
-                FlashResponse::MagCalSaveFailed
-            }
+        if self.save_to_map(2, data.as_slice()).await {
+            info!("Flash: Mag cal saved");
+            FlashResponse::MagCalSaved
+        } else {
+            warn!("Flash: Mag cal save failed");
+            FlashResponse::MagCalSaveFailed
         }
     }
 
     /// Load mag calibration offsets from flash map storage (key=2, 12 bytes)
     async fn load_mag_cal_internal(&mut self) -> FlashResponse {
-        let flash = self.take_flash();
-        let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
-        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
-
-        let mut data_buffer = [0u8; 128];
-        let key: u8 = 2;
-        mask_sio_fifo();
-        let result: Result<Option<&[u8]>, _> =
-            map.fetch_item(&mut data_buffer, &key).await;
-        unsafe { unmask_sio_fifo() };
-
-        let response = match result {
-            Ok(Some(slice)) if slice.len() == 12 => {
-                let mut out = [0u8; 12];
-                out.copy_from_slice(slice);
-                Some(out)
-            }
-            Ok(Some(slice)) => {
-                warn!(
-                    "Flash: Mag cal wrong size ({}), expected 12",
-                    slice.len()
-                );
-                None
-            }
-            Ok(None) => None,
-            Err(e) => {
-                warn!("Flash: Mag cal load failed: {:?}", Debug2Format(&e));
-                None
-            }
-        };
-
-        let (flash, _cache) = map.destroy();
-        self.put_flash(flash);
-
-        match response {
+        match self.load_from_map::<12>(2).await {
             Some(data) => {
                 info!("Flash: Mag cal loaded");
                 FlashResponse::MagCalLoaded { data }
@@ -456,7 +399,6 @@ impl<'a> SequentialFlashManager<'a> {
             Timer::after(Duration::from_millis(1)).await;
         }
 
-        self.ulog_initialized = false;
         ULOG_BYTES_USED.store(0, Ordering::Relaxed);
         ULOG_ITEMS_STORED.store(0, Ordering::Relaxed);
         FlashResponse::ULogEraseSuccess
