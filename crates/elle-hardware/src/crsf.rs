@@ -86,10 +86,7 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
                                                 frame_count, parse_error_count, error_count
                                             );
                                         }
-                                        let mut scaled = [0u16; 16];
-                                        for (i, val) in scaled.iter_mut().enumerate() {
-                                            *val = crsf_to_rc(channels.0[i]);
-                                        }
+                                        let scaled = core::array::from_fn(|i| crsf_to_rc(channels.0[i]));
                                         let commands = PilotCommands::Raw(RawCommands {
                                             channels: scaled,
                                             timestamp: Instant::now(),

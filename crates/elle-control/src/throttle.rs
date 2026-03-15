@@ -31,18 +31,6 @@ pub const fn rc_to_pulse_us_custom(rc_value: u16, min_us: u32, max_us: u32) -> u
     min_us + (rc_value as u32 * (max_us - min_us) / 2047)
 }
 
-#[must_use]
-#[inline(always)]
-pub fn throttle_curve_fast(rc_value: u16) -> u16 {
-    throttle_curve_lut(rc_value)
-}
-
-#[must_use]
-#[inline(always)]
-pub fn rc_to_pulse_fast(rc_value: u16) -> u32 {
-    rc_to_pulse_lut(rc_value)
-}
-
 /// Engine-specific function for arming logic
 #[must_use]
 #[inline(always)]

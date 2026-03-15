@@ -58,13 +58,6 @@ pub fn apply_differential_thrust(base_thrust: u16, factors: &DifferentialFactors
     (left, right)
 }
 
-/// Ultra-fast differential thrust calculation directly from RC value to thrust values (DShot space)
-#[must_use]
-#[inline(always)]
-pub fn apply_differential_thrust_direct(base_thrust: u16, yaw_rc: u16) -> (u16, u16) {
-    apply_differential_thrust_lut(base_thrust, yaw_rc)
-}
-
 /// Combined throttle curve + differential thrust calculation (maximum performance, DShot space)
 #[must_use]
 #[inline(always)]

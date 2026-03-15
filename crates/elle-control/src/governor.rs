@@ -38,14 +38,12 @@ impl RpmGovernor {
         }
 
         // Rate-limit telemetry: reject readings that jump too far from previous
-        let filtered = if self.last_measured > 0
-            && measured_erpm.abs_diff(self.last_measured) > GOVERNOR_ERPM_MAX_JUMP
-        {
-            self.last_measured // keep previous value, ignore spike
-        } else {
+        let is_spike = self.last_measured > 0
+            && measured_erpm.abs_diff(self.last_measured) > GOVERNOR_ERPM_MAX_JUMP;
+        if !is_spike {
             self.last_measured = measured_erpm;
-            measured_erpm
-        };
+        }
+        let filtered = self.last_measured;
 
         // PI correction with deadband
         let error = target_erpm as f32 - filtered as f32;

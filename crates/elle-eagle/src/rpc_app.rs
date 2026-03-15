@@ -62,6 +62,30 @@ pub struct RpcContext {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Load the current ULog state from the atomic, converting to the enum.
+fn load_ulog_state() -> ULogState {
+    match ULOG_STATE.load(Ordering::Acquire) {
+        0 => ULogState::Idle,
+        1 => ULogState::Reading,
+        2 => ULogState::Ready,
+        3 => ULogState::Empty,
+        _ => ULogState::Idle,
+    }
+}
+
+/// Convert an `EngineUnitReading` (hardware) to an `EngineUnit` (ICD).
+fn engine_unit_from(r: &elle_hardware::dshot::EngineUnitReading) -> EngineUnit {
+    EngineUnit {
+        erpm: r.erpm,
+        throttle: r.throttle,
+        valid: r.valid,
+        target_erpm: r.target_erpm,
+        temperature: r.temperature,
+        voltage_mv: r.voltage_mv,
+        current_ma: r.current_ma,
+    }
+}
+
 /// Send an RpcCommand via the context channel, returning AckResp.
 fn send_cmd(ctx: &mut RpcContext, cmd: RpcCommand) -> AckResp {
     match ctx.cmd_sender.try_send(cmd) {
@@ -112,8 +136,8 @@ fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Status
         armed: state.armed,
         failsafe: state.failsafe,
         mode: state.mode,
-        imu_calibrated: imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
-        imu_error_count: imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
+        imu_calibrated: imu_status.as_ref().map_or(false, |s| s.calibrated),
+        imu_error_count: imu_status.as_ref().map_or(0, |s| s.error_count),
         rc_age_ms: state.rc_age_ms,
     }
 }
@@ -203,24 +227,8 @@ fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Bar
 fn handle_get_engine(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> EngineResp {
     let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
     EngineResp {
-        left: EngineUnit {
-            erpm: eng.left.erpm,
-            throttle: eng.left.throttle,
-            valid: eng.left.valid,
-            target_erpm: eng.left.target_erpm,
-            temperature: eng.left.temperature,
-            voltage_mv: eng.left.voltage_mv,
-            current_ma: eng.left.current_ma,
-        },
-        right: EngineUnit {
-            erpm: eng.right.erpm,
-            throttle: eng.right.throttle,
-            valid: eng.right.valid,
-            target_erpm: eng.right.target_erpm,
-            temperature: eng.right.temperature,
-            voltage_mv: eng.right.voltage_mv,
-            current_ma: eng.right.current_ma,
-        },
+        left: engine_unit_from(&eng.left),
+        right: engine_unit_from(&eng.right),
     }
 }
 
@@ -233,9 +241,8 @@ fn handle_stop_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp 
 }
 
 fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogReadResp {
-    let state = ULOG_STATE.load(Ordering::Acquire);
-    match state {
-        s if s == ULogState::Ready as u8 => {
+    match load_ulog_state() {
+        ULogState::Ready => {
             let offset = ULOG_OFFSET.load(Ordering::Acquire) as usize;
             let total = ULOG_ITEM_LEN.load(Ordering::Acquire) as usize;
 
@@ -270,7 +277,7 @@ fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> UL
                 }
             }
         }
-        s if s == ULogState::Empty as u8 => {
+        ULogState::Empty => {
             ULOG_STATE.store(ULogState::Idle as u8, Ordering::Release);
             ULogReadResp {
                 data: heapless::Vec::new(),
@@ -278,7 +285,7 @@ fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> UL
                 pending: false,
             }
         }
-        s if s == ULogState::Idle as u8 => {
+        ULogState::Idle => {
             // Start first read
             ULOG_STATE.store(ULogState::Reading as u8, Ordering::Release);
             let _ = ctx.cmd_sender.try_send(RpcCommand::ReadULogChunk);
@@ -288,8 +295,8 @@ fn handle_read_ulog_chunk(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> UL
                 pending: true,
             }
         }
-        _ => {
-            // READING state — not ready yet
+        ULogState::Reading => {
+            // Not ready yet
             ULogReadResp {
                 data: heapless::Vec::new(),
                 has_more: true,

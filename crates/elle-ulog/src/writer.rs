@@ -134,16 +134,26 @@ impl ULogWriter {
         Ok(msg_id)
     }
 
+    /// Write a data message with a given msg_id and serialized payload bytes.
+    fn write_data_payload(&mut self, msg_id: u16, data_bytes: &[u8]) -> Result<(), WriteError> {
+        // 2 bytes for msg_id + data_bytes; use a stack buffer sized for the largest message
+        let total = 2 + data_bytes.len();
+        if total > 128 {
+            return Err(WriteError::InvalidMessage);
+        }
+        let mut payload = [0u8; 128];
+        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
+        payload[2..total].copy_from_slice(data_bytes);
+        self.write_message(MessageType::Data, &payload[..total])
+    }
+
     /// Write an attitude data message
     pub fn write_attitude(
         &mut self,
         msg_id: u16,
         data: &AttitudeMessage,
     ) -> Result<(), WriteError> {
-        let mut payload = [0u8; AttitudeMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write a commands message
@@ -152,18 +162,12 @@ impl ULogWriter {
         msg_id: u16,
         data: &CommandsMessage,
     ) -> Result<(), WriteError> {
-        let mut payload = [0u8; CommandsMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write a status message
     pub fn write_status(&mut self, msg_id: u16, data: &StatusMessage) -> Result<(), WriteError> {
-        let mut payload = [0u8; StatusMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write a barometer data message
@@ -172,10 +176,7 @@ impl ULogWriter {
         msg_id: u16,
         data: &BarometerMessage,
     ) -> Result<(), WriteError> {
-        let mut payload = [0u8; BarometerMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write a magnetometer data message
@@ -184,18 +185,12 @@ impl ULogWriter {
         msg_id: u16,
         data: &MagnetometerMessage,
     ) -> Result<(), WriteError> {
-        let mut payload = [0u8; MagnetometerMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write a GNSS data message
     pub fn write_gnss(&mut self, msg_id: u16, data: &GnssMessage) -> Result<(), WriteError> {
-        let mut payload = [0u8; GnssMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write an engine data message
@@ -204,10 +199,7 @@ impl ULogWriter {
         msg_id: u16,
         data: &EngineMessage,
     ) -> Result<(), WriteError> {
-        let mut payload = [0u8; EngineMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write a log event data message
@@ -216,10 +208,7 @@ impl ULogWriter {
         msg_id: u16,
         data: &LogEventMessage,
     ) -> Result<(), WriteError> {
-        let mut payload = [0u8; LogEventMessage::SIZE + 2];
-        payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
-        payload[2..].copy_from_slice(&data.to_bytes());
-        self.write_message(MessageType::Data, &payload)
+        self.write_data_payload(msg_id, &data.to_bytes())
     }
 
     /// Write an info message with a string value

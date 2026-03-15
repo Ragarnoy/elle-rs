@@ -34,33 +34,6 @@ pub struct ElevonOutputs {
     pub right_us: u32,
 }
 
-impl ControlInputs {
-    /// Create control inputs from RC channels using ultra-fast LUTs
-    #[must_use]
-    #[inline(always)]
-    pub fn from_rc_channels(channels: &[u16]) -> Self {
-        Self {
-            pitch: elle_config::rc_to_normalized(channels[PITCH_CH]),
-            roll: elle_config::rc_to_normalized(channels[ROLL_CH]),
-            yaw: elle_config::rc_to_normalized(channels[YAW_CH]),
-            throttle: (channels[THROTTLE_CH] as f32 / 2047.0).clamp(0.0, 1.0),
-        }
-    }
-
-    /// Ultra-fast batch conversion using single LUT call
-    #[must_use]
-    #[inline(always)]
-    pub fn from_rc_channels_fast(channels: &[u16]) -> Self {
-        let (roll, pitch, yaw, throttle) = channels_to_normalized_lut(channels);
-        Self {
-            pitch,
-            roll,
-            yaw,
-            throttle,
-        }
-    }
-
-}
 
 /// Mixes pitch, roll and yaw inputs into elevon control surface positions
 #[must_use]
