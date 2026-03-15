@@ -48,6 +48,23 @@ pub const CONTROL_LOOP_DT: f32 = 0.013; // 13ms actual timing for PID stability
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
 pub const RC_MAX_LATENCY_MS: u64 = 100; // Max acceptable RC packet age
 
+// ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ)
+pub const ULOG_STATUS_DIVISOR: u32 = 10; // 77/10 ≈ 7.7 Hz
+pub const ULOG_MAG_DIVISOR: u32 = 8; // 77/8 ≈ 9.6 Hz
+pub const ULOG_BARO_DIVISOR: u32 = 38; // 77/38 ≈ 2 Hz
+pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
+pub const STALE_EVENT_DRAIN_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
+
+// LED update interval (iterations at CONTROL_LOOP_FREQUENCY_HZ)
+pub const LED_UPDATE_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 4; // ~4s
+
+// Performance log interval
+pub const PERF_LOG_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 10; // ~10s
+
+// GNSS error log throttling
+pub const GNSS_ERROR_LOG_INITIAL: u32 = 3; // Log first N errors
+pub const GNSS_ERROR_LOG_INTERVAL: u32 = 1000; // Then every Nth error
+
 // NEW: Flight control channel mapping (0-indexed)
 pub const ROLL_CH: usize = 0; // Aileron/roll input
 pub const PITCH_CH: usize = 1; // Elevator/pitch input

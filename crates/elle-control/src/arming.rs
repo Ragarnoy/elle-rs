@@ -8,8 +8,7 @@ pub struct ArmingState {
 }
 
 impl ArmingState {
-    pub fn update(&mut self, throttle_raw: u16, failsafe: bool) {
-        // Check arming conditions
+    pub fn update(&mut self, throttle_raw: u16) {
         if !self.armed {
             let throttle_us =
                 rc_to_pulse_us(throttle_raw, ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US);
@@ -17,31 +16,25 @@ impl ArmingState {
                 self.armed = true;
             }
         }
-
-        // Handle failsafe
-        if failsafe {
-            self.armed = false;
-            self.failsafe_active = true;
-        }
     }
 
-    pub const fn signal_loss(&mut self) {
+    pub fn signal_loss(&mut self) {
         self.armed = false;
         self.failsafe_active = true;
     }
 
-    pub const fn signal_restored(&mut self) {
+    pub fn signal_restored(&mut self) {
         self.failsafe_active = false;
     }
 
     /// Manual arm (for RTT/debug control)
-    pub const fn arm(&mut self) {
+    pub fn arm(&mut self) {
         self.armed = true;
         self.failsafe_active = false;
     }
 
     /// Manual disarm (for RTT/debug control)
-    pub const fn disarm(&mut self) {
+    pub fn disarm(&mut self) {
         self.armed = false;
     }
 }

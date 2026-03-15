@@ -3,9 +3,10 @@ use elle_config::*;
 use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
 use elle_control::SavedGains;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+use elle_config::lut::apply_differential_thrust_lut;
 use elle_control::mixing::{
     elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
-    yaw::{apply_differential_thrust_direct, throttle_with_differential_lut},
+    yaw::throttle_with_differential_lut,
 };
 use elle_control::{arming::ArmingState, pid::AttitudeController};
 use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT};
@@ -21,6 +22,16 @@ pub enum ControlMode {
     Manual,    // Full manual control (~306)
     Mixed,     // Pilot + Autopilot blend (~1000)
     Autopilot, // Full autopilot control (~1694)
+}
+
+impl From<AttitudeMode> for ControlMode {
+    fn from(mode: AttitudeMode) -> Self {
+        match mode {
+            AttitudeMode::Manual => Self::Manual,
+            AttitudeMode::Mixed => Self::Mixed,
+            AttitudeMode::Autopilot => Self::Autopilot,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
@@ -272,11 +283,7 @@ impl<'a> FlightController<'a> {
         let mode = commands.attitude_mode();
 
         // Track mode changes
-        let current_mode = match mode {
-            AttitudeMode::Manual => ControlMode::Manual,
-            AttitudeMode::Mixed => ControlMode::Mixed,
-            AttitudeMode::Autopilot => ControlMode::Autopilot,
-        };
+        let current_mode = ControlMode::from(mode);
 
         if current_mode != self.current_control_mode {
             info!(
@@ -307,7 +314,7 @@ impl<'a> FlightController<'a> {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn update_fast_path_raw(&mut self, channels: &[u16; 16]) {
-        self.arming.update(channels[THROTTLE_CH], false);
+        self.arming.update(channels[THROTTLE_CH]);
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
         self.pwm
@@ -333,7 +340,7 @@ impl<'a> FlightController<'a> {
         // Throttle-low auto-arm for RC input; skipped in RPC mode (explicit arm/disarm)
         if !self.explicit_arming_only {
             let throttle_rc_equiv = (norm.throttle * 2047.0) as u16;
-            self.arming.update(throttle_rc_equiv, false);
+            self.arming.update(throttle_rc_equiv);
         }
 
         // Enable attitude controller based on mode
@@ -342,10 +349,9 @@ impl<'a> FlightController<'a> {
             && self.arming.armed;
 
         // Apply setpoint override if active (used by autotuner)
-        let (pitch_sp_deg, roll_sp_deg) = match self.setpoint_override {
-            Some((p, r)) => (p, r),
-            None => (norm.pitch_setpoint_deg, norm.roll_setpoint_deg),
-        };
+        let (pitch_sp_deg, roll_sp_deg) = self
+            .setpoint_override
+            .unwrap_or((norm.pitch_setpoint_deg, norm.roll_setpoint_deg));
 
         // Convert setpoints to radians and apply smoothing
         let pitch_setpoint_rad = pitch_sp_deg.to_radians();
@@ -436,7 +442,7 @@ impl<'a> FlightController<'a> {
         let yaw_rc = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
 
         let (left_thrust, right_thrust) = if self.arming.armed {
-            apply_differential_thrust_direct(base_thrust, yaw_rc)
+            apply_differential_thrust_lut(base_thrust, yaw_rc)
         } else {
             (0, 0)
         };
@@ -454,15 +460,6 @@ impl<'a> FlightController<'a> {
             engine_left_dshot: left_thrust,
             engine_right_dshot: right_thrust,
         };
-    }
-
-    /// Updated method that uses PilotCommands
-    pub fn update_with_attitude(
-        &mut self,
-        commands: &PilotCommands,
-        attitude: Option<&AttitudeData>,
-    ) {
-        self.update(commands, attitude);
     }
 
     pub fn check_failsafe(&mut self) {
@@ -538,7 +535,7 @@ impl<'a> FlightController<'a> {
     #[must_use]
     pub fn rc_signal_age_ms(&self) -> u16 {
         let age = self.last_packet_time.elapsed().as_millis();
-        if age > u16::MAX as u64 { u16::MAX } else { age as u16 }
+        age.min(u16::MAX as u64) as u16
     }
 
     #[must_use]
@@ -552,17 +549,17 @@ impl<'a> FlightController<'a> {
     }
 
     /// Disable throttle-low auto-arming (RPC mode uses explicit arm/disarm only)
-    pub const fn set_explicit_arming(&mut self, enabled: bool) {
+    pub fn set_explicit_arming(&mut self, enabled: bool) {
         self.explicit_arming_only = enabled;
     }
 
     /// Manual arm (for RTT/debug control)
-    pub const fn arm(&mut self) {
+    pub fn arm(&mut self) {
         self.arming.arm();
     }
 
     /// Manual disarm (for RTT/debug control)
-    pub const fn disarm(&mut self) {
+    pub fn disarm(&mut self) {
         self.arming.disarm();
     }
 
@@ -626,12 +623,12 @@ impl<'a> FlightController<'a> {
     }
 
     /// Set attitude setpoint override (degrees). Used by autotuner.
-    pub const fn set_setpoint_override(&mut self, pitch_deg: f32, roll_deg: f32) {
+    pub fn set_setpoint_override(&mut self, pitch_deg: f32, roll_deg: f32) {
         self.setpoint_override = Some((pitch_deg, roll_deg));
     }
 
     /// Clear setpoint override, returning to normal RC/RPC control.
-    pub const fn clear_setpoint_override(&mut self) {
+    pub fn clear_setpoint_override(&mut self) {
         self.setpoint_override = None;
     }
 
@@ -679,11 +676,7 @@ impl TaskTiming {
             self.avg_us = execution_time_us;
         } else {
             // Weighted average with more recent samples having slightly more weight
-            let weight = if self.samples < 100 {
-                self.samples + 1
-            } else {
-                100
-            };
+            let weight = (self.samples + 1).min(100);
             self.avg_us = (self.avg_us * (weight - 1) + execution_time_us) / weight;
         }
 

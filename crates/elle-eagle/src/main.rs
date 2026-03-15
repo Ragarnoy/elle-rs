@@ -9,9 +9,11 @@ use defmt_rtt as _;
 
 use defmt::{info, warn};
 use elle_config::profile::FLASH_SIZE;
+#[allow(unused_imports)]
 use elle_config::{
     CONTROL_LOOP_FREQUENCY_HZ, CONTROL_LOOP_PERIOD_MS, IMU_CALIBRATION_TIMEOUT_S, IMU_I2C_FREQ,
-    IMU_MAX_AGE_MS,
+    IMU_MAX_AGE_MS, LED_UPDATE_INTERVAL, PERF_LOG_INTERVAL, STALE_EVENT_DRAIN_DIVISOR,
+    ULOG_BARO_DIVISOR, ULOG_MAG_DIVISOR, ULOG_STATUS_DIVISOR,
 };
 
 #[cfg(any(not(feature = "rpc-control"), feature = "rc"))]
@@ -175,8 +177,8 @@ fn log_flight_data(
         let _ = logger.log_engine(&eng);
     }
 
-    // Log status at reduced rate (7.7Hz - every 10th iteration)
-    if loop_counter.is_multiple_of(10) {
+    // Log status at reduced rate (~7.7Hz)
+    if loop_counter.is_multiple_of(ULOG_STATUS_DIVISOR) {
         let imu_status = IMU_STATUS.try_read();
         let _ = logger.log_status(
             loop_timer_us,
@@ -188,21 +190,21 @@ fn log_flight_data(
         );
     }
 
-    // Log barometer at ~2Hz (every 38 iterations)
-    if loop_counter.is_multiple_of(38) {
+    // Log barometer at ~2Hz
+    if loop_counter.is_multiple_of(ULOG_BARO_DIVISOR) {
         let baro = BARO.read_cached();
         let _ = logger.log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m);
     }
 
-    // Log magnetometer at ~10Hz (every 8 iterations)
-    if loop_counter.is_multiple_of(8) {
+    // Log magnetometer at ~10Hz
+    if loop_counter.is_multiple_of(ULOG_MAG_DIVISOR) {
         let mag = MAG.read_cached();
         let _ = logger.log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32);
     }
 
-    // Log GNSS at ~1Hz (every 77 iterations) — feature-gated
+    // Log GNSS at ~1Hz — feature-gated
     #[cfg(all(feature = "gnss", feature = "rpc-control"))]
-    if loop_counter.is_multiple_of(77)
+    if loop_counter.is_multiple_of(elle_config::ULOG_GNSS_DIVISOR)
         && let Some(gnss) = gnss_signal::GNSS_SIGNAL.try_take()
     {
         gnss_signal::GNSS_SIGNAL.signal(gnss); // put back for other readers
@@ -835,8 +837,8 @@ async fn main(spawner: Spawner) {
                         loop_timer.elapsed_us(),
                         &fc,
                     );
-                } else if loop_counter.is_multiple_of(77) {
-                    // Drain stale events when not recording (~1Hz)
+                } else if loop_counter.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR) {
+                    // Drain stale events when not recording
                     while elle_hardware::event::ULOG_EVENT_CHANNEL
                         .try_receive()
                         .is_ok()
@@ -851,11 +853,11 @@ async fn main(spawner: Spawner) {
             loop_counter = loop_counter.saturating_add(1);
 
             // Periodic status updates
-            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
+            if loop_counter.is_multiple_of(PERF_LOG_INTERVAL) {
                 log_performance_summary();
             }
 
-            if loop_counter.is_multiple_of(20000) {
+            if loop_counter.is_multiple_of(LED_UPDATE_INTERVAL) {
                 loop_counter = 0;
 
                 let imu_status = IMU_STATUS.read().await;
@@ -1452,8 +1454,8 @@ async fn main(spawner: Spawner) {
                     loop_timer.elapsed_us(),
                     &fc,
                 );
-            } else if loop_counter.is_multiple_of(77) {
-                // Drain stale events when not recording (~1Hz)
+            } else if loop_counter.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR) {
+                // Drain stale events when not recording
                 while elle_hardware::event::ULOG_EVENT_CHANNEL
                     .try_receive()
                     .is_ok()
@@ -1463,11 +1465,11 @@ async fn main(spawner: Spawner) {
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
 
-            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ * 10) {
+            if loop_counter.is_multiple_of(PERF_LOG_INTERVAL) {
                 log_performance_summary();
             }
 
-            if loop_counter.is_multiple_of(2000) {
+            if loop_counter.is_multiple_of(LED_UPDATE_INTERVAL) {
                 loop_counter = 0;
 
                 let imu_status = IMU_STATUS.read().await;
@@ -1603,7 +1605,9 @@ async fn gnss_task(
             }
             Err(e) => {
                 uart_error_count += 1;
-                if uart_error_count <= 3 || uart_error_count.is_multiple_of(1000) {
+                if uart_error_count <= elle_config::GNSS_ERROR_LOG_INITIAL
+                    || uart_error_count.is_multiple_of(elle_config::GNSS_ERROR_LOG_INTERVAL)
+                {
                     elle_hardware::elle_event!(
                         warn,
                         elle_hardware::event::EVT_GNSS_UART_ERROR,

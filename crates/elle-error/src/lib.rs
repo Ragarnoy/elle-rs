@@ -54,6 +54,22 @@ pub enum CalibrationError {
     ProfileFailed,
 }
 
+/// ULog logging errors
+#[derive(Error, Debug, Format, Clone, Copy, PartialEq, Eq)]
+pub enum ULogError {
+    #[error("ULog not initialized")]
+    NotInitialized,
+
+    #[error("ULog initialization failed")]
+    InitFailed,
+
+    #[error("ULog buffer overflow")]
+    BufferFull,
+
+    #[error("ULog flash write failed")]
+    FlushFailed,
+}
+
 /// Main error type that encompasses all subsystem errors
 #[derive(Error, Debug, Format, Clone, Copy, PartialEq, Eq)]
 pub enum ElleError {

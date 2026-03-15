@@ -4,6 +4,7 @@
 
 use defmt::*;
 use elle_config::profile::{ULOG_LOGGER_BUFFER_SIZE, ULOG_WRITE_CHUNK_SIZE};
+use elle_error::ULogError;
 use embassy_time::Instant;
 use heapless::Vec;
 
@@ -55,7 +56,7 @@ impl ULogLogger {
     ///
     /// `epoch_ms` is the wall-clock time in ms since UNIX epoch, used for
     /// the `sys_start_time_utc_ms` info message in the ULog header.
-    pub async fn initialize(&mut self, epoch_ms: u64) -> Result<(), ()> {
+    pub async fn initialize(&mut self, epoch_ms: u64) -> Result<(), ULogError> {
         if self.initialized {
             info!("ULog logger already initialized");
             return Ok(());
@@ -73,53 +74,60 @@ impl ULogLogger {
         self.start_time = Some(start_time);
 
         // Initialize writer with header
-        self.writer.initialize(start_time).map_err(|_| ())?;
+        self.writer
+            .initialize(start_time)
+            .map_err(|_| ULogError::InitFailed)?;
 
         // Write definitions
         self.writer
-            .write_definitions("ELLE-RS", "RP2350-XFly-Eagle", env!("CARGO_PKG_VERSION"), epoch_ms)
-            .map_err(|_| ())?;
+            .write_definitions(
+                "ELLE-RS",
+                "RP2350-XFly-Eagle",
+                env!("CARGO_PKG_VERSION"),
+                epoch_ms,
+            )
+            .map_err(|_| ULogError::InitFailed)?;
 
         // Add subscriptions
         self.attitude_msg_id = Some(
             self.writer
                 .add_subscription(AttitudeMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
         self.commands_msg_id = Some(
             self.writer
                 .add_subscription(CommandsMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
         self.status_msg_id = Some(
             self.writer
                 .add_subscription(StatusMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
         self.barometer_msg_id = Some(
             self.writer
                 .add_subscription(BarometerMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
         self.magnetometer_msg_id = Some(
             self.writer
                 .add_subscription(MagnetometerMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
         self.gnss_msg_id = Some(
             self.writer
                 .add_subscription(GnssMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
         self.engine_msg_id = Some(
             self.writer
                 .add_subscription(EngineMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
         self.log_event_msg_id = Some(
             self.writer
                 .add_subscription(LogEventMessage::NAME)
-                .map_err(|_| ())?,
+                .map_err(|_| ULogError::InitFailed)?,
         );
 
         info!(
@@ -141,7 +149,7 @@ impl ULogLogger {
             let success = request_write_ulog_blocking(data).await;
             if !success {
                 error!("Failed to write ULog header to flash");
-                return Err(());
+                return Err(ULogError::FlushFailed);
             }
             // Clear writer buffer after successful flush
             self.writer.clear_buffer();
@@ -149,6 +157,20 @@ impl ULogLogger {
 
         self.initialized = true;
         info!("ULog logger initialized successfully");
+        Ok(())
+    }
+
+    /// Write a message from the writer buffer into the internal buffer,
+    /// flushing to flash if the buffer is getting full.
+    fn buffer_writer_output(&mut self) -> Result<(), ULogError> {
+        self.buffer
+            .extend_from_slice(self.writer.buffer())
+            .map_err(|_| ULogError::BufferFull)?;
+
+        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
+            self.flush()?;
+        }
+
         Ok(())
     }
 
@@ -161,14 +183,12 @@ impl ULogLogger {
         pitch_rate: f32,
         roll_rate: f32,
         yaw_rate: f32,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::AttitudeMessage;
-
-        let msg = AttitudeMessage::new(
+        let msg = elle_ulog::AttitudeMessage::new(
             Instant::now(),
             pitch,
             roll,
@@ -178,23 +198,12 @@ impl ULogLogger {
             yaw_rate,
         );
 
-        // Clear writer and write message
         self.writer.clear_buffer();
         self.writer
             .write_attitude(self.attitude_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        // Add to buffer
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Log commands data
@@ -208,14 +217,12 @@ impl ULogLogger {
         attitude_mode: u8,
         pitch_setpoint_deg: f32,
         roll_setpoint_deg: f32,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::CommandsMessage;
-
-        let msg = CommandsMessage::new(
+        let msg = elle_ulog::CommandsMessage::new(
             Instant::now(),
             throttle,
             pitch,
@@ -226,23 +233,12 @@ impl ULogLogger {
             roll_setpoint_deg,
         );
 
-        // Clear writer and write message
         self.writer.clear_buffer();
         self.writer
             .write_commands(self.commands_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        // Add to buffer
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Log system status
@@ -254,14 +250,12 @@ impl ULogLogger {
         armed: bool,
         cpu_load: f32,
         rc_age_ms: u16,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::StatusMessage;
-
-        let msg = StatusMessage::new(
+        let msg = elle_ulog::StatusMessage::new(
             Instant::now(),
             loop_time_us,
             imu_errors,
@@ -271,23 +265,12 @@ impl ULogLogger {
             rc_age_ms,
         );
 
-        // Clear writer and write message
         self.writer.clear_buffer();
         self.writer
             .write_status(self.status_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        // Add to buffer
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        // Flush if buffer is getting full
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Log barometer data
@@ -296,55 +279,41 @@ impl ULogLogger {
         pressure_hpa: f32,
         temperature_c: f32,
         altitude_m: f32,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::BarometerMessage;
-
-        let msg = BarometerMessage::new(Instant::now(), pressure_hpa, temperature_c, altitude_m);
+        let msg =
+            elle_ulog::BarometerMessage::new(Instant::now(), pressure_hpa, temperature_c, altitude_m);
 
         self.writer.clear_buffer();
         self.writer
             .write_barometer(self.barometer_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Log magnetometer data
-    pub fn log_magnetometer(&mut self, mag_x: f32, mag_y: f32, mag_z: f32) -> Result<(), ()> {
+    pub fn log_magnetometer(
+        &mut self,
+        mag_x: f32,
+        mag_y: f32,
+        mag_z: f32,
+    ) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::MagnetometerMessage;
-
-        let msg = MagnetometerMessage::new(Instant::now(), mag_x, mag_y, mag_z);
+        let msg = elle_ulog::MagnetometerMessage::new(Instant::now(), mag_x, mag_y, mag_z);
 
         self.writer.clear_buffer();
         self.writer
             .write_magnetometer(self.magnetometer_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Log GNSS data
@@ -357,14 +326,12 @@ impl ULogLogger {
         fix_quality: u8,
         num_satellites: u8,
         hdop: f32,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::GnssMessage;
-
-        let msg = GnssMessage::new(
+        let msg = elle_ulog::GnssMessage::new(
             Instant::now(),
             latitude,
             longitude,
@@ -377,31 +344,18 @@ impl ULogLogger {
         self.writer.clear_buffer();
         self.writer
             .write_gnss(self.gnss_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Log engine data from `EngineReading` cache snapshot
-    pub fn log_engine(
-        &mut self,
-        eng: &crate::dshot::EngineReading,
-    ) -> Result<(), ()> {
+    pub fn log_engine(&mut self, eng: &crate::dshot::EngineReading) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::EngineMessage;
-
-        let msg = EngineMessage::new(
+        let msg = elle_ulog::EngineMessage::new(
             Instant::now(),
             eng.left.erpm,
             eng.right.erpm,
@@ -420,48 +374,30 @@ impl ULogLogger {
         self.writer.clear_buffer();
         self.writer
             .write_engine(self.engine_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Log a discrete event (level + code)
-    pub fn log_event(&mut self, level: u8, code: u16) -> Result<(), ()> {
+    pub fn log_event(&mut self, level: u8, code: u16) -> Result<(), ULogError> {
         if !self.initialized {
-            return Err(());
+            return Err(ULogError::NotInitialized);
         }
 
-        use elle_ulog::LogEventMessage;
-
-        let msg = LogEventMessage::new(Instant::now(), level, code);
+        let msg = elle_ulog::LogEventMessage::new(Instant::now(), level, code);
 
         self.writer.clear_buffer();
         self.writer
             .write_log_event(self.log_event_msg_id.unwrap(), &msg)
-            .map_err(|_| ())?;
+            .map_err(|_| ULogError::BufferFull)?;
 
-        self.buffer
-            .extend_from_slice(self.writer.buffer())
-            .map_err(|_| ())?;
-
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
-            self.flush()?;
-        }
-
-        Ok(())
+        self.buffer_writer_output()
     }
 
     /// Flush buffered data to flash (fire-and-forget — returns immediately).
     /// Splits the buffer into ULOG_WRITE_CHUNK_SIZE messages for the channel.
-    pub fn flush(&mut self) -> Result<(), ()> {
+    pub fn flush(&mut self) -> Result<(), ULogError> {
         if self.buffer.is_empty() {
             return Ok(());
         }
@@ -480,7 +416,11 @@ impl ULogLogger {
 
         // Clear buffer regardless to avoid re-sending stale data
         self.buffer.clear();
-        if all_ok { Ok(()) } else { Err(()) }
+        if all_ok {
+            Ok(())
+        } else {
+            Err(ULogError::FlushFailed)
+        }
     }
 
     /// Check if the logger has been initialized
