@@ -62,7 +62,7 @@ impl WireRx for ProbeRttRx {
 pub struct TokSpawn;
 
 impl WireSpawn for TokSpawn {
-    fn spawn(&mut self, fut: impl std::future::Future<Output = ()> + Send + 'static) {
+    fn spawn(&mut self, fut: impl Future<Output = ()> + Send + 'static) {
         _ = tokio::task::spawn(fut);
     }
 }

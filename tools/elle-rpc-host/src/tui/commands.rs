@@ -387,7 +387,7 @@ async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {
             let region_mb = info.region_total as f64 / (1024.0 * 1024.0);
             let used_kb = info.bytes_used as f64 / 1024.0;
             let remaining_mb =
-                (info.region_total.saturating_sub(info.bytes_used)) as f64 / (1024.0 * 1024.0);
+                info.region_total.saturating_sub(info.bytes_used) as f64 / (1024.0 * 1024.0);
             let pct = if info.region_total > 0 {
                 info.bytes_used as f64 / info.region_total as f64 * 100.0
             } else {

@@ -57,7 +57,7 @@ pub async fn run() -> Result<()> {
     );
 
     // Subscribe to topics
-    let mut log_sub = client.subscribe_multi::<LogTopic>(64).await.unwrap();
+    let mut log_sub = client.subscribe_multi::<LogTopic>(64).await?;
 
     // Initialize terminal
     enable_raw_mode()?;
