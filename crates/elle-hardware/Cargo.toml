@@ -27,7 +27,7 @@ smart-leds = { workspace = true }
 sequential-storage = { workspace = true }
 embedded-storage-async = "0.4"
 
-crc = { workspace = true, optional = true }
+crc = { workspace = true }
 
 cortex-m = "0.7"
 defmt = { workspace = true }
@@ -37,10 +37,8 @@ nalgebra = { workspace = true }
 heapless = { workspace = true }
 
 [features]
-performance-monitoring = []
 disable-imu = []  # Disable IMU for debugging (enabled by default, use this flag to disable)
-crsf-telemetry = ["crc"]  # Enable CRSF telemetry TX to radio
-gnss = []  # Enable GPS telemetry frames (requires crsf-telemetry)
+gnss = []  # Enable GPS telemetry frames
 
 [lib]
 test = false

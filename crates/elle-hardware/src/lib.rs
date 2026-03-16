@@ -12,7 +12,6 @@ pub mod signal_cache;
 
 pub mod ulog_logger;
 
-#[cfg(feature = "crsf-telemetry")]
 pub mod crsf_telemetry;
 
 pub use crsf::CrsfReceiver;

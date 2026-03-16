@@ -4,6 +4,12 @@
 
 //! Firmware for the XFly Eagle Testbed with WS2812B LED
 
+// Feature gate guards
+#[cfg(all(feature = "defmt-logging", feature = "rpc-control"))]
+compile_error!("defmt-logging and rpc-control are mutually exclusive (both define _SEGGER_RTT)");
+#[cfg(all(feature = "rpc-rc", not(feature = "rpc-control")))]
+compile_error!("rpc-rc requires rpc-control (RC command source only applies in RPC mode)");
+
 #[cfg(feature = "defmt-logging")]
 use defmt_rtt as _;
 
@@ -16,14 +22,14 @@ use elle_config::{
     ULOG_BARO_DIVISOR, ULOG_MAG_DIVISOR, ULOG_STATUS_DIVISOR,
 };
 
-#[cfg(any(not(feature = "rpc-control"), feature = "rc"))]
+#[cfg(any(not(feature = "rpc-control"), feature = "rpc-rc"))]
 use defmt::debug;
-#[cfg(any(not(feature = "rpc-control"), feature = "rc"))]
+#[cfg(any(not(feature = "rpc-control"), feature = "rpc-rc"))]
 use elle_config::{
     ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH, PITCH_CH, ROLL_CH,
     THROTTLE_CH, YAW_CH,
 };
-#[cfg(any(not(feature = "rpc-control"), feature = "rc"))]
+#[cfg(any(not(feature = "rpc-control"), feature = "rpc-rc"))]
 use elle_control::commands::PilotCommands;
 use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains};
 use elle_hardware::imu::{
@@ -193,7 +199,7 @@ fn log_flight_data(
     // Log barometer at ~2Hz
     if loop_counter.is_multiple_of(ULOG_BARO_DIVISOR) {
         let baro = BARO.read_cached();
-        let _ = logger.log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m);
+        let _ = logger.log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m, baro.vario_ms);
     }
 
     // Log magnetometer at ~10Hz
@@ -203,7 +209,7 @@ fn log_flight_data(
     }
 
     // Log GNSS at ~1Hz — feature-gated
-    #[cfg(all(feature = "gnss", feature = "rpc-control"))]
+    #[cfg(feature = "gnss")]
     if loop_counter.is_multiple_of(elle_config::ULOG_GNSS_DIVISOR)
         && let Some(gnss) = gnss_signal::GNSS_SIGNAL.try_take()
     {
@@ -256,14 +262,24 @@ pub mod rc_signal {
     pub static RC_SIGNAL: Signal<CriticalSectionRawMutex, [u16; 16]> = Signal::new();
 }
 
-// GNSS signal for sharing position data with RPC handler
-#[cfg(all(feature = "gnss", feature = "rpc-control"))]
+// GNSS signal for sharing position data (ULog, CRSF telemetry, RPC)
+#[cfg(feature = "gnss")]
 pub mod gnss_signal {
-    use elle_rpc_icd::GnssResp;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::signal::Signal;
 
-    pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssResp> = Signal::new();
+    /// GNSS position data — independent of RPC ICD types
+    #[derive(Clone, Copy)]
+    pub struct GnssData {
+        pub latitude: f32,
+        pub longitude: f32,
+        pub altitude_m: f32,
+        pub fix_quality: u8,
+        pub num_satellites: u8,
+        pub hdop: f32,
+    }
+
+    pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssData> = Signal::new();
 }
 
 #[cfg(feature = "rpc-control")]
@@ -363,43 +379,30 @@ async fn main(spawner: Spawner) {
         },
     );
 
-    // Always spawn CRSF receiver — use DMA_CH3 when rpc-control is enabled
-    // (DMA_CH0 is reserved for GNSS in that configuration)
+    // Always spawn CRSF receiver — use DMA_CH3 when rpc-control or gnss is enabled
+    // (DMA_CH0 is reserved for GNSS UART0 RX in those configurations)
     {
         info!("Core0: Starting CRSF receiver task (UART1, GPIO21)");
         let config = crsf_uart_config();
 
-        #[cfg(feature = "crsf-telemetry")]
-        {
-            // Split UART1: RX for CRSF receiver, TX for telemetry
-            #[cfg(not(feature = "rpc-control"))]
-            let uart = embassy_rp::uart::Uart::new(
-                p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH0, config,
-            );
-            #[cfg(feature = "rpc-control")]
-            let uart = embassy_rp::uart::Uart::new(
-                p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH3, config,
-            );
-            let (tx, rx) = uart.split();
-            let crsf = CrsfReceiver::new(rx);
-            spawner.spawn(crsf_receiver_task(crsf).unwrap());
+        // Split UART1: RX for CRSF receiver, TX for telemetry
+        #[cfg(not(any(feature = "rpc-control", feature = "gnss")))]
+        let uart = embassy_rp::uart::Uart::new(
+            p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH0, config,
+        );
+        #[cfg(any(feature = "rpc-control", feature = "gnss"))]
+        let uart = embassy_rp::uart::Uart::new(
+            p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH3, config,
+        );
+        let (tx, rx) = uart.split();
+        let crsf = CrsfReceiver::new(rx);
+        spawner.spawn(crsf_receiver_task(crsf).unwrap());
 
-            info!("Core0: Starting CRSF telemetry TX task (PIN_20, DMA_CH4)");
-            spawner.spawn(elle_hardware::crsf_telemetry::crsf_telemetry_task(tx).unwrap());
-        }
-
-        #[cfg(not(feature = "crsf-telemetry"))]
-        {
-            #[cfg(not(feature = "rpc-control"))]
-            let rx = embassy_rp::uart::UartRx::new(p.UART1, p.PIN_21, Irqs, p.DMA_CH0, config);
-            #[cfg(feature = "rpc-control")]
-            let rx = embassy_rp::uart::UartRx::new(p.UART1, p.PIN_21, Irqs, p.DMA_CH3, config);
-            let crsf = CrsfReceiver::new(rx);
-            spawner.spawn(crsf_receiver_task(crsf).unwrap());
-        }
+        info!("Core0: Starting CRSF telemetry TX task (PIN_20, DMA_CH4)");
+        spawner.spawn(elle_hardware::crsf_telemetry::crsf_telemetry_task(tx).unwrap());
     }
 
-    #[cfg(all(feature = "gnss", feature = "rpc-control"))]
+    #[cfg(feature = "gnss")]
     {
         info!("Core0: Starting GNSS task (UART0, GPIO28/29)");
         spawner.spawn(gnss_task(p.UART0, p.PIN_29, p.DMA_CH0).unwrap());
@@ -656,7 +659,6 @@ async fn main(spawner: Spawner) {
                 let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
                 DSHOT_THROTTLE.signal((l_erpm, r_erpm));
 
-                #[cfg(feature = "crsf-telemetry")]
                 elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
                     elle_hardware::crsf_telemetry::CrsfFlightMode {
                         armed: fc.is_armed(),
@@ -890,10 +892,10 @@ async fn main(spawner: Spawner) {
     {
         use core::sync::atomic::Ordering;
         use elle_config::profile::{FlashRequest, FlashResponse};
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         use elle_control::commands::AttitudeMode;
         use elle_control::commands::NormalizedCommands;
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         use elle_control::commands::PilotCommands;
         use elle_hardware::sequential_flash_manager::{
             FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
@@ -903,36 +905,36 @@ async fn main(spawner: Spawner) {
         };
         use rpc_handlers::{RPC_CMD_CHANNEL, RpcCommand};
 
-        #[cfg(feature = "rc")]
+        #[cfg(feature = "rpc-rc")]
         info!("RPC MONITORING MODE - RC/CRSF flight control + RPC observability");
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         info!("GROUND TEST MODE - RPC Control (postcard-RPC over RTT)");
         info!("WARNING: This mode requires programmer connection");
 
         // RPC mode without RC: arming is via explicit arm/disarm commands only
         // With RC: use RC-based arming (throttle-low auto-arm)
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         fc.set_explicit_arming(true);
 
         // Ticker for consistent control loop timing
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
 
         // RPC commands accumulator (updated by RPC handlers, unused when rc feature is active)
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         let mut rpc_throttle: f32 = 0.0;
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         let mut rpc_elevon_left: f32 = 0.0;
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         let mut rpc_elevon_right: f32 = 0.0;
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         let mut rpc_mode = AttitudeMode::Manual;
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         let mut rpc_pitch_setpoint_deg: f32 = 0.0;
-        #[cfg(not(feature = "rc"))]
+        #[cfg(not(feature = "rpc-rc"))]
         let mut rpc_roll_setpoint_deg: f32 = 0.0;
 
         // RC mode: track last commands from CRSF receiver
-        #[cfg(feature = "rc")]
+        #[cfg(feature = "rpc-rc")]
         let mut last_commands: Option<PilotCommands> = None;
 
         // Autotuner state (same pattern as flight mode)
@@ -953,20 +955,20 @@ async fn main(spawner: Spawner) {
             // Process all pending RPC commands
             while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
                 match cmd {
-                    #[cfg(not(feature = "rc"))]
+                    #[cfg(not(feature = "rpc-rc"))]
                     RpcCommand::SetThrottle(percent) => {
                         rpc_throttle = (percent as f32 / 100.0).clamp(0.0, 1.0);
                     }
-                    #[cfg(feature = "rc")]
+                    #[cfg(feature = "rpc-rc")]
                     RpcCommand::SetThrottle(_) => {} // Ignored in RC mode
-                    #[cfg(not(feature = "rc"))]
+                    #[cfg(not(feature = "rpc-rc"))]
                     RpcCommand::SetElevons { left, right } => {
                         rpc_elevon_left = (left as f32 / 100.0).clamp(-1.0, 1.0);
                         rpc_elevon_right = (right as f32 / 100.0).clamp(-1.0, 1.0);
                     }
-                    #[cfg(feature = "rc")]
+                    #[cfg(feature = "rpc-rc")]
                     RpcCommand::SetElevons { .. } => {} // Ignored in RC mode
-                    #[cfg(not(feature = "rc"))]
+                    #[cfg(not(feature = "rpc-rc"))]
                     RpcCommand::SetMode(mode) => {
                         rpc_mode = match mode {
                             ControlMode::Manual => AttitudeMode::Manual,
@@ -979,7 +981,7 @@ async fn main(spawner: Spawner) {
                             ControlMode::Autopilot => "Autopilot",
                         });
                     }
-                    #[cfg(feature = "rc")]
+                    #[cfg(feature = "rpc-rc")]
                     RpcCommand::SetMode(_) => {} // Ignored in RC mode
                     RpcCommand::Arm => {
                         fc.arm();
@@ -1003,7 +1005,7 @@ async fn main(spawner: Spawner) {
                             elle_hardware::event::EVT_EMERGENCY_STOP,
                             "RPC: EMERGENCY STOP"
                         );
-                        #[cfg(not(feature = "rc"))]
+                        #[cfg(not(feature = "rpc-rc"))]
                         {
                             rpc_throttle = 0.0;
                             rpc_elevon_left = 0.0;
@@ -1038,7 +1040,7 @@ async fn main(spawner: Spawner) {
                             (i_limit * 10.0) as i32,
                         );
                     }
-                    #[cfg(not(feature = "rc"))]
+                    #[cfg(not(feature = "rpc-rc"))]
                     RpcCommand::SetAttitudeSetpoint {
                         pitch_deg,
                         roll_deg,
@@ -1051,7 +1053,7 @@ async fn main(spawner: Spawner) {
                             (roll_deg * 100.0) as i32,
                         );
                     }
-                    #[cfg(feature = "rc")]
+                    #[cfg(feature = "rpc-rc")]
                     RpcCommand::SetAttitudeSetpoint { .. } => {} // Ignored in RC mode
                     RpcCommand::StartULog => {
                         let mut ok = ulog_logger.is_initialized();
@@ -1235,7 +1237,7 @@ async fn main(spawner: Spawner) {
             }
 
             // Build pilot commands — from CRSF receiver (rc feature) or RPC accumulators
-            #[cfg(feature = "rc")]
+            #[cfg(feature = "rpc-rc")]
             let commands = {
                 if let Some(commands) = RC_COMMANDS.try_take() {
                     if let PilotCommands::Raw(raw) = &commands {
@@ -1259,7 +1261,7 @@ async fn main(spawner: Spawner) {
                 last_commands.clone()
             };
 
-            #[cfg(not(feature = "rc"))]
+            #[cfg(not(feature = "rpc-rc"))]
             let commands = {
                 if let Some(PilotCommands::Raw(raw)) = RC_COMMANDS.try_take().as_ref() {
                     rc_signal::RC_SIGNAL.signal(raw.channels);
@@ -1289,7 +1291,7 @@ async fn main(spawner: Spawner) {
             DSHOT_THROTTLE.signal((l_erpm, r_erpm));
 
             // Check for RC signal loss (only relevant when RC is the command source)
-            #[cfg(feature = "rc")]
+            #[cfg(feature = "rpc-rc")]
             fc.check_failsafe();
 
             // Autotuner per-tick update
@@ -1403,7 +1405,6 @@ async fn main(spawner: Spawner) {
             // Update mag cal sample count for RPC visibility
             // (read from IMU side if collecting — approximated via status check)
 
-            #[cfg(feature = "crsf-telemetry")]
             elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
                 elle_hardware::crsf_telemetry::CrsfFlightMode {
                     armed: fc.is_armed(),
@@ -1572,7 +1573,7 @@ async fn imu_task(
     imu.run().await;
 }
 
-#[cfg(all(feature = "gnss", feature = "rpc-control"))]
+#[cfg(feature = "gnss")]
 #[embassy_executor::task]
 async fn gnss_task(
     uart: Peri<'static, UART0>,
@@ -1667,17 +1668,15 @@ async fn gnss_task(
                         }
                     }
 
-                    let resp = elle_rpc_icd::GnssResp {
+                    gnss_signal::GNSS_SIGNAL.signal(gnss_signal::GnssData {
                         latitude: last_lat,
                         longitude: last_lon,
                         altitude_m: last_alt,
                         fix_quality: fix,
                         num_satellites: sats,
                         hdop: gga.hdop.unwrap_or(99.9),
-                    };
-                    gnss_signal::GNSS_SIGNAL.signal(resp);
+                    });
 
-                    #[cfg(feature = "crsf-telemetry")]
                     elle_hardware::crsf_telemetry::TELEMETRY_GNSS.signal(
                         elle_hardware::crsf_telemetry::TelemetryGpsData {
                             latitude: last_lat,
