@@ -221,6 +221,7 @@ fn handle_get_barometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Bar
         pressure_hpa: baro.pressure_hpa,
         temperature_c: baro.temperature_c,
         altitude_m: baro.altitude_m,
+        vario_ms: baro.vario_ms,
     }
 }
 
@@ -417,7 +418,14 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
     {
         if let Some(gnss) = crate::gnss_signal::GNSS_SIGNAL.try_take() {
             crate::gnss_signal::GNSS_SIGNAL.signal(gnss);
-            return gnss;
+            return GnssResp {
+                latitude: gnss.latitude,
+                longitude: gnss.longitude,
+                altitude_m: gnss.altitude_m,
+                fix_quality: gnss.fix_quality,
+                num_satellites: gnss.num_satellites,
+                hdop: gnss.hdop,
+            };
         }
     }
     GnssResp {

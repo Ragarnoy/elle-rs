@@ -290,7 +290,7 @@ impl StatusMessage {
 
 /// Barometer data message - logs BMP390 pressure, temperature, altitude
 ///
-/// Format: "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m"
+/// Format: "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m;float vario_ms"
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct BarometerMessage {
@@ -302,30 +302,33 @@ pub struct BarometerMessage {
     pub temperature_c: f32,
     /// Barometric altitude in meters
     pub altitude_m: f32,
+    /// Vertical speed in m/s (positive = climbing)
+    pub vario_ms: f32,
 }
 
 impl BarometerMessage {
     /// Format definition string for ULog
     pub const FORMAT: &'static str =
-        "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m";
+        "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m;float vario_ms";
 
     /// Message name
     pub const NAME: &'static str = "barometer_data";
 
     /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub const FORMAT_MSG: &'static [u8] = b"\x59\x00Fbarometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m";
+    pub const FORMAT_MSG: &'static [u8] = b"\x68\x00Fbarometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m;float vario_ms";
 
     /// Size of the message in bytes
-    pub const SIZE: usize = 20; // 8 + 3*4
+    pub const SIZE: usize = 24; // 8 + 4*4
 
     /// Create a new barometer message
     #[must_use]
-    pub fn new(timestamp: Instant, pressure_hpa: f32, temperature_c: f32, altitude_m: f32) -> Self {
+    pub fn new(timestamp: Instant, pressure_hpa: f32, temperature_c: f32, altitude_m: f32, vario_ms: f32) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
             pressure_hpa,
             temperature_c,
             altitude_m,
+            vario_ms,
         }
     }
 
@@ -337,6 +340,7 @@ impl BarometerMessage {
         buf[8..12].copy_from_slice(&self.pressure_hpa.to_le_bytes());
         buf[12..16].copy_from_slice(&self.temperature_c.to_le_bytes());
         buf[16..20].copy_from_slice(&self.altitude_m.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.vario_ms.to_le_bytes());
         buf
     }
 }

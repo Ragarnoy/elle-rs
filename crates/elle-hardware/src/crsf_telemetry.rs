@@ -148,10 +148,11 @@ fn build_gps_frame(
 
 /// Build a CRSF Barometric Altitude frame (type 0x09).
 /// Payload: altitude_dm:u16 (decimeters, offset +10000) + vario_cm:i16 (cm/s).
-fn build_baro_frame(buf: &mut [u8; 8], altitude_m: f32) {
+fn build_baro_frame(buf: &mut [u8; 8], altitude_m: f32, vario_ms: f32) {
     // CRSF barometric altitude = decimeters + 10000 offset
     let alt_dm = ((altitude_m * 10.0) as i32 + 10000).clamp(0, 65535) as u16;
-    let vario: i16 = 0; // no vario computation yet
+    // Vario in cm/s, clamped to i16 range
+    let vario = (vario_ms * 100.0).clamp(-32768.0, 32767.0) as i16;
     buf[0] = CRSF_SYNC_BYTE;
     buf[1] = 6; // type + 4 payload + crc
     buf[2] = CRSF_FRAMETYPE_BARO;
@@ -241,9 +242,11 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         if let Some(mode) = CRSF_FLIGHT_MODE.try_take() {
             last_mode = mode;
         }
+        let last_vario_ms;
         {
             let baro = BARO.read_cached();
             last_baro_alt = baro.altitude_m;
+            last_vario_ms = baro.vario_ms;
         }
 
         let mut tx_ok = true;
@@ -289,7 +292,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
             }
             3 => {
                 let mut buf = [0u8; 8];
-                build_baro_frame(&mut buf, last_baro_alt);
+                build_baro_frame(&mut buf, last_baro_alt, last_vario_ms);
                 if let Err(e) = tx.write(&buf).await {
                     warn!("CRSF TX baro error: {}", e);
                     tx_ok = false;

@@ -51,7 +51,7 @@ pub const RC_MAX_LATENCY_MS: u64 = 100; // Max acceptable RC packet age
 // ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ)
 pub const ULOG_STATUS_DIVISOR: u32 = 10; // 77/10 ≈ 7.7 Hz
 pub const ULOG_MAG_DIVISOR: u32 = 8; // 77/8 ≈ 9.6 Hz
-pub const ULOG_BARO_DIVISOR: u32 = 38; // 77/38 ≈ 2 Hz
+pub const ULOG_BARO_DIVISOR: u32 = 19; // 77/19 ≈ 4 Hz
 pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const STALE_EVENT_DRAIN_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 
@@ -98,8 +98,8 @@ pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
 pub const AHRS_BETA: f32 = 0.033;
 /// Magnetometer read interval in IMU ticks (100 = 10Hz at 1kHz IMU rate)
 pub const MAG_READ_INTERVAL_TICKS: u32 = 100;
-/// Barometer read interval in IMU ticks (500 = 2Hz at 1kHz IMU rate)
-pub const BARO_READ_INTERVAL_TICKS: u32 = 500;
+/// Barometer read interval in IMU ticks (50 = 20Hz at 1kHz IMU rate)
+pub const BARO_READ_INTERVAL_TICKS: u32 = 50;
 
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout

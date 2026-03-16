@@ -97,6 +97,7 @@ pub static BARO: SignalCache<BaroReading> = SignalCache::new(BaroReading {
     pressure_hpa: 0.0,
     temperature_c: 0.0,
     altitude_m: 0.0,
+    vario_ms: 0.0,
 });
 
 /// Barometer reading from BMP390
@@ -105,6 +106,9 @@ pub struct BaroReading {
     pub pressure_hpa: f32,
     pub temperature_c: f32,
     pub altitude_m: f32,
+    /// Vertical speed in m/s (positive = climbing, negative = sinking).
+    /// Computed from altitude differentiation with EMA smoothing.
+    pub vario_ms: f32,
 }
 
 /// Cross-core: Core0 signals loaded offsets at boot → Core1 IMU applies them
@@ -187,6 +191,9 @@ pub struct Imu<'a> {
     mag_cal_min: [f32; 3],
     mag_cal_max: [f32; 3],
     mag_cal_samples: u32,
+    prev_baro_alt: f32,
+    prev_baro_time: Option<Instant>,
+    vario_filtered: f32,
 }
 
 #[cfg(not(feature = "disable-imu"))]
@@ -220,6 +227,9 @@ impl<'a> Imu<'a> {
             mag_cal_min: [f32::MAX; 3],
             mag_cal_max: [f32::MIN; 3],
             mag_cal_samples: 0,
+            prev_baro_alt: 0.0,
+            prev_baro_time: None,
+            vario_filtered: 0.0,
         }
     }
 
@@ -429,7 +439,6 @@ impl<'a> Imu<'a> {
                     };
 
                     ATTITUDE.publish(attitude);
-                    #[cfg(feature = "crsf-telemetry")]
                     crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
                     CORE1_HEARTBEAT.signal(());
@@ -468,7 +477,6 @@ impl<'a> Imu<'a> {
                         let mut failed = self.last_attitude;
                         failed.timestamp = Instant::from_ticks(0);
                         ATTITUDE.publish(failed);
-                        #[cfg(feature = "crsf-telemetry")]
                         crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(failed);
                         Timer::after(Duration::from_secs(1)).await;
                         consecutive_errors = 0;
@@ -559,7 +567,7 @@ impl<'a> Imu<'a> {
                 }
             }
 
-            // 5. Read BMP390 at ~2 Hz
+            // 5. Read BMP390 at ~20 Hz
             baro_counter += 1;
             if baro_counter >= elle_config::BARO_READ_INTERVAL_TICKS {
                 baro_counter = 0;
@@ -569,10 +577,30 @@ impl<'a> Imu<'a> {
                             use uom::si::length::meter;
                             use uom::si::pressure::hectopascal;
                             use uom::si::thermodynamic_temperature::degree_celsius;
+                            let alt = m.altitude.get::<meter>();
+
+                            // Compute vario from altitude differentiation + EMA filter
+                            let now = Instant::now();
+                            let raw_vario = if let Some(prev_time) = self.prev_baro_time {
+                                let dt_s = (now - prev_time).as_micros() as f32 / 1_000_000.0;
+                                if dt_s > 0.001 {
+                                    (alt - self.prev_baro_alt) / dt_s
+                                } else {
+                                    0.0
+                                }
+                            } else {
+                                0.0
+                            };
+                            // EMA: alpha=0.3 gives ~150ms effective time constant at 20Hz
+                            self.vario_filtered = self.vario_filtered * 0.7 + raw_vario * 0.3;
+                            self.prev_baro_alt = alt;
+                            self.prev_baro_time = Some(now);
+
                             let reading = BaroReading {
                                 pressure_hpa: m.pressure.get::<hectopascal>(),
                                 temperature_c: m.temperature.get::<degree_celsius>(),
-                                altitude_m: m.altitude.get::<meter>(),
+                                altitude_m: alt,
+                                vario_ms: self.vario_filtered,
                             };
                             BARO.publish(reading);
                         }
@@ -725,7 +753,6 @@ impl<'a> Imu<'a> {
 
             // Signal synthetic attitude data
             ATTITUDE.publish(attitude);
-            #[cfg(feature = "crsf-telemetry")]
             crate::crsf_telemetry::TELEMETRY_ATTITUDE.signal(attitude);
 
             // Read MMC5616WA magnetometer at ~10 Hz (every 400 ticks at 4 kHz)
@@ -747,9 +774,9 @@ impl<'a> Imu<'a> {
                 }
             }
 
-            // Read BMP390 barometer at ~2 Hz (every 2000 ticks at 4 kHz)
+            // Read BMP390 barometer at ~20 Hz (every 200 ticks at 4 kHz)
             baro_counter += 1;
-            if baro_counter >= 2000 {
+            if baro_counter >= 200 {
                 baro_counter = 0;
                 if let Some(baro) = &mut self.baro {
                     match baro.measure() {
@@ -761,6 +788,7 @@ impl<'a> Imu<'a> {
                                 pressure_hpa: m.pressure.get::<hectopascal>(),
                                 temperature_c: m.temperature.get::<degree_celsius>(),
                                 altitude_m: m.altitude.get::<meter>(),
+                                vario_ms: 0.0, // stub — no vario in disable-imu mode
                             };
                             BARO.publish(reading);
                         }

@@ -279,13 +279,14 @@ impl ULogLogger {
         pressure_hpa: f32,
         temperature_c: f32,
         altitude_m: f32,
+        vario_ms: f32,
     ) -> Result<(), ULogError> {
         if !self.initialized {
             return Err(ULogError::NotInitialized);
         }
 
         let msg =
-            elle_ulog::BarometerMessage::new(Instant::now(), pressure_hpa, temperature_c, altitude_m);
+            elle_ulog::BarometerMessage::new(Instant::now(), pressure_hpa, temperature_c, altitude_m, vario_ms);
 
         self.writer.clear_buffer();
         self.writer

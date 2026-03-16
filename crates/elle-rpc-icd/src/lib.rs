@@ -138,6 +138,8 @@ pub struct BarometerResp {
     pub temperature_c: f32,
     /// Barometric altitude in meters
     pub altitude_m: f32,
+    /// Vertical speed in m/s (positive = climbing)
+    pub vario_ms: f32,
 }
 
 /// Per-engine telemetry (DShot bidirectional RPM + throttle + governor + EDT)

@@ -240,7 +240,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                 "  Baro: {:.1} hPa | {:.1}\u{00B0}C",
                 b.pressure_hpa, b.temperature_c
             ),
-            format!("  Alt:  {:.1}m (baro)", b.altitude_m),
+            format!("  Alt:  {:.1}m | Vario: {:+.1} m/s", b.altitude_m, b.vario_ms),
         )
     } else {
         ("  Baro: ---".into(), "  Alt:  --- (baro)".into())
