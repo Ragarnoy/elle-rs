@@ -40,7 +40,7 @@ use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
     dshot::{DSHOT_THROTTLE, dshot_task},
     pwm::{PwmOutputs, PwmPins},
-    sequential_flash_manager::SequentialFlashManager,
+    flash::SequentialFlashManager,
 };
 
 use elle_hardware::ULogLogger;
@@ -91,7 +91,7 @@ fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
 /// Save PID gains to flash with timeout. Returns true on success.
 async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
     use elle_config::profile::{FlashRequest, FlashResponse};
-    use elle_hardware::sequential_flash_manager::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+    use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 
     FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
     let save_timeout = Timer::after(Duration::from_secs(5));
@@ -399,7 +399,7 @@ async fn main(spawner: Spawner) {
         spawner.spawn(crsf_receiver_task(crsf).unwrap());
 
         info!("Core0: Starting CRSF telemetry TX task (PIN_20, DMA_CH4)");
-        spawner.spawn(elle_hardware::crsf_telemetry::crsf_telemetry_task(tx).unwrap());
+        spawner.spawn(elle_hardware::crsf::crsf_telemetry_task(tx).unwrap());
     }
 
     #[cfg(feature = "gnss")]
@@ -461,7 +461,7 @@ async fn main(spawner: Spawner) {
     // Boot-time PID profile load from flash
     {
         use elle_config::profile::{FlashRequest, FlashResponse};
-        use elle_hardware::sequential_flash_manager::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+        use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 
         info!("Core0: Loading PID profile from flash");
         FLASH_REQUEST_SIGNAL.signal(FlashRequest::LoadPidProfile);
@@ -510,7 +510,7 @@ async fn main(spawner: Spawner) {
     // Boot-time mag cal load from flash
     {
         use elle_config::profile::{FlashRequest, FlashResponse};
-        use elle_hardware::sequential_flash_manager::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+        use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 
         info!("Core0: Loading mag calibration from flash");
         FLASH_REQUEST_SIGNAL.signal(FlashRequest::LoadMagCal);
@@ -659,8 +659,8 @@ async fn main(spawner: Spawner) {
                 let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
                 DSHOT_THROTTLE.signal((l_erpm, r_erpm));
 
-                elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
-                    elle_hardware::crsf_telemetry::CrsfFlightMode {
+                elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(
+                    elle_hardware::crsf::CrsfFlightMode {
                         armed: fc.is_armed(),
                         failsafe: fc.is_failsafe(),
                         attitude_mode: fc.is_attitude_enabled(),
@@ -897,7 +897,7 @@ async fn main(spawner: Spawner) {
         use elle_control::commands::NormalizedCommands;
         #[cfg(not(feature = "rpc-rc"))]
         use elle_control::commands::PilotCommands;
-        use elle_hardware::sequential_flash_manager::{
+        use elle_hardware::flash::{
             FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
         };
         use rpc_app::{
@@ -1405,8 +1405,8 @@ async fn main(spawner: Spawner) {
             // Update mag cal sample count for RPC visibility
             // (read from IMU side if collecting — approximated via status check)
 
-            elle_hardware::crsf_telemetry::CRSF_FLIGHT_MODE.signal(
-                elle_hardware::crsf_telemetry::CrsfFlightMode {
+            elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(
+                elle_hardware::crsf::CrsfFlightMode {
                     armed: fc.is_armed(),
                     failsafe: fc.is_failsafe(),
                     attitude_mode: fc.is_attitude_enabled(),
@@ -1677,8 +1677,8 @@ async fn gnss_task(
                         hdop: gga.hdop.unwrap_or(99.9),
                     });
 
-                    elle_hardware::crsf_telemetry::TELEMETRY_GNSS.signal(
-                        elle_hardware::crsf_telemetry::TelemetryGpsData {
+                    elle_hardware::crsf::TELEMETRY_GNSS.signal(
+                        elle_hardware::crsf::TelemetryGpsData {
                             latitude: last_lat,
                             longitude: last_lon,
                             altitude_m: last_alt,

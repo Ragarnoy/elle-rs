@@ -8,7 +8,7 @@ use elle_error::ULogError;
 use embassy_time::Instant;
 use heapless::Vec;
 
-use crate::sequential_flash_manager::{request_write_ulog, request_write_ulog_blocking};
+use crate::flash::{request_write_ulog, request_write_ulog_blocking};
 
 /// ULog logger state
 pub struct ULogLogger {

@@ -15,7 +15,7 @@ use sequential_storage::cache::NoCache;
 use sequential_storage::map::{MapConfig, MapStorage};
 use sequential_storage::queue::{QueueConfig, QueueStorage};
 
-use crate::flash_constants::{PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_START};
+use super::constants::{PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_START};
 
 /// Mask SIO_IRQ_FIFO on Core0 before flash operations.
 ///
@@ -176,7 +176,7 @@ impl<'a> SequentialFlashManager<'a> {
         }
 
         let flash = self.take_flash();
-        let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
+        let config = QueueConfig::new(ULOG_FLASH_START..super::constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         mask_sio_fifo();
@@ -207,7 +207,7 @@ impl<'a> SequentialFlashManager<'a> {
     /// Peek at the oldest ULog entry without removing it
     async fn peek_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.take_flash();
-        let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
+        let config = QueueConfig::new(ULOG_FLASH_START..super::constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         mask_sio_fifo();
@@ -241,7 +241,7 @@ impl<'a> SequentialFlashManager<'a> {
     /// Pop the oldest ULog entry from the queue
     async fn pop_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.take_flash();
-        let config = QueueConfig::new(ULOG_FLASH_START..crate::flash_constants::ULOG_FLASH_END_EXCL);
+        let config = QueueConfig::new(ULOG_FLASH_START..super::constants::ULOG_FLASH_END_EXCL);
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         mask_sio_fifo();
@@ -373,7 +373,7 @@ impl<'a> SequentialFlashManager<'a> {
     async fn erase_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.flash.as_mut().expect("flash not available");
         let mut addr = ULOG_FLASH_START;
-        let end = crate::flash_constants::ULOG_FLASH_END_EXCL;
+        let end = super::constants::ULOG_FLASH_END_EXCL;
         const ERASE_CHUNK: u32 = 64 * 1024; // 64KB per iteration
 
         while addr < end {

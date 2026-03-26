@@ -313,8 +313,8 @@ fn handle_erase_ulog(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp
 }
 
 fn handle_get_ulog_info(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> ULogInfoResp {
-    use elle_hardware::flash_constants::ULOG_FLASH_SIZE;
-    use elle_hardware::sequential_flash_manager::{ULOG_BYTES_USED, ULOG_ITEMS_STORED};
+    use elle_hardware::flash::ULOG_FLASH_SIZE;
+    use elle_hardware::flash::{ULOG_BYTES_USED, ULOG_ITEMS_STORED};
 
     ULogInfoResp {
         recording: ULOG_ENABLED.load(Ordering::Relaxed),
