@@ -38,6 +38,16 @@ Key feature flags for elle-eagle:
 
 ULog flash recording is always compiled in (no feature gate). Recording is idle until explicitly started.
 
+### Feature Powerset Check
+
+Use `cargo hack` to verify all valid feature combinations compile:
+
+```sh
+cargo hack check -p elle-eagle --feature-powerset --exclude-features defmt-logging,default,rpc-rc --release
+```
+
+Excluded features: `defmt-logging`/`default` (mutually exclusive with `rpc-control`), `rpc-rc` (requires `rpc-control`, not valid standalone). The two `compile_error!` guards in `main.rs` enforce these constraints.
+
 ### Host Tool
 
 Must specify target explicitly (workspace `.cargo/config.toml` defaults to thumbv8m):
