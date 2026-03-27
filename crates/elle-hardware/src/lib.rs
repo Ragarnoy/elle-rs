@@ -7,6 +7,7 @@ pub mod flash;
 pub mod imu;
 pub mod led;
 pub mod pwm;
+pub mod sd_writer;
 pub mod signal_cache;
 
 pub mod ulog_logger;

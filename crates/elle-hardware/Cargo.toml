@@ -35,6 +35,13 @@ libm = { workspace = true }
 ahrs = { workspace = true }
 nalgebra = { workspace = true }
 heapless = { workspace = true }
+static_cell = { workspace = true }
+sdspi = { git = "https://github.com/MabezDev/embedded-fatfs", version = "0.1.0", default-features = false }
+embedded-fatfs = { git = "https://github.com/MabezDev/embedded-fatfs", version = "0.1.0", default-features = false }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", version = "0.6.0", default-features = false }
+aligned = { version = "0.4", default-features = false }
+embedded-io-async = { version = "0.6", default-features = false }
+block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", version = "0.2.0", default-features = false }
 
 [features]
 disable-imu = []  # Disable IMU for debugging (enabled by default, use this flag to disable)

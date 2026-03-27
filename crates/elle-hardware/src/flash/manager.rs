@@ -2,7 +2,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::NVIC;
 use defmt::*;
 use elle_config::profile::{FlashRequest, FlashResponse, ULOG_CHUNK_SIZE, ULOG_WRITE_CHUNK_SIZE};
-use elle_error::{ElleResult, FlashError};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::interrupt;
 use embassy_rp::peripherals::FLASH;
@@ -65,7 +64,6 @@ pub struct SequentialFlashManager<'a> {
     /// `pop()` requires `MultiwriteNorFlash` which isn't impl'd for `&mut Flash`,
     /// so we move flash into QueueStorage and back via destroy().
     flash: Option<FlashDevice<'a>>,
-    ulog_buffer: [u8; ULOG_CHUNK_SIZE],
 }
 
 impl<'a> SequentialFlashManager<'a> {
@@ -73,7 +71,6 @@ impl<'a> SequentialFlashManager<'a> {
     pub const fn new(flash: FlashDevice<'a>) -> Self {
         Self {
             flash: Some(flash),
-            ulog_buffer: [0; ULOG_CHUNK_SIZE],
         }
     }
 
@@ -87,42 +84,16 @@ impl<'a> SequentialFlashManager<'a> {
         self.flash = Some(flash);
     }
 
-    /// Main flash manager task running on Core 0
+    /// Main flash manager task running on Core 0.
+    ///
+    /// Handles PID profiles, mag calibration, and ULog extraction from flash.
+    /// ULog **writes** are handled by `sd_writer_task` via `ULOG_WRITE_CHANNEL`.
     pub async fn run(&mut self) {
-        info!("Core0: Sequential flash manager started and waiting for requests");
+        info!("Core0: Flash manager started (profiles + ULog extraction only)");
 
         loop {
-            // Select between fire-and-forget ULog writes and signal-based flash ops
-            match embassy_futures::select::select(
-                ULOG_WRITE_CHANNEL.receive(),
-                FLASH_REQUEST_SIGNAL.wait(),
-            )
-            .await
-            {
-                // Fire-and-forget ULog write from channel (no response needed)
-                // Batch: drain all pending channel messages into ulog_buffer, push once
-                embassy_futures::select::Either::First(req) => {
-                    let mut total = req.len.min(ULOG_CHUNK_SIZE);
-                    self.ulog_buffer[..total].copy_from_slice(&req.data[..total]);
-
-                    // Drain remaining pending messages into the same buffer
-                    while let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() {
-                        let len = extra.len.min(ULOG_WRITE_CHUNK_SIZE);
-                        if total + len > ULOG_CHUNK_SIZE {
-                            break; // Buffer full, leave extra for next iteration
-                        }
-                        self.ulog_buffer[total..total + len]
-                            .copy_from_slice(&extra.data[..len]);
-                        total += len;
-                    }
-
-                    if let Err(e) = self.write_ulog_batched(total).await {
-                        warn!("Flash: ULog write failed: {}", e);
-                    }
-                }
-
-                // Signal-based flash operations (response required)
-                embassy_futures::select::Either::Second(request) => match request {
+            let request = FLASH_REQUEST_SIGNAL.wait().await;
+            match request {
                     FlashRequest::PeekULog => {
                         let response = self.peek_ulog_internal().await;
                         FLASH_RESPONSE_SIGNAL.signal(response);
@@ -158,49 +129,10 @@ impl<'a> SequentialFlashManager<'a> {
                         let response = self.load_mag_cal_internal().await;
                         FLASH_RESPONSE_SIGNAL.signal(response);
                     }
-                },
-            }
+                }
 
             // Small yield to ensure other tasks can run
             Timer::after(Duration::from_millis(1)).await;
-        }
-    }
-
-    /// Write batched ULog data to flash using sequential-storage queue.
-    /// Data must already be in `self.ulog_buffer[..len]`.
-    /// Batches multiple channel messages into a single `queue.push()` call,
-    /// reducing the number of `in_ram()` pause/resume cycles.
-    async fn write_ulog_batched(&mut self, len: usize) -> ElleResult<()> {
-        if len == 0 {
-            return Ok(());
-        }
-
-        let flash = self.take_flash();
-        let config = QueueConfig::new(ULOG_FLASH_START..super::constants::ULOG_FLASH_END_EXCL);
-        let mut queue = QueueStorage::new(flash, config, NoCache::new());
-
-        mask_sio_fifo();
-        let result = queue.push(&self.ulog_buffer[..len], false).await;
-        unsafe { unmask_sio_fifo() };
-
-        let (flash, _cache) = queue.destroy();
-        self.put_flash(flash);
-
-        match result {
-            Ok(_) => {
-                ULOG_BYTES_USED.fetch_add(len as u32, Ordering::Relaxed);
-                ULOG_ITEMS_STORED.fetch_add(1, Ordering::Relaxed);
-                Ok(())
-            }
-            Err(e) => {
-                crate::elle_event!(
-                    error,
-                    crate::event::EVT_FLASH_ULOG_PUSH_FAILED,
-                    "Flash: ULog push failed: {:?}",
-                    Debug2Format(&e)
-                );
-                Err(FlashError::WriteFailed.into())
-            }
         }
     }
 
@@ -211,7 +143,8 @@ impl<'a> SequentialFlashManager<'a> {
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         mask_sio_fifo();
-        let result = queue.peek(&mut self.ulog_buffer).await;
+        let mut buf = [0u8; ULOG_CHUNK_SIZE];
+        let result = queue.peek(&mut buf).await;
         unsafe { unmask_sio_fifo() };
 
         // Copy data before destroying queue (result borrows ulog_buffer)
@@ -245,7 +178,8 @@ impl<'a> SequentialFlashManager<'a> {
         let mut queue = QueueStorage::new(flash, config, NoCache::new());
 
         mask_sio_fifo();
-        let result = queue.pop(&mut self.ulog_buffer).await;
+        let mut buf = [0u8; ULOG_CHUNK_SIZE];
+        let result = queue.pop(&mut buf).await;
         unsafe { unmask_sio_fifo() };
 
         let response = match result {

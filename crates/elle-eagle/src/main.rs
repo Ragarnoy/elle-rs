@@ -248,7 +248,9 @@ bind_interrupts!(
             embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH1>,
             embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH2>,
             embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH3>,
-            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH4>;
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH4>,
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH5>,
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH6>;
     }
 );
 
@@ -316,6 +318,20 @@ async fn main(spawner: Spawner) {
     // Small delay to let debug probe settle
     Timer::after_millis(10).await;
     spawner.spawn(flash_manager_task(flash).unwrap());
+
+    // SD card writer on SPI1 with DMA (async)
+    info!("Core0: Starting SD card writer");
+    {
+        let mut sd_spi_config = embassy_rp::spi::Config::default();
+        sd_spi_config.frequency = 400_000; // 400kHz for SD card init
+        let sd_spi = embassy_rp::spi::Spi::new(
+            p.SPI1, p.PIN_26, p.PIN_27, p.PIN_24,
+            p.DMA_CH5, p.DMA_CH6, Irqs, sd_spi_config,
+        );
+        let sd_cs = embassy_rp::gpio::Output::new(p.PIN_25, embassy_rp::gpio::Level::High);
+        let sd_detect = embassy_rp::gpio::Input::new(p.PIN_23, embassy_rp::gpio::Pull::Up);
+        spawner.spawn(elle_hardware::sd_writer::sd_writer_task(sd_spi, sd_cs, sd_detect, epoch_ms).unwrap());
+    }
 
     // Setup PIO0: elevon PWM (SM0, SM1) + WS2812B LED (SM2)
     info!("Core0: Setting up flight control hardware + LED on PIO0");
@@ -794,6 +810,19 @@ async fn main(spawner: Spawner) {
                             );
                         }
                     }
+
+                    // Log autotune status to ULog (77Hz during active autotune)
+                    if ulog_recording {
+                        let _ = ulog_logger.log_autotune(
+                            autotuner.phase_u8(),
+                            autotuner.axis() as u8,
+                            autotuner.relay_positive(),
+                            autotuner.current_setpoint_deg(),
+                            measurement_deg,
+                            autotuner.cycles_completed(),
+                            autotuner.current_amplitude_deg(),
+                        );
+                    }
                 }
 
                 autotune_tick += 1;
@@ -811,11 +840,16 @@ async fn main(spawner: Spawner) {
                 };
 
                 if switch_on && !ulog_recording {
-                    // Switch just turned on — initialize and start
-                    if !ulog_logger.is_initialized() {
+                    // Switch just turned on — initialize and start (only if SD card is ready)
+                    if !ulog_logger.is_initialized()
+                        && elle_hardware::sd_writer::SD_READY.load(core::sync::atomic::Ordering::Acquire)
+                    {
                         let wall_ms =
                             compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                         let _ = ulog_logger.initialize(wall_ms).await;
+                        elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
+                            elle_hardware::sd_writer::SdCommand::Start,
+                        );
                     }
                     if ulog_logger.is_initialized() {
                         ulog_recording = true;
@@ -828,6 +862,9 @@ async fn main(spawner: Spawner) {
                 } else if !switch_on && ulog_recording {
                     // Switch just turned off — flush and stop
                     let _ = ulog_logger.flush();
+                    elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
+                        elle_hardware::sd_writer::SdCommand::Stop,
+                    );
                     ulog_recording = false;
                     elle_hardware::elle_event!(
                         info,
@@ -1042,12 +1079,18 @@ async fn main(spawner: Spawner) {
                     }
                     RpcCommand::StartULog => {
                         let mut ok = ulog_logger.is_initialized();
-                        if !ok {
+                        if !ok
+                            && elle_hardware::sd_writer::SD_READY
+                                .load(Ordering::Acquire)
+                        {
                             let wall_ms =
                                 compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                             ok = ulog_logger.initialize(wall_ms).await.is_ok();
                         }
                         if ok {
+                            elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
+                                elle_hardware::sd_writer::SdCommand::Start,
+                            );
                             ULOG_ENABLED.store(true, Ordering::Release);
                             elle_hardware::elle_event!(
                                 info,
@@ -1065,6 +1108,9 @@ async fn main(spawner: Spawner) {
                     RpcCommand::StopULog => {
                         ULOG_ENABLED.store(false, Ordering::Release);
                         let _ = ulog_logger.flush();
+                        elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
+                            elle_hardware::sd_writer::SdCommand::Stop,
+                        );
                         elle_hardware::elle_event!(
                             info,
                             elle_hardware::event::EVT_ULOG_STOPPED,
@@ -1325,6 +1371,19 @@ async fn main(spawner: Spawner) {
                             "Autotune COMPLETE (RPC)"
                         );
                     }
+                }
+
+                // Log autotune status to ULog (77Hz during active autotune)
+                if ULOG_ENABLED.load(Ordering::Acquire) {
+                    let _ = ulog_logger.log_autotune(
+                        autotuner.phase_u8(),
+                        autotuner.axis() as u8,
+                        autotuner.relay_positive(),
+                        autotuner.current_setpoint_deg(),
+                        measurement_deg,
+                        autotuner.cycles_completed(),
+                        autotuner.current_amplitude_deg(),
+                    );
                 }
             }
             autotune_tick += 1;

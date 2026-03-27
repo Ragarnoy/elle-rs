@@ -28,6 +28,7 @@ pub struct ULogLogger {
     gnss_msg_id: Option<u16>,
     engine_msg_id: Option<u16>,
     log_event_msg_id: Option<u16>,
+    autotune_msg_id: Option<u16>,
     /// Log start time
     start_time: Option<Instant>,
 }
@@ -48,6 +49,7 @@ impl ULogLogger {
             gnss_msg_id: None,
             engine_msg_id: None,
             log_event_msg_id: None,
+            autotune_msg_id: None,
             start_time: None,
         }
     }
@@ -66,8 +68,8 @@ impl ULogLogger {
 
         // Import ULog types
         use elle_ulog::{
-            AttitudeMessage, BarometerMessage, CommandsMessage, EngineMessage, GnssMessage,
-            LogEventMessage, MagnetometerMessage, StatusMessage,
+            AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, EngineMessage,
+            GnssMessage, LogEventMessage, MagnetometerMessage, StatusMessage,
         };
 
         let start_time = Instant::now();
@@ -129,9 +131,14 @@ impl ULogLogger {
                 .add_subscription(LogEventMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
+        self.autotune_msg_id = Some(
+            self.writer
+                .add_subscription(AutotuneMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
 
         info!(
-            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}",
+            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}, autotune={}",
             self.attitude_msg_id.unwrap(),
             self.commands_msg_id.unwrap(),
             self.status_msg_id.unwrap(),
@@ -139,7 +146,8 @@ impl ULogLogger {
             self.magnetometer_msg_id.unwrap(),
             self.gnss_msg_id.unwrap(),
             self.engine_msg_id.unwrap(),
-            self.log_event_msg_id.unwrap()
+            self.log_event_msg_id.unwrap(),
+            self.autotune_msg_id.unwrap()
         );
 
         // Flush header and definitions to flash
@@ -391,6 +399,41 @@ impl ULogLogger {
         self.writer.clear_buffer();
         self.writer
             .write_log_event(self.log_event_msg_id.unwrap(), &msg)
+            .map_err(|_| ULogError::BufferFull)?;
+
+        self.buffer_writer_output()
+    }
+
+    /// Log autotune status (called at 77Hz during active autotune only)
+    #[allow(clippy::too_many_arguments)]
+    pub fn log_autotune(
+        &mut self,
+        phase: u8,
+        axis: u8,
+        relay_positive: bool,
+        setpoint_deg: f32,
+        measurement_deg: f32,
+        cycles_done: u8,
+        amplitude_deg: f32,
+    ) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+
+        let msg = elle_ulog::AutotuneMessage::new(
+            Instant::now(),
+            phase,
+            axis,
+            relay_positive,
+            setpoint_deg,
+            measurement_deg,
+            cycles_done,
+            amplitude_deg,
+        );
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_autotune(self.autotune_msg_id.unwrap(), &msg)
             .map_err(|_| ULogError::BufferFull)?;
 
         self.buffer_writer_output()
