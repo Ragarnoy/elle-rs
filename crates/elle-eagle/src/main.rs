@@ -25,13 +25,10 @@ use elle_config::{
 #[cfg(any(not(feature = "rpc-control"), feature = "rpc-rc"))]
 use defmt::debug;
 #[cfg(any(not(feature = "rpc-control"), feature = "rpc-rc"))]
-use elle_config::{
-    ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH, PITCH_CH, ROLL_CH,
-    THROTTLE_CH, YAW_CH,
-};
+use elle_config::{ATTITUDE_ENABLE_CH, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH};
+use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains};
 #[cfg(any(not(feature = "rpc-control"), feature = "rpc-rc"))]
 use elle_control::commands::PilotCommands;
-use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains};
 use elle_hardware::imu::{
     ATTITUDE, AttitudeData, IMU_STATUS, Imu, LED_COMMAND_CHANNEL, is_attitude_valid,
 };
@@ -39,8 +36,8 @@ use elle_hardware::imu::{BARO, MAG};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
     dshot::{DSHOT_THROTTLE, dshot_task},
-    pwm::{PwmOutputs, PwmPins},
     flash::SequentialFlashManager,
+    pwm::{PwmOutputs, PwmPins},
 };
 
 use elle_hardware::ULogLogger;
@@ -62,8 +59,9 @@ use elle_system::{
     update_led_timing, update_ulog_timing,
 };
 use embassy_executor::Spawner;
-use embassy_rp::executor::Executor;
+use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
+use embassy_rp::executor::Executor;
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::i2c::{Config, I2c};
 use embassy_rp::multicore::{Stack, spawn_core1};
@@ -71,7 +69,6 @@ use embassy_rp::peripherals::{
     DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_5, PIN_8, PIN_9, PIN_10, PIO0, PIO1,
     PIO2, SPI0, UART0, UART1,
 };
-use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
@@ -150,6 +147,7 @@ fn log_flight_data(
 
     // Log commands at 77Hz
     // Convert to normalized for consistent logging
+    let last_out = fc.last_output();
     match commands {
         PilotCommands::Normalized(norm) => {
             let _ = logger.log_commands(
@@ -158,8 +156,8 @@ fn log_flight_data(
                 norm.roll,
                 norm.yaw,
                 norm.attitude_mode as u8,
-                norm.pitch_setpoint_deg,
-                norm.roll_setpoint_deg,
+                last_out.pitch_setpoint_deg,
+                last_out.roll_setpoint_deg,
             );
         }
         PilotCommands::Raw(raw) => {
@@ -171,8 +169,8 @@ fn log_flight_data(
                 norm.roll,
                 norm.yaw,
                 norm.attitude_mode as u8,
-                norm.pitch_setpoint_deg,
-                norm.roll_setpoint_deg,
+                last_out.pitch_setpoint_deg,
+                last_out.roll_setpoint_deg,
             );
         }
     }
@@ -199,7 +197,12 @@ fn log_flight_data(
     // Log barometer at ~2Hz
     if loop_counter.is_multiple_of(ULOG_BARO_DIVISOR) {
         let baro = BARO.read_cached();
-        let _ = logger.log_barometer(baro.pressure_hpa, baro.temperature_c, baro.altitude_m, baro.vario_ms);
+        let _ = logger.log_barometer(
+            baro.pressure_hpa,
+            baro.temperature_c,
+            baro.altitude_m,
+            baro.vario_ms,
+        );
     }
 
     // Log magnetometer at ~10Hz
@@ -625,14 +628,12 @@ async fn main(spawner: Spawner) {
                     && let PilotCommands::Raw(raw) = &commands
                 {
                     debug!(
-                        "RC: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
+                        "RC: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{}",
                         raw.channels[ROLL_CH],
                         raw.channels[PITCH_CH],
                         raw.channels[THROTTLE_CH],
                         raw.channels[YAW_CH],
                         raw.channels[ATTITUDE_ENABLE_CH],
-                        raw.channels[ATTITUDE_PITCH_SETPOINT_CH],
-                        raw.channels[ATTITUDE_ROLL_SETPOINT_CH]
                     );
                 }
 
@@ -655,18 +656,18 @@ async fn main(spawner: Spawner) {
 
                 // Send engine commands via DShot (governor converts eRPM target to DShot)
                 let (engine_l, engine_r) = fc.engine_output();
-                let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
-                let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+                let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM)
+                    / elle_config::DSHOT_THROTTLE_MAX as u32;
+                let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM)
+                    / elle_config::DSHOT_THROTTLE_MAX as u32;
                 DSHOT_THROTTLE.signal((l_erpm, r_erpm));
 
-                elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(
-                    elle_hardware::crsf::CrsfFlightMode {
-                        armed: fc.is_armed(),
-                        failsafe: fc.is_failsafe(),
-                        attitude_mode: fc.is_attitude_enabled(),
-                        autotuning: autotuner.is_active(),
-                    },
-                );
+                elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(elle_hardware::crsf::CrsfFlightMode {
+                    armed: fc.is_armed(),
+                    failsafe: fc.is_failsafe(),
+                    attitude_mode: fc.is_attitude_enabled(),
+                    autotuning: autotuner.is_active(),
+                });
 
                 // --- Autotune RC switch logic (CH9, 3-position with debounce) ---
                 if let PilotCommands::Raw(raw) = commands {
@@ -716,8 +717,8 @@ async fn main(spawner: Spawner) {
                                 let test_gains = autotuner.start(
                                     axis,
                                     current_gains,
-                                    5.0,  // relay_deg
-                                    6,    // num_cycles
+                                    5.0, // relay_deg
+                                    6,   // num_cycles
                                     elle_control::autotune::TuningRule::TyreusLuyben,
                                     autotune_tick,
                                 );
@@ -738,7 +739,9 @@ async fn main(spawner: Spawner) {
                 }
 
                 // Autotune state machine tick
-                if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
+                if autotuner.is_active()
+                    && let Some(att) = valid_attitude.as_ref()
+                {
                     let measurement_deg = if autotune_stable_pos == 1 {
                         att.pitch * (180.0 / core::f32::consts::PI)
                     } else {
@@ -747,7 +750,10 @@ async fn main(spawner: Spawner) {
 
                     match autotuner.update(measurement_deg, autotune_tick) {
                         AutotuneAction::None => {}
-                        AutotuneAction::SetpointOverride { pitch_deg, roll_deg } => {
+                        AutotuneAction::SetpointOverride {
+                            pitch_deg,
+                            roll_deg,
+                        } => {
                             fc.set_setpoint_override(pitch_deg, roll_deg);
                         }
                         AutotuneAction::ApplyGains(gains) => {
@@ -799,8 +805,7 @@ async fn main(spawner: Spawner) {
 
                 // ULog recording controlled by RC switch
                 let switch_on = if let PilotCommands::Raw(raw) = commands {
-                    raw.channels[elle_config::ULOG_ENABLE_CH]
-                        > elle_config::ULOG_ENABLE_THRESHOLD
+                    raw.channels[elle_config::ULOG_ENABLE_CH] > elle_config::ULOG_ENABLE_THRESHOLD
                 } else {
                     false
                 };
@@ -808,7 +813,8 @@ async fn main(spawner: Spawner) {
                 if switch_on && !ulog_recording {
                     // Switch just turned on — initialize and start
                     if !ulog_logger.is_initialized() {
-                        let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
+                        let wall_ms =
+                            compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                         let _ = ulog_logger.initialize(wall_ms).await;
                     }
                     if ulog_logger.is_initialized() {
@@ -866,9 +872,7 @@ async fn main(spawner: Spawner) {
 
                 let led_pattern = if fc.is_failsafe() {
                     LedPattern::RapidFlash(colors::ORANGE)
-                } else if fc.is_armed()
-                    && fc.rc_link_state() == elle_system::RcLinkState::Warning
-                {
+                } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
                     if fc.is_attitude_enabled() {
@@ -897,9 +901,7 @@ async fn main(spawner: Spawner) {
         use elle_control::commands::NormalizedCommands;
         #[cfg(not(feature = "rpc-rc"))]
         use elle_control::commands::PilotCommands;
-        use elle_hardware::flash::{
-            FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
-        };
+        use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
         use rpc_app::{
             ULOG_ENABLED, ULOG_ITEM_LEN, ULOG_ITEM_SIGNAL, ULOG_OFFSET, ULOG_STATE, ULogState,
         };
@@ -928,10 +930,6 @@ async fn main(spawner: Spawner) {
         let mut rpc_elevon_right: f32 = 0.0;
         #[cfg(not(feature = "rpc-rc"))]
         let mut rpc_mode = AttitudeMode::Manual;
-        #[cfg(not(feature = "rpc-rc"))]
-        let mut rpc_pitch_setpoint_deg: f32 = 0.0;
-        #[cfg(not(feature = "rpc-rc"))]
-        let mut rpc_roll_setpoint_deg: f32 = 0.0;
 
         // RC mode: track last commands from CRSF receiver
         #[cfg(feature = "rpc-rc")]
@@ -972,14 +970,17 @@ async fn main(spawner: Spawner) {
                     RpcCommand::SetMode(mode) => {
                         rpc_mode = match mode {
                             ControlMode::Manual => AttitudeMode::Manual,
-                            ControlMode::Mixed => AttitudeMode::Mixed,
-                            ControlMode::Autopilot => AttitudeMode::Autopilot,
+                            ControlMode::Stabilized => AttitudeMode::Stabilized,
+                            ControlMode::AltitudeHold => AttitudeMode::AltitudeHold,
                         };
-                        info!("RPC: Control mode set to {}", match mode {
-                            ControlMode::Manual => "Manual",
-                            ControlMode::Mixed => "Mixed",
-                            ControlMode::Autopilot => "Autopilot",
-                        });
+                        info!(
+                            "RPC: Control mode set to {}",
+                            match mode {
+                                ControlMode::Manual => "Manual",
+                                ControlMode::Stabilized => "Stabilized",
+                                ControlMode::AltitudeHold => "AltitudeHold",
+                            }
+                        );
                     }
                     #[cfg(feature = "rpc-rc")]
                     RpcCommand::SetMode(_) => {} // Ignored in RC mode
@@ -1025,8 +1026,7 @@ async fn main(spawner: Spawner) {
                         i_limit,
                     } => {
                         fc.set_pid_gains(
-                            pitch_kp, pitch_ki, pitch_kd, roll_kp, roll_ki, roll_kd, scale,
-                            i_limit,
+                            pitch_kp, pitch_ki, pitch_kd, roll_kp, roll_ki, roll_kd, scale, i_limit,
                         );
                         info!(
                             "RPC: PID gains updated P({}/{}/{}) R({}/{}/{}) s={} il={}",
@@ -1040,25 +1040,11 @@ async fn main(spawner: Spawner) {
                             (i_limit * 10.0) as i32,
                         );
                     }
-                    #[cfg(not(feature = "rpc-rc"))]
-                    RpcCommand::SetAttitudeSetpoint {
-                        pitch_deg,
-                        roll_deg,
-                    } => {
-                        rpc_pitch_setpoint_deg = pitch_deg;
-                        rpc_roll_setpoint_deg = roll_deg;
-                        info!(
-                            "RPC: Setpoint P={}cdeg R={}cdeg",
-                            (pitch_deg * 100.0) as i32,
-                            (roll_deg * 100.0) as i32,
-                        );
-                    }
-                    #[cfg(feature = "rpc-rc")]
-                    RpcCommand::SetAttitudeSetpoint { .. } => {} // Ignored in RC mode
                     RpcCommand::StartULog => {
                         let mut ok = ulog_logger.is_initialized();
                         if !ok {
-                            let wall_ms = compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
+                            let wall_ms =
+                                compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                             ok = ulog_logger.initialize(wall_ms).await.is_ok();
                         }
                         if ok {
@@ -1148,10 +1134,7 @@ async fn main(spawner: Spawner) {
                             save_pid_to_flash(gains.to_bytes(), "savepid").await;
                         } else {
                             use elle_control::autotune::TuningRule;
-                            if fc.is_armed()
-                                && fc.is_attitude_enabled()
-                                && !autotuner.is_active()
-                            {
+                            if fc.is_armed() && fc.is_attitude_enabled() && !autotuner.is_active() {
                                 let at_axis = if axis == 0 {
                                     AutotuneAxis::Pitch
                                 } else {
@@ -1245,14 +1228,12 @@ async fn main(spawner: Spawner) {
                         // Debug logging (~8Hz)
                         if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10) {
                             debug!(
-                                "RC: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{} CH6:{} CH8:{}",
+                                "RC: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{}",
                                 raw.channels[ROLL_CH],
                                 raw.channels[PITCH_CH],
                                 raw.channels[THROTTLE_CH],
                                 raw.channels[YAW_CH],
                                 raw.channels[ATTITUDE_ENABLE_CH],
-                                raw.channels[ATTITUDE_PITCH_SETPOINT_CH],
-                                raw.channels[ATTITUDE_ROLL_SETPOINT_CH]
                             );
                         }
                     }
@@ -1272,8 +1253,6 @@ async fn main(spawner: Spawner) {
                     roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,
                     yaw: 0.0,
                     attitude_mode: rpc_mode,
-                    pitch_setpoint_deg: rpc_pitch_setpoint_deg,
-                    roll_setpoint_deg: rpc_roll_setpoint_deg,
                     timestamp: Instant::now(),
                 }))
             };
@@ -1286,8 +1265,10 @@ async fn main(spawner: Spawner) {
 
             // Send engine commands via DShot (governor converts eRPM target to DShot)
             let (engine_l, engine_r) = fc.engine_output();
-            let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
-            let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+            let l_erpm =
+                (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+            let r_erpm =
+                (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
             DSHOT_THROTTLE.signal((l_erpm, r_erpm));
 
             // Check for RC signal loss (only relevant when RC is the command source)
@@ -1295,14 +1276,19 @@ async fn main(spawner: Spawner) {
             fc.check_failsafe();
 
             // Autotuner per-tick update
-            if autotuner.is_active() && let Some(att) = valid_attitude.as_ref() {
+            if autotuner.is_active()
+                && let Some(att) = valid_attitude.as_ref()
+            {
                 let measurement_deg = match autotuner.axis() {
                     AutotuneAxis::Pitch => att.pitch * (180.0 / core::f32::consts::PI),
                     AutotuneAxis::Roll => att.roll * (180.0 / core::f32::consts::PI),
                 };
                 match autotuner.update(measurement_deg, autotune_tick) {
                     AutotuneAction::None => {}
-                    AutotuneAction::SetpointOverride { pitch_deg, roll_deg } => {
+                    AutotuneAction::SetpointOverride {
+                        pitch_deg,
+                        roll_deg,
+                    } => {
                         fc.set_setpoint_override(pitch_deg, roll_deg);
                     }
                     AutotuneAction::ApplyGains(gains) => {
@@ -1366,9 +1352,7 @@ async fn main(spawner: Spawner) {
                         )
                         .await
                         {
-                            embassy_futures::select::Either::First(
-                                FlashResponse::MagCalSaved,
-                            ) => {
+                            embassy_futures::select::Either::First(FlashResponse::MagCalSaved) => {
                                 elle_hardware::elle_event!(
                                     info,
                                     elle_hardware::event::EVT_MAG_CAL_SAVED,
@@ -1405,14 +1389,12 @@ async fn main(spawner: Spawner) {
             // Update mag cal sample count for RPC visibility
             // (read from IMU side if collecting — approximated via status check)
 
-            elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(
-                elle_hardware::crsf::CrsfFlightMode {
-                    armed: fc.is_armed(),
-                    failsafe: fc.is_failsafe(),
-                    attitude_mode: fc.is_attitude_enabled(),
-                    autotuning: autotuner.is_active(),
-                },
-            );
+            elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(elle_hardware::crsf::CrsfFlightMode {
+                armed: fc.is_armed(),
+                failsafe: fc.is_failsafe(),
+                attitude_mode: fc.is_attitude_enabled(),
+                autotuning: autotuner.is_active(),
+            });
 
             // Publish flight state for RPC handlers
             let fs = flight_state::FlightState {
@@ -1420,8 +1402,8 @@ async fn main(spawner: Spawner) {
                 failsafe: fc.is_failsafe(),
                 mode: match fc.current_control_mode() {
                     elle_system::ControlMode::Manual => ControlMode::Manual,
-                    elle_system::ControlMode::Mixed => ControlMode::Mixed,
-                    elle_system::ControlMode::Autopilot => ControlMode::Autopilot,
+                    elle_system::ControlMode::Stabilized => ControlMode::Stabilized,
+                    elle_system::ControlMode::AltitudeHold => ControlMode::AltitudeHold,
                 },
                 rc_age_ms: fc.rc_signal_age_ms(),
             };
@@ -1476,9 +1458,7 @@ async fn main(spawner: Spawner) {
                 let imu_status = IMU_STATUS.read().await;
                 let led_pattern = if fc.is_failsafe() {
                     LedPattern::RapidFlash(colors::ORANGE)
-                } else if fc.is_armed()
-                    && fc.rc_link_state() == elle_system::RcLinkState::Warning
-                {
+                } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
                     LedPattern::DoubleBlink(colors::PURPLE)

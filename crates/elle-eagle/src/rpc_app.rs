@@ -103,10 +103,13 @@ fn handle_set_throttle(ctx: &mut RpcContext, _hdr: VarHeader, req: SetThrottleRe
 }
 
 fn handle_set_elevons(ctx: &mut RpcContext, _hdr: VarHeader, req: SetElevonsReq) -> AckResp {
-    send_cmd(ctx, RpcCommand::SetElevons {
-        left: req.left,
-        right: req.right,
-    })
+    send_cmd(
+        ctx,
+        RpcCommand::SetElevons {
+            left: req.left,
+            right: req.right,
+        },
+    )
 }
 
 fn handle_set_control_mode(
@@ -346,45 +349,32 @@ fn handle_get_controller_output(
     }
 }
 
-fn handle_set_pid_gains(
-    ctx: &mut RpcContext,
-    _hdr: VarHeader,
-    req: SetPidGainsReq,
-) -> AckResp {
-    send_cmd(ctx, RpcCommand::SetPidGains {
-        pitch_kp: req.pitch_kp_x1000 as f32 / 1000.0,
-        pitch_ki: req.pitch_ki_x1000 as f32 / 1000.0,
-        pitch_kd: req.pitch_kd_x1000 as f32 / 1000.0,
-        roll_kp: req.roll_kp_x1000 as f32 / 1000.0,
-        roll_ki: req.roll_ki_x1000 as f32 / 1000.0,
-        roll_kd: req.roll_kd_x1000 as f32 / 1000.0,
-        scale: req.scale_x10000 as f32 / 10000.0,
-        i_limit: req.i_limit_x10 as f32 / 10.0,
-    })
+fn handle_set_pid_gains(ctx: &mut RpcContext, _hdr: VarHeader, req: SetPidGainsReq) -> AckResp {
+    send_cmd(
+        ctx,
+        RpcCommand::SetPidGains {
+            pitch_kp: req.pitch_kp_x1000 as f32 / 1000.0,
+            pitch_ki: req.pitch_ki_x1000 as f32 / 1000.0,
+            pitch_kd: req.pitch_kd_x1000 as f32 / 1000.0,
+            roll_kp: req.roll_kp_x1000 as f32 / 1000.0,
+            roll_ki: req.roll_ki_x1000 as f32 / 1000.0,
+            roll_kd: req.roll_kd_x1000 as f32 / 1000.0,
+            scale: req.scale_x10000 as f32 / 10000.0,
+            i_limit: req.i_limit_x10 as f32 / 10.0,
+        },
+    )
 }
 
-fn handle_set_attitude_setpoint(
-    ctx: &mut RpcContext,
-    _hdr: VarHeader,
-    req: SetAttitudeSetpointReq,
-) -> AckResp {
-    send_cmd(ctx, RpcCommand::SetAttitudeSetpoint {
-        pitch_deg: req.pitch_cdeg as f32 / 100.0,
-        roll_deg: req.roll_cdeg as f32 / 100.0,
-    })
-}
-
-fn handle_start_autotune(
-    ctx: &mut RpcContext,
-    _hdr: VarHeader,
-    req: StartAutotuneReq,
-) -> AckResp {
-    send_cmd(ctx, RpcCommand::StartAutotune {
-        axis: req.axis,
-        relay_deg_x10: req.relay_deg_x10,
-        num_cycles: req.num_cycles,
-        rule: req.rule,
-    })
+fn handle_start_autotune(ctx: &mut RpcContext, _hdr: VarHeader, req: StartAutotuneReq) -> AckResp {
+    send_cmd(
+        ctx,
+        RpcCommand::StartAutotune {
+            axis: req.axis,
+            relay_deg_x10: req.relay_deg_x10,
+            num_cycles: req.num_cycles,
+            rule: req.rule,
+        },
+    )
 }
 
 fn handle_abort_autotune(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
@@ -483,7 +473,6 @@ postcard_rpc::define_dispatch! {
         | GetTimeEndpoint           | blocking  | handle_get_time           |
         | GetControllerOutputEndpoint | blocking | handle_get_controller_output |
         | SetPidGainsEndpoint       | blocking  | handle_set_pid_gains      |
-        | SetAttitudeSetpointEndpoint | blocking | handle_set_attitude_setpoint |
         | StartAutotuneEndpoint     | blocking  | handle_start_autotune       |
         | AbortAutotuneEndpoint     | blocking  | handle_abort_autotune       |
         | StartMagCalEndpoint       | blocking  | handle_start_mag_cal        |

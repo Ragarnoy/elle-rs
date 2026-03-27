@@ -1,14 +1,14 @@
 use defmt::{info, warn};
+use elle_config::lut::apply_differential_thrust_lut;
 use elle_config::*;
-use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
 use elle_control::SavedGains;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
-use elle_config::lut::apply_differential_thrust_lut;
 use elle_control::mixing::{
     elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
     yaw::throttle_with_differential_lut,
 };
 use elle_control::{arming::ArmingState, pid::AttitudeController};
+use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
 use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT};
 use elle_hardware::pwm::PwmOutputs;
 use embassy_rp::watchdog::Watchdog;
@@ -19,17 +19,17 @@ use free_flight_stabilization::FlightStabilizerConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 pub enum ControlMode {
-    Manual,    // Full manual control (~306)
-    Mixed,     // Pilot + Autopilot blend (~1000)
-    Autopilot, // Full autopilot control (~1694)
+    Manual,       // Full manual control (~306)
+    Stabilized,   // Stick = attitude setpoint, 100% PID (~1000)
+    AltitudeHold, // Level hold, manual throttle (~1694)
 }
 
 impl From<AttitudeMode> for ControlMode {
     fn from(mode: AttitudeMode) -> Self {
         match mode {
             AttitudeMode::Manual => Self::Manual,
-            AttitudeMode::Mixed => Self::Mixed,
-            AttitudeMode::Autopilot => Self::Autopilot,
+            AttitudeMode::Stabilized => Self::Stabilized,
+            AttitudeMode::AltitudeHold => Self::AltitudeHold,
         }
     }
 }
@@ -344,14 +344,29 @@ impl<'a> FlightController<'a> {
         }
 
         // Enable attitude controller based on mode
-        self.attitude_controller.enabled = (norm.attitude_mode == AttitudeMode::Mixed
-            || norm.attitude_mode == AttitudeMode::Autopilot)
+        self.attitude_controller.enabled = (norm.attitude_mode == AttitudeMode::Stabilized
+            || norm.attitude_mode == AttitudeMode::AltitudeHold)
             && self.arming.armed;
 
-        // Apply setpoint override if active (used by autotuner)
-        let (pitch_sp_deg, roll_sp_deg) = self
-            .setpoint_override
-            .unwrap_or((norm.pitch_setpoint_deg, norm.roll_setpoint_deg));
+        // Compute setpoint from mode, with autotune override taking precedence
+        let (pitch_sp_deg, roll_sp_deg) = if let Some(ovr) = self.setpoint_override {
+            ovr
+        } else {
+            match norm.attitude_mode {
+                AttitudeMode::Stabilized => {
+                    // Stick IS the setpoint: center=level, full deflection=max angle
+                    (
+                        norm.pitch * STABILIZED_MAX_PITCH_DEG,
+                        norm.roll * STABILIZED_MAX_ROLL_DEG,
+                    )
+                }
+                AttitudeMode::AltitudeHold => {
+                    // Level hold: fixed 0°/0° (future: altitude controller adjusts)
+                    (0.0, 0.0)
+                }
+                AttitudeMode::Manual => (0.0, 0.0), // unused, PID disabled
+            }
+        };
 
         // Convert setpoints to radians and apply smoothing
         let pitch_setpoint_rad = pitch_sp_deg.to_radians();
@@ -390,7 +405,7 @@ impl<'a> FlightController<'a> {
                 pilot_inputs
             }
 
-            AttitudeMode::Mixed | AttitudeMode::Autopilot => {
+            AttitudeMode::Stabilized | AttitudeMode::AltitudeHold => {
                 // Try to get attitude data (current or cached)
                 match attitude.or(self.last_attitude.as_ref()) {
                     Some(att) => {
@@ -409,22 +424,13 @@ impl<'a> FlightController<'a> {
                         pitch_correction = pc;
                         roll_correction = rc;
 
-                        // Blend based on mode
-                        let mut corrected = pilot_inputs;
-                        if norm.attitude_mode == AttitudeMode::Mixed {
-                            // Blend pilot + autopilot
-                            corrected.pitch = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT)
-                                * pilot_inputs.pitch
-                                + MIXED_MODE_AUTOPILOT_WEIGHT * pitch_correction;
-                            corrected.roll = (1.0 - MIXED_MODE_AUTOPILOT_WEIGHT)
-                                * pilot_inputs.roll
-                                + MIXED_MODE_AUTOPILOT_WEIGHT * roll_correction;
-                        } else {
-                            // Full autopilot - replace pitch/roll, keep throttle/yaw
-                            corrected.pitch = pitch_correction;
-                            corrected.roll = roll_correction;
+                        // 100% PID output for pitch/roll, throttle/yaw remain manual
+                        ControlInputs {
+                            pitch: pitch_correction,
+                            roll: roll_correction,
+                            yaw: pilot_inputs.yaw,
+                            throttle: pilot_inputs.throttle,
                         }
-                        corrected
                     }
                     None => pilot_inputs, // No attitude - fallback to manual
                 }
@@ -483,11 +489,7 @@ impl<'a> FlightController<'a> {
             (_, RcLinkState::Ok) => {
                 // Restored — clear failsafe but do NOT re-arm (pilot must throttle-low arm)
                 self.arming.signal_restored();
-                elle_hardware::elle_event!(
-                    info,
-                    EVT_RC_RESTORED,
-                    "RC signal restored"
-                );
+                elle_hardware::elle_event!(info, EVT_RC_RESTORED, "RC signal restored");
             }
             (RcLinkState::Ok, RcLinkState::Warning) => {
                 elle_hardware::elle_event!(

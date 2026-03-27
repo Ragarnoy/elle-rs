@@ -4,9 +4,8 @@ use embassy_time::{Duration, Instant};
 
 // Import LUT functions and channel indices for decoding
 use elle_config::{
-    ATTITUDE_ENABLE_CH, ATTITUDE_PITCH_SETPOINT_CH, ATTITUDE_ROLL_SETPOINT_CH,
-    DSHOT_THROTTLE_MAX, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH, rc_to_normalized,
-    throttle_curve_lut,
+    ATTITUDE_ENABLE_CH, DSHOT_THROTTLE_MAX, PITCH_CH, ROLL_CH, THROTTLE_CH, YAW_CH,
+    rc_to_normalized, throttle_curve_lut,
 };
 
 /// Commands can be raw (fast path) or normalized (semantic)
@@ -37,8 +36,6 @@ impl RawCommands {
             roll: rc_to_normalized(self.channels[ROLL_CH]),
             yaw: rc_to_normalized(self.channels[YAW_CH]),
             attitude_mode: decode_attitude_mode(self.channels[ATTITUDE_ENABLE_CH]),
-            pitch_setpoint_deg: decode_pitch_setpoint(self.channels[ATTITUDE_PITCH_SETPOINT_CH]),
-            roll_setpoint_deg: decode_roll_setpoint(self.channels[ATTITUDE_ROLL_SETPOINT_CH]),
             timestamp: self.timestamp,
         }
     }
@@ -52,16 +49,14 @@ pub struct NormalizedCommands {
     pub roll: f32,     // -1.0 to 1.0
     pub yaw: f32,      // -1.0 to 1.0
     pub attitude_mode: AttitudeMode,
-    pub pitch_setpoint_deg: f32,
-    pub roll_setpoint_deg: f32,
     pub timestamp: Instant,
 }
 
 #[derive(Clone, Copy, Debug, Format, PartialEq, Eq)]
 pub enum AttitudeMode {
     Manual,
-    Mixed,
-    Autopilot,
+    Stabilized,
+    AltitudeHold,
 }
 
 impl PilotCommands {
@@ -99,8 +94,6 @@ impl NormalizedCommands {
             roll: 0.0,
             yaw: 0.0,
             attitude_mode: AttitudeMode::Manual,
-            pitch_setpoint_deg: 0.0,
-            roll_setpoint_deg: 0.0,
             timestamp: Instant::from_ticks(0),
         }
     }
@@ -111,23 +104,9 @@ impl NormalizedCommands {
 pub const fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
     if ch5_value < MANUAL_MODE_THRESHOLD {
         AttitudeMode::Manual
-    } else if ch5_value < MIXED_MODE_THRESHOLD {
-        AttitudeMode::Mixed
+    } else if ch5_value < STABILIZED_MODE_THRESHOLD {
+        AttitudeMode::Stabilized
     } else {
-        AttitudeMode::Autopilot
+        AttitudeMode::AltitudeHold
     }
-}
-
-#[must_use]
-pub fn decode_pitch_setpoint(ch6_value: u16) -> f32 {
-    let normalized = rc_to_normalized(ch6_value);
-    ATTITUDE_PITCH_MIN_DEG
-        + (normalized + 1.0) * 0.5 * (ATTITUDE_PITCH_MAX_DEG - ATTITUDE_PITCH_MIN_DEG)
-}
-
-#[must_use]
-pub fn decode_roll_setpoint(ch8_value: u16) -> f32 {
-    let normalized = rc_to_normalized(ch8_value);
-    ATTITUDE_ROLL_MIN_DEG
-        + (normalized + 1.0) * 0.5 * (ATTITUDE_ROLL_MAX_DEG - ATTITUDE_ROLL_MIN_DEG)
 }

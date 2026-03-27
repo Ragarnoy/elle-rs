@@ -22,25 +22,77 @@ struct CmdDef {
 }
 
 const COMMANDS: &[CmdDef] = &[
-    CmdDef { name: "arm",      aliases: &[],                subs: &[] },
-    CmdDef { name: "autotune", aliases: &["atune"],         subs: &["pitch", "roll", "abort"] },
-    CmdDef { name: "disarm",   aliases: &[],                subs: &[] },
-    CmdDef { name: "elevon",   aliases: &["elv"],           subs: &[] },
-    CmdDef { name: "estop",    aliases: &["stop"],          subs: &[] },
-    CmdDef { name: "help",     aliases: &["?"],             subs: &[] },
-    CmdDef { name: "mag",      aliases: &[],                subs: &["cal", "cal start", "cal clear"] },
-    CmdDef { name: "mode",     aliases: &[],                subs: &["manual", "mixed", "auto"] },
-    CmdDef { name: "pid",      aliases: &[],                subs: &[] },
-    CmdDef { name: "quit",     aliases: &["q", "exit"],     subs: &[] },
-    CmdDef { name: "savepid",  aliases: &[],                subs: &[] },
-    CmdDef { name: "setpoint", aliases: &["sp"],            subs: &[] },
-    CmdDef { name: "throttle", aliases: &["thr"],           subs: &[] },
-    CmdDef { name: "ulog",     aliases: &[],                subs: &["info", "start", "stop", "extract", "erase"] },
+    CmdDef {
+        name: "arm",
+        aliases: &[],
+        subs: &[],
+    },
+    CmdDef {
+        name: "autotune",
+        aliases: &["atune"],
+        subs: &["pitch", "roll", "abort"],
+    },
+    CmdDef {
+        name: "disarm",
+        aliases: &[],
+        subs: &[],
+    },
+    CmdDef {
+        name: "elevon",
+        aliases: &["elv"],
+        subs: &[],
+    },
+    CmdDef {
+        name: "estop",
+        aliases: &["stop"],
+        subs: &[],
+    },
+    CmdDef {
+        name: "help",
+        aliases: &["?"],
+        subs: &[],
+    },
+    CmdDef {
+        name: "mag",
+        aliases: &[],
+        subs: &["cal", "cal start", "cal clear"],
+    },
+    CmdDef {
+        name: "mode",
+        aliases: &[],
+        subs: &["manual", "stabilized", "althold"],
+    },
+    CmdDef {
+        name: "pid",
+        aliases: &[],
+        subs: &[],
+    },
+    CmdDef {
+        name: "quit",
+        aliases: &["q", "exit"],
+        subs: &[],
+    },
+    CmdDef {
+        name: "savepid",
+        aliases: &[],
+        subs: &[],
+    },
+    CmdDef {
+        name: "throttle",
+        aliases: &["thr"],
+        subs: &[],
+    },
+    CmdDef {
+        name: "ulog",
+        aliases: &[],
+        subs: &["info", "start", "stop", "extract", "erase"],
+    },
 ];
 
 /// Resolve a user-typed command to its canonical name via the COMMANDS table.
 fn resolve_command(input: &str) -> Option<&'static str> {
-    COMMANDS.iter()
+    COMMANDS
+        .iter()
         .find(|c| c.name == input || c.aliases.contains(&input))
         .map(|c| c.name)
 }
@@ -112,10 +164,7 @@ pub enum CommandResult {
     Background(String, tokio::task::JoinHandle<String>),
 }
 
-pub async fn execute(
-    input: &str,
-    client: &HostClient<WireError>,
-) -> CommandResult {
+pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResult {
     let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.is_empty() {
         return CommandResult::Ok(String::new());
@@ -153,13 +202,13 @@ pub async fn execute(
         }
         Some("mode") => {
             if parts.len() < 2 {
-                return CommandResult::Err("Usage: mode <manual|mixed|auto>".into());
+                return CommandResult::Err("Usage: mode <manual|stab|althold>".into());
             }
             match parts[1].to_lowercase().as_str() {
                 "manual" | "man" => cmd_mode(client, ControlMode::Manual).await,
-                "mixed" | "mix" => cmd_mode(client, ControlMode::Mixed).await,
-                "auto" | "autopilot" => cmd_mode(client, ControlMode::Autopilot).await,
-                _ => CommandResult::Err("Mode must be: manual, mixed, or auto".into()),
+                "stabilized" | "stab" => cmd_mode(client, ControlMode::Stabilized).await,
+                "althold" | "altitudehold" => cmd_mode(client, ControlMode::AltitudeHold).await,
+                _ => CommandResult::Err("Mode must be: manual, stab, or althold".into()),
             }
         }
         Some("ulog") => {
@@ -219,17 +268,6 @@ pub async fn execute(
                 None => CommandResult::Err("All PID arguments must be valid floats".into()),
             }
         }
-        Some("setpoint") => {
-            if parts.len() < 3 {
-                return CommandResult::Err("Usage: setpoint <pitch_deg> <roll_deg>".into());
-            }
-            let pitch: Result<f32, _> = parts[1].parse();
-            let roll: Result<f32, _> = parts[2].parse();
-            match (pitch, roll) {
-                (Ok(p), Ok(r)) => cmd_set_attitude_setpoint(client, p, r).await,
-                _ => CommandResult::Err("Setpoint values must be valid floats".into()),
-            }
-        }
         Some("autotune") => {
             if parts.len() < 2 {
                 return CommandResult::Err(
@@ -245,14 +283,8 @@ pub async fn execute(
                     } else {
                         1
                     };
-                    let relay_deg: f32 = parts
-                        .get(2)
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(5.0);
-                    let cycles: u8 = parts
-                        .get(3)
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(6);
+                    let relay_deg: f32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(5.0);
+                    let cycles: u8 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(6);
                     let rule: u8 = match parts.get(4).map(|s| s.to_lowercase()).as_deref() {
                         Some("zn") => 1,
                         Some("so") => 2,
@@ -260,9 +292,9 @@ pub async fn execute(
                     };
                     cmd_autotune_start(client, axis, relay_deg, cycles, rule).await
                 }
-                _ => CommandResult::Err(
-                    "autotune subcommand must be: pitch, roll, or abort".into(),
-                ),
+                _ => {
+                    CommandResult::Err("autotune subcommand must be: pitch, roll, or abort".into())
+                }
             }
         }
         Some("savepid") => cmd_savepid(client).await,
@@ -283,7 +315,8 @@ pub async fn execute(
         }
         Some("help") => {
             // Generate help from COMMANDS table
-            let names: Vec<&str> = COMMANDS.iter()
+            let names: Vec<&str> = COMMANDS
+                .iter()
                 .filter(|c| c.name != "help" && c.name != "quit")
                 .map(|c| c.name)
                 .collect();
@@ -296,45 +329,62 @@ pub async fn execute(
 async fn cmd_arm(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<ArmEndpoint>(&())).await,
-        "Arm", "ARMED".into(),
+        "Arm",
+        "ARMED".into(),
     )
 }
 
 async fn cmd_disarm(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<DisarmEndpoint>(&())).await,
-        "Disarm", "DISARMED".into(),
+        "Disarm",
+        "DISARMED".into(),
     )
 }
 
 async fn cmd_estop(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<EmergencyStopEndpoint>(&())).await,
-        "E-Stop", "EMERGENCY STOP EXECUTED".into(),
+        "E-Stop",
+        "EMERGENCY STOP EXECUTED".into(),
     )
 }
 
 async fn cmd_throttle(client: &HostClient<WireError>, percent: u8) -> CommandResult {
     handle_ack(
-        timeout(CMD_TIMEOUT, client.send_resp::<SetThrottleEndpoint>(&SetThrottleReq { percent })).await,
-        "Throttle", format!("Throttle: {percent}%"),
+        timeout(
+            CMD_TIMEOUT,
+            client.send_resp::<SetThrottleEndpoint>(&SetThrottleReq { percent }),
+        )
+        .await,
+        "Throttle",
+        format!("Throttle: {percent}%"),
     )
 }
 
 async fn cmd_elevon(client: &HostClient<WireError>, left: i8, right: i8) -> CommandResult {
     handle_ack(
-        timeout(CMD_TIMEOUT, client.send_resp::<SetElevonsEndpoint>(&SetElevonsReq { left, right })).await,
-        "Elevon", format!("Elevons: L={left} R={right}"),
+        timeout(
+            CMD_TIMEOUT,
+            client.send_resp::<SetElevonsEndpoint>(&SetElevonsReq { left, right }),
+        )
+        .await,
+        "Elevon",
+        format!("Elevons: L={left} R={right}"),
     )
 }
 
 async fn cmd_mode(client: &HostClient<WireError>, mode: ControlMode) -> CommandResult {
     handle_ack(
-        timeout(CMD_TIMEOUT, client.send_resp::<SetControlModeEndpoint>(&SetControlModeReq { mode })).await,
-        "Mode", format!("Mode: {mode:?}"),
+        timeout(
+            CMD_TIMEOUT,
+            client.send_resp::<SetControlModeEndpoint>(&SetControlModeReq { mode }),
+        )
+        .await,
+        "Mode",
+        format!("Mode: {mode:?}"),
     )
 }
-
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_set_pid_gains(
@@ -365,22 +415,6 @@ async fn cmd_set_pid_gains(
     )
 }
 
-async fn cmd_set_attitude_setpoint(
-    client: &HostClient<WireError>,
-    pitch_deg: f32,
-    roll_deg: f32,
-) -> CommandResult {
-    let req = SetAttitudeSetpointReq {
-        pitch_cdeg: (pitch_deg * 100.0) as i16,
-        roll_cdeg: (roll_deg * 100.0) as i16,
-    };
-    handle_ack(
-        timeout(CMD_TIMEOUT, client.send_resp::<SetAttitudeSetpointEndpoint>(&req)).await,
-        "Setpoint",
-        format!("Setpoint: P={pitch_deg}° R={roll_deg}°"),
-    )
-}
-
 async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {
     match timeout(CMD_TIMEOUT, client.send_resp::<GetULogInfoEndpoint>(&())).await {
         Ok(Ok(info)) => {
@@ -407,14 +441,16 @@ async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {
 async fn cmd_ulog_start(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<StartULogEndpoint>(&())).await,
-        "ULog start", "ULog recording started".into(),
+        "ULog start",
+        "ULog recording started".into(),
     )
 }
 
 async fn cmd_ulog_stop(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<StopULogEndpoint>(&())).await,
-        "ULog stop", "ULog recording stopped".into(),
+        "ULog stop",
+        "ULog recording stopped".into(),
     )
 }
 
@@ -516,7 +552,8 @@ async fn cmd_ulog_erase(client: &HostClient<WireError>) -> CommandResult {
     const ERASE_TIMEOUT: Duration = Duration::from_secs(30);
     handle_ack(
         timeout(ERASE_TIMEOUT, client.send_resp::<EraseULogEndpoint>(&())).await,
-        "ULog erase", "ULog flash erased".into(),
+        "ULog erase",
+        "ULog flash erased".into(),
     )
 }
 
@@ -543,14 +580,17 @@ async fn cmd_autotune_start(
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await,
         "Autotune start",
-        format!("Autotune started: {axis_name} relay={relay_deg}° cycles={cycles} rule={rule_name}"),
+        format!(
+            "Autotune started: {axis_name} relay={relay_deg}° cycles={cycles} rule={rule_name}"
+        ),
     )
 }
 
 async fn cmd_autotune_abort(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<AbortAutotuneEndpoint>(&())).await,
-        "Autotune abort", "Autotune aborted".into(),
+        "Autotune abort",
+        "Autotune aborted".into(),
     )
 }
 
@@ -563,7 +603,8 @@ async fn cmd_savepid(client: &HostClient<WireError>) -> CommandResult {
     };
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await,
-        "PID save", "PID gains save requested".into(),
+        "PID save",
+        "PID gains save requested".into(),
     )
 }
 
@@ -578,7 +619,8 @@ async fn cmd_mag_cal_start(client: &HostClient<WireError>) -> CommandResult {
 async fn cmd_mag_cal_clear(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<ClearMagCalEndpoint>(&())).await,
-        "Mag cal clear", "Mag cal cleared (offsets zeroed)".into(),
+        "Mag cal clear",
+        "Mag cal cleared (offsets zeroed)".into(),
     )
 }
 

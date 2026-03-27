@@ -129,7 +129,7 @@ pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better r
 
 // RC aux channel assignments:
 //   CH5 (idx 4) = 2-pos switch left  → ULog recording on/off
-//   CH6 (idx 5) = 3-pos switch left  → Attitude mode (Manual/Mixed/Autopilot)
+//   CH6 (idx 5) = 3-pos switch left  → Attitude mode (Manual/Stabilized/AltitudeHold)
 //   CH7 (idx 6) = 3-pos switch right → Autotune (off/pitch/roll)
 //   CH8 (idx 7) = 2-pos switch right → Unused (reserved for modifier)
 
@@ -138,20 +138,15 @@ pub const ULOG_ENABLE_CH: usize = 4; // CH5 - 2-pos: ULog recording enable
 pub const ULOG_ENABLE_THRESHOLD: u16 = 1500; // Above this = recording enabled
 
 // Attitude control mode
-pub const ATTITUDE_ENABLE_CH: usize = 5; // CH6 - 3-pos: Manual/Mixed/Autopilot
+pub const ATTITUDE_ENABLE_CH: usize = 5; // CH6 - 3-pos: Manual/Stabilized/AltitudeHold
 
 // Control mode switch thresholds (3-state switch on CH6)
 pub const MANUAL_MODE_THRESHOLD: u16 = 500; // Below this = Full Manual (~306)
-pub const MIXED_MODE_THRESHOLD: u16 = 1300; // Above this but below AUTOPILOT = Mixed (~1000)
-pub const AUTOPILOT_MODE_THRESHOLD: u16 = 1500; // Above this = Full Autopilot (~1694)
+pub const STABILIZED_MODE_THRESHOLD: u16 = 1300; // Above this = Stabilized (~1000), above next = AltitudeHold
 
-// Attitude setpoints (no knobs available — fixed defaults used)
-pub const ATTITUDE_PITCH_SETPOINT_CH: usize = 5; // Unused — no knob, setpoint stays at default
-pub const ATTITUDE_ROLL_SETPOINT_CH: usize = 5; // Unused — no knob, setpoint stays at default
-pub const ATTITUDE_PITCH_MIN_DEG: f32 = -15.0;
-pub const ATTITUDE_PITCH_MAX_DEG: f32 = 25.0;
-pub const ATTITUDE_ROLL_MIN_DEG: f32 = -45.0;
-pub const ATTITUDE_ROLL_MAX_DEG: f32 = 45.0;
+// Stabilized mode: stick deflection maps to attitude angle
+pub const STABILIZED_MAX_PITCH_DEG: f32 = 25.0; // Full stick = ±25° pitch
+pub const STABILIZED_MAX_ROLL_DEG: f32 = 45.0; // Full stick = ±45° roll
 
 // Autotune RC switch (3-position on CH7)
 pub const AUTOTUNE_CH: usize = 6; // CH7 - 3-pos: off/pitch/roll
@@ -162,9 +157,6 @@ pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)
-
-// Mixed mode control blending
-pub const MIXED_MODE_AUTOPILOT_WEIGHT: f32 = 0.6; // 60% autopilot, 40% pilot in mixed mode
 
 // Motor specs: 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
@@ -181,4 +173,3 @@ pub const GOVERNOR_KI: f32 = 0.002;
 pub const GOVERNOR_DT: f32 = 0.001; // 1ms (1kHz task rate)
 pub const GOVERNOR_DEADBAND_ERPM: f32 = 500.0; // Ignore errors below this (absorbs EDT noise)
 pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000; // Reject telemetry jumps larger than this
-

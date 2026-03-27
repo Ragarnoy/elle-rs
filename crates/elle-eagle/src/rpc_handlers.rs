@@ -6,7 +6,10 @@ use embassy_sync::channel::Channel;
 #[allow(dead_code)] // Some variant fields unused when `rc` feature ignores RPC flight commands
 pub enum RpcCommand {
     SetThrottle(u8),
-    SetElevons { left: i8, right: i8 },
+    SetElevons {
+        left: i8,
+        right: i8,
+    },
     SetMode(super::ControlMode),
     Arm,
     Disarm,
@@ -20,10 +23,6 @@ pub enum RpcCommand {
         roll_kd: f32,
         scale: f32,
         i_limit: f32,
-    },
-    SetAttitudeSetpoint {
-        pitch_deg: f32,
-        roll_deg: f32,
     },
     StartULog,
     StopULog,

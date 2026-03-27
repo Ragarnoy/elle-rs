@@ -31,8 +31,8 @@ pub struct SetElevonsReq {
 #[repr(u8)]
 pub enum ControlMode {
     Manual = 0,
-    Mixed = 1,
-    Autopilot = 2,
+    Stabilized = 1,
+    AltitudeHold = 2,
 }
 
 /// Set control mode
@@ -235,13 +235,6 @@ pub struct SetPidGainsReq {
     pub i_limit_x10: i16,
 }
 
-/// Set attitude setpoint in centidegrees (e.g. 500 = 5.0°)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
-pub struct SetAttitudeSetpointReq {
-    pub pitch_cdeg: i16,
-    pub roll_cdeg: i16,
-}
-
 /// Start autotune on a specific axis
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct StartAutotuneReq {
@@ -318,7 +311,6 @@ endpoints! {
     | GetTimeEndpoint           | ()                | u64               | "elle/sys/time"       |
     | GetControllerOutputEndpoint | ()              | ControllerOutputResp | "elle/query/ctrl_out" |
     | SetPidGainsEndpoint       | SetPidGainsReq    | AckResp           | "elle/ctrl/pid"       |
-    | SetAttitudeSetpointEndpoint | SetAttitudeSetpointReq | AckResp      | "elle/ctrl/setpoint"  |
     | StartAutotuneEndpoint   | StartAutotuneReq  | AckResp           | "elle/ctrl/atune/start" |
     | AbortAutotuneEndpoint   | ()                | AckResp           | "elle/ctrl/atune/abort" |
     | StartMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/start"    |
