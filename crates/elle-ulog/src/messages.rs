@@ -606,6 +606,86 @@ impl LogEventMessage {
     }
 }
 
+/// Autotune status message — logged at 77Hz during active autotune only
+///
+/// Format: "autotune_status:uint64_t timestamp;uint8_t phase;uint8_t axis;uint8_t relay_positive;float setpoint_deg;float measurement_deg;uint8_t cycles_done;float amplitude_deg"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct AutotuneMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Phase: 0=Idle, 1=Settling, 2=Relay, 3=Complete, 4=Aborted
+    pub phase: u8,
+    /// Axis: 0=Pitch, 1=Roll
+    pub axis: u8,
+    /// Current relay direction: 0=negative, 1=positive
+    pub relay_positive: u8,
+    /// Current setpoint being applied (degrees)
+    pub setpoint_deg: f32,
+    /// Current attitude measurement on tuned axis (degrees)
+    pub measurement_deg: f32,
+    /// Full oscillation cycles completed so far
+    pub cycles_done: u8,
+    /// Current half-cycle peak amplitude (degrees)
+    pub amplitude_deg: f32,
+}
+
+impl AutotuneMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str = "autotune_status:uint64_t timestamp;uint8_t phase;uint8_t axis;uint8_t relay_positive;float setpoint_deg;float measurement_deg;uint8_t cycles_done;float amplitude_deg";
+
+    /// Message name
+    pub const NAME: &'static str = "autotune_status";
+
+    // FORMAT string is 168 chars. FORMAT_MSG = 3-byte header (LE u16 size + 'F') + format string.
+    // Total payload = 168 bytes → LE u16 = 0x00A8.
+    /// Pre-serialized format definition message
+    pub const FORMAT_MSG: &'static [u8] = b"\xa5\x00Fautotune_status:uint64_t timestamp;uint8_t phase;uint8_t axis;uint8_t relay_positive;float setpoint_deg;float measurement_deg;uint8_t cycles_done;float amplitude_deg";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 24; // 8 + 1 + 1 + 1 + 4 + 4 + 1 + 4
+
+    /// Create a new autotune status message
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        timestamp: Instant,
+        phase: u8,
+        axis: u8,
+        relay_positive: bool,
+        setpoint_deg: f32,
+        measurement_deg: f32,
+        cycles_done: u8,
+        amplitude_deg: f32,
+    ) -> Self {
+        Self {
+            timestamp: timestamp.as_micros(),
+            phase,
+            axis,
+            relay_positive: relay_positive as u8,
+            setpoint_deg,
+            measurement_deg,
+            cycles_done,
+            amplitude_deg,
+        }
+    }
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8] = self.phase;
+        buf[9] = self.axis;
+        buf[10] = self.relay_positive;
+        buf[11..15].copy_from_slice(&self.setpoint_deg.to_le_bytes());
+        buf[15..19].copy_from_slice(&self.measurement_deg.to_le_bytes());
+        buf[19] = self.cycles_done;
+        buf[20..24].copy_from_slice(&self.amplitude_deg.to_le_bytes());
+        buf
+    }
+}
+
 /// Logged string message (type 'L')
 #[derive(Debug, Clone)]
 pub struct LoggedString<'a> {

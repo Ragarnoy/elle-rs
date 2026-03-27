@@ -462,6 +462,46 @@ impl Autotuner {
         self.axis
     }
 
+    /// Current phase as u8 for ULog logging.
+    pub const fn phase_u8(&self) -> u8 {
+        match self.phase {
+            Phase::Idle => 0,
+            Phase::Settling => 1,
+            Phase::Relay => 2,
+            Phase::Complete => 3,
+            Phase::Aborted => 4,
+        }
+    }
+
+    /// Current relay direction.
+    pub const fn relay_positive(&self) -> bool {
+        self.relay_positive
+    }
+
+    /// Current relay setpoint in degrees (±relay_deg during relay, 0.0 during settling/idle).
+    pub fn current_setpoint_deg(&self) -> f32 {
+        match self.phase {
+            Phase::Relay => {
+                if self.relay_positive {
+                    self.relay_deg
+                } else {
+                    -self.relay_deg
+                }
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// Current half-cycle peak amplitude (degrees), or 0.0 if no crossings yet.
+    pub fn current_amplitude_deg(&self) -> f32 {
+        self.detector.current_peak
+    }
+
+    /// Number of full oscillation cycles completed.
+    pub fn cycles_completed(&self) -> u8 {
+        self.detector.full_cycle_count as u8
+    }
+
     /// Abort the current autotune run.
     /// Returns the saved gains to restore.
     pub fn abort(&mut self) -> Option<SavedGains> {

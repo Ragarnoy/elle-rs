@@ -4,8 +4,8 @@
 
 use crate::format::{FLAG_BITS_MSG, InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader};
 use crate::messages::{
-    AttitudeMessage, BarometerMessage, CommandsMessage, EngineMessage, GnssMessage,
-    LogEventMessage, MagnetometerMessage, MessageType, StatusMessage,
+    AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, EngineMessage,
+    GnssMessage, LogEventMessage, MagnetometerMessage, MessageType, StatusMessage,
 };
 use embassy_time::Instant;
 use heapless::Vec;
@@ -110,6 +110,9 @@ impl ULogWriter {
         self.buffer
             .extend_from_slice(EngineMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(AutotuneMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
 
         // Write info messages (type 'I')
         self.write_info("char[] sys_name", sys_name)?;
@@ -207,6 +210,15 @@ impl ULogWriter {
         &mut self,
         msg_id: u16,
         data: &LogEventMessage,
+    ) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write an autotune status data message
+    pub fn write_autotune(
+        &mut self,
+        msg_id: u16,
+        data: &AutotuneMessage,
     ) -> Result<(), WriteError> {
         self.write_data_payload(msg_id, &data.to_bytes())
     }
