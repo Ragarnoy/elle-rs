@@ -56,6 +56,33 @@ Must specify target explicitly (workspace `.cargo/config.toml` defaults to thumb
 cargo build -p elle-rpc-host --target x86_64-unknown-linux-gnu
 ```
 
+## Pin Map
+
+| Pin | Function | Bus/Peripheral |
+|-----|----------|----------------|
+| PIN_0 | SPI0 MISO | ICM-42686 IMU |
+| PIN_1 | SPI0 CS | ICM-42686 IMU |
+| PIN_2 | SPI0 SCLK | ICM-42686 IMU |
+| PIN_3 | SPI0 MOSI | ICM-42686 IMU |
+| PIN_5 | IMU INT1 | DATA_RDY (polled) |
+| PIN_8 | I2C0 SDA | MMC5616WA mag + BMP390 baro |
+| PIN_9 | I2C0 SCL | MMC5616WA mag + BMP390 baro |
+| PIN_10 | WS2812B LED | PIO0 SM2 + DMA_CH2 |
+| PIN_11 | DShot right engine | PIO2 |
+| PIN_12 | Elevon right PWM | PIO0 SM1 |
+| PIN_13 | Elevon left PWM | PIO0 SM0 |
+| PIN_14 | DShot left engine | PIO1 |
+| PIN_20 | UART1 TX | CRSF telemetry (DMA_CH4) |
+| PIN_21 | UART1 RX | CRSF receiver (DMA_CH3) |
+| PIN_23 | SD CARD_DETECT | GPIO input (active-low) |
+| PIN_24 | SPI1 MISO | SD card |
+| PIN_25 | SPI1 CS | SD card |
+| PIN_26 | SPI1 SCK | SD card |
+| PIN_27 | SPI1 MOSI | SD card |
+| PIN_29 | UART0 RX | SAM-M10Q GNSS (DMA_CH0, feature `gnss`) |
+
+DMA channels: CH0=GNSS UART, CH1=Flash async, CH2=LED, CH3=CRSF RX, CH4=CRSF TX, CH5=SD SPI1 TX, CH6=SD SPI1 RX.
+
 ## Architecture
 
 ### RPC Transport (postcard-RPC over RTT)
@@ -208,7 +235,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - Direct mode shares probe.rs/wire.rs with TUI
 - Firmware dispatch via `define_dispatch!` macro
 - ICD uses batch `endpoints!`/`topics!` macros
-- CRSF telemetry TX: attitude, flight mode, GPS frames to radio via PIN_20 (feature `crsf-telemetry`)
+- CRSF telemetry TX: attitude, flight mode, GPS frames to radio via PIN_20
 - CRSF telemetry log events forwarded to RPC LogTopic (codes 20-23) for TUI visibility
 - Host TUI/direct mode: proper RTT worker shutdown via `AtomicBool` flag + `JoinHandle::join()`
 - `CrsfReceiver::new()` refactored to accept `UartRx` (UART split for TX telemetry)
