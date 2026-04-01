@@ -1,7 +1,7 @@
 use core::time::Duration;
 use elle_config::*;
 use embassy_rp::Peri;
-use embassy_rp::peripherals::{PIN_12, PIN_14, PIO0};
+use embassy_rp::peripherals::{PIN_12, PIN_13, PIO0};
 use embassy_rp::pio::{Common, StateMachine};
 use embassy_rp::pio_programs::pwm::{PioPwm, PioPwmProgram};
 
@@ -97,6 +97,6 @@ fn apply_elevon_trim(base_us: u32, trim_us: i32) -> u32 {
 }
 
 pub struct PwmPins<'a> {
-    pub elevon_left: Peri<'a, PIN_12>,
-    pub elevon_right: Peri<'a, PIN_14>,
+    pub elevon_left: Peri<'a, PIN_13>,
+    pub elevon_right: Peri<'a, PIN_12>,
 }

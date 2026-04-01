@@ -65,11 +65,16 @@ pub const PERF_LOG_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 10; // ~10s
 pub const GNSS_ERROR_LOG_INITIAL: u32 = 3; // Log first N errors
 pub const GNSS_ERROR_LOG_INTERVAL: u32 = 1000; // Then every Nth error
 
-// NEW: Flight control channel mapping (0-indexed)
+// Flight control channel mapping (0-indexed)
 pub const ROLL_CH: usize = 0; // Aileron/roll input
 pub const PITCH_CH: usize = 1; // Elevator/pitch input
 pub const THROTTLE_CH: usize = 2; // Engine throttle
 pub const YAW_CH: usize = 3; // Rudder/yaw input
+
+// Channel inversion (sign flip for reversed servo/engine direction)
+pub const PITCH_INVERT: f32 = -1.0;
+pub const ROLL_INVERT: f32 = 1.0;
+pub const YAW_INVERT: f32 = -1.0;
 
 // Legacy direct elevon channels (if needed for fallback)
 pub const ELEVON_LEFT_CH: usize = 0;
@@ -128,7 +133,7 @@ pub const PITCH_KD: f32 = 0.1;
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
 
 // RC aux channel assignments:
-//   CH5 (idx 4) = 2-pos switch left  → ULog recording on/off
+//   CH5 (idx 4) = 2-pos switch left  → Kill switch (high = disarm, must re-arm)
 //   CH6 (idx 5) = 3-pos switch left  → Attitude mode (Manual/Stabilized/AltitudeHold)
 //   CH7 (idx 6) = 3-pos switch right → Autotune (off/pitch/roll)
 //   CH8 (idx 7) = 2-pos switch right → Unused (reserved for modifier)

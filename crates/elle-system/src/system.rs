@@ -137,15 +137,16 @@ impl<'a> FlightController<'a> {
         config.kd_yaw = 0.00015;
 
         // Set the upper limit for the integral term to prevent windup
-        // At i_limit=2.0, max integral contribution = ki * 2.0 * scale ≈ 0.001
-        // (enough for steady-state trim, won't cause runaway from sensor bias)
-        config.i_limit = 2.0;
+        config.i_limit = 0.5;
 
-        // Set the scale to adjust the PID outputs to the actuator range
-        config.scale = 0.015; // Increased for more responsive but still smooth control
+        // Scale maps PID output to actuator range (-1..+1 for elevon mixing).
+        // At scale=5.0, full 25° error with Kp=0.2 gives output ≈ 0.44.
+        // Old value (0.015) was for blended mode; Stabilized uses 100% PID output.
+        config.scale = 5.0;
 
         let mut attitude_controller = AttitudeController::with_config(config);
-        attitude_controller.roll_hold_enabled = true; // Enable roll hold for CH8 control
+        attitude_controller.pitch_hold_enabled = true;
+        attitude_controller.roll_hold_enabled = true;
 
         Self {
             pwm,
@@ -321,7 +322,9 @@ impl<'a> FlightController<'a> {
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
         let (left_thrust, right_thrust) = if self.arming.armed {
-            throttle_with_differential_lut(channels[THROTTLE_CH], channels[YAW_CH])
+            // Invert yaw in raw RC space if YAW_INVERT is -1.0 (mirror around center=1024)
+            let yaw_raw = if YAW_INVERT < 0.0 { 2047 - channels[YAW_CH] } else { channels[YAW_CH] };
+            throttle_with_differential_lut(channels[THROTTLE_CH], yaw_raw)
         } else {
             (0, 0)
         };
@@ -412,12 +415,20 @@ impl<'a> FlightController<'a> {
                         // Compute attitude corrections
                         // Reset integrator when disarmed or throttle near zero
                         let low_throttle = !self.arming.armed || norm.throttle < 0.05;
+                        // Negate measurements to match inverted stick conventions.
+                        // PITCH_INVERT/ROLL_INVERT are applied to the setpoint (via stick),
+                        // so the same inversion must apply to the AHRS measurement + rate
+                        // to keep the PID error and damping signs consistent.
                         let (pc, rc) = self.attitude_controller.update(
                             self.filtered_pitch_setpoint_rad,
                             self.filtered_roll_setpoint_rad,
-                            att.pitch,
-                            att.roll,
-                            Some((att.roll_rate, att.pitch_rate, att.yaw_rate)),
+                            att.pitch * PITCH_INVERT,
+                            att.roll * ROLL_INVERT,
+                            Some((
+                                -att.roll_rate * ROLL_INVERT,
+                                -att.pitch_rate * PITCH_INVERT,
+                                att.yaw_rate,
+                            )),
                             Instant::now(),
                             low_throttle,
                         );

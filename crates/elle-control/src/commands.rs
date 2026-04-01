@@ -32,9 +32,9 @@ impl RawCommands {
             throttle: (throttle_curve_lut(self.channels[THROTTLE_CH]) as f32
                 / DSHOT_THROTTLE_MAX as f32)
                 .clamp(0.0, 1.0),
-            pitch: rc_to_normalized(self.channels[PITCH_CH]),
-            roll: rc_to_normalized(self.channels[ROLL_CH]),
-            yaw: rc_to_normalized(self.channels[YAW_CH]),
+            pitch: rc_to_normalized(self.channels[PITCH_CH]) * elle_config::PITCH_INVERT,
+            roll: rc_to_normalized(self.channels[ROLL_CH]) * elle_config::ROLL_INVERT,
+            yaw: rc_to_normalized(self.channels[YAW_CH]) * elle_config::YAW_INVERT,
             attitude_mode: decode_attitude_mode(self.channels[ATTITUDE_ENABLE_CH]),
             timestamp: self.timestamp,
         }

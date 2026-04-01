@@ -250,10 +250,10 @@ pub fn calculate_yaw_differential_lut(yaw_rc: u16) -> (f32, f32) {
 #[inline(always)]
 pub fn channels_to_normalized_lut(channels: &[u16]) -> (f32, f32, f32, f32) {
     (
-        rc_to_normalized(channels[ROLL_CH]),
-        rc_to_normalized(channels[PITCH_CH]),
-        rc_to_normalized(channels[YAW_CH]),
-        (channels[THROTTLE_CH] as f32) / 2047.0, // Simple division for throttle normalization
+        rc_to_normalized(channels[ROLL_CH]) * ROLL_INVERT,
+        rc_to_normalized(channels[PITCH_CH]) * PITCH_INVERT,
+        rc_to_normalized(channels[YAW_CH]) * YAW_INVERT,
+        (channels[THROTTLE_CH] as f32) / 2047.0,
     )
 }
 

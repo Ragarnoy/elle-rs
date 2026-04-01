@@ -337,8 +337,8 @@ async fn main(spawner: Spawner) {
     info!("Core0: Setting up flight control hardware + LED on PIO0");
     static PWM_PINS: StaticCell<PwmPins<'static>> = StaticCell::new();
     let pwm_pins = PWM_PINS.init(PwmPins {
-        elevon_left: p.PIN_12,
-        elevon_right: p.PIN_14,
+        elevon_left: p.PIN_13,
+        elevon_right: p.PIN_12,
     });
 
     let Pio {
@@ -358,13 +358,13 @@ async fn main(spawner: Spawner) {
     let engine_left = embassy_dshot::rp::BidirDshotPio::new(
         p.PIO1,
         Irqs,
-        p.PIN_11,
+        p.PIN_14,
         embassy_dshot::rp::DshotSpeed::DShot300,
     );
     let engine_right = embassy_dshot::rp::BidirDshotPio::new(
         p.PIO2,
         Irqs,
-        p.PIN_15,
+        p.PIN_11,
         embassy_dshot::rp::DshotSpeed::DShot300,
     );
     spawner.spawn(dshot_task(engine_left, engine_right).unwrap());
@@ -658,6 +658,24 @@ async fn main(spawner: Spawner) {
 
             // Always update flight controller at 13ms intervals for consistent PID timing
             // Use last known commands if no new packet arrived this iteration
+            // Kill switch: CH5 high = disarm, block fc.update() to prevent re-arm
+            let kill_active = last_commands.as_ref().is_some_and(|cmd| {
+                if let PilotCommands::Raw(raw) = cmd {
+                    raw.channels[elle_config::ULOG_ENABLE_CH] > elle_config::ULOG_ENABLE_THRESHOLD
+                } else {
+                    false
+                }
+            });
+
+            if kill_active && fc.is_armed() {
+                fc.disarm();
+                elle_hardware::elle_event!(
+                    warn,
+                    elle_hardware::event::EVT_MOTORS_DISARMED,
+                    "Kill switch activated"
+                );
+            }
+
             if let Some(commands) = &last_commands {
                 // Update with validated attitude (warns if stale)
                 let valid_attitude = validate_attitude(attitude);
@@ -668,7 +686,9 @@ async fn main(spawner: Spawner) {
                         "Stale attitude data, using manual control only"
                     );
                 }
-                fc.update(commands, valid_attitude.as_ref());
+                if !kill_active {
+                    fc.update(commands, valid_attitude.as_ref());
+                }
 
                 // Send engine commands via DShot (governor converts eRPM target to DShot)
                 let (engine_l, engine_r) = fc.engine_output();
@@ -832,18 +852,11 @@ async fn main(spawner: Spawner) {
                     save_pid_to_flash(data, "autotune").await;
                 }
 
-                // ULog recording controlled by RC switch
-                let switch_on = if let PilotCommands::Raw(raw) = commands {
-                    raw.channels[elle_config::ULOG_ENABLE_CH] > elle_config::ULOG_ENABLE_THRESHOLD
-                } else {
-                    false
-                };
-
-                if switch_on && !ulog_recording {
-                    // Switch just turned on — initialize and start (only if SD card is ready)
-                    if !ulog_logger.is_initialized()
-                        && elle_hardware::sd_writer::SD_READY.load(core::sync::atomic::Ordering::Acquire)
-                    {
+                // Auto-start ULog on SD card ready (runs until power off)
+                if !ulog_recording
+                    && elle_hardware::sd_writer::SD_READY.load(core::sync::atomic::Ordering::Acquire)
+                {
+                    if !ulog_logger.is_initialized() {
                         let wall_ms =
                             compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                         let _ = ulog_logger.initialize(wall_ms).await;
@@ -856,21 +869,9 @@ async fn main(spawner: Spawner) {
                         elle_hardware::elle_event!(
                             info,
                             elle_hardware::event::EVT_ULOG_RC_ON,
-                            "ULog recording ON (RC switch)"
+                            "ULog recording started (auto)"
                         );
                     }
-                } else if !switch_on && ulog_recording {
-                    // Switch just turned off — flush and stop
-                    let _ = ulog_logger.flush();
-                    elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
-                        elle_hardware::sd_writer::SdCommand::Stop,
-                    );
-                    ulog_recording = false;
-                    elle_hardware::elle_event!(
-                        info,
-                        elle_hardware::event::EVT_ULOG_RC_OFF,
-                        "ULog recording OFF (RC switch)"
-                    );
                 }
 
                 if ulog_recording {
