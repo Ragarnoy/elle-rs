@@ -12,6 +12,18 @@ use embassy_time::{Duration, Ticker, Timer};
 /// Target eRPM per engine (left, right). Governor PI converts to DShot at 1kHz.
 pub static DSHOT_THROTTLE: Signal<CriticalSectionRawMutex, (u32, u32)> = Signal::new();
 
+/// Beep request signal. The DShot task checks this each tick and plays the beep sequence.
+pub static BEEP_SIGNAL: Signal<CriticalSectionRawMutex, BeepPattern> = Signal::new();
+
+/// Beep patterns available via DShot commands.
+#[derive(Clone, Copy, defmt::Format)]
+pub enum BeepPattern {
+    /// Short single beep (arm confirmation)
+    ArmBeep,
+    /// Two short beeps (disarm confirmation)
+    DisarmBeep,
+}
+
 /// Consecutive bidir telemetry failure threshold before falling back to fire-and-forget.
 const BIDIR_FALLBACK_THRESHOLD: u16 = 100;
 
@@ -281,6 +293,37 @@ pub async fn dshot_task(
     let mut reading = EngineReading::default();
 
     loop {
+        // Check for beep request (non-blocking)
+        if let Some(pattern) = BEEP_SIGNAL.try_take() {
+            use embassy_dshot::Command;
+            match pattern {
+                BeepPattern::ArmBeep => {
+                    // Single beep: Beep1 repeated 10x (DShot spec)
+                    for _ in 0..10 {
+                        engines.left.send_command_async(Command::Beep1).await;
+                        engines.right.send_command_async(Command::Beep1).await;
+                        Timer::after(Duration::from_millis(1)).await;
+                    }
+                    Timer::after(Duration::from_millis(200)).await;
+                }
+                BeepPattern::DisarmBeep => {
+                    // Two short beeps
+                    for _ in 0..10 {
+                        engines.left.send_command_async(Command::Beep2).await;
+                        engines.right.send_command_async(Command::Beep2).await;
+                        Timer::after(Duration::from_millis(1)).await;
+                    }
+                    Timer::after(Duration::from_millis(100)).await;
+                    for _ in 0..10 {
+                        engines.left.send_command_async(Command::Beep2).await;
+                        engines.right.send_command_async(Command::Beep2).await;
+                        Timer::after(Duration::from_millis(1)).await;
+                    }
+                    Timer::after(Duration::from_millis(200)).await;
+                }
+            }
+        }
+
         if let Some(t) = DSHOT_THROTTLE.try_take() {
             target = t;
         }

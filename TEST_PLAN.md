@@ -77,14 +77,16 @@ Hold board in hand. Verify PID corrects **against** the tilt, not with it.
 If P-term is inverted (corrects wrong way at steady angle): negate the AHRS measurement for that axis in `system.rs`.
 If D-term is inverted (accelerates rotation): negate the AHRS rate for that axis in `system.rs`.
 
-### 1.4 Kill Switch
+### 1.4 Kill Switch + Beep
 
-| # | Action                        | Expected                                   | Pass |
-|---|-------------------------------|---------------------------------------------|------|
-| 1 | Armed, throttle up, CH5 high  | Motors stop immediately                     | [ ]  |
-| 2 | CH5 still high, throttle low  | Motors stay off (no re-arm)                 | [ ]  |
-| 3 | CH5 low, throttle low         | Re-arms (throttle-low auto-arm)             | [ ]  |
-| 4 | Throttle up                   | Motors spin normally                        | [ ]  |
+| # | Action                        | Expected                                    | Pass |
+|---|-------------------------------|----------------------------------------------|------|
+| 1 | Throttle low (auto-arm)       | Single beep from motors (arm confirmation)   | [ ]  |
+| 2 | Throttle up                   | Motors spin normally                         | [ ]  |
+| 3 | CH5 high (kill)               | Motors stop immediately, two beeps (disarm)  | [ ]  |
+| 4 | CH5 still high, throttle low  | Motors stay off (no re-arm, no beep)         | [ ]  |
+| 5 | CH5 low, throttle low         | Re-arms, single beep again                  | [ ]  |
+| 6 | Throttle up                   | Motors spin normally                         | [ ]  |
 
 ---
 

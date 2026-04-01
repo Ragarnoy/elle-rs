@@ -626,6 +626,7 @@ async fn main(spawner: Spawner) {
 
         // Track last commands for consistent update rate
         let mut last_commands: Option<PilotCommands> = None;
+        let mut was_armed = false;
 
         loop {
             ticker.next().await; // Wait for next tick BEFORE processing
@@ -689,6 +690,19 @@ async fn main(spawner: Spawner) {
                 if !kill_active {
                     fc.update(commands, valid_attitude.as_ref());
                 }
+
+                // Detect arm/disarm transitions → beep
+                let now_armed = fc.is_armed();
+                if now_armed && !was_armed {
+                    elle_hardware::dshot::BEEP_SIGNAL.signal(
+                        elle_hardware::dshot::BeepPattern::ArmBeep,
+                    );
+                } else if !now_armed && was_armed {
+                    elle_hardware::dshot::BEEP_SIGNAL.signal(
+                        elle_hardware::dshot::BeepPattern::DisarmBeep,
+                    );
+                }
+                was_armed = now_armed;
 
                 // Send engine commands via DShot (governor converts eRPM target to DShot)
                 let (engine_l, engine_r) = fc.engine_output();
