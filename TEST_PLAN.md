@@ -1,13 +1,15 @@
-# Ground Test Plan — Flight Mode Rework
+# Ground Test Plan
 
-Pre-flight verification for Stabilized/AltitudeHold mode changes.
-Test date target: 2026-03-29.
+Pre-flight verification checklist. Complete ALL tests before flight.
 
 ## Prerequisites
 
 - BetaFPV Pro transmitter bound and linked
+- CH5 (2-pos switch left): Kill switch (high = disarm)
 - CH6 (3-pos switch left): Manual / Stabilized / AltitudeHold
+- CH7 (3-pos switch right): Autotune off / pitch / roll
 - Props removed for all ground tests
+- SD card inserted (FAT32)
 - Probe-rs debug probe connected (RPC tests only)
 
 ## Build Commands
@@ -15,7 +17,7 @@ Test date target: 2026-03-29.
 ```sh
 # Flight firmware (default — CRSF/ELRS)
 cd crates/elle-eagle
-cargo run --release
+cargo run --release --features gnss
 
 # RPC firmware (ground test mode)
 cargo run --release --no-default-features --features rpc-control
@@ -29,99 +31,64 @@ cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 
 ---
 
-## Part 1: RPC Mode Tests (probe connected, no RC needed)
+## Part 1: Axis Verification (props off, Manual mode)
 
-Flash `--features rpc-control`, launch TUI.
+**Critical: verify all axes move the correct direction before any other test.**
+Use default flight firmware or RPC+RC with TUI for monitoring.
 
-### 1.1 TUI Command Acceptance
+### 1.1 Elevon Direction (Manual mode, armed)
 
-| # | Command             | Expected                                        | Pass |
-|---|---------------------|-------------------------------------------------|------|
-| 1 | `mode stab`         | "Mode: Stabilized"                              | [ ]  |
-| 2 | `mode stabilized`   | "Mode: Stabilized"                              | [ ]  |
-| 3 | `mode althold`      | "Mode: AltitudeHold"                            | [ ]  |
-| 4 | `mode altitudehold` | "Mode: AltitudeHold"                            | [ ]  |
-| 5 | `mode manual`       | "Mode: Manual"                                  | [ ]  |
-| 6 | `mode mixed`        | Error: "Mode must be: manual, stab, or althold" | [ ]  |
-| 7 | `mode auto`         | Same error                                      | [ ]  |
-| 8 | `setpoint 5 5`      | Error: unknown command                          | [ ]  |
+Hold the aircraft from behind, looking forward along the fuselage.
 
-### 1.2 Mode Display in TUI
+| # | Stick input            | Left elevon | Right elevon | Pass |
+|---|------------------------|-------------|--------------|------|
+| 1 | Pitch stick forward    | Down        | Down         | [ ]  |
+| 2 | Pitch stick back       | Up          | Up           | [ ]  |
+| 3 | Roll stick left        | Up          | Down         | [ ]  |
+| 4 | Roll stick right       | Down        | Up           | [ ]  |
+| 5 | Sticks centered        | Both at trim (center)  | | [ ]  |
 
-| # | Action         | Expected header display   | Pass |
-|---|----------------|---------------------------|------|
-| 1 | `mode manual`  | Mode shows "Manual"       | [ ]  |
-| 2 | `mode stab`    | Mode shows "Stabilized"   | [ ]  |
-| 3 | `mode althold` | Mode shows "AltitudeHold" | [ ]  |
+If any row is wrong: adjust `PITCH_INVERT` or `ROLL_INVERT` in `elle-config/src/lib.rs`, or swap `elevon_left`/`elevon_right` pins.
 
-### 1.3 Stabilized Mode — Stick-to-Setpoint (RPC elevon input)
+### 1.2 Differential Thrust Direction (Manual mode, armed)
 
-With mode set to `stab`, the elevon command maps to pitch/roll stick which becomes the attitude setpoint.
+| # | Stick input       | Left engine | Right engine | Expected yaw | Pass |
+|---|-------------------|-------------|--------------|--------------|------|
+| 1 | Yaw stick left    | Slower      | Faster       | Turn left    | [ ]  |
+| 2 | Yaw stick right   | Faster      | Slower       | Turn right   | [ ]  |
+| 3 | Yaw stick center  | Equal       | Equal        | Straight     | [ ]  |
 
-| # | Command sequence          | Expected in controller output panel       | Pass |
-|---|---------------------------|-------------------------------------------|------|
-| 1 | `mode stab`, `arm`        | Attitude controller active                | [ ]  |
-| 2 | `elevon 0 0`              | Setpoint near 0/0, PID corrections small  | [ ]  |
-| 3 | `elevon 50 0`             | Pitch setpoint ~12.5° (50% of 25°)        | [ ]  |
-| 4 | `elevon 0 50`             | Roll setpoint ~22.5° (50% of 45°)         | [ ]  |
-| 5 | `elevon 100 100`          | Pitch setpoint ~25°, roll ~45° (max)      | [ ]  |
-| 6 | `elevon -100 -100`        | Pitch setpoint ~-25°, roll ~-45°          | [ ]  |
-| 7 | `elevon 0 0` → tilt board | PID corrections respond to attitude error | [ ]  |
+If reversed: flip `YAW_INVERT` in `elle-config/src/lib.rs`.
 
-Note: elevon maps to pitch = (left+right)/2, roll = (right-left)/2.
+### 1.3 Stabilized PID Direction (Stabilized mode, armed)
 
-### 1.4 AltitudeHold Mode — Level Hold
+Hold board in hand. Verify PID corrects **against** the tilt, not with it.
 
-| # | Command sequence      | Expected                                          | Pass |
-|---|-----------------------|---------------------------------------------------|------|
-| 1 | `mode althold`, `arm` | Setpoint locked at 0°/0°                          | [ ]  |
-| 2 | `elevon 100 100`      | Setpoint still 0°/0° (stick ignored for setpoint) | [ ]  |
-| 3 | Tilt board            | PID corrections oppose tilt                       | [ ]  |
-| 4 | Return board level    | Corrections return to ~0                          | [ ]  |
+| # | Action                   | Expected elevon response             | Pass |
+|---|--------------------------|--------------------------------------|------|
+| 1 | Tilt nose up             | Elevons push nose down (both down)   | [ ]  |
+| 2 | Tilt nose down           | Elevons push nose up (both up)       | [ ]  |
+| 3 | Tilt roll left           | Elevons correct right (left down, right up) | [ ]  |
+| 4 | Tilt roll right          | Elevons correct left (left up, right down)  | [ ]  |
+| 5 | Hold steady tilt 15°     | Sustained correction, not oscillating | [ ]  |
+| 6 | Quick pitch rotation     | D-term damps the motion (opposes rate) | [ ]  |
+| 7 | Quick roll rotation      | D-term damps the motion (opposes rate) | [ ]  |
 
-### 1.5 Manual Mode — No PID
+If P-term is inverted (corrects wrong way at steady angle): negate the AHRS measurement for that axis in `system.rs`.
+If D-term is inverted (accelerates rotation): negate the AHRS rate for that axis in `system.rs`.
 
-| # | Command sequence     | Expected                            | Pass |
-|---|----------------------|-------------------------------------|------|
-| 1 | `mode manual`, `arm` | PID corrections stay 0              | [ ]  |
-| 2 | `elevon 50 -50`      | Elevons move, no PID engagement     | [ ]  |
-| 3 | Tilt board           | No PID response, corrections stay 0 | [ ]  |
+### 1.4 Kill Switch
 
-### 1.6 Manual Escape
-
-| # | From mode                 | Action        | Expected                                     | Pass |
-|---|---------------------------|---------------|----------------------------------------------|------|
-| 1 | `stab` (armed, tilted)    | `mode manual` | PID immediately stops, corrections drop to 0 | [ ]  |
-| 2 | `althold` (armed, tilted) | `mode manual` | Same — instant PID disengage                 | [ ]  |
-
-### 1.7 Autotune in Stabilized Mode
-
-| # | Command sequence   | Expected                                  | Pass |
-|---|--------------------|-------------------------------------------|------|
-| 1 | `mode stab`, `arm` | Armed in Stabilized                       | [ ]  |
-| 2 | `throttle 30`      | Motors spin (if connected)                | [ ]  |
-| 3 | `autotune pitch`   | Autotune starts, setpoint override active | [ ]  |
-| 4 | `autotune abort`   | Autotune aborts, original gains restored  | [ ]  |
-
-### 1.8 ULog Setpoint Recording
-
-| # | Steps                                | Expected                                       | Pass |
-|---|--------------------------------------|------------------------------------------------|------|
-| 1 | `mode stab`, `arm`, `elevon 50 0`    | -                                              | [ ]  |
-| 2 | `ulog start`                         | Recording started (code 30)                    | [ ]  |
-| 3 | Wait 3s, `ulog stop`, `ulog extract` | File saved                                     | [ ]  |
-| 4 | Open .ulg, check `pilot_commands`    | `pitch_setpoint_deg` ~12.5° (not 0 or garbage) | [ ]  |
+| # | Action                        | Expected                                   | Pass |
+|---|-------------------------------|---------------------------------------------|------|
+| 1 | Armed, throttle up, CH5 high  | Motors stop immediately                     | [ ]  |
+| 2 | CH5 still high, throttle low  | Motors stay off (no re-arm)                 | [ ]  |
+| 3 | CH5 low, throttle low         | Re-arms (throttle-low auto-arm)             | [ ]  |
+| 4 | Throttle up                   | Motors spin normally                        | [ ]  |
 
 ---
 
-## Part 2: RC Mode Tests (transmitter required)
-
-All inputs via RC sticks/switches. Two firmware options:
-
-- **Default firmware** (`cargo run --release`) — RC only, verify via defmt logs or servo movement
-- **RPC+RC firmware** (`--no-default-features --features rpc-control,rpc-rc`) — RC controls flight, TUI provides live monitoring (attitude, setpoints, mode, engine). Recommended for ground testing since you can see PID state.
-
-Transmitter must be bound. Props off for all tests.
+## Part 2: Mode Tests (props off)
 
 ### 2.1 Mode Switch Mapping (CH6 3-position)
 
@@ -131,23 +98,20 @@ Transmitter must be bound. Props off for all tests.
 | 2 | Position 2 (mid, ~1000)  | Stabilized    | [ ]  |
 | 3 | Position 3 (high, ~1694) | AltitudeHold  | [ ]  |
 
-Verify via TUI (rpc-rc build) or defmt log output.
+### 2.2 Stabilized Mode — Stick Response
 
-### 2.2 Stabilized Mode — Stick Feel
-
-Hold board in hand, props off, armed.
+Hold board in hand, armed.
 
 | # | Stick input                           | Expected servo response                           | Pass |
 |---|---------------------------------------|---------------------------------------------------|------|
-| 1 | CH6 mid (Stabilized), sticks centered | Elevons hold trim position, PID corrects for tilt | [ ]  |
+| 1 | CH6 mid (Stabilized), sticks centered | Elevons hold trim, PID corrects for hand tilt     | [ ]  |
 | 2 | Full pitch stick forward              | Elevons deflect to nose-down attitude (~25°)      | [ ]  |
 | 3 | Full pitch stick back                 | Elevons deflect to nose-up (~25°)                 | [ ]  |
 | 4 | Full roll stick left                  | Elevons split for left roll (~45°)                | [ ]  |
 | 5 | Full roll stick right                 | Elevons split for right roll (~45°)               | [ ]  |
 | 6 | Release sticks (center)               | Elevons return to level hold (0°/0°)              | [ ]  |
-| 7 | Stick centered, tilt board nose-up    | PID pushes elevons to correct back to level       | [ ]  |
-| 8 | Throttle stick                        | Throttle responds directly (no PID on throttle)   | [ ]  |
-| 9 | Yaw stick                             | Differential thrust responds directly             | [ ]  |
+| 7 | Throttle stick                        | Throttle responds directly (no PID on throttle)   | [ ]  |
+| 8 | Yaw stick                             | Differential thrust responds directly             | [ ]  |
 
 ### 2.3 AltitudeHold Mode — Wings Level
 
@@ -175,36 +139,77 @@ Hold board in hand, props off, armed.
 | 3 | Stabilized, autotune running               | -                                                  | [ ]  |
 | 4 | Flip CH6 to Manual                         | Autotune pauses, PID off, full manual control      | [ ]  |
 
-### 2.6 ULog Recording via RC Switch
+---
 
-| # | Steps                                     | Expected                                                 | Pass |
-|---|-------------------------------------------|----------------------------------------------------------|------|
-| 1 | CH5 high (ULog on), fly Stabilized for 5s | -                                                        | [ ]  |
-| 2 | CH5 low (ULog off)                        | Recording stopped                                        | [ ]  |
-| 3 | Extract via probe or next RPC session     | `pitch_setpoint_deg` in ULog matches stick-derived angle | [ ]  |
+## Part 3: SD Card + ULog
 
-### 2.7 RC Autotune (CH7 3-position)
+### 3.1 Auto-Start Recording
 
-| # | Steps                                    | Expected                                        | Pass |
-|---|------------------------------------------|-------------------------------------------------|------|
-| 1 | CH6 mid (Stabilized), armed, throttle up | -                                               | [ ]  |
-| 2 | CH7 mid (pitch autotune)                 | Autotune starts, oscillation visible on elevons | [ ]  |
-| 3 | CH7 low (off)                            | Autotune aborts                                 | [ ]  |
-| 4 | CH6 low (Manual) during autotune         | PID off, autotune paused, full manual           | [ ]  |
+| # | Action                    | Expected                                   | Pass |
+|---|---------------------------|---------------------------------------------|------|
+| 1 | Power on with SD inserted | defmt: "SD: FAT32 mounted"                 | [ ]  |
+| 2 | Wait 5s                   | defmt: "ULog recording started (auto)"     | [ ]  |
+| 3 | Power off, pull SD card   | LOG_0000.ULG exists with data              | [ ]  |
+| 4 | Power on again            | Next file is LOG_0001.ULG (not overwritten) | [ ]  |
+
+### 3.2 ULog Data Validation
+
+| # | Check                       | Expected                              | Pass |
+|---|------------------------------|---------------------------------------|------|
+| 1 | `ulog_info LOG_NNNN.ULG`    | All message types present, no errors  | [ ]  |
+| 2 | attitude_data rate           | ~77 Hz                                | [ ]  |
+| 3 | File has real timestamp      | Correct date/time (not 1970/1980)     | [ ]  |
+
+### 3.3 Autotune ULog (RPC mode)
+
+| # | Steps                      | Expected                                    | Pass |
+|---|----------------------------|---------------------------------------------|------|
+| 1 | `mode stab`, `arm`         | Armed in Stabilized                         | [ ]  |
+| 2 | `autotune pitch`           | Autotune starts                             | [ ]  |
+| 3 | `autotune abort`           | Autotune aborts                             | [ ]  |
+| 4 | Pull SD, check ULog        | `autotune_status` message present with phase transitions | [ ]  |
+
+---
+
+## Part 4: RPC Mode Tests (probe connected)
+
+Flash `--features rpc-control`, launch TUI.
+
+### 4.1 TUI Command Acceptance
+
+| # | Command             | Expected                                        | Pass |
+|---|---------------------|-------------------------------------------------|------|
+| 1 | `mode stab`         | "Mode: Stabilized"                              | [ ]  |
+| 2 | `mode stabilized`   | "Mode: Stabilized"                              | [ ]  |
+| 3 | `mode althold`      | "Mode: AltitudeHold"                            | [ ]  |
+| 4 | `mode altitudehold` | "Mode: AltitudeHold"                            | [ ]  |
+| 5 | `mode manual`       | "Mode: Manual"                                  | [ ]  |
+| 6 | `mode mixed`        | Error: "Mode must be: manual, stab, or althold" | [ ]  |
+
+### 4.2 RPC Stabilized Mode
+
+| # | Command sequence          | Expected in controller output panel       | Pass |
+|---|---------------------------|-------------------------------------------|------|
+| 1 | `mode stab`, `arm`        | Attitude controller active                | [ ]  |
+| 2 | `elevon 0 0`              | Setpoint near 0/0, PID corrections small  | [ ]  |
+| 3 | `elevon 50 0`             | Pitch setpoint ~12.5° (50% of 25°)        | [ ]  |
+| 4 | `elevon 0 50`             | Roll setpoint ~22.5° (50% of 45°)         | [ ]  |
+| 5 | `elevon 0 0` → tilt board | PID corrections respond to attitude error | [ ]  |
 
 ---
 
 ## Abort Criteria
 
 Stop testing and investigate if any of these occur:
+- Any axis in 1.1/1.2/1.3 is reversed — fix inversions before proceeding
+- Kill switch does not stop motors — do NOT fly
 - Manual mode escape does not immediately disable PID
-- Elevons do not respond in Manual mode
-- PID oscillates uncontrollably in Stabilized mode (reduce gains)
+- PID oscillates uncontrollably in Stabilized mode (reduce `config.scale` in system.rs)
 - Mode switch has no effect (check CH6 wiring / thresholds)
-- ULog setpoint values are 0 when stick is deflected (logging bug)
+- SD card not mounting or ULog not auto-starting
 
 ## Post-Ground Sign-Off
 
-All tests in Part 1 and Part 2 passed: [ ]
+All tests in Part 1 through Part 4 passed: [ ]
 Reviewed by: _______________
 Date: _______________
