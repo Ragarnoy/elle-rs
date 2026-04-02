@@ -81,7 +81,7 @@ impl SavedGains {
     ///
     /// Returns `None` if any value is non-finite or out of its valid range:
     /// - kp/ki/kd: 0.0..=100.0
-    /// - scale: 0.0..=1.0
+    /// - scale: 0.0..=100.0
     /// - i_limit: 0.0..=1000.0
     pub fn from_bytes(b: &[u8; 32]) -> Option<Self> {
         let pitch_kp = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
@@ -104,7 +104,7 @@ impl SavedGains {
         {
             return None;
         }
-        if !scale.is_finite() || !(0.0..=1.0).contains(&scale) {
+        if !scale.is_finite() || !(0.0..=100.0).contains(&scale) {
             return None;
         }
         if !i_limit.is_finite() || !(0.0..=1000.0).contains(&i_limit) {
