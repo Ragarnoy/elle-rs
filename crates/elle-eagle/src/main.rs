@@ -634,6 +634,7 @@ async fn main(spawner: Spawner) {
 
         loop {
             ticker.next().await; // Wait for next tick BEFORE processing
+            let loop_start = Instant::now();
             let loop_timer = TimingMeasurement::start();
 
             // Supervisor check - monitor core health and kick watchdog
@@ -939,7 +940,7 @@ async fn main(spawner: Spawner) {
                         valid_attitude.as_ref(),
                         commands,
                         loop_counter,
-                        loop_timer.elapsed_us(),
+                        loop_start.elapsed().as_micros() as u32,
                         &fc,
                     );
                 } else if loop_counter.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR) {
@@ -1039,6 +1040,7 @@ async fn main(spawner: Spawner) {
 
         loop {
             ticker.next().await;
+            let loop_start = Instant::now();
             let loop_timer = TimingMeasurement::start();
 
             // Supervisor check
@@ -1557,7 +1559,7 @@ async fn main(spawner: Spawner) {
                     valid_attitude.as_ref(),
                     ulog_commands,
                     loop_counter,
-                    loop_timer.elapsed_us(),
+                    loop_start.elapsed().as_micros() as u32,
                     &fc,
                 );
             } else if loop_counter.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR) {
