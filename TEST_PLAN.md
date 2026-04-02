@@ -162,14 +162,91 @@ Hold board in hand, armed.
 | 2 | attitude_data rate           | ~77 Hz                                | [ ]  |
 | 3 | File has real timestamp      | Correct date/time (not 1970/1980)     | [ ]  |
 
-### 3.3 Autotune ULog (RPC mode)
+### 3.3 Autotune ULog + Performance (RPC mode)
 
 | # | Steps                      | Expected                                    | Pass |
 |---|----------------------------|---------------------------------------------|------|
 | 1 | `mode stab`, `arm`         | Armed in Stabilized                         | [ ]  |
 | 2 | `autotune pitch`           | Autotune starts                             | [ ]  |
-| 3 | `autotune abort`           | Autotune aborts                             | [ ]  |
-| 4 | Pull SD, check ULog        | `autotune_status` message present with phase transitions | [ ]  |
+| 3 | Let it run for ~10s        | No "attitude data lost" abort event         | [ ]  |
+| 4 | `autotune abort`           | Autotune aborts normally                    | [ ]  |
+| 5 | Pull SD, check ULog        | `autotune_status` message present with phase transitions | [ ]  |
+| 6 | Check `system_status.loop_time_us` | All values < 13000µs (13ms budget) | [ ]  |
+| 7 | Check attitude_data rate   | Still ~77 Hz during autotune (no drops)     | [ ]  |
+
+### 3.4 Autotune Oscillation Verification (RPC+RC mode, props off)
+
+**Critical: verify autotune relay direction is correct before attempting in flight.**
+Use `--features rpc-control,rpc-rc,gnss` so TUI monitors while RC controls.
+
+**Note:** Autotune cannot produce real oscillation on the ground — there is no airflow,
+so elevons produce no aerodynamic force. The board will not move on its own.
+You must **manually tilt the board to simulate the aircraft's response**:
+- When the setpoint is positive, tilt the board in the positive direction (nose up / roll right)
+- When the setpoint flips negative, tilt the other way
+- You are simulating what aerodynamic forces would do in flight
+- Tilt just enough to cross zero — precision doesn't matter
+
+The computed gains will be meaningless (hand period ≠ flight period) and will be
+overwritten by in-flight autotune. The goal is only to verify the relay direction
+and sign conventions are correct (setpoint flips when measurement crosses zero,
+elevons push the right way, cycle counter increments, run completes).
+
+#### 3.4.1 Pitch Autotune — Oscillation Forms
+
+Hold board level in hand. Switch to Stabilized (CH6 mid), let it arm.
+
+| # | Action                       | Expected                                              | Pass |
+|---|------------------------------|-------------------------------------------------------|------|
+| 1 | TUI: `autotune pitch`        | CRSF radio shows `AT P`                              | [ ]  |
+| 2 | Wait 2s (settling)           | Setpoint held at 0°, elevons hold trim                | [ ]  |
+| 3 | Relay starts                 | Pitch setpoint alternates ±5° (visible in TUI)        | [ ]  |
+| 4 | Observe elevons              | Elevons oscillate in pitch (both up/both down rhythm) | [ ]  |
+| 5 | Observe cycle count          | Cycle counter increments in TUI autotune log          | [ ]  |
+| 6 | Wait ~10-15s for completion  | `DONE` on radio, gains printed in TUI                 | [ ]  |
+
+**If it aborts with ERR! after ~10s:** oscillation never formed — sign mismatch between
+autotuner measurement and PID. Check `PITCH_INVERT` is applied in both the PID measurement
+path (`system.rs`) and the autotuner measurement path (`main.rs`).
+
+**If oscillation grows until 20° safety abort:** TEST_KP (1.0) × scale (5.0) is too aggressive.
+Retry with `autotune pitch 3` (3° relay amplitude).
+
+**If `UnstablePeriod` abort:** oscillation period varies >30% between cycles. Reduce hand
+shake — rest board on a surface with pitch axis free to rotate.
+
+#### 3.4.2 Roll Autotune — Oscillation Forms
+
+| # | Action                       | Expected                                              | Pass |
+|---|------------------------------|-------------------------------------------------------|------|
+| 1 | TUI: `autotune roll`         | CRSF radio shows `AT R`                              | [ ]  |
+| 2 | Wait 2s (settling)           | Setpoint held at 0°                                   | [ ]  |
+| 3 | Relay starts                 | Roll setpoint alternates ±5°                          | [ ]  |
+| 4 | Observe elevons              | Elevons oscillate in split (left up/right down, then swap) | [ ]  |
+| 5 | Wait ~10-15s for completion  | `DONE` on radio, gains printed in TUI                 | [ ]  |
+
+#### 3.4.3 Gains Survive Reboot
+
+| # | Action                       | Expected                                              | Pass |
+|---|------------------------------|-------------------------------------------------------|------|
+| 1 | Note gains from 3.4.1/3.4.2 | Record Kp/Ki/Kd for pitch and roll                    | [ ]  |
+| 2 | Power cycle the board        | —                                                     | [ ]  |
+| 3 | Check TUI startup logs       | "PID loaded P(...) R(...) s=... il=..." with matching gains | [ ]  |
+
+#### 3.4.4 Safety Abort — Amplitude Limit
+
+| # | Action                        | Expected                                             | Pass |
+|---|-------------------------------|------------------------------------------------------|------|
+| 1 | TUI: `autotune pitch`         | Autotune starts                                     | [ ]  |
+| 2 | During relay, tilt board >20° | Immediate abort, `ERR!` on radio                    | [ ]  |
+| 3 | Elevons return to normal      | Stabilized mode resumes with original gains          | [ ]  |
+
+#### 3.4.5 Safety Abort — RC Switch
+
+| # | Action                        | Expected                                             | Pass |
+|---|-------------------------------|------------------------------------------------------|------|
+| 1 | CH7 mid (pitch autotune)      | Autotune starts, `AT P` on radio                    | [ ]  |
+| 2 | CH7 low (off) during relay    | Immediate abort, `ERR!` on radio, original gains restored | [ ]  |
 
 ---
 
