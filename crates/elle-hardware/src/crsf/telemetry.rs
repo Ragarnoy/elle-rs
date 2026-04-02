@@ -31,13 +31,28 @@ pub static TELEMETRY_ATTITUDE: Signal<CriticalSectionRawMutex, AttitudeData> = S
 /// Flight-mode signal, written by the main control loop after each fc.update().
 pub static CRSF_FLIGHT_MODE: Signal<CriticalSectionRawMutex, CrsfFlightMode> = Signal::new();
 
+/// Autotune display state for CRSF telemetry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+pub enum AutotuneDisplay {
+    /// No autotune activity
+    Off,
+    /// Pitch autotune running
+    Pitch,
+    /// Roll autotune running
+    Roll,
+    /// Autotune completed successfully (shown for a few seconds)
+    Done,
+    /// Autotune failed (shown for a few seconds)
+    Error,
+}
+
 /// Snapshot of the current flight mode for CRSF telemetry.
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct CrsfFlightMode {
     pub armed: bool,
     pub failsafe: bool,
     pub attitude_mode: bool,
-    pub autotuning: bool,
+    pub autotune: AutotuneDisplay,
 }
 
 /// Lightweight GPS data for telemetry (avoids dependency on elle-rpc-icd).
@@ -82,12 +97,20 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
         b"!FS!\0"
     } else if !mode.armed {
         b"WAIT\0"
-    } else if mode.autotuning {
-        b"ATUN\0"
-    } else if mode.attitude_mode {
-        b"STAB\0"
     } else {
-        b"MANU\0"
+        match mode.autotune {
+            AutotuneDisplay::Pitch => b"AT P\0",
+            AutotuneDisplay::Roll  => b"AT R\0",
+            AutotuneDisplay::Done  => b"DONE\0",
+            AutotuneDisplay::Error => b"ERR!\0",
+            AutotuneDisplay::Off => {
+                if mode.attitude_mode {
+                    b"STAB\0"
+                } else {
+                    b"MANU\0"
+                }
+            }
+        }
     };
 
     let payload_len = mode_str.len(); // includes NUL
@@ -213,7 +236,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         armed: false,
         failsafe: false,
         attitude_mode: false,
-        autotuning: false,
+        autotune: AutotuneDisplay::Off,
     };
 
     #[cfg(feature = "gnss")]
