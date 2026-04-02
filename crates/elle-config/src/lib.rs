@@ -216,3 +216,25 @@ const _: () = assert!(AUTOTUNE_OFF_THRESHOLD < AUTOTUNE_PITCH_THRESHOLD);
 // Channel indices must be distinct and in 0..16
 const _: () = assert!(ROLL_CH < 16 && PITCH_CH < 16 && THROTTLE_CH < 16 && YAW_CH < 16);
 const _: () = assert!(ATTITUDE_ENABLE_CH < 16 && AUTOTUNE_CH < 16 && ULOG_ENABLE_CH < 16);
+
+// CONTROL_LOOP_DT must be consistent with CONTROL_LOOP_FREQUENCY_HZ (±1ms tolerance).
+// These are defined independently — if one changes and the other doesn't, PID integrator
+// and autotuner timing silently break.
+const _: () = {
+    let expected_ms = 1000 / CONTROL_LOOP_FREQUENCY_HZ; // integer ms
+    let dt_ms = (CONTROL_LOOP_DT * 1000.0) as u32;
+    assert!(dt_ms >= expected_ms - 1 && dt_ms <= expected_ms + 1);
+};
+
+// Motor poles must be even (eRPM = RPM × poles/2)
+const _: () = assert!(MOTOR_POLES % 2 == 0);
+
+// Servo range: MIN < CENTER < MAX
+const _: () = assert!(SERVO_MIN_PULSE_US < SERVO_CENTER_US);
+const _: () = assert!(SERVO_CENTER_US < SERVO_MAX_PULSE_US);
+
+// Trim must not push center outside servo range
+const _: () = assert!(ELEVON_LEFT_CENTER_US >= SERVO_MIN_PULSE_US);
+const _: () = assert!(ELEVON_LEFT_CENTER_US <= SERVO_MAX_PULSE_US);
+const _: () = assert!(ELEVON_RIGHT_CENTER_US >= SERVO_MIN_PULSE_US);
+const _: () = assert!(ELEVON_RIGHT_CENTER_US <= SERVO_MAX_PULSE_US);
