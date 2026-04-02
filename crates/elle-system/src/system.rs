@@ -136,13 +136,8 @@ impl<'a> FlightController<'a> {
         config.ki_yaw = 0.05;
         config.kd_yaw = 0.00015;
 
-        // Set the upper limit for the integral term to prevent windup
-        config.i_limit = 0.5;
-
-        // Scale maps PID output to actuator range (-1..+1 for elevon mixing).
-        // At scale=5.0, full 25° error with Kp=0.2 gives output ≈ 0.44.
-        // Old value (0.015) was for blended mode; Stabilized uses 100% PID output.
-        config.scale = 5.0;
+        config.i_limit = PID_I_LIMIT;
+        config.scale = PID_SCALE;
 
         let mut attitude_controller = AttitudeController::with_config(config);
         attitude_controller.pitch_hold_enabled = true;

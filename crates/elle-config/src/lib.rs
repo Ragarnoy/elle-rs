@@ -129,6 +129,10 @@ pub const PITCH_KP: f32 = 0.2;
 pub const PITCH_KI: f32 = 0.03;
 pub const PITCH_KD: f32 = 0.1;
 
+// PID operating scale and integral limit (must match SavedGains validation ranges)
+pub const PID_SCALE: f32 = 5.0;
+pub const PID_I_LIMIT: f32 = 0.5;
+
 // Control authority limits (0.0 to 1.0)
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
 
@@ -178,3 +182,37 @@ pub const GOVERNOR_KI: f32 = 0.002;
 pub const GOVERNOR_DT: f32 = 0.001; // 1ms (1kHz task rate)
 pub const GOVERNOR_DEADBAND_ERPM: f32 = 500.0; // Ignore errors below this (absorbs EDT noise)
 pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000; // Reject telemetry jumps larger than this
+
+// ---------------------------------------------------------------------------
+// Compile-time validation
+// ---------------------------------------------------------------------------
+// These mirror the SavedGains::from_bytes() validation ranges (elle-control).
+// If a const assert fires, the default config would fail to round-trip through
+// flash persistence — exactly the bug we had with scale=5.0 vs range 0..=1.
+
+// PID gains must fit SavedGains range 0.0..=100.0
+const _: () = assert!(PITCH_KP >= 0.0 && PITCH_KP <= 100.0);
+const _: () = assert!(PITCH_KI >= 0.0 && PITCH_KI <= 100.0);
+const _: () = assert!(PITCH_KD >= 0.0 && PITCH_KD <= 100.0);
+const _: () = assert!(ROLL_KP >= 0.0 && ROLL_KP <= 100.0);
+const _: () = assert!(ROLL_KI >= 0.0 && ROLL_KI <= 100.0);
+const _: () = assert!(ROLL_KD >= 0.0 && ROLL_KD <= 100.0);
+
+// Scale must fit SavedGains range 0.0..=100.0
+const _: () = assert!(PID_SCALE >= 0.0 && PID_SCALE <= 100.0);
+
+// I-limit must fit SavedGains range 0.0..=1000.0
+const _: () = assert!(PID_I_LIMIT >= 0.0 && PID_I_LIMIT <= 1000.0);
+
+// Inversions must be exactly ±1.0 (not arbitrary floats)
+const _: () = assert!(PITCH_INVERT == 1.0 || PITCH_INVERT == -1.0);
+const _: () = assert!(ROLL_INVERT == 1.0 || ROLL_INVERT == -1.0);
+const _: () = assert!(YAW_INVERT == 1.0 || YAW_INVERT == -1.0);
+
+// Mode thresholds must be ordered
+const _: () = assert!(MANUAL_MODE_THRESHOLD < STABILIZED_MODE_THRESHOLD);
+const _: () = assert!(AUTOTUNE_OFF_THRESHOLD < AUTOTUNE_PITCH_THRESHOLD);
+
+// Channel indices must be distinct and in 0..16
+const _: () = assert!(ROLL_CH < 16 && PITCH_CH < 16 && THROTTLE_CH < 16 && YAW_CH < 16);
+const _: () = assert!(ATTITUDE_ENABLE_CH < 16 && AUTOTUNE_CH < 16 && ULOG_ENABLE_CH < 16);
