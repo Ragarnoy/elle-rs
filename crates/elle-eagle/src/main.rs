@@ -620,6 +620,10 @@ async fn main(spawner: Spawner) {
         let mut autotune_stable_pos: u8 = 0;
         let mut pitch_tune_done: bool = false;
         let mut save_pending: Option<[u8; 32]> = None;
+        // Autotune display for CRSF telemetry (DONE/ERR shown for ~3s then reverts to Off)
+        let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
+        let mut autotune_display_timer: u32 = 0;
+        const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
 
         // Create ticker for precise 13ms periods (77Hz)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
@@ -668,13 +672,18 @@ async fn main(spawner: Spawner) {
                 }
             });
 
-            if kill_active && fc.is_armed() {
-                fc.disarm();
-                elle_hardware::elle_event!(
-                    warn,
-                    elle_hardware::event::EVT_MOTORS_DISARMED,
-                    "Kill switch activated"
-                );
+            if kill_active {
+                // Kill switch active: disarm, center elevons, zero throttle
+                if fc.is_armed() {
+                    fc.disarm();
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_MOTORS_DISARMED,
+                        "Kill switch activated"
+                    );
+                }
+                fc.set_safe_positions();
+                DSHOT_THROTTLE.signal((0, 0));
             }
 
             if let Some(commands) = &last_commands {
@@ -705,18 +714,34 @@ async fn main(spawner: Spawner) {
                 was_armed = now_armed;
 
                 // Send engine commands via DShot (governor converts eRPM target to DShot)
-                let (engine_l, engine_r) = fc.engine_output();
-                let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM)
-                    / elle_config::DSHOT_THROTTLE_MAX as u32;
-                let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM)
-                    / elle_config::DSHOT_THROTTLE_MAX as u32;
-                DSHOT_THROTTLE.signal((l_erpm, r_erpm));
+                if !kill_active {
+                    let (engine_l, engine_r) = fc.engine_output();
+                    let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM)
+                        / elle_config::DSHOT_THROTTLE_MAX as u32;
+                    let r_erpm = (engine_r as u32 * elle_config::MAX_ERPM)
+                        / elle_config::DSHOT_THROTTLE_MAX as u32;
+                    DSHOT_THROTTLE.signal((l_erpm, r_erpm));
+                }
+
+                // Update autotune display state for CRSF telemetry
+                if autotuner.is_active() {
+                    autotune_display = if autotune_stable_pos == 1 {
+                        elle_hardware::crsf::AutotuneDisplay::Pitch
+                    } else {
+                        elle_hardware::crsf::AutotuneDisplay::Roll
+                    };
+                } else if autotune_display_timer > 0 {
+                    autotune_display_timer -= 1;
+                    if autotune_display_timer == 0 {
+                        autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
+                    }
+                }
 
                 elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(elle_hardware::crsf::CrsfFlightMode {
                     armed: fc.is_armed(),
                     failsafe: fc.is_failsafe(),
                     attitude_mode: fc.is_attitude_enabled(),
-                    autotuning: autotuner.is_active(),
+                    autotune: autotune_display,
                 });
 
                 // --- Autotune RC switch logic (CH9, 3-position with debounce) ---
@@ -746,6 +771,8 @@ async fn main(spawner: Spawner) {
                             if let Some(saved) = autotuner.abort() {
                                 fc.apply_saved_gains(&saved);
                                 fc.clear_setpoint_override();
+                                autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                                autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
                                 elle_hardware::elle_event!(
                                     warn,
                                     elle_hardware::event::EVT_AUTOTUNE_ABORTED,
@@ -789,13 +816,27 @@ async fn main(spawner: Spawner) {
                 }
 
                 // Autotune state machine tick
+                if autotuner.is_active() && valid_attitude.is_none() {
+                    // Attitude data lost during autotune — abort for safety
+                    if let Some(saved) = autotuner.abort() {
+                        fc.apply_saved_gains(&saved);
+                        fc.clear_setpoint_override();
+                        autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                        autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
+                        elle_hardware::elle_event!(
+                            error,
+                            elle_hardware::event::EVT_AUTOTUNE_ESTOP,
+                            "Autotune aborted: attitude data lost"
+                        );
+                    }
+                }
                 if autotuner.is_active()
                     && let Some(att) = valid_attitude.as_ref()
                 {
                     let measurement_deg = if autotune_stable_pos == 1 {
-                        att.pitch * (180.0 / core::f32::consts::PI)
+                        att.pitch * elle_config::PITCH_INVERT * (180.0 / core::f32::consts::PI)
                     } else {
-                        att.roll * (180.0 / core::f32::consts::PI)
+                        att.roll * elle_config::ROLL_INVERT * (180.0 / core::f32::consts::PI)
                     };
 
                     match autotuner.update(measurement_deg, autotune_tick) {
@@ -812,6 +853,8 @@ async fn main(spawner: Spawner) {
                         AutotuneAction::RestoreGains(gains) => {
                             fc.apply_saved_gains(&gains);
                             fc.clear_setpoint_override();
+                            autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                            autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
                             elle_hardware::elle_event!(
                                 warn,
                                 elle_hardware::event::EVT_AUTOTUNE_ESTOP,
@@ -827,6 +870,8 @@ async fn main(spawner: Spawner) {
                             if result.axis == AutotuneAxis::Pitch {
                                 pitch_tune_done = true;
                             }
+                            autotune_display = elle_hardware::crsf::AutotuneDisplay::Done;
+                            autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
                             info!(
                                 "Autotune COMPLETE: Ku={} Tu={}ms kp={} ki={} kd={} amp={}cdeg cycles={}",
                                 (result.ku * 1000.0) as i32,
@@ -1341,8 +1386,8 @@ async fn main(spawner: Spawner) {
                 && let Some(att) = valid_attitude.as_ref()
             {
                 let measurement_deg = match autotuner.axis() {
-                    AutotuneAxis::Pitch => att.pitch * (180.0 / core::f32::consts::PI),
-                    AutotuneAxis::Roll => att.roll * (180.0 / core::f32::consts::PI),
+                    AutotuneAxis::Pitch => att.pitch * elle_config::PITCH_INVERT * (180.0 / core::f32::consts::PI),
+                    AutotuneAxis::Roll => att.roll * elle_config::ROLL_INVERT * (180.0 / core::f32::consts::PI),
                 };
                 match autotuner.update(measurement_deg, autotune_tick) {
                     AutotuneAction::None => {}
@@ -1467,7 +1512,11 @@ async fn main(spawner: Spawner) {
                 armed: fc.is_armed(),
                 failsafe: fc.is_failsafe(),
                 attitude_mode: fc.is_attitude_enabled(),
-                autotuning: autotuner.is_active(),
+                autotune: if autotuner.is_active() {
+                    elle_hardware::crsf::AutotuneDisplay::Pitch // simplified for RPC mode
+                } else {
+                    elle_hardware::crsf::AutotuneDisplay::Off
+                },
             });
 
             // Publish flight state for RPC handlers

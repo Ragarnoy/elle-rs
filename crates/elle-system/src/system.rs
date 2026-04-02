@@ -409,6 +409,11 @@ impl<'a> FlightController<'a> {
             }
 
             AttitudeMode::Stabilized | AttitudeMode::AltitudeHold => {
+                // Reset PID on entry from Manual to prevent integral carryover
+                if self.current_control_mode == ControlMode::Manual {
+                    self.attitude_controller.reset();
+                }
+
                 // Try to get attitude data (current or cached)
                 match attitude.or(self.last_attitude.as_ref()) {
                     Some(att) => {
@@ -574,6 +579,11 @@ impl<'a> FlightController<'a> {
     /// Manual disarm (for RTT/debug control)
     pub fn disarm(&mut self) {
         self.arming.disarm();
+    }
+
+    /// Force elevons to center (safe position). Used by kill switch.
+    pub fn set_safe_positions(&mut self) {
+        self.pwm.set_safe_positions();
     }
 
     /// Update PID gains at runtime (resets integral state)
