@@ -204,10 +204,10 @@ pub async fn sd_writer_task(
         let mut iter = root.iter();
         while let Some(Ok(entry)) = iter.next().await {
             let raw_name = entry.short_file_name_as_bytes();
-            // Match "LOG_NNNN.ULG" in 8.3 format: "LOG_NNNNULG"
-            if raw_name.len() >= 11
+            // Match "LOG_NNNN.ULG" (12 bytes with dot separator)
+            if raw_name.len() >= 12
                 && &raw_name[..4] == b"LOG_"
-                && &raw_name[8..11] == b"ULG"
+                && &raw_name[8..12] == b".ULG"
             {
                 if let Ok(s) = core::str::from_utf8(&raw_name[4..8]) {
                     if let Ok(n) = s.parse::<i32>() {
