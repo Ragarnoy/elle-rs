@@ -46,12 +46,20 @@ pub enum AutotuneDisplay {
     Error,
 }
 
+/// Flight mode for CRSF telemetry display.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+pub enum CrsfControlMode {
+    Manual,
+    Stabilized,
+    AltitudeHold,
+}
+
 /// Snapshot of the current flight mode for CRSF telemetry.
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct CrsfFlightMode {
     pub armed: bool,
     pub failsafe: bool,
-    pub attitude_mode: bool,
+    pub mode: CrsfControlMode,
     pub autotune: AutotuneDisplay,
 }
 
@@ -103,12 +111,10 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
             AutotuneDisplay::Roll  => b"AT R\0",
             AutotuneDisplay::Done  => b"DONE\0",
             AutotuneDisplay::Error => b"ERR!\0",
-            AutotuneDisplay::Off => {
-                if mode.attitude_mode {
-                    b"STAB\0"
-                } else {
-                    b"MANU\0"
-                }
+            AutotuneDisplay::Off => match mode.mode {
+                CrsfControlMode::Manual => b"MANU\0",
+                CrsfControlMode::Stabilized => b"STAB\0",
+                CrsfControlMode::AltitudeHold => b"AHLD\0",
             }
         }
     };
@@ -235,7 +241,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
     let mut last_mode = CrsfFlightMode {
         armed: false,
         failsafe: false,
-        attitude_mode: false,
+        mode: CrsfControlMode::Manual,
         autotune: AutotuneDisplay::Off,
     };
 

@@ -311,6 +311,7 @@ impl<'a> FlightController<'a> {
     #[inline(always)]
     fn update_fast_path_raw(&mut self, channels: &[u16; 16]) {
         self.arming.update(channels[THROTTLE_CH]);
+        self.attitude_controller.enabled = false;
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
         self.pwm
