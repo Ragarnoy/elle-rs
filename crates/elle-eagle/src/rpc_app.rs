@@ -142,6 +142,7 @@ fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Status
         imu_calibrated: imu_status.as_ref().map_or(false, |s| s.calibrated),
         imu_error_count: imu_status.as_ref().map_or(0, |s| s.error_count),
         rc_age_ms: state.rc_age_ms,
+        autotune_state: state.autotune_state,
     }
 }
 

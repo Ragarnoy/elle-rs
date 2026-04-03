@@ -68,6 +68,32 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("")
     };
 
+    let autotune_span = match state.status.map(|s| s.autotune_state).unwrap_or(0) {
+        1 => Span::styled(
+            " | AT PITCH",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        2 => Span::styled(
+            " | AT ROLL",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        3 => Span::styled(
+            " | AT DONE",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        4 => Span::styled(
+            " | AT ERR",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        _ => Span::raw(""),
+    };
+
     // Blink REC at ~1Hz using sub-second parity
     let rec_span = if state.ulog_recording {
         let blink_on = (std::time::SystemTime::now()
@@ -125,6 +151,7 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
             Style::default().fg(Color::White),
         ),
         failsafe_span,
+        autotune_span,
         Span::raw(" |"),
         rec_span,
         Span::raw(" | "),

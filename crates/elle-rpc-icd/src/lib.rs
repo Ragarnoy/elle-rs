@@ -79,6 +79,8 @@ pub struct StatusResp {
     pub imu_calibrated: bool,
     pub imu_error_count: u32,
     pub rc_age_ms: u16,
+    /// Autotune state: 0=off, 1=pitch, 2=roll, 3=done, 4=error
+    pub autotune_state: u8,
 }
 
 /// Attitude data response (scaled integers for efficiency)

@@ -7,6 +7,8 @@ pub struct FlightState {
     pub failsafe: bool,
     pub mode: ControlMode,
     pub rc_age_ms: u16,
+    /// Autotune state: 0=off, 1=pitch, 2=roll, 3=done, 4=error
+    pub autotune_state: u8,
 }
 
 pub static FLIGHT_STATE: SignalCache<FlightState> = SignalCache::new(FlightState {
@@ -14,6 +16,7 @@ pub static FLIGHT_STATE: SignalCache<FlightState> = SignalCache::new(FlightState
     failsafe: false,
     mode: ControlMode::Manual,
     rc_age_ms: 0,
+    autotune_state: 0,
 });
 
 /// Controller output snapshot published from the main loop for RPC observability
