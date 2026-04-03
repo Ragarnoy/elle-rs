@@ -225,6 +225,10 @@ impl ULogLogger {
         attitude_mode: u8,
         pitch_setpoint_deg: f32,
         roll_setpoint_deg: f32,
+        pitch_correction: f32,
+        roll_correction: f32,
+        elevon_left_us: u32,
+        elevon_right_us: u32,
     ) -> Result<(), ULogError> {
         if !self.initialized {
             return Err(ULogError::NotInitialized);
@@ -239,6 +243,10 @@ impl ULogLogger {
             attitude_mode,
             pitch_setpoint_deg,
             roll_setpoint_deg,
+            pitch_correction,
+            roll_correction,
+            elevon_left_us,
+            elevon_right_us,
         );
 
         self.writer.clear_buffer();

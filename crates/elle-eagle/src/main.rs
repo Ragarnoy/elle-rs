@@ -148,31 +148,24 @@ fn log_flight_data(
     // Log commands at 77Hz
     // Convert to normalized for consistent logging
     let last_out = fc.last_output();
+    let log_cmd = |logger: &mut ULogLogger, norm: &elle_control::commands::NormalizedCommands| {
+        let _ = logger.log_commands(
+            norm.throttle,
+            norm.pitch,
+            norm.roll,
+            norm.yaw,
+            norm.attitude_mode as u8,
+            last_out.pitch_setpoint_deg,
+            last_out.roll_setpoint_deg,
+            last_out.pitch_correction,
+            last_out.roll_correction,
+            last_out.elevon_left_us,
+            last_out.elevon_right_us,
+        );
+    };
     match commands {
-        PilotCommands::Normalized(norm) => {
-            let _ = logger.log_commands(
-                norm.throttle,
-                norm.pitch,
-                norm.roll,
-                norm.yaw,
-                norm.attitude_mode as u8,
-                last_out.pitch_setpoint_deg,
-                last_out.roll_setpoint_deg,
-            );
-        }
-        PilotCommands::Raw(raw) => {
-            // Convert raw to normalized for logging
-            let norm = raw.to_normalized();
-            let _ = logger.log_commands(
-                norm.throttle,
-                norm.pitch,
-                norm.roll,
-                norm.yaw,
-                norm.attitude_mode as u8,
-                last_out.pitch_setpoint_deg,
-                last_out.roll_setpoint_deg,
-            );
-        }
+        PilotCommands::Normalized(norm) => log_cmd(logger, norm),
+        PilotCommands::Raw(raw) => log_cmd(logger, &raw.to_normalized()),
     }
 
     // Log engine data at 77Hz

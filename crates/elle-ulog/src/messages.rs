@@ -136,9 +136,9 @@ impl AttitudeMessage {
     }
 }
 
-/// Pilot commands message - logs RC input and setpoints
+/// Pilot commands message - logs RC input, setpoints, PID output, and servo positions
 ///
-/// Format: "commands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg"
+/// Format: "commands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg;float pitch_correction;float roll_correction;uint32_t elevon_left_us;uint32_t elevon_right_us"
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct CommandsMessage {
@@ -152,27 +152,34 @@ pub struct CommandsMessage {
     pub roll: f32,
     /// Yaw command [-1.0, 1.0]
     pub yaw: f32,
-    /// Attitude mode (0=Rate, 1=Angle)
+    /// Attitude mode (0=Manual, 1=Stabilized, 2=AltitudeHold)
     pub attitude_mode: u8,
     /// Pitch setpoint in degrees
     pub pitch_setpoint_deg: f32,
     /// Roll setpoint in degrees
     pub roll_setpoint_deg: f32,
+    /// PID pitch correction output [-1.0, 1.0]
+    pub pitch_correction: f32,
+    /// PID roll correction output [-1.0, 1.0]
+    pub roll_correction: f32,
+    /// Left elevon servo position in microseconds
+    pub elevon_left_us: u32,
+    /// Right elevon servo position in microseconds
+    pub elevon_right_us: u32,
 }
 
 impl CommandsMessage {
     /// Format definition string for ULog
-    pub const FORMAT: &'static str = "commands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg";
+    pub const FORMAT: &'static str = "commands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg;float pitch_correction;float roll_correction;uint32_t elevon_left_us;uint32_t elevon_right_us";
 
     /// Message name
     pub const NAME: &'static str = "commands";
 
     /// Pre-serialized format definition message (header + payload, computed at compile time)
-    /// msg_size = 146 bytes (format string length)
-    pub const FORMAT_MSG: &'static [u8] = b"\x92\x00Fcommands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg";
+    pub const FORMAT_MSG: &'static [u8] = b"\xf0\x00Fcommands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg;float pitch_correction;float roll_correction;uint32_t elevon_left_us;uint32_t elevon_right_us";
 
     /// Size of the message in bytes
-    pub const SIZE: usize = 33; // 8 + 4*4 + 1 + 2*4
+    pub const SIZE: usize = 49; // 8 + 4*4 + 1 + 2*4 + 2*4 + 2*4
 
     /// Create a new commands message
     #[must_use]
@@ -186,6 +193,10 @@ impl CommandsMessage {
         attitude_mode: u8,
         pitch_setpoint_deg: f32,
         roll_setpoint_deg: f32,
+        pitch_correction: f32,
+        roll_correction: f32,
+        elevon_left_us: u32,
+        elevon_right_us: u32,
     ) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
@@ -196,6 +207,10 @@ impl CommandsMessage {
             attitude_mode,
             pitch_setpoint_deg,
             roll_setpoint_deg,
+            pitch_correction,
+            roll_correction,
+            elevon_left_us,
+            elevon_right_us,
         }
     }
 
@@ -211,7 +226,10 @@ impl CommandsMessage {
         buf[24] = self.attitude_mode;
         buf[25..29].copy_from_slice(&self.pitch_setpoint_deg.to_le_bytes());
         buf[29..33].copy_from_slice(&self.roll_setpoint_deg.to_le_bytes());
-        // Pad to alignment if needed
+        buf[33..37].copy_from_slice(&self.pitch_correction.to_le_bytes());
+        buf[37..41].copy_from_slice(&self.roll_correction.to_le_bytes());
+        buf[41..45].copy_from_slice(&self.elevon_left_us.to_le_bytes());
+        buf[45..49].copy_from_slice(&self.elevon_right_us.to_le_bytes());
         buf
     }
 }
