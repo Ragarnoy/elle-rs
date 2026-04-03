@@ -657,10 +657,10 @@ async fn main(spawner: Spawner) {
 
             // Always update flight controller at 13ms intervals for consistent PID timing
             // Use last known commands if no new packet arrived this iteration
-            // Kill switch: CH5 high = disarm, block fc.update() to prevent re-arm
+            // Kill switch: CH8 high = disarm, block fc.update() to prevent re-arm
             let kill_active = last_commands.as_ref().is_some_and(|cmd| {
                 if let PilotCommands::Raw(raw) = cmd {
-                    raw.channels[elle_config::ULOG_ENABLE_CH] > elle_config::ULOG_ENABLE_THRESHOLD
+                    raw.channels[elle_config::KILL_SWITCH_CH] > elle_config::KILL_SWITCH_THRESHOLD
                 } else {
                     false
                 }
@@ -734,7 +734,11 @@ async fn main(spawner: Spawner) {
                 elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(elle_hardware::crsf::CrsfFlightMode {
                     armed: fc.is_armed(),
                     failsafe: fc.is_failsafe(),
-                    attitude_mode: fc.is_attitude_enabled(),
+                    mode: match fc.current_control_mode() {
+                        elle_system::ControlMode::Manual => elle_hardware::crsf::CrsfControlMode::Manual,
+                        elle_system::ControlMode::Stabilized => elle_hardware::crsf::CrsfControlMode::Stabilized,
+                        elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
+                    },
                     autotune: autotune_display,
                 });
 
@@ -946,7 +950,10 @@ async fn main(spawner: Spawner) {
             }
 
             // Check for failsafe (triggers after 300ms of no valid packets)
-            fc.check_failsafe();
+            // Skip when killed — fc.update() is blocked so last_packet_time never refreshes
+            if !kill_active {
+                fc.check_failsafe();
+            }
 
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
@@ -1030,6 +1037,10 @@ async fn main(spawner: Spawner) {
         let mut autotuner = Autotuner::new();
         let mut autotune_tick: u32 = 0;
         let mut rpc_save_pending: Option<[u8; 32]> = None;
+        let mut was_armed = false;
+        let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
+        let mut autotune_display_timer: u32 = 0;
+        const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
 
         loop {
             ticker.next().await;
@@ -1277,6 +1288,8 @@ async fn main(spawner: Spawner) {
                         if let Some(saved) = autotuner.abort() {
                             fc.apply_saved_gains(&saved);
                             fc.clear_setpoint_override();
+                            autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                            autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
                             elle_hardware::elle_event!(
                                 warn,
                                 elle_hardware::event::EVT_AUTOTUNE_ABORTED,
@@ -1358,23 +1371,68 @@ async fn main(spawner: Spawner) {
                 }))
             };
 
+            // Kill switch: CH8 high = disarm (RPC+RC mode)
+            #[cfg(feature = "rpc-rc")]
+            let kill_active = last_commands.as_ref().is_some_and(|cmd| {
+                if let PilotCommands::Raw(raw) = cmd {
+                    raw.channels[elle_config::KILL_SWITCH_CH] > elle_config::KILL_SWITCH_THRESHOLD
+                } else {
+                    false
+                }
+            });
+            #[cfg(not(feature = "rpc-rc"))]
+            let kill_active = false;
+
+            if kill_active {
+                if fc.is_armed() {
+                    fc.disarm();
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_MOTORS_DISARMED,
+                        "Kill switch activated (RPC)"
+                    );
+                }
+                fc.set_safe_positions();
+                DSHOT_THROTTLE.signal((0, 0));
+            }
+
             // Update flight controller
             let valid_attitude = validate_attitude(attitude);
             if let Some(ref commands) = commands {
-                fc.update(commands, valid_attitude.as_ref());
+                if !kill_active {
+                    fc.update(commands, valid_attitude.as_ref());
+                }
             }
 
             // Send engine commands via DShot (governor converts eRPM target to DShot)
-            let (engine_l, engine_r) = fc.engine_output();
-            let l_erpm =
-                (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
-            let r_erpm =
-                (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
-            DSHOT_THROTTLE.signal((l_erpm, r_erpm));
+            if !kill_active {
+                let (engine_l, engine_r) = fc.engine_output();
+                let l_erpm =
+                    (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+                let r_erpm =
+                    (engine_r as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+                DSHOT_THROTTLE.signal((l_erpm, r_erpm));
+            }
+
+            // Detect arm/disarm transitions → beep
+            let now_armed = fc.is_armed();
+            if now_armed && !was_armed {
+                elle_hardware::dshot::BEEP_SIGNAL.signal(
+                    elle_hardware::dshot::BeepPattern::ArmBeep,
+                );
+            } else if !now_armed && was_armed {
+                elle_hardware::dshot::BEEP_SIGNAL.signal(
+                    elle_hardware::dshot::BeepPattern::DisarmBeep,
+                );
+            }
+            was_armed = now_armed;
 
             // Check for RC signal loss (only relevant when RC is the command source)
+            // Skip when killed — fc.update() is blocked so last_packet_time never refreshes
             #[cfg(feature = "rpc-rc")]
-            fc.check_failsafe();
+            if !kill_active {
+                fc.check_failsafe();
+            }
 
             // Autotuner per-tick update
             if autotuner.is_active()
@@ -1398,6 +1456,8 @@ async fn main(spawner: Spawner) {
                     AutotuneAction::RestoreGains(gains) => {
                         fc.apply_saved_gains(&gains);
                         fc.clear_setpoint_override();
+                        autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                        autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
                         elle_hardware::elle_event!(
                             warn,
                             elle_hardware::event::EVT_AUTOTUNE_ESTOP,
@@ -1410,6 +1470,8 @@ async fn main(spawner: Spawner) {
                             rpc_save_pending = Some(gains.to_bytes());
                         }
                         fc.clear_setpoint_override();
+                        autotune_display = elle_hardware::crsf::AutotuneDisplay::Done;
+                        autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
                         info!(
                             "Autotune COMPLETE: Ku={} Tu={}ms kp={} ki={} kd={} amp={}cdeg cycles={}",
                             (result.ku * 1000.0) as i32,
@@ -1503,15 +1565,28 @@ async fn main(spawner: Spawner) {
             // Update mag cal sample count for RPC visibility
             // (read from IMU side if collecting — approximated via status check)
 
+            // Update autotune display state for CRSF telemetry
+            if autotuner.is_active() {
+                autotune_display = match autotuner.axis() {
+                    AutotuneAxis::Pitch => elle_hardware::crsf::AutotuneDisplay::Pitch,
+                    AutotuneAxis::Roll => elle_hardware::crsf::AutotuneDisplay::Roll,
+                };
+            } else if autotune_display_timer > 0 {
+                autotune_display_timer -= 1;
+                if autotune_display_timer == 0 {
+                    autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
+                }
+            }
+
             elle_hardware::crsf::CRSF_FLIGHT_MODE.signal(elle_hardware::crsf::CrsfFlightMode {
                 armed: fc.is_armed(),
                 failsafe: fc.is_failsafe(),
-                attitude_mode: fc.is_attitude_enabled(),
-                autotune: if autotuner.is_active() {
-                    elle_hardware::crsf::AutotuneDisplay::Pitch // simplified for RPC mode
-                } else {
-                    elle_hardware::crsf::AutotuneDisplay::Off
+                mode: match fc.current_control_mode() {
+                    elle_system::ControlMode::Manual => elle_hardware::crsf::CrsfControlMode::Manual,
+                    elle_system::ControlMode::Stabilized => elle_hardware::crsf::CrsfControlMode::Stabilized,
+                    elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
                 },
+                autotune: autotune_display,
             });
 
             // Publish flight state for RPC handlers
@@ -1524,6 +1599,11 @@ async fn main(spawner: Spawner) {
                     elle_system::ControlMode::AltitudeHold => ControlMode::AltitudeHold,
                 },
                 rc_age_ms: fc.rc_signal_age_ms(),
+                autotune_state: if autotuner.is_active() {
+                    if autotuner.axis() == AutotuneAxis::Pitch { 1 } else { 2 }
+                } else {
+                    0
+                },
             };
             flight_state::FLIGHT_STATE.publish(fs);
 

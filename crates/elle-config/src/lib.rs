@@ -137,14 +137,14 @@ pub const PID_I_LIMIT: f32 = 0.5;
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
 
 // RC aux channel assignments:
-//   CH5 (idx 4) = 2-pos switch left  → Kill switch (high = disarm, must re-arm)
+//   CH5 (idx 4) = 2-pos switch left  → Unused
 //   CH6 (idx 5) = 3-pos switch left  → Attitude mode (Manual/Stabilized/AltitudeHold)
 //   CH7 (idx 6) = 3-pos switch right → Autotune (off/pitch/roll)
-//   CH8 (idx 7) = 2-pos switch right → Unused (reserved for modifier)
+//   CH8 (idx 7) = 2-pos switch right → Kill switch (high = disarm, must re-arm)
 
-// ULog recording switch
-pub const ULOG_ENABLE_CH: usize = 4; // CH5 - 2-pos: ULog recording enable
-pub const ULOG_ENABLE_THRESHOLD: u16 = 1500; // Above this = recording enabled
+// Kill switch
+pub const KILL_SWITCH_CH: usize = 7; // CH8 - 2-pos switch right: kill (high = disarm)
+pub const KILL_SWITCH_THRESHOLD: u16 = 1500; // Above this = kill active
 
 // Attitude control mode
 pub const ATTITUDE_ENABLE_CH: usize = 5; // CH6 - 3-pos: Manual/Stabilized/AltitudeHold
@@ -215,7 +215,7 @@ const _: () = assert!(AUTOTUNE_OFF_THRESHOLD < AUTOTUNE_PITCH_THRESHOLD);
 
 // Channel indices must be distinct and in 0..16
 const _: () = assert!(ROLL_CH < 16 && PITCH_CH < 16 && THROTTLE_CH < 16 && YAW_CH < 16);
-const _: () = assert!(ATTITUDE_ENABLE_CH < 16 && AUTOTUNE_CH < 16 && ULOG_ENABLE_CH < 16);
+const _: () = assert!(ATTITUDE_ENABLE_CH < 16 && AUTOTUNE_CH < 16 && KILL_SWITCH_CH < 16);
 
 // CONTROL_LOOP_DT must be consistent with CONTROL_LOOP_FREQUENCY_HZ (±1ms tolerance).
 // These are defined independently — if one changes and the other doesn't, PID integrator
