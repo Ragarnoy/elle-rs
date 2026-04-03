@@ -25,6 +25,9 @@ cargo run --release --no-default-features --features rpc-control
 # RPC + RC firmware (probe monitoring with RC control)
 cargo run --release --no-default-features --features rpc-control,rpc-rc
 
+# RPC + RC + GNSS firmware (autotune ground test with full monitoring)
+cargo run --release --no-default-features --features rpc-control,rpc-rc,gnss
+
 # Host TUI
 cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 ```
@@ -274,6 +277,92 @@ Flash `--features rpc-control`, launch TUI.
 | 3 | `elevon 50 0`             | Pitch setpoint ~12.5° (50% of 25°)        | [ ]  |
 | 4 | `elevon 0 50`             | Roll setpoint ~22.5° (50% of 45°)         | [ ]  |
 | 5 | `elevon 0 0` → tilt board | PID corrections respond to attitude error | [ ]  |
+
+---
+
+---
+
+## Part 5: ULog Post-Validation
+
+After completing Parts 1-4, pull the SD card and validate the ULog file(s).
+Each test leaves a signature in the data that can be checked after the fact.
+
+**Tools**: `ulog_info`, pyulog, or PlotJuggler.
+
+### 5.1 Message Presence
+
+| # | Check                              | Expected                                    | Pass |
+|---|------------------------------------|---------------------------------------------|------|
+| 1 | `attitude_data` messages present   | Yes, ~77 Hz rate                            | [ ]  |
+| 2 | `commands` messages present        | Yes, ~77 Hz rate                            | [ ]  |
+| 3 | `engine_data` messages present     | Yes, ~77 Hz rate                            | [ ]  |
+| 4 | `system_status` messages present   | Yes, ~7.7 Hz rate                           | [ ]  |
+| 5 | `barometer_data` messages present  | Yes, ~4 Hz rate                             | [ ]  |
+| 6 | `magnetometer_data` messages present | Yes, ~9.6 Hz rate                         | [ ]  |
+| 7 | `log_event` messages present       | Yes (arm/disarm/kill events)                | [ ]  |
+| 8 | `autotune_status` messages present | Yes (if autotune was run in 3.4)            | [ ]  |
+
+### 5.2 Axis Verification (validates Part 1)
+
+Plot `commands.pitch` vs `commands.elevon_left_us` and `commands.elevon_right_us`:
+
+| # | Check                                                   | Expected                                  | Pass |
+|---|---------------------------------------------------------|-------------------------------------------|------|
+| 1 | Pitch stick forward (commands.pitch < 0)                | Both elevon_us decrease (deflect down)    | [ ]  |
+| 2 | Pitch stick back (commands.pitch > 0)                   | Both elevon_us increase (deflect up)      | [ ]  |
+| 3 | Roll stick right (commands.roll > 0)                    | Left elevon down, right elevon up         | [ ]  |
+| 4 | Yaw stick left → engine_data                            | left_erpm < right_erpm                    | [ ]  |
+
+### 5.3 PID Direction (validates Part 1.3)
+
+Plot `attitude_data.pitch` vs `commands.pitch_correction` during Stabilized mode
+(`commands.attitude_mode == 1`):
+
+| # | Check                                                   | Expected                                  | Pass |
+|---|---------------------------------------------------------|-------------------------------------------|------|
+| 1 | Positive pitch (nose up tilt)                           | Negative pitch_correction (pushes down)   | [ ]  |
+| 2 | Positive roll (right tilt)                              | Negative roll_correction (pushes left)    | [ ]  |
+| 3 | Corrections track tilt magnitude                        | Larger tilt = larger correction           | [ ]  |
+
+### 5.4 Kill Switch (validates Part 1.4)
+
+Find `log_event` with kill switch event codes in the timeline:
+
+| # | Check                                                   | Expected                                  | Pass |
+|---|---------------------------------------------------------|-------------------------------------------|------|
+| 1 | At kill event timestamp                                 | system_status.armed transitions 1→0       | [ ]  |
+| 2 | After kill event                                        | engine_data left/right_throttle = 0       | [ ]  |
+| 3 | After kill event                                        | elevon_us returns to center (~1500)       | [ ]  |
+
+### 5.5 Mode Transitions (validates Part 2)
+
+| # | Check                                                   | Expected                                  | Pass |
+|---|---------------------------------------------------------|-------------------------------------------|------|
+| 1 | commands.attitude_mode changes 0→1→2→0                  | Mode transitions visible in data          | [ ]  |
+| 2 | In mode 0 (Manual): pitch_correction = 0                | PID inactive                              | [ ]  |
+| 3 | In mode 1 (Stabilized): pitch_correction ≠ 0 with tilt | PID active                                | [ ]  |
+| 4 | In mode 2 (AltHold): setpoint locked 0°/0°             | pitch/roll_setpoint_deg stay near 0       | [ ]  |
+
+### 5.6 Autotune (validates Part 3.4)
+
+Plot `autotune_status` fields:
+
+| # | Check                                                   | Expected                                  | Pass |
+|---|---------------------------------------------------------|-------------------------------------------|------|
+| 1 | phase transitions: 1→2→3                                | Settling → Relay → Complete               | [ ]  |
+| 2 | setpoint_deg alternates ±5° during phase 2              | Clean relay switching                     | [ ]  |
+| 3 | measurement_deg crosses zero between relay flips        | Oscillation is forming                    | [ ]  |
+| 4 | cycles_done increments to 8                             | 2 discard + 6 measured                    | [ ]  |
+| 5 | amplitude_deg stays < 20°                               | Within safety limit                       | [ ]  |
+
+### 5.7 Performance
+
+| # | Check                                                   | Expected                                  | Pass |
+|---|---------------------------------------------------------|-------------------------------------------|------|
+| 1 | system_status.loop_time_us: max                         | < 13000 µs (13ms budget)                  | [ ]  |
+| 2 | system_status.loop_time_us: average                     | < 5000 µs (comfortable margin)            | [ ]  |
+| 3 | attitude_data sample interval                           | Consistent ~13ms, no gaps > 26ms          | [ ]  |
+| 4 | During autotune: loop_time_us not elevated              | < 13000 µs (no performance regression)    | [ ]  |
 
 ---
 
