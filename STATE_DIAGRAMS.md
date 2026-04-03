@@ -58,7 +58,7 @@
     │      STABILIZED (gains restored)
     │
     │
-    │   ──── CH5 HIGH (from ANY armed state) ────
+    │   ──── CH8 HIGH (from ANY armed state) ────
     │                    │
     │                    ▼
     │         ┌──────────────────┐
@@ -69,7 +69,7 @@
     │         │ beep: double     │
     │         │ ULog: continues  │
     │         └────────┬─────────┘
-    │                  │ CH5 low + throttle low
+    │                  │ CH8 low + throttle low
     │                  │ beep: single (re-arm)
     └──────────────────┘
 
@@ -125,12 +125,12 @@ stateDiagram-v2
     Autotune --> Armed_Stab: Attitude lost\n(safety abort)
     Autotune --> Armed_Manual: CH6 low\n(PID off, autotune paused)
 
-    Armed_Manual --> Killed: CH5 high
-    Armed_Stab --> Killed: CH5 high
-    Armed_AltHold --> Killed: CH5 high
-    Autotune --> Killed: CH5 high
+    Armed_Manual --> Killed: CH8 high
+    Armed_Stab --> Killed: CH8 high
+    Armed_AltHold --> Killed: CH8 high
+    Autotune --> Killed: CH8 high
 
-    Killed --> Armed_Manual: CH5 low +\nthrottle low\n(re-arm, beep)
+    Killed --> Armed_Manual: CH8 low +\nthrottle low\n(re-arm, beep)
 
     note right of Killed
         Motors: OFF

@@ -5,9 +5,9 @@ Pre-flight verification checklist. Complete ALL tests before flight.
 ## Prerequisites
 
 - BetaFPV Pro transmitter bound and linked
-- CH5 (2-pos switch left): Kill switch (high = disarm)
 - CH6 (3-pos switch left): Manual / Stabilized / AltitudeHold
-- CH7 (3-pos switch right): Autotune off / pitch / roll
+- CH7 (3-pos switch right): Autotune off / pitch / roll (flight firmware only)
+- CH8 (2-pos switch right): Kill switch (high = disarm)
 - Props removed for all ground tests
 - SD card inserted (FAT32)
 - Probe-rs debug probe connected (RPC tests only)
@@ -36,30 +36,31 @@ cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 
 ## Part 1: Axis Verification (props off, Manual mode)
 
+**Firmware: RPC+RC** (`--features rpc-control,rpc-rc,gnss`) + TUI for monitoring.
 **Critical: verify all axes move the correct direction before any other test.**
-Use default flight firmware or RPC+RC with TUI for monitoring.
 
 ### 1.1 Elevon Direction (Manual mode, armed)
 
 Hold the aircraft from behind, looking forward along the fuselage.
 
-| # | Stick input            | Left elevon | Right elevon | Pass |
-|---|------------------------|-------------|--------------|------|
-| 1 | Pitch stick forward    | Down        | Down         | [ ]  |
-| 2 | Pitch stick back       | Up          | Up           | [ ]  |
-| 3 | Roll stick left        | Up          | Down         | [ ]  |
-| 4 | Roll stick right       | Down        | Up           | [ ]  |
-| 5 | Sticks centered        | Both at trim (center)  | | [ ]  |
+| # | Stick input         | Left elevon           | Right elevon | Pass |
+|---|---------------------|-----------------------|--------------|------|
+| 1 | Pitch stick forward | Down                  | Down         | [x]  |
+| 2 | Pitch stick back    | Up                    | Up           | [x]  |
+| 3 | Roll stick left     | Up                    | Down         | [x]  |
+| 4 | Roll stick right    | Down                  | Up           | [x]  | 
+| 5 | Sticks centered     | Both at trim (center) |              | [x]  | 
 
-If any row is wrong: adjust `PITCH_INVERT` or `ROLL_INVERT` in `elle-config/src/lib.rs`, or swap `elevon_left`/`elevon_right` pins.
+If any row is wrong: adjust `PITCH_INVERT` or `ROLL_INVERT` in `elle-config/src/lib.rs`, or swap `elevon_left`/
+`elevon_right` pins.
 
 ### 1.2 Differential Thrust Direction (Manual mode, armed)
 
-| # | Stick input       | Left engine | Right engine | Expected yaw | Pass |
-|---|-------------------|-------------|--------------|--------------|------|
-| 1 | Yaw stick left    | Slower      | Faster       | Turn left    | [ ]  |
-| 2 | Yaw stick right   | Faster      | Slower       | Turn right   | [ ]  |
-| 3 | Yaw stick center  | Equal       | Equal        | Straight     | [ ]  |
+| # | Stick input      | Left engine | Right engine | Expected yaw | Pass |
+|---|------------------|-------------|--------------|--------------|------|
+| 1 | Yaw stick left   | Slower      | Faster       | Turn left    | [x]  |
+| 2 | Yaw stick right  | Faster      | Slower       | Turn right   | [x]  |
+| 3 | Yaw stick center | Equal       | Equal        | Straight     | [x]  |
 
 If reversed: flip `YAW_INVERT` in `elle-config/src/lib.rs`.
 
@@ -67,82 +68,82 @@ If reversed: flip `YAW_INVERT` in `elle-config/src/lib.rs`.
 
 Hold board in hand. Verify PID corrects **against** the tilt, not with it.
 
-| # | Action                   | Expected elevon response             | Pass |
-|---|--------------------------|--------------------------------------|------|
-| 1 | Tilt nose up             | Elevons push nose down (both down)   | [ ]  |
-| 2 | Tilt nose down           | Elevons push nose up (both up)       | [ ]  |
-| 3 | Tilt roll left           | Elevons correct right (left down, right up) | [ ]  |
-| 4 | Tilt roll right          | Elevons correct left (left up, right down)  | [ ]  |
-| 5 | Hold steady tilt 15°     | Sustained correction, not oscillating | [ ]  |
-| 6 | Quick pitch rotation     | D-term damps the motion (opposes rate) | [ ]  |
-| 7 | Quick roll rotation      | D-term damps the motion (opposes rate) | [ ]  |
+| # | Action               | Expected elevon response                    | Pass |
+|---|----------------------|---------------------------------------------|------|
+| 1 | Tilt nose up         | Elevons push nose down (both down)          | [x]  |
+| 2 | Tilt nose down       | Elevons push nose up (both up)              | [x]  |
+| 3 | Tilt roll left       | Elevons correct right (left down, right up) | [x]  |
+| 4 | Tilt roll right      | Elevons correct left (left up, right down)  | [x]  |
+| 5 | Hold steady tilt 15° | Sustained correction, not oscillating       | [x]  |
+| 6 | Quick pitch rotation | D-term damps the motion (opposes rate)      | [x]  |
+| 7 | Quick roll rotation  | D-term damps the motion (opposes rate)      | [x]  |
 
 If P-term is inverted (corrects wrong way at steady angle): negate the AHRS measurement for that axis in `system.rs`.
 If D-term is inverted (accelerates rotation): negate the AHRS rate for that axis in `system.rs`.
 
 ### 1.4 Kill Switch + Beep
 
-| # | Action                        | Expected                                    | Pass |
-|---|-------------------------------|----------------------------------------------|------|
-| 1 | Throttle low (auto-arm)       | Single beep from motors (arm confirmation)   | [ ]  |
-| 2 | Throttle up                   | Motors spin normally                         | [ ]  |
-| 3 | CH5 high (kill)               | Motors stop immediately, two beeps (disarm)  | [ ]  |
-| 4 | CH5 still high, throttle low  | Motors stay off (no re-arm, no beep)         | [ ]  |
-| 5 | CH5 low, throttle low         | Re-arms, single beep again                  | [ ]  |
-| 6 | Throttle up                   | Motors spin normally                         | [ ]  |
+| # | Action                       | Expected                                    | Pass |
+|---|------------------------------|---------------------------------------------|------|
+| 1 | Throttle low (auto-arm)      | Single beep from motors (arm confirmation)  | [x]  |
+| 2 | Throttle up                  | Motors spin normally                        | [x]  |
+| 3 | CH8 high (kill)              | Motors stop immediately, two beeps (disarm) | [x]  |
+| 4 | CH8 still high, throttle low | Motors stay off (no re-arm, no beep)        | [x]  |
+| 5 | CH8 low, throttle low        | Re-arms, single beep again                  | [x]  |
+| 6 | Throttle up                  | Motors spin normally                        | [x]  |
 
 ---
 
-## Part 2: Mode Tests (props off)
+## Part 2: Mode Tests (props off, RPC+RC)
 
 ### 2.1 Mode Switch Mapping (CH6 3-position)
 
 | # | CH6 position             | Expected mode | Pass |
 |---|--------------------------|---------------|------|
-| 1 | Position 1 (low, ~306)   | Manual        | [ ]  |
-| 2 | Position 2 (mid, ~1000)  | Stabilized    | [ ]  |
-| 3 | Position 3 (high, ~1694) | AltitudeHold  | [ ]  |
+| 1 | Position 1 (low, ~306)   | Manual        | [x]  |
+| 2 | Position 2 (mid, ~1000)  | Stabilized    | [x]  |
+| 3 | Position 3 (high, ~1694) | AltitudeHold  | [x]  |
 
 ### 2.2 Stabilized Mode — Stick Response
 
 Hold board in hand, armed.
 
-| # | Stick input                           | Expected servo response                           | Pass |
-|---|---------------------------------------|---------------------------------------------------|------|
-| 1 | CH6 mid (Stabilized), sticks centered | Elevons hold trim, PID corrects for hand tilt     | [ ]  |
-| 2 | Full pitch stick forward              | Elevons deflect to nose-down attitude (~25°)      | [ ]  |
-| 3 | Full pitch stick back                 | Elevons deflect to nose-up (~25°)                 | [ ]  |
-| 4 | Full roll stick left                  | Elevons split for left roll (~45°)                | [ ]  |
-| 5 | Full roll stick right                 | Elevons split for right roll (~45°)               | [ ]  |
-| 6 | Release sticks (center)               | Elevons return to level hold (0°/0°)              | [ ]  |
-| 7 | Throttle stick                        | Throttle responds directly (no PID on throttle)   | [ ]  |
-| 8 | Yaw stick                             | Differential thrust responds directly             | [ ]  |
+| # | Stick input                           | Expected servo response                         | Pass |
+|---|---------------------------------------|-------------------------------------------------|------|
+| 1 | CH6 mid (Stabilized), sticks centered | Elevons hold trim, PID corrects for hand tilt   | [x]  |
+| 2 | Full pitch stick forward              | Elevons deflect to nose-down attitude (~25°)    | [x]  |
+| 3 | Full pitch stick back                 | Elevons deflect to nose-up (~25°)               | [x]  |
+| 4 | Full roll stick left                  | Elevons split for left roll (~45°)              | [x]  |
+| 5 | Full roll stick right                 | Elevons split for right roll (~45°)             | [x]  |
+| 6 | Release sticks (center)               | Elevons return to level hold (0°/0°)            | [x]  |
+| 7 | Throttle stick                        | Throttle responds directly (no PID on throttle) | [x]  |
+| 8 | Yaw stick                             | Differential thrust responds directly           | [x]  |
 
 ### 2.3 AltitudeHold Mode — Wings Level
 
 | # | Stick input               | Expected                                            | Pass |
 |---|---------------------------|-----------------------------------------------------|------|
-| 1 | CH6 high, sticks centered | Elevons hold level (0°/0°)                          | [ ]  |
-| 2 | Full pitch/roll stick     | Elevons do NOT follow stick (setpoint locked 0°/0°) | [ ]  |
-| 3 | Tilt board                | PID corrects to level                               | [ ]  |
-| 4 | Throttle/yaw sticks       | Respond normally (manual)                           | [ ]  |
+| 1 | CH6 high, sticks centered | Elevons hold level (0°/0°)                          | [x]  |
+| 2 | Full pitch/roll stick     | Elevons do NOT follow stick (setpoint locked 0°/0°) | [x]  |
+| 3 | Tilt board                | PID corrects to level                               | [x]  |
+| 4 | Throttle/yaw sticks       | Respond normally (manual)                           | [x]  |
 
 ### 2.4 Manual Mode — Direct Pass-Through
 
 | # | Stick input              | Expected                              | Pass |
 |---|--------------------------|---------------------------------------|------|
-| 1 | CH6 low, sticks centered | Elevons at trim, no PID               | [ ]  |
-| 2 | Move pitch stick         | Elevons follow stick directly via LUT | [ ]  |
-| 3 | Tilt board               | No servo correction (PID off)         | [ ]  |
+| 1 | CH6 low, sticks centered | Elevons at trim, no PID               | [x]  |
+| 2 | Move pitch stick         | Elevons follow stick directly via LUT | [x]  |
+| 3 | Tilt board               | No servo correction (PID off)         | [x]  |
 
 ### 2.5 Manual Escape Under Load
 
-| # | Scenario                                   | Expected                                           | Pass |
-|---|--------------------------------------------|----------------------------------------------------|------|
-| 1 | Stabilized, board tilted 30°, PID fighting | -                                                  | [ ]  |
-| 2 | Flip CH6 to Manual                         | Instant: elevons snap to stick position, PID stops | [ ]  |
-| 3 | Stabilized, autotune running               | -                                                  | [ ]  |
-| 4 | Flip CH6 to Manual                         | Autotune pauses, PID off, full manual control      | [ ]  |
+| # | Scenario                                          | Expected                                           | Pass |
+|---|---------------------------------------------------|----------------------------------------------------|------|
+| 1 | Stabilized, board tilted 30°, PID fighting        | -                                                  | [x]  |
+| 2 | Flip CH6 to Manual                                | Instant: elevons snap to stick position, PID stops | [x]  |
+| 3 | Stabilized, TUI: `autotune pitch`, relay running  | -                                                  | [x]  |
+| 4 | TUI: `autotune abort`, then flip CH6 to Manual    | Autotune aborts, PID off, full manual control      | [x]  |
 
 ---
 
@@ -150,32 +151,35 @@ Hold board in hand, armed.
 
 ### 3.1 Auto-Start Recording
 
-| # | Action                    | Expected                                   | Pass |
-|---|---------------------------|---------------------------------------------|------|
-| 1 | Power on with SD inserted | defmt: "SD: FAT32 mounted"                 | [ ]  |
-| 2 | Wait 5s                   | defmt: "ULog recording started (auto)"     | [ ]  |
-| 3 | Power off, pull SD card   | LOG_0000.ULG exists with data              | [ ]  |
-| 4 | Power on again            | Next file is LOG_0001.ULG (not overwritten) | [ ]  |
+**Firmware: RPC+RC** — ULog must be started manually via TUI `ulog start`.
+ULog auto-starts only in flight firmware.
+
+| # | Action                    | Expected                                            | Pass |
+|---|---------------------------|-----------------------------------------------------|------|
+| 1 | Power on with SD inserted | TUI: REC is dark gray (not recording yet)           | [x]  |
+| 2 | TUI: `ulog start`         | TUI: REC blinks red                                 | [x]  |
+| 3 | Power off, pull SD card   | LOG_0000.ULG exists with data                       | [x]  |
+| 4 | Power on again            | Next file is LOG_0001.ULG (not overwritten)         | [x]  |
 
 ### 3.2 ULog Data Validation
 
-| # | Check                       | Expected                              | Pass |
-|---|------------------------------|---------------------------------------|------|
-| 1 | `ulog_info LOG_NNNN.ULG`    | All message types present, no errors  | [ ]  |
-| 2 | attitude_data rate           | ~77 Hz                                | [ ]  |
-| 3 | File has real timestamp      | Correct date/time (not 1970/1980)     | [ ]  |
+| # | Check                    | Expected                             | Pass |
+|---|--------------------------|--------------------------------------|------|
+| 1 | `ulog_info LOG_NNNN.ULG` | All message types present, no errors | [x]  |
+| 2 | attitude_data rate       | ~77 Hz                               | [x]  |
+| 3 | File has real timestamp  | Correct date/time (not 1970/1980)    | [x]  |
 
-### 3.3 Autotune ULog + Performance (RPC mode)
+### 3.3 Autotune ULog + Performance (RPC+RC mode)
 
-| # | Steps                      | Expected                                    | Pass |
-|---|----------------------------|---------------------------------------------|------|
-| 1 | `mode stab`, `arm`         | Armed in Stabilized                         | [ ]  |
-| 2 | `autotune pitch`           | Autotune starts                             | [ ]  |
-| 3 | Let it run for ~10s        | No "attitude data lost" abort event         | [ ]  |
-| 4 | `autotune abort`           | Autotune aborts normally                    | [ ]  |
-| 5 | Pull SD, check ULog        | `autotune_status` message present with phase transitions | [ ]  |
-| 6 | Check `system_status.loop_time_us` | All values < 13000µs (13ms budget) | [ ]  |
-| 7 | Check attitude_data rate   | Still ~77 Hz during autotune (no drops)     | [ ]  |
+| # | Steps                              | Expected                                                 | Pass |
+|---|------------------------------------|----------------------------------------------------------|------|
+| 1 | CH6 mid (Stabilized), throttle low | Armed in Stabilized (TUI shows ARMED + Stabilized)       | [x]  |
+| 2 | TUI: `autotune pitch`              | Autotune starts, TUI header shows `AT PITCH`             | [x]  |
+| 3 | Let it run for ~10s                | No "attitude data lost" abort event                      | [x]  |
+| 4 | TUI: `autotune abort`              | Autotune aborts normally, `AT PITCH` disappears          | [ ]  |
+| 5 | Pull SD, check ULog                | `autotune_status` message present with phase transitions | [x]  |
+| 6 | Check `system_status.loop_time_us` | All values < 13000µs (13ms budget)                       | [x]  |
+| 7 | Check attitude_data rate           | Still ~77 Hz during autotune (no drops)                  | [x]  |
 
 ### 3.4 Autotune Oscillation Verification (RPC+RC mode, props off)
 
@@ -185,6 +189,7 @@ Use `--features rpc-control,rpc-rc,gnss` so TUI monitors while RC controls.
 **Note:** Autotune cannot produce real oscillation on the ground — there is no airflow,
 so elevons produce no aerodynamic force. The board will not move on its own.
 You must **manually tilt the board to simulate the aircraft's response**:
+
 - When the setpoint is positive, tilt the board in the positive direction (nose up / roll right)
 - When the setpoint flips negative, tilt the other way
 - You are simulating what aerodynamic forces would do in flight
@@ -198,15 +203,16 @@ elevons push the right way, cycle counter increments, run completes).
 #### 3.4.1 Pitch Autotune — Oscillation Forms
 
 Hold board level in hand. Switch to Stabilized (CH6 mid), let it arm.
+**Start autotune via TUI command** (CH7 switch does NOT work in RPC+RC mode).
 
-| # | Action                       | Expected                                              | Pass |
-|---|------------------------------|-------------------------------------------------------|------|
-| 1 | TUI: `autotune pitch`        | CRSF radio shows `AT P`                              | [ ]  |
-| 2 | Wait 2s (settling)           | Setpoint held at 0°, elevons hold trim                | [ ]  |
-| 3 | Relay starts                 | Pitch setpoint alternates ±5° (visible in TUI)        | [ ]  |
-| 4 | Observe elevons              | Elevons oscillate in pitch (both up/both down rhythm) | [ ]  |
-| 5 | Observe cycle count          | Cycle counter increments in TUI autotune log          | [ ]  |
-| 6 | Wait ~10-15s for completion  | `DONE` on radio, gains printed in TUI                 | [ ]  |
+| # | Action                      | Expected                                              | Pass |
+|---|-----------------------------|-------------------------------------------------------|------|
+| 1 | TUI: `autotune pitch`       | TUI header: `AT PITCH`, radio: `AT P`                 | [x]  |
+| 2 | Wait 2s (settling)          | Setpoint held at 0°, elevons hold trim                | [x]  |
+| 3 | Relay starts                | Pitch setpoint alternates ±5° (visible in TUI)        | [x]  |
+| 4 | Observe elevons             | Elevons oscillate in pitch (both up/both down rhythm) | [x]  |
+| 5 | Observe cycle count         | Cycle counter increments in TUI autotune log          | [x]  |
+| 6 | Wait ~10-15s for completion | `DONE` on radio, gains printed in TUI                 | [x]  |
 
 **If it aborts with ERR! after ~10s:** oscillation never formed — sign mismatch between
 autotuner measurement and PID. Check `PITCH_INVERT` is applied in both the PID measurement
@@ -220,36 +226,46 @@ shake — rest board on a surface with pitch axis free to rotate.
 
 #### 3.4.2 Roll Autotune — Oscillation Forms
 
-| # | Action                       | Expected                                              | Pass |
-|---|------------------------------|-------------------------------------------------------|------|
-| 1 | TUI: `autotune roll`         | CRSF radio shows `AT R`                              | [ ]  |
-| 2 | Wait 2s (settling)           | Setpoint held at 0°                                   | [ ]  |
-| 3 | Relay starts                 | Roll setpoint alternates ±5°                          | [ ]  |
-| 4 | Observe elevons              | Elevons oscillate in split (left up/right down, then swap) | [ ]  |
-| 5 | Wait ~10-15s for completion  | `DONE` on radio, gains printed in TUI                 | [ ]  |
+| # | Action                      | Expected                                                   | Pass |
+|---|-----------------------------|------------------------------------------------------------|------|
+| 1 | TUI: `autotune roll`        | TUI header: `AT ROLL`, radio: `AT R`                       | [x]  |
+| 2 | Wait 2s (settling)          | Setpoint held at 0°                                        | [x]  |
+| 3 | Relay starts                | Roll setpoint alternates ±5°                               | [x]  |
+| 4 | Observe elevons             | Elevons oscillate in split (left up/right down, then swap) | [x]  |
+| 5 | Wait ~10-15s for completion | `DONE` on radio, gains printed in TUI                      | [x]  |
 
 #### 3.4.3 Gains Survive Reboot
 
-| # | Action                       | Expected                                              | Pass |
-|---|------------------------------|-------------------------------------------------------|------|
-| 1 | Note gains from 3.4.1/3.4.2 | Record Kp/Ki/Kd for pitch and roll                    | [ ]  |
-| 2 | Power cycle the board        | —                                                     | [ ]  |
-| 3 | Check TUI startup logs       | "PID loaded P(...) R(...) s=... il=..." with matching gains | [ ]  |
+| # | Action                      | Expected                                                    | Pass |
+|---|-----------------------------|-------------------------------------------------------------|------|
+| 1 | Note gains from 3.4.1/3.4.2 | Record Kp/Ki/Kd for pitch and roll                          | [ ]  |
+| 2 | Power cycle the board       | —                                                           | [ ]  |
+| 3 | Check TUI startup logs      | "PID loaded P(...) R(...) s=... il=..." with matching gains | [ ]  |
 
 #### 3.4.4 Safety Abort — Amplitude Limit
 
-| # | Action                        | Expected                                             | Pass |
-|---|-------------------------------|------------------------------------------------------|------|
-| 1 | TUI: `autotune pitch`         | Autotune starts                                     | [ ]  |
-| 2 | During relay, tilt board >20° | Immediate abort, `ERR!` on radio                    | [ ]  |
-| 3 | Elevons return to normal      | Stabilized mode resumes with original gains          | [ ]  |
+| # | Action                        | Expected                                    | Pass |
+|---|-------------------------------|---------------------------------------------|------|
+| 1 | TUI: `autotune pitch`         | Autotune starts                             | [ ]  |
+| 2 | During relay, tilt board >20° | Immediate abort, `ERR!` on radio            | [ ]  |
+| 3 | Elevons return to normal      | Stabilized mode resumes with original gains | [ ]  |
 
-#### 3.4.5 Safety Abort — RC Switch
+#### 3.4.5 Safety Abort — TUI Command
 
-| # | Action                        | Expected                                             | Pass |
-|---|-------------------------------|------------------------------------------------------|------|
-| 1 | CH7 mid (pitch autotune)      | Autotune starts, `AT P` on radio                    | [ ]  |
-| 2 | CH7 low (off) during relay    | Immediate abort, `ERR!` on radio, original gains restored | [ ]  |
+| # | Action                             | Expected                                                  | Pass |
+|---|------------------------------------|-----------------------------------------------------------|------|
+| 1 | TUI: `autotune pitch`              | Autotune starts, `AT PITCH` in TUI, `AT P` on radio       | [ ]  |
+| 2 | TUI: `autotune abort` during relay | Immediate abort, `ERR!` on radio, original gains restored | [ ]  |
+
+#### 3.4.6 Safety Abort — RC Switch (flight firmware only)
+
+**Firmware: flight mode** (`--features gnss`). This test verifies the CH7 switch abort
+path which is only available in flight firmware, not RPC+RC.
+
+| # | Action                     | Expected                                                  | Pass |
+|---|----------------------------|-----------------------------------------------------------|------|
+| 1 | CH7 mid (pitch autotune)   | Autotune starts, `AT P` on radio                          | [ ]  |
+| 2 | CH7 low (off) during relay | Immediate abort, `ERR!` on radio, original gains restored | [ ]  |
 
 ---
 
@@ -291,84 +307,89 @@ Each test leaves a signature in the data that can be checked after the fact.
 
 ### 5.1 Message Presence
 
-| # | Check                              | Expected                                    | Pass |
-|---|------------------------------------|---------------------------------------------|------|
-| 1 | `attitude_data` messages present   | Yes, ~77 Hz rate                            | [ ]  |
-| 2 | `commands` messages present        | Yes, ~77 Hz rate                            | [ ]  |
-| 3 | `engine_data` messages present     | Yes, ~77 Hz rate                            | [ ]  |
-| 4 | `system_status` messages present   | Yes, ~7.7 Hz rate                           | [ ]  |
-| 5 | `barometer_data` messages present  | Yes, ~4 Hz rate                             | [ ]  |
-| 6 | `magnetometer_data` messages present | Yes, ~9.6 Hz rate                         | [ ]  |
-| 7 | `log_event` messages present       | Yes (arm/disarm/kill events)                | [ ]  |
-| 8 | `autotune_status` messages present | Yes (if autotune was run in 3.4)            | [ ]  |
+| # | Check                                | Expected                         | Pass |
+|---|--------------------------------------|----------------------------------|------|
+| 1 | `attitude_data` messages present     | Yes, ~77 Hz rate                 | [x]  |
+| 2 | `commands` messages present          | Yes, ~77 Hz rate                 | [x]  |
+| 3 | `engine_data` messages present       | Yes, ~77 Hz rate                 | [x]  |
+| 4 | `system_status` messages present     | Yes, ~7.7 Hz rate                | [x]  |
+| 5 | `barometer_data` messages present    | Yes, ~4 Hz rate                  | [x]  |
+| 6 | `magnetometer_data` messages present | Yes, ~9.6 Hz rate                | [x]  |
+| 7 | `log_event` messages present         | Yes (arm/disarm/kill events)     | [x]  |
+| 8 | `autotune_status` messages present   | Yes (if autotune was run in 3.4) | [x]  |
 
 ### 5.2 Axis Verification (validates Part 1)
 
 Plot `commands.pitch` vs `commands.elevon_left_us` and `commands.elevon_right_us`:
 
-| # | Check                                                   | Expected                                  | Pass |
-|---|---------------------------------------------------------|-------------------------------------------|------|
-| 1 | Pitch stick forward (commands.pitch < 0)                | Both elevon_us decrease (deflect down)    | [ ]  |
-| 2 | Pitch stick back (commands.pitch > 0)                   | Both elevon_us increase (deflect up)      | [ ]  |
-| 3 | Roll stick right (commands.roll > 0)                    | Left elevon down, right elevon up         | [ ]  |
-| 4 | Yaw stick left → engine_data                            | left_erpm < right_erpm                    | [ ]  |
+| # | Check                                    | Expected                               | Pass |
+|---|------------------------------------------|----------------------------------------|------|
+| 1 | Pitch stick forward (commands.pitch < 0) | Both elevon_us decrease (deflect down) | [x]  |
+| 2 | Pitch stick back (commands.pitch > 0)    | Both elevon_us increase (deflect up)   | [x]  |
+| 3 | Roll stick right (commands.roll > 0)     | Left elevon down, right elevon up      | [x]  |
+| 4 | Yaw stick left → engine_data             | left_erpm < right_erpm                 | [ ]  |
 
 ### 5.3 PID Direction (validates Part 1.3)
 
 Plot `attitude_data.pitch` vs `commands.pitch_correction` during Stabilized mode
 (`commands.attitude_mode == 1`):
 
-| # | Check                                                   | Expected                                  | Pass |
-|---|---------------------------------------------------------|-------------------------------------------|------|
-| 1 | Positive pitch (nose up tilt)                           | Negative pitch_correction (pushes down)   | [ ]  |
-| 2 | Positive roll (right tilt)                              | Negative roll_correction (pushes left)    | [ ]  |
-| 3 | Corrections track tilt magnitude                        | Larger tilt = larger correction           | [ ]  |
+Note: positive pitch_correction = elevons UP = nose-down push (correct).
+PITCH_INVERT flips the measurement inside the PID, so positive raw pitch
+produces positive correction which pushes against the tilt.
+
+| # | Check                            | Expected                                             | Pass |
+|---|----------------------------------|------------------------------------------------------|------|
+| 1 | Positive pitch (nose up tilt)    | Positive pitch_correction (elevons up = nose down)   | [x]  |
+| 2 | Positive roll (right tilt)       | Correction opposes tilt direction                    | [x]  |
+| 3 | Corrections track tilt magnitude | Larger tilt = larger correction                      | [x]  |
 
 ### 5.4 Kill Switch (validates Part 1.4)
 
 Find `log_event` with kill switch event codes in the timeline:
 
-| # | Check                                                   | Expected                                  | Pass |
-|---|---------------------------------------------------------|-------------------------------------------|------|
-| 1 | At kill event timestamp                                 | system_status.armed transitions 1→0       | [ ]  |
-| 2 | After kill event                                        | engine_data left/right_throttle = 0       | [ ]  |
-| 3 | After kill event                                        | elevon_us returns to center (~1500)       | [ ]  |
+| # | Check                   | Expected                            | Pass |
+|---|-------------------------|-------------------------------------|------|
+| 1 | At kill event timestamp | system_status.armed transitions 1→0 | [x]  |
+| 2 | After kill event        | engine_data left/right_throttle = 0 | [x]  |
+| 3 | After kill event        | elevon_us returns to center (~1500) | [x]  |
 
 ### 5.5 Mode Transitions (validates Part 2)
 
-| # | Check                                                   | Expected                                  | Pass |
-|---|---------------------------------------------------------|-------------------------------------------|------|
-| 1 | commands.attitude_mode changes 0→1→2→0                  | Mode transitions visible in data          | [ ]  |
-| 2 | In mode 0 (Manual): pitch_correction = 0                | PID inactive                              | [ ]  |
-| 3 | In mode 1 (Stabilized): pitch_correction ≠ 0 with tilt | PID active                                | [ ]  |
-| 4 | In mode 2 (AltHold): setpoint locked 0°/0°             | pitch/roll_setpoint_deg stay near 0       | [ ]  |
+| # | Check                                                  | Expected                            | Pass |
+|---|--------------------------------------------------------|-------------------------------------|------|
+| 1 | commands.attitude_mode changes 0→1→2→0                 | Mode transitions visible in data    | [x]  |
+| 2 | In mode 0 (Manual): pitch_correction = 0               | PID inactive                        | [x]  |
+| 3 | In mode 1 (Stabilized): pitch_correction ≠ 0 with tilt | PID active                          | [x]  |
+| 4 | In mode 2 (AltHold): setpoint locked 0°/0°             | pitch/roll_setpoint_deg stay near 0 | [ ]  |
 
 ### 5.6 Autotune (validates Part 3.4)
 
 Plot `autotune_status` fields:
 
-| # | Check                                                   | Expected                                  | Pass |
-|---|---------------------------------------------------------|-------------------------------------------|------|
-| 1 | phase transitions: 1→2→3                                | Settling → Relay → Complete               | [ ]  |
-| 2 | setpoint_deg alternates ±5° during phase 2              | Clean relay switching                     | [ ]  |
-| 3 | measurement_deg crosses zero between relay flips        | Oscillation is forming                    | [ ]  |
-| 4 | cycles_done increments to 8                             | 2 discard + 6 measured                    | [ ]  |
-| 5 | amplitude_deg stays < 20°                               | Within safety limit                       | [ ]  |
+| # | Check                                            | Expected                    | Pass |
+|---|--------------------------------------------------|-----------------------------|------|
+| 1 | phase transitions: 1→2→3                         | Settling → Relay → Complete | [x]  |
+| 2 | setpoint_deg alternates ±5° during phase 2       | Clean relay switching       | [x]  |
+| 3 | measurement_deg crosses zero between relay flips | Oscillation is forming      | [x]  |
+| 4 | cycles_done increments to 8                      | 2 discard + 6 measured      | [x]  |
+| 5 | amplitude_deg stays < 20°                        | Within safety limit         | [x]  |
 
 ### 5.7 Performance
 
-| # | Check                                                   | Expected                                  | Pass |
-|---|---------------------------------------------------------|-------------------------------------------|------|
-| 1 | system_status.loop_time_us: max                         | < 13000 µs (13ms budget)                  | [ ]  |
-| 2 | system_status.loop_time_us: average                     | < 5000 µs (comfortable margin)            | [ ]  |
-| 3 | attitude_data sample interval                           | Consistent ~13ms, no gaps > 26ms          | [ ]  |
-| 4 | During autotune: loop_time_us not elevated              | < 13000 µs (no performance regression)    | [ ]  |
+| # | Check                                      | Expected                               | Pass |
+|---|--------------------------------------------|----------------------------------------|------|
+| 1 | system_status.loop_time_us: max            | < 13000 µs (13ms budget)               | [x]  |
+| 2 | system_status.loop_time_us: average        | < 5000 µs (comfortable margin)         | [x]  |
+| 3 | attitude_data sample interval              | Consistent ~13ms, no gaps > 26ms       | [x]  |
+| 4 | During autotune: loop_time_us not elevated | < 13000 µs (no performance regression) | [x]  |
 
 ---
 
 ## Abort Criteria
 
 Stop testing and investigate if any of these occur:
+
 - Any axis in 1.1/1.2/1.3 is reversed — fix inversions before proceeding
 - Kill switch does not stop motors — do NOT fly
 - Manual mode escape does not immediately disable PID
