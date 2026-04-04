@@ -243,7 +243,8 @@ bind_interrupts!(
             embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH3>,
             embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH4>,
             embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH5>,
-            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH6>;
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH6>,
+            embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH7>;
     }
 );
 
@@ -417,7 +418,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "gnss")]
     {
         info!("Core0: Starting GNSS task (UART0, GPIO28/29)");
-        spawner.spawn(gnss_task(p.UART0, p.PIN_29, p.DMA_CH0).unwrap());
+        spawner.spawn(gnss_task(p.UART0, p.PIN_28, p.PIN_29, p.DMA_CH0, p.DMA_CH7).unwrap());
     }
     let mut fc = FlightController::new(pwm);
 
@@ -1244,6 +1245,20 @@ async fn main(spawner: Spawner) {
                             // Magic value: save current PID gains to flash
                             let gains = fc.get_pid_gains();
                             save_pid_to_flash(gains.to_bytes(), "savepid").await;
+                        } else if axis == 0xFE {
+                            // Magic value: erase PID profile from flash
+                            use elle_config::profile::{FlashRequest, FlashResponse};
+                            use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+                            FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
+                            let timeout = Timer::after(Duration::from_secs(5));
+                            match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
+                                embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
+                                    info!("PID profile erased from flash");
+                                }
+                                _ => {
+                                    warn!("PID profile erase failed or timed out");
+                                }
+                            }
                         } else {
                             use elle_control::autotune::TuningRule;
                             if fc.is_armed() && fc.is_attitude_enabled() && !autotuner.is_active() {
@@ -1299,6 +1314,20 @@ async fn main(spawner: Spawner) {
                     }
                     RpcCommand::SavePidProfile { data } => {
                         save_pid_to_flash(data, "RPC").await;
+                    }
+                    RpcCommand::ClearPidProfile => {
+                        use elle_config::profile::{FlashRequest, FlashResponse};
+                        use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
+                        let timeout = Timer::after(Duration::from_secs(5));
+                        match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
+                            embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
+                                info!("PID profile erased from flash");
+                            }
+                            _ => {
+                                warn!("PID profile erase failed or timed out");
+                            }
+                        }
                     }
                     RpcCommand::StartMagCal => {
                         elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
@@ -1755,20 +1784,42 @@ async fn imu_task(
 #[embassy_executor::task]
 async fn gnss_task(
     uart: Peri<'static, UART0>,
+    tx_pin: Peri<'static, embassy_rp::peripherals::PIN_28>,
     rx_pin: Peri<'static, embassy_rp::peripherals::PIN_29>,
     rx_dma: Peri<'static, embassy_rp::peripherals::DMA_CH0>,
+    tx_dma: Peri<'static, embassy_rp::peripherals::DMA_CH7>,
 ) {
-    use embassy_rp::uart::{self, UartRx};
+    use embassy_rp::uart::{self, Uart};
     use sam_m10q::decoder::{Decoder, FeedResult};
     use sam_m10q::nmea::ParseResult;
     use sam_m10q::types::Frame;
 
-    info!("GNSS task starting (9600 baud, UART0 RX on GPIO29)");
+    info!("GNSS task starting (9600 baud, UART0 TX=GPIO28 RX=GPIO29)");
 
     let mut uart_config = uart::Config::default();
     uart_config.baudrate = 9600;
 
-    let mut rx = UartRx::new(uart, rx_pin, Irqs, rx_dma, uart_config);
+    let mut uart_full = Uart::new(uart, tx_pin, rx_pin, Irqs, tx_dma, rx_dma, uart_config);
+
+    // Send UBX-CFG-RST cold start to force fresh satellite acquisition
+    {
+        let mut buf = [0u8; 12];
+        // UBX-CFG-RST: class=0x06, id=0x04, payload=[0x00, 0x00, 0x02, 0x00]
+        // navBbrMask=0x0000 (cold start), resetMode=0x02 (software reset GNSS only)
+        let payload = [0x00u8, 0x00, 0x02, 0x00];
+        if let Some(len) = sam_m10q::ubx::build_frame(&mut buf, 0x06, 0x04, &payload) {
+            if let Err(e) = uart_full.write(&buf[..len]).await {
+                warn!("GNSS: cold start send failed: {}", e);
+            } else {
+                info!("GNSS: UBX cold start sent");
+            }
+        }
+        // Wait for module to restart
+        Timer::after(Duration::from_millis(500)).await;
+    }
+
+    // Split to RX-only for the receive loop
+    let (_, mut rx) = uart_full.split();
     let mut decoder = Decoder::new();
     let mut gga_count: u32 = 0;
     let mut uart_error_count: u32 = 0;
