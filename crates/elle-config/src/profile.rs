@@ -23,6 +23,7 @@ pub enum FlashRequest {
         data: [u8; 32],
     },
     LoadPidProfile,
+    ErasePidProfile,
     SaveMagCal {
         data: [u8; 12],
     },
@@ -42,6 +43,8 @@ pub enum FlashResponse {
     ULogEraseFailed,
     PidProfileSaved,
     PidProfileSaveFailed,
+    PidProfileErased,
+    PidProfileEraseFailed,
     PidProfileLoaded {
         data: [u8; 32],
     },

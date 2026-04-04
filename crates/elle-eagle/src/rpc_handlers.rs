@@ -40,6 +40,7 @@ pub enum RpcCommand {
     SavePidProfile {
         data: [u8; 32],
     },
+    ClearPidProfile,
     StartMagCal,
     ClearMagCal,
 }

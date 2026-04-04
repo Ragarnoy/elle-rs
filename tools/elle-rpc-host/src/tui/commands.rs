@@ -78,6 +78,11 @@ const COMMANDS: &[CmdDef] = &[
         subs: &[],
     },
     CmdDef {
+        name: "clearpid",
+        aliases: &[],
+        subs: &[],
+    },
+    CmdDef {
         name: "throttle",
         aliases: &["thr"],
         subs: &[],
@@ -298,6 +303,7 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
             }
         }
         Some("savepid") => cmd_savepid(client).await,
+        Some("clearpid") => cmd_clearpid(client).await,
         Some("mag") => {
             if parts.len() >= 2 && parts[1].to_lowercase() == "cal" {
                 if parts.len() >= 3 {
@@ -605,6 +611,20 @@ async fn cmd_savepid(client: &HostClient<WireError>) -> CommandResult {
         timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await,
         "PID save",
         "PID gains save requested".into(),
+    )
+}
+
+async fn cmd_clearpid(client: &HostClient<WireError>) -> CommandResult {
+    let req = StartAutotuneReq {
+        axis: 0xFE, // Magic value = erase PID profile from flash
+        relay_deg_x10: 0,
+        num_cycles: 0,
+        rule: 0,
+    };
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await,
+        "PID clear",
+        "PID profile erased from flash".into(),
     )
 }
 

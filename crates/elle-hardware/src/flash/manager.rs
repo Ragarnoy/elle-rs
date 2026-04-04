@@ -120,6 +120,12 @@ impl<'a> SequentialFlashManager<'a> {
                         FLASH_RESPONSE_SIGNAL.signal(response);
                     }
 
+                    FlashRequest::ErasePidProfile => {
+                        info!("Flash: erasing PID profile region");
+                        let response = self.erase_pid_profile_internal().await;
+                        FLASH_RESPONSE_SIGNAL.signal(response);
+                    }
+
                     FlashRequest::SaveMagCal { data } => {
                         let response = self.save_mag_cal_internal(&data).await;
                         FLASH_RESPONSE_SIGNAL.signal(response);
@@ -261,6 +267,24 @@ impl<'a> SequentialFlashManager<'a> {
         } else {
             warn!("Flash: PID profile save failed");
             FlashResponse::PidProfileSaveFailed
+        }
+    }
+
+    /// Erase the PID profile flash region (64KB)
+    async fn erase_pid_profile_internal(&mut self) -> FlashResponse {
+        let flash = self.flash.as_mut().expect("flash not available");
+        mask_sio_fifo();
+        match flash.erase(PROFILE_FLASH_START, PROFILE_FLASH_END).await {
+            Ok(_) => {
+                unsafe { unmask_sio_fifo() };
+                info!("Flash: PID profile region erased");
+                FlashResponse::PidProfileErased
+            }
+            Err(e) => {
+                unsafe { unmask_sio_fifo() };
+                warn!("Flash: PID profile erase failed: {:?}", Debug2Format(&e));
+                FlashResponse::PidProfileEraseFailed
+            }
         }
     }
 
