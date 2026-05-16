@@ -9,9 +9,11 @@ members = [
     "crates/elle-ulog",
     "crates/elle-rpc-icd",
     "crates/elle-eagle",
+    "crates/elle-dart",
     "tools/elle-rpc-host",
     "drivers/mmc5616wa",
     "drivers/sam-m10q",
+    "drivers/bmp390",
 ]
 
 [workspace.package]
@@ -72,6 +74,7 @@ embassy-dshot = { path = "../dshot-pio", default-features = false, features = ["
 [patch.crates-io]
 embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
+bmp390 = { path = "drivers/bmp390" }
 
 [profile.release]
 debug = 2
