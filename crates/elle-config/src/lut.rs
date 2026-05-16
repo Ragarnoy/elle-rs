@@ -277,6 +277,7 @@ pub fn apply_differential_thrust_lut(base_thrust: u16, yaw_rc: u16) -> (u16, u16
 /// Measured eRPM→DShot mapping (averaged from both engines under EDF load, 4S).
 /// Pairs are (eRPM, DShot), sorted by eRPM.
 /// Data from rpm_range sweep test with 200-sample settle + 500-sample measurement per step.
+#[cfg(not(feature = "platform-dart"))]
 const GOVERNOR_FF_TABLE: [(u32, u16); 11] = [
     (6_184, 48),     // avg(915,852) RPM × 7
     (19_177, 148),   // avg(2764,2715) RPM × 7
@@ -296,6 +297,7 @@ const GOVERNOR_FF_TABLE: [(u32, u16); 11] = [
 /// Governor feedforward: estimate DShot output for a target eRPM using measured LUT.
 /// Piecewise linear interpolation between measured data points.
 /// Returns DShot 0–1999.
+#[cfg(not(feature = "platform-dart"))]
 #[must_use]
 pub fn governor_feedforward(target_erpm: u32) -> u16 {
     if target_erpm == 0 {
@@ -315,6 +317,57 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
     }
 
     // Linear search (table is small, ~12 entries — faster than binary search on MCU)
+    for i in 1..GOVERNOR_FF_TABLE.len() {
+        if target_erpm <= GOVERNOR_FF_TABLE[i].0 {
+            let (erpm_lo, dshot_lo) = GOVERNOR_FF_TABLE[i - 1];
+            let (erpm_hi, dshot_hi) = GOVERNOR_FF_TABLE[i];
+            let range_erpm = erpm_hi - erpm_lo;
+            let range_dshot = dshot_hi as u32 - dshot_lo as u32;
+            let offset = target_erpm - erpm_lo;
+            return (dshot_lo as u32 + offset * range_dshot / range_erpm) as u16;
+        }
+    }
+
+    last.1
+}
+
+/// Measured eRPM→DShot mapping for dart (500-sample per step, rpm_range sweep).
+/// RPM × 7 (14-pole assumed). Covers DShot 48–1148; above 1148 RPM declines (prop stall).
+#[cfg(feature = "platform-dart")]
+const GOVERNOR_FF_TABLE: [(u32, u16); 13] = [
+    (2_373,  48),   //   339 RPM
+    (4_641,  98),   //   663 RPM
+    (9_198,  148),  // 1,314 RPM
+    (16_800, 248),  // 2,400 RPM
+    (23_485, 348),  // 3,355 RPM
+    (29_316, 448),  // 4,188 RPM
+    (34_503, 548),  // 4,929 RPM
+    (39_655, 648),  // 5,665 RPM
+    (43_876, 748),  // 6,268 RPM
+    (48_279, 848),  // 6,897 RPM
+    (51_541, 948),  // 7,363 RPM
+    (54_145, 1048), // 7,735 RPM
+    (56_707, 1148), // 8,101 RPM — peak; governor caps here
+];
+
+/// Governor feedforward for dart: piecewise linear interpolation over measured LUT.
+/// Returns DShot 0–1148 (capped at peak-RPM throttle to avoid prop stall region).
+#[cfg(feature = "platform-dart")]
+#[must_use]
+pub fn governor_feedforward(target_erpm: u32) -> u16 {
+    if target_erpm == 0 {
+        return 0;
+    }
+
+    if target_erpm <= GOVERNOR_FF_TABLE[0].0 {
+        return ((target_erpm * GOVERNOR_FF_TABLE[0].1 as u32) / GOVERNOR_FF_TABLE[0].0) as u16;
+    }
+
+    let last = GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1];
+    if target_erpm >= last.0 {
+        return last.1; // 1148 — never enter prop stall region
+    }
+
     for i in 1..GOVERNOR_FF_TABLE.len() {
         if target_erpm <= GOVERNOR_FF_TABLE[i].0 {
             let (erpm_lo, dshot_lo) = GOVERNOR_FF_TABLE[i - 1];

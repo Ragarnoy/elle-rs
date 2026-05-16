@@ -85,7 +85,10 @@ pub const DIFFERENTIAL_CH: usize = 3;
 // Elevon mixing parameters
 pub const ELEVON_PITCH_GAIN: f32 = 1.0; // How much pitch affects elevons
 pub const ELEVON_ROLL_GAIN: f32 = 1.0; // How much roll affects elevons
+#[cfg(not(feature = "platform-dart"))]
 pub const YAW_TO_DIFF_GAIN: f32 = 1.0; // How much yaw affects differential thrust
+#[cfg(feature = "platform-dart")]
+pub const YAW_TO_DIFF_GAIN: f32 = 0.0; // Single engine — no yaw via differential thrust
 pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons for coordination
 
 // Control mode selection
@@ -111,8 +114,15 @@ pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
 pub const SUPERVISOR_CHECK_INTERVAL_MS: u64 = 50; // How often to check supervisor health
 
+#[cfg(not(feature = "platform-dart"))]
 pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
+#[cfg(not(feature = "platform-dart"))]
 pub const ELEVON_RIGHT_TRIM_US: i32 = -50;
+
+#[cfg(feature = "platform-dart")]
+pub const ELEVON_LEFT_TRIM_US: i32 = 5; // New airframe — start at zero
+#[cfg(feature = "platform-dart")]
+pub const ELEVON_RIGHT_TRIM_US: i32 = 0;
 
 // Individual servo center positions after trim
 pub const ELEVON_LEFT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_LEFT_TRIM_US) as u32;
@@ -121,13 +131,33 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
-pub const ROLL_KP: f32 = 0.2;
-pub const ROLL_KI: f32 = 0.05;
-pub const ROLL_KD: f32 = 0.08;
+#[cfg(not(feature = "platform-dart"))]
+pub const ROLL_KP: f32 = 0.5;
+#[cfg(not(feature = "platform-dart"))]
+pub const ROLL_KI: f32 = 0.03;
+#[cfg(not(feature = "platform-dart"))]
+pub const ROLL_KD: f32 = 0.12;
 
-pub const PITCH_KP: f32 = 0.2;
-pub const PITCH_KI: f32 = 0.03;
-pub const PITCH_KD: f32 = 0.1;
+#[cfg(feature = "platform-dart")]
+pub const ROLL_KP: f32 = 0.5;
+#[cfg(feature = "platform-dart")]
+pub const ROLL_KI: f32 = 0.03;
+#[cfg(feature = "platform-dart")]
+pub const ROLL_KD: f32 = 0.12;
+
+#[cfg(not(feature = "platform-dart"))]
+pub const PITCH_KP: f32 = 1.0;
+#[cfg(not(feature = "platform-dart"))]
+pub const PITCH_KI: f32 = 0.1;
+#[cfg(not(feature = "platform-dart"))]
+pub const PITCH_KD: f32 = 0.25;
+
+#[cfg(feature = "platform-dart")]
+pub const PITCH_KP: f32 = 1.0;
+#[cfg(feature = "platform-dart")]
+pub const PITCH_KI: f32 = 0.1;
+#[cfg(feature = "platform-dart")]
+pub const PITCH_KD: f32 = 0.25;
 
 // PID operating scale and integral limit (must match SavedGains validation ranges)
 pub const PID_SCALE: f32 = 5.0;
@@ -167,21 +197,48 @@ pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)
 
-// Motor specs: 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
+// Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
 // Left engine saturates at ~21,865 RPM (DShot ~1498), right at ~21,430 RPM (DShot ~1473)
 // MAX_RPM capped at slower engine (right) to avoid asymmetric thrust
+#[cfg(not(feature = "platform-dart"))]
 pub const MOTOR_POLES: u8 = 14;
+#[cfg(not(feature = "platform-dart"))]
 pub const MAX_RPM: u32 = 21_400; // Measured: right engine saturation under EDF load (4S)
+#[cfg(not(feature = "platform-dart"))]
 pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 149,800
+
+// Motor specs (dart): measured via rpm_range sweep (500-sample per step, DShot 48–2000)
+// Peak RPM 8101 at DShot 1148; RPM declines above that (prop stall). Governor FF LUT
+// caps at DShot 1148. MOTOR_POLES assumed 14 — verify against motor spec sheet.
+#[cfg(feature = "platform-dart")]
+pub const MOTOR_POLES: u8 = 14;
+#[cfg(feature = "platform-dart")]
+pub const MAX_RPM: u32 = 8_101; // Measured peak at DShot 1148
+#[cfg(feature = "platform-dart")]
+pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 56,707
+
 /// Governor PI gains — normalized to eRPM scale.
 /// Kp=0.01 gives ~14 DShot counts per 1000 eRPM error — fast enough to reduce
 /// overshoot settling time without oscillation.
+#[cfg(not(feature = "platform-dart"))]
 pub const GOVERNOR_KP: f32 = 0.01;
+#[cfg(not(feature = "platform-dart"))]
 pub const GOVERNOR_KI: f32 = 0.002;
-pub const GOVERNOR_DT: f32 = 0.001; // 1ms (1kHz task rate)
+pub const GOVERNOR_DT: f32 = 0.001; // 1ms (1kHz task rate) — universal
+#[cfg(not(feature = "platform-dart"))]
 pub const GOVERNOR_DEADBAND_ERPM: f32 = 500.0; // Ignore errors below this (absorbs EDT noise)
+#[cfg(not(feature = "platform-dart"))]
 pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000; // Reject telemetry jumps larger than this
+
+#[cfg(feature = "platform-dart")]
+pub const GOVERNOR_KP: f32 = 0.01;
+#[cfg(feature = "platform-dart")]
+pub const GOVERNOR_KI: f32 = 0.002;
+#[cfg(feature = "platform-dart")]
+pub const GOVERNOR_DEADBAND_ERPM: f32 = 500.0;
+#[cfg(feature = "platform-dart")]
+pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000;
 
 // ---------------------------------------------------------------------------
 // Compile-time validation
@@ -227,7 +284,7 @@ const _: () = {
 };
 
 // Motor poles must be even (eRPM = RPM × poles/2)
-const _: () = assert!(MOTOR_POLES % 2 == 0);
+const _: () = assert!(MOTOR_POLES.is_multiple_of(2));
 
 // Servo range: MIN < CENTER < MAX
 const _: () = assert!(SERVO_MIN_PULSE_US < SERVO_CENTER_US);

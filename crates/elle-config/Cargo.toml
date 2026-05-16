@@ -7,6 +7,9 @@ edition.workspace = true
 defmt = { workspace = true }
 heapless = { workspace = true }
 
+[features]
+platform-dart = []
+
 [lib]
 test = false
 bench = false
