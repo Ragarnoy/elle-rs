@@ -180,7 +180,7 @@ impl<'a> Imu<'a> {
         };
         self.mag_ok = mag_init_ok;
 
-        // 3. Initialize BMP390 barometer on I2C0 at address 0x76
+        // 3. Initialize BMP390/BMP384 barometer on I2C0 — try 0x77 then 0x76
         // Standard resolution config (datasheet Section 3.5): osrs_p=x8, osrs_t=x1, IIR=coef_3, ODR=50Hz
         let baro_config = bmp390::Configuration {
             iir_filter: bmp390::Config {
@@ -188,29 +188,38 @@ impl<'a> Imu<'a> {
             },
             ..bmp390::Configuration::default()
         };
-        let baro_i2c = I2cRefCellDevice::new(self.i2c_bus);
-        match bmp390::sync::Bmp390::try_new(
-            baro_i2c,
-            bmp390::Address::Down,
-            embassy_time::Delay,
-            &baro_config,
-        ) {
-            Ok(baro) => {
-                self.baro = Some(baro);
-                info!("BMP390: initialized at 0x76 (pressure + temperature)");
-            }
-            Err(e) => {
-                crate::elle_event!(
-                    warn,
-                    crate::event::EVT_BARO_INIT_FAILED,
-                    "BMP390: init failed at 0x76: {}",
-                    e
-                );
+        let addresses = [
+            (bmp390::Address::Up, "0x77"),
+            (bmp390::Address::Down, "0x76"),
+        ];
+        for (addr, addr_str) in addresses {
+            let baro_i2c = I2cRefCellDevice::new(self.i2c_bus);
+            match bmp390::sync::Bmp390::try_new(baro_i2c, addr, embassy_time::Delay, &baro_config) {
+                Ok(baro) => {
+                    self.baro = Some(baro);
+                    info!("BMP390: initialized at {} (pressure + temperature)", addr_str);
+                    break;
+                }
+                Err(e) => {
+                    crate::elle_event!(
+                        warn,
+                        crate::event::EVT_BARO_INIT_FAILED,
+                        "BMP390: init failed at {}: {}",
+                        addr_str,
+                        e
+                    );
+                }
             }
         }
 
         self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
         Ok(())
+    }
+
+    /// Permanently disable magnetometer reads. Call before `run()` on platforms
+    /// where the I2C bus is unreliable — prevents blocking hangs in the Core1 loop.
+    pub fn disable_mag(&mut self) {
+        self.mag_ok = false;
     }
 
     /// ICM-42686 has no user calibration (factory-calibrated MEMS)
@@ -407,7 +416,17 @@ impl<'a> Imu<'a> {
                         );
                         self.has_mag = true;
                     }
-                    Err(e) => warn!("MMC5616WA: read error: {}", e),
+                    Err(e) => {
+                        // Any I2C error leaves the bus stuck on this hardware — the next call
+                        // would block Core1 indefinitely. Disable mag immediately.
+                        warn!("MMC5616WA: read error: {}", e);
+                        self.mag_ok = false;
+                        crate::elle_event!(
+                            warn,
+                            crate::event::EVT_IMU_INIT_FAILED,
+                            "MMC5616WA: disabling mag after I2C error — falling back to 6-DOF"
+                        );
+                    }
                 }
             }
 

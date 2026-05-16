@@ -107,7 +107,7 @@ fn days_to_ymd(mut days: u64) -> (u32, u32, u32) {
 }
 
 const fn is_leap(y: u32) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
 }
 
 /// Session file counter — seeded from existing files on SD card after mount.
@@ -208,14 +208,11 @@ pub async fn sd_writer_task(
             if raw_name.len() >= 12
                 && &raw_name[..4] == b"LOG_"
                 && &raw_name[8..12] == b".ULG"
+                && let Ok(s) = core::str::from_utf8(&raw_name[4..8])
+                && let Ok(n) = s.parse::<i32>()
+                && n > max_num
             {
-                if let Ok(s) = core::str::from_utf8(&raw_name[4..8]) {
-                    if let Ok(n) = s.parse::<i32>() {
-                        if n > max_num {
-                            max_num = n;
-                        }
-                    }
-                }
+                max_num = n;
             }
         }
         let start = (max_num + 1).max(0) as u16;

@@ -275,6 +275,93 @@ impl<'a> DshotEngines<'a> {
     }
 }
 
+/// Single-engine variant: arms ESC on startup, then resends latest `DSHOT_THROTTLE` at ~1kHz.
+/// Only the left/primary eRPM value from `DSHOT_THROTTLE` is used; right stays zero.
+#[cfg(feature = "single-engine")]
+#[embassy_executor::task]
+pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
+    defmt::info!("DShot single-engine task: arming ESC (2s)");
+    let mut engine = engine;
+    engine.arm_async(Duration::from_secs(2)).await;
+
+    // Enable extended telemetry (must send command 6 times per DShot protocol)
+    for _ in 0..EDT_ENABLE_REPEAT {
+        engine
+            .send_command_async(embassy_dshot::Command::ExtendedTelemetryEnable)
+            .await;
+        Timer::after(Duration::from_micros(300)).await;
+    }
+    defmt::info!("DShot single-engine task: armed, entering 1kHz loop");
+
+    let mut target_erpm = 0u32;
+    let mut ticker = Ticker::every(Duration::from_millis(1));
+    let mut state = EngineState::new();
+    let mut reading = EngineReading::default();
+
+    loop {
+        // Check for beep request (non-blocking)
+        if let Some(pattern) = BEEP_SIGNAL.try_take() {
+            use embassy_dshot::Command;
+            match pattern {
+                BeepPattern::ArmBeep => {
+                    for _ in 0..10 {
+                        engine.send_command_async(Command::Beep1).await;
+                        Timer::after(Duration::from_millis(1)).await;
+                    }
+                    Timer::after(Duration::from_millis(200)).await;
+                }
+                BeepPattern::DisarmBeep => {
+                    for _ in 0..10 {
+                        engine.send_command_async(Command::Beep2).await;
+                        Timer::after(Duration::from_millis(1)).await;
+                    }
+                    Timer::after(Duration::from_millis(100)).await;
+                    for _ in 0..10 {
+                        engine.send_command_async(Command::Beep2).await;
+                        Timer::after(Duration::from_millis(1)).await;
+                    }
+                    Timer::after(Duration::from_millis(200)).await;
+                }
+            }
+        }
+
+        if let Some(t) = DSHOT_THROTTLE.try_take() {
+            target_erpm = t.0; // single engine uses only the left/primary value
+        }
+
+        let dshot_val = state.governor.update(
+            target_erpm,
+            reading.left.erpm,
+            state.bidir_enabled && reading.left.valid,
+        );
+
+        let edt = if dshot_val == 0 {
+            engine
+                .send_command_async(embassy_dshot::Command::MotorStop)
+                .await;
+            None
+        } else if !state.bidir_enabled {
+            let _ = engine.throttle_async(dshot_val).await;
+            None
+        } else {
+            match embassy_time::with_timeout(
+                BIDIR_READ_TIMEOUT,
+                engine.read_extended_telemetry(dshot_val),
+            )
+            .await
+            {
+                Ok(Ok(e)) => Some(e),
+                _ => None,
+            }
+        };
+
+        update_engine_unit(&mut reading.left, &mut state, edt, dshot_val, target_erpm);
+        // right stays zeroed (single engine)
+        ENGINE_CACHE.lock(|c| c.set(reading));
+        ticker.next().await;
+    }
+}
+
 /// Arms ESCs on startup, then resends latest `DSHOT_THROTTLE` values at ~1kHz.
 #[embassy_executor::task]
 pub async fn dshot_task(

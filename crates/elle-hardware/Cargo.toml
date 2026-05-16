@@ -46,6 +46,7 @@ block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", ve
 [features]
 disable-imu = []  # Disable IMU for debugging (enabled by default, use this flag to disable)
 gnss = []  # Enable GPS telemetry frames
+single-engine = []  # Single-engine platform (dart) — uses dshot_single_task instead of dshot_task
 
 [lib]
 test = false
