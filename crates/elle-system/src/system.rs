@@ -7,7 +7,10 @@ use elle_control::mixing::{
     elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
     yaw::throttle_with_differential_lut,
 };
-use elle_control::{arming::ArmingState, pid::AttitudeController};
+use elle_control::{
+    arming::ArmingState,
+    pid::{AttitudeController, PidConfig},
+};
 use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
 use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT};
 use elle_hardware::pwm::PwmOutputs;
@@ -15,7 +18,6 @@ use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
-use free_flight_stabilization::FlightStabilizerConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 pub enum ControlMode {
@@ -110,7 +112,7 @@ pub struct FlightController<'a> {
     last_watchdog_kick: Instant,
     supervisor_enabled: bool,
     // Config shadow for autotune gain readback
-    current_config: FlightStabilizerConfig<f32>,
+    current_config: PidConfig,
     // Setpoint override for autotune relay feedback
     setpoint_override: Option<(f32, f32)>,
     // RC link state machine
@@ -122,22 +124,16 @@ pub struct FlightController<'a> {
 impl<'a> FlightController<'a> {
     #[must_use]
     pub fn new(pwm: PwmOutputs<'a>) -> Self {
-        // Use conservative gains similar to free-flight-stabilization example
-        let mut config = FlightStabilizerConfig::<f32>::new();
-
-        // Set the PID gains for roll, pitch, and yaw (from the example you provided)
-        config.kp_roll = ROLL_KP;
-        config.ki_roll = ROLL_KI;
-        config.kd_roll = ROLL_KD;
-        config.kp_pitch = PITCH_KP;
-        config.ki_pitch = PITCH_KI;
-        config.kd_pitch = PITCH_KD;
-        config.kp_yaw = 0.3;
-        config.ki_yaw = 0.05;
-        config.kd_yaw = 0.00015;
-
-        config.i_limit = PID_I_LIMIT;
-        config.scale = PID_SCALE;
+        let config = PidConfig {
+            kp_pitch: PITCH_KP,
+            ki_pitch: PITCH_KI,
+            kd_pitch: PITCH_KD,
+            kp_roll: ROLL_KP,
+            ki_roll: ROLL_KI,
+            kd_roll: ROLL_KD,
+            i_limit: PID_I_LIMIT,
+            scale: PID_SCALE,
+        };
 
         let mut attitude_controller = AttitudeController::with_config(config);
         attitude_controller.pitch_hold_enabled = true;
@@ -319,7 +315,11 @@ impl<'a> FlightController<'a> {
 
         let (left_thrust, right_thrust) = if self.arming.armed {
             // Invert yaw in raw RC space if YAW_INVERT is -1.0 (mirror around center=1024)
-            let yaw_raw = if YAW_INVERT < 0.0 { 2047 - channels[YAW_CH] } else { channels[YAW_CH] };
+            let yaw_raw = if YAW_INVERT < 0.0 {
+                2047 - channels[YAW_CH]
+            } else {
+                channels[YAW_CH]
+            };
             throttle_with_differential_lut(channels[THROTTLE_CH], yaw_raw)
         } else {
             (0, 0)
@@ -595,19 +595,16 @@ impl<'a> FlightController<'a> {
         scale: f32,
         i_limit: f32,
     ) {
-        let mut config = FlightStabilizerConfig::<f32>::new();
-        config.kp_pitch = pitch_kp;
-        config.ki_pitch = pitch_ki;
-        config.kd_pitch = pitch_kd;
-        config.kp_roll = roll_kp;
-        config.ki_roll = roll_ki;
-        config.kd_roll = roll_kd;
-        config.scale = scale;
-        config.i_limit = i_limit;
-        // Keep yaw gains at defaults (flying wing — yaw not actively controlled)
-        config.kp_yaw = 0.3;
-        config.ki_yaw = 0.05;
-        config.kd_yaw = 0.00015;
+        let config = PidConfig {
+            kp_pitch: pitch_kp,
+            ki_pitch: pitch_ki,
+            kd_pitch: pitch_kd,
+            kp_roll: roll_kp,
+            ki_roll: roll_ki,
+            kd_roll: roll_kd,
+            scale,
+            i_limit,
+        };
         self.current_config = config;
         self.attitude_controller.update_config(config);
     }

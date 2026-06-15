@@ -1,12 +1,71 @@
-//! Attitude controller for flying wing stabilization using free-flight-stabilization crate
-use defmt::warn;
+//! Attitude controller for flying-wing stabilization.
+//!
+//! Each axis is a simple angle PID: P and I act on the angle error, D acts on
+//! a directly-supplied gyro rate (already sign-corrected by the caller to
+//! represent d(error)/dt) rather than a finite difference of the noisy AHRS
+//! angle.
 use elle_config::CONTROL_LOOP_DT;
 use embassy_time::Instant;
-use free_flight_stabilization::{AngleStabilizer, FlightStabilizer, FlightStabilizerConfig};
 
-/// Attitude controller using free-flight-stabilization crate
+/// Single-axis angle PID: P on angle error, I on error (clamped), D on supplied rate.
+#[derive(Clone, Copy, Default)]
+struct AxisPid {
+    kp: f32,
+    ki: f32,
+    kd: f32,
+    integral: f32,
+}
+
+impl AxisPid {
+    fn compute(
+        &mut self,
+        error: f32,
+        rate: f32,
+        i_limit: f32,
+        dt: f32,
+        reset_integral: bool,
+    ) -> f32 {
+        // Negative i_limit would invert the clamp bounds below; treat as zero.
+        let i_limit = if i_limit > 0.0 { i_limit } else { 0.0 };
+        self.integral = if reset_integral {
+            0.0
+        } else {
+            let sum = self.integral + error * dt;
+            if sum > i_limit {
+                i_limit
+            } else if sum < -i_limit {
+                -i_limit
+            } else {
+                sum
+            }
+        };
+        self.kp * error + self.ki * self.integral + self.kd * rate
+    }
+
+    fn reset(&mut self) {
+        self.integral = 0.0;
+    }
+}
+
+/// PID gains plus shared output scale and integral clamp.
+#[derive(Clone, Copy)]
+pub struct PidConfig {
+    pub kp_pitch: f32,
+    pub ki_pitch: f32,
+    pub kd_pitch: f32,
+    pub kp_roll: f32,
+    pub ki_roll: f32,
+    pub kd_roll: f32,
+    pub i_limit: f32,
+    pub scale: f32,
+}
+
+/// Attitude controller for flying-wing pitch/roll stabilization.
 pub struct AttitudeController {
-    stabilizer: AngleStabilizer<f32>,
+    pitch_pid: AxisPid,
+    roll_pid: AxisPid,
+    i_limit: f32,
+    scale: f32,
     last_time: Option<Instant>,
 
     // Control flags
@@ -15,65 +74,59 @@ pub struct AttitudeController {
     pub roll_hold_enabled: bool,
 }
 
-impl Default for AttitudeController {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AttitudeController {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::with_config(FlightStabilizerConfig::new())
+    /// Apply gains/scale/limit from `config`, resetting both axes' integrators.
+    fn apply_gains(&mut self, config: PidConfig) {
+        self.pitch_pid = AxisPid {
+            kp: config.kp_pitch,
+            ki: config.ki_pitch,
+            kd: config.kd_pitch,
+            integral: 0.0,
+        };
+        self.roll_pid = AxisPid {
+            kp: config.kp_roll,
+            ki: config.ki_roll,
+            kd: config.kd_roll,
+            integral: 0.0,
+        };
+        self.i_limit = config.i_limit;
+        self.scale = config.scale;
     }
 
-    /// Create with custom configuration (matches free-flight-stabilization pattern)
+    /// Create with the given gains/scale/limit
     #[must_use]
-    pub fn with_config(config: FlightStabilizerConfig<f32>) -> Self {
-        let stabilizer = AngleStabilizer::with_config(config);
-
-        Self {
-            stabilizer,
+    pub fn with_config(config: PidConfig) -> Self {
+        let mut controller = Self {
+            pitch_pid: AxisPid::default(),
+            roll_pid: AxisPid::default(),
+            i_limit: 0.0,
+            scale: 0.0,
             last_time: None,
             enabled: false,
             pitch_hold_enabled: true,
             roll_hold_enabled: false, // Usually just level wings for flying wings
-        }
+        };
+        controller.apply_gains(config);
+        controller
     }
 
-    /// Reset the controller state
+    /// Update gains/scale/limit and reset integral state, leaving enabled/hold flags untouched
+    pub fn update_config(&mut self, config: PidConfig) {
+        self.apply_gains(config);
+        self.last_time = None;
+    }
+
+    /// Reset the controller state (clears integrators and timing)
     pub fn reset(&mut self) {
-        // Reset by creating a new stabilizer with default config
-        // Since we can't access the current config, use default
-        self.stabilizer = AngleStabilizer::new();
+        self.pitch_pid.reset();
+        self.roll_pid.reset();
         self.last_time = None;
     }
 
-    /// Update configuration and reset integral state
-    pub fn update_config(&mut self, config: FlightStabilizerConfig<f32>) {
-        self.stabilizer = AngleStabilizer::with_config(config);
-        self.last_time = None;
-    }
-
-    /// Control method compatible with free-flight-stabilization crate interface
-    pub fn control(
-        &mut self,
-        set_point: (f32, f32, f32),    // (roll, pitch, yaw) setpoints
-        imu_attitude: (f32, f32, f32), // (roll, pitch, yaw) current attitude
-        gyro_rate: (f32, f32, f32),    // (roll_rate, pitch_rate, yaw_rate)
-        dt: f32,                       // time step
-        low_throttle: bool,            // low throttle flag
-    ) -> (f32, f32, f32) {
-        if !self.enabled {
-            return (0.0, 0.0, 0.0);
-        }
-
-        // Use free-flight-stabilization crate directly
-        self.stabilizer
-            .control(set_point, imu_attitude, gyro_rate, dt, low_throttle)
-    }
-
-    /// Calculate attitude corrections (existing interface for compatibility)
+    /// Calculate attitude corrections.
+    ///
+    /// `gyro_rates` is `(roll_rate, pitch_rate, yaw_rate)`, already sign-corrected
+    /// by the caller so that each component equals d(error)/dt for that axis.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -81,7 +134,7 @@ impl AttitudeController {
         desired_roll: f32,
         current_pitch: f32,
         current_roll: f32,
-        gyro_rates: Option<(f32, f32, f32)>, // (roll_rate, pitch_rate, yaw_rate)
+        gyro_rates: Option<(f32, f32, f32)>,
         now: Instant,
         low_throttle: bool,
     ) -> (f32, f32) {
@@ -89,47 +142,30 @@ impl AttitudeController {
             return (0.0, 0.0);
         }
 
-        // Use fixed dt for consistent control performance
         let dt = CONTROL_LOOP_DT;
-
-        // Update timing for diagnostics (optional)
-        if let Some(last) = self.last_time {
-            let actual_dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
-
-            // Warn if timing is significantly off (>30% deviation)
-            if (actual_dt - dt).abs() / dt > 0.3 {
-                warn!(
-                    "Timing deviation: expected {}ms, got {}ms",
-                    (dt * 1000.0) as u32,
-                    (actual_dt * 1000.0) as u32
-                );
-            }
-        }
-
         self.last_time = Some(now);
 
-        // Use the control interface internally
-        let set_point = (
-            if self.roll_hold_enabled {
-                desired_roll
-            } else {
-                current_roll
-            },
-            if self.pitch_hold_enabled {
-                desired_pitch
-            } else {
-                current_pitch
-            },
-            0.0, // No yaw control for flying wing
-        );
+        let (roll_rate, pitch_rate, _yaw_rate) = gyro_rates.unwrap_or((0.0, 0.0, 0.0));
 
-        let current_attitude = (current_roll, current_pitch, 0.0);
+        let pitch_error = if self.pitch_hold_enabled {
+            desired_pitch - current_pitch
+        } else {
+            0.0
+        };
+        let roll_error = if self.roll_hold_enabled {
+            desired_roll - current_roll
+        } else {
+            0.0
+        };
 
-        // Use provided gyro rates or fall back to zeros
-        let gyro_rates = gyro_rates.unwrap_or((0.0, 0.0, 0.0));
-
-        let (roll_output, pitch_output, _yaw_output) =
-            self.control(set_point, current_attitude, gyro_rates, dt, low_throttle);
+        let pitch_output = self.scale
+            * self
+                .pitch_pid
+                .compute(pitch_error, pitch_rate, self.i_limit, dt, low_throttle);
+        let roll_output = self.scale
+            * self
+                .roll_pid
+                .compute(roll_error, roll_rate, self.i_limit, dt, low_throttle);
 
         (pitch_output, roll_output)
     }

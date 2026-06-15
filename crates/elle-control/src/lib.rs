@@ -12,4 +12,4 @@ pub mod throttle;
 pub use arming::ArmingState;
 pub use autotune::{AutotuneAction, AutotuneAxis, AutotuneResult, Autotuner, SavedGains};
 pub use commands::{NormalizedCommands, RawCommands};
-pub use pid::AttitudeController;
+pub use pid::{AttitudeController, PidConfig};

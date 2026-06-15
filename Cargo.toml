@@ -44,9 +44,6 @@ icm426xx = { path = "../icm426xx", default-features = false, features = ["defmt"
 crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = false, features = ["defmt"] }
 smart-leds = "0.4.0"
 
-# External dependencies - Control algorithms
-free-flight-stabilization = { git = "https://github.com/AeroRust/free-flight-stabilization.git", branch = "fix/no_std-support-for-f32-f64", default-features = false }
-
 # External dependencies - System libraries
 cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
