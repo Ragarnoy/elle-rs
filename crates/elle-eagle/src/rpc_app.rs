@@ -351,17 +351,20 @@ fn handle_get_controller_output(
 }
 
 fn handle_set_pid_gains(ctx: &mut RpcContext, _hdr: VarHeader, req: SetPidGainsReq) -> AckResp {
+    use elle_control::PidConfig;
     send_cmd(
         ctx,
         RpcCommand::SetPidGains {
-            pitch_kp: req.pitch_kp_x1000 as f32 / 1000.0,
-            pitch_ki: req.pitch_ki_x1000 as f32 / 1000.0,
-            pitch_kd: req.pitch_kd_x1000 as f32 / 1000.0,
-            roll_kp: req.roll_kp_x1000 as f32 / 1000.0,
-            roll_ki: req.roll_ki_x1000 as f32 / 1000.0,
-            roll_kd: req.roll_kd_x1000 as f32 / 1000.0,
-            scale: req.scale_x10000 as f32 / 10000.0,
-            i_limit: req.i_limit_x10 as f32 / 10.0,
+            config: PidConfig {
+                kp_pitch: req.pitch_kp_x1000 as f32 / 1000.0,
+                ki_pitch: req.pitch_ki_x1000 as f32 / 1000.0,
+                kd_pitch: req.pitch_kd_x1000 as f32 / 1000.0,
+                kp_roll: req.roll_kp_x1000 as f32 / 1000.0,
+                ki_roll: req.roll_ki_x1000 as f32 / 1000.0,
+                kd_roll: req.roll_kd_x1000 as f32 / 1000.0,
+                scale: req.scale_x10000 as f32 / 10000.0,
+                i_limit: req.i_limit_x10 as f32 / 10.0,
+            },
         },
     )
 }

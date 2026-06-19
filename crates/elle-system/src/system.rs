@@ -111,8 +111,6 @@ pub struct FlightController<'a> {
     core1_health: CoreHealth,
     last_watchdog_kick: Instant,
     supervisor_enabled: bool,
-    // Config shadow for autotune gain readback
-    current_config: PidConfig,
     // Setpoint override for autotune relay feedback
     setpoint_override: Option<(f32, f32)>,
     // RC link state machine
@@ -153,7 +151,6 @@ impl<'a> FlightController<'a> {
             core1_health: CoreHealth::default(),
             last_watchdog_kick: Instant::now(),
             supervisor_enabled: false,
-            current_config: config,
             setpoint_override: None,
             rc_link_state: RcLinkState::Ok,
             explicit_arming_only: false,
@@ -430,7 +427,6 @@ impl<'a> FlightController<'a> {
                                 -att.pitch_rate * PITCH_INVERT,
                                 att.yaw_rate,
                             )),
-                            Instant::now(),
                             low_throttle,
                         );
                         pitch_correction = pc;
@@ -582,60 +578,20 @@ impl<'a> FlightController<'a> {
         self.pwm.set_safe_positions();
     }
 
-    /// Update PID gains at runtime (resets integral state)
-    #[allow(clippy::too_many_arguments)]
-    pub fn set_pid_gains(
-        &mut self,
-        pitch_kp: f32,
-        pitch_ki: f32,
-        pitch_kd: f32,
-        roll_kp: f32,
-        roll_ki: f32,
-        roll_kd: f32,
-        scale: f32,
-        i_limit: f32,
-    ) {
-        let config = PidConfig {
-            kp_pitch: pitch_kp,
-            ki_pitch: pitch_ki,
-            kd_pitch: pitch_kd,
-            kp_roll: roll_kp,
-            ki_roll: roll_ki,
-            kd_roll: roll_kd,
-            scale,
-            i_limit,
-        };
-        self.current_config = config;
+    /// Update PID gains at runtime (resets integral state).
+    pub fn set_pid_gains(&mut self, config: PidConfig) {
         self.attitude_controller.update_config(config);
     }
 
-    /// Apply PID gains from a SavedGains struct (used by autotuner)
+    /// Apply PID gains from a `SavedGains` snapshot (used by autotuner).
     pub fn apply_saved_gains(&mut self, gains: &SavedGains) {
-        self.set_pid_gains(
-            gains.pitch_kp,
-            gains.pitch_ki,
-            gains.pitch_kd,
-            gains.roll_kp,
-            gains.roll_ki,
-            gains.roll_kd,
-            gains.scale,
-            gains.i_limit,
-        );
+        self.set_pid_gains((*gains).into());
     }
 
-    /// Get current PID gains as a SavedGains snapshot
+    /// Get current PID gains as a `SavedGains` snapshot.
     #[must_use]
-    pub const fn get_pid_gains(&self) -> SavedGains {
-        SavedGains {
-            pitch_kp: self.current_config.kp_pitch,
-            pitch_ki: self.current_config.ki_pitch,
-            pitch_kd: self.current_config.kd_pitch,
-            roll_kp: self.current_config.kp_roll,
-            roll_ki: self.current_config.ki_roll,
-            roll_kd: self.current_config.kd_roll,
-            scale: self.current_config.scale,
-            i_limit: self.current_config.i_limit,
-        }
+    pub fn get_pid_gains(&self) -> SavedGains {
+        self.attitude_controller.config.into()
     }
 
     /// Set attitude setpoint override (degrees). Used by autotuner.

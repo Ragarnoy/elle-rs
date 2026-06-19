@@ -63,6 +63,21 @@ pub struct SavedGains {
     pub i_limit: f32,
 }
 
+impl From<crate::pid::PidConfig> for SavedGains {
+    fn from(c: crate::pid::PidConfig) -> Self {
+        Self {
+            pitch_kp: c.kp_pitch,
+            pitch_ki: c.ki_pitch,
+            pitch_kd: c.kd_pitch,
+            roll_kp: c.kp_roll,
+            roll_ki: c.ki_roll,
+            roll_kd: c.kd_roll,
+            scale: c.scale,
+            i_limit: c.i_limit,
+        }
+    }
+}
+
 impl SavedGains {
     pub fn to_bytes(self) -> [u8; 32] {
         bytemuck::cast(self)

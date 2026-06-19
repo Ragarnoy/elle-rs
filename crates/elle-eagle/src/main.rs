@@ -1116,29 +1116,18 @@ async fn main(spawner: Spawner) {
                         fc.disarm();
                         fc.apply_failsafe();
                     }
-                    RpcCommand::SetPidGains {
-                        pitch_kp,
-                        pitch_ki,
-                        pitch_kd,
-                        roll_kp,
-                        roll_ki,
-                        roll_kd,
-                        scale,
-                        i_limit,
-                    } => {
-                        fc.set_pid_gains(
-                            pitch_kp, pitch_ki, pitch_kd, roll_kp, roll_ki, roll_kd, scale, i_limit,
-                        );
+                    RpcCommand::SetPidGains { config } => {
+                        fc.set_pid_gains(config);
                         info!(
                             "RPC: PID gains updated P({}/{}/{}) R({}/{}/{}) s={} il={}",
-                            (pitch_kp * 1000.0) as i32,
-                            (pitch_ki * 1000.0) as i32,
-                            (pitch_kd * 1000.0) as i32,
-                            (roll_kp * 1000.0) as i32,
-                            (roll_ki * 1000.0) as i32,
-                            (roll_kd * 1000.0) as i32,
-                            (scale * 10000.0) as i32,
-                            (i_limit * 10.0) as i32,
+                            (config.kp_pitch * 1000.0) as i32,
+                            (config.ki_pitch * 1000.0) as i32,
+                            (config.kd_pitch * 1000.0) as i32,
+                            (config.kp_roll * 1000.0) as i32,
+                            (config.ki_roll * 1000.0) as i32,
+                            (config.kd_roll * 1000.0) as i32,
+                            (config.scale * 10000.0) as i32,
+                            (config.i_limit * 10.0) as i32,
                         );
                     }
                     RpcCommand::StartULog => {
