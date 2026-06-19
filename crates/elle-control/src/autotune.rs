@@ -50,7 +50,8 @@ pub enum TuningRule {
 }
 
 /// Saved PID configuration for all axes.
-#[derive(Debug, Clone, Copy, defmt::Format)]
+#[derive(Debug, Clone, Copy, defmt::Format, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 pub struct SavedGains {
     pub pitch_kp: f32,
     pub pitch_ki: f32,
@@ -63,64 +64,29 @@ pub struct SavedGains {
 }
 
 impl SavedGains {
-    /// Serialize to 32 bytes (8 × f32 little-endian).
-    pub fn to_bytes(&self) -> [u8; 32] {
-        let mut buf = [0u8; 32];
-        buf[0..4].copy_from_slice(&self.pitch_kp.to_le_bytes());
-        buf[4..8].copy_from_slice(&self.pitch_ki.to_le_bytes());
-        buf[8..12].copy_from_slice(&self.pitch_kd.to_le_bytes());
-        buf[12..16].copy_from_slice(&self.roll_kp.to_le_bytes());
-        buf[16..20].copy_from_slice(&self.roll_ki.to_le_bytes());
-        buf[20..24].copy_from_slice(&self.roll_kd.to_le_bytes());
-        buf[24..28].copy_from_slice(&self.scale.to_le_bytes());
-        buf[28..32].copy_from_slice(&self.i_limit.to_le_bytes());
-        buf
+    pub fn to_bytes(self) -> [u8; 32] {
+        bytemuck::cast(self)
     }
 
-    /// Deserialize from 32 bytes (8 × f32 little-endian).
-    ///
     /// Returns `None` if any value is non-finite or out of its valid range:
-    /// - kp/ki/kd: 0.0..=100.0
-    /// - scale: 0.0..=100.0
+    /// - kp/ki/kd/scale: 0.0..=100.0
     /// - i_limit: 0.0..=1000.0
     pub fn from_bytes(b: &[u8; 32]) -> Option<Self> {
-        let pitch_kp = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-        let pitch_ki = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
-        let pitch_kd = f32::from_le_bytes([b[8], b[9], b[10], b[11]]);
-        let roll_kp = f32::from_le_bytes([b[12], b[13], b[14], b[15]]);
-        let roll_ki = f32::from_le_bytes([b[16], b[17], b[18], b[19]]);
-        let roll_kd = f32::from_le_bytes([b[20], b[21], b[22], b[23]]);
-        let scale = f32::from_le_bytes([b[24], b[25], b[26], b[27]]);
-        let i_limit = f32::from_le_bytes([b[28], b[29], b[30], b[31]]);
-
-        // Validate all gains are finite and within reasonable ranges
+        let g: Self = bytemuck::pod_read_unaligned(b);
         let gain_ok = |v: f32| v.is_finite() && (0.0..=100.0).contains(&v);
-        if !gain_ok(pitch_kp)
-            || !gain_ok(pitch_ki)
-            || !gain_ok(pitch_kd)
-            || !gain_ok(roll_kp)
-            || !gain_ok(roll_ki)
-            || !gain_ok(roll_kd)
+        if !gain_ok(g.pitch_kp)
+            || !gain_ok(g.pitch_ki)
+            || !gain_ok(g.pitch_kd)
+            || !gain_ok(g.roll_kp)
+            || !gain_ok(g.roll_ki)
+            || !gain_ok(g.roll_kd)
+            || !gain_ok(g.scale)
+            || !g.i_limit.is_finite()
+            || !(0.0..=1000.0).contains(&g.i_limit)
         {
             return None;
         }
-        if !scale.is_finite() || !(0.0..=100.0).contains(&scale) {
-            return None;
-        }
-        if !i_limit.is_finite() || !(0.0..=1000.0).contains(&i_limit) {
-            return None;
-        }
-
-        Some(Self {
-            pitch_kp,
-            pitch_ki,
-            pitch_kd,
-            roll_kp,
-            roll_ki,
-            roll_kd,
-            scale,
-            i_limit,
-        })
+        Some(g)
     }
 }
 

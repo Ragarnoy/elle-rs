@@ -530,10 +530,7 @@ async fn main(spawner: Spawner) {
         let load_timeout = Timer::after(Duration::from_secs(2));
         match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), load_timeout).await {
             embassy_futures::select::Either::First(FlashResponse::MagCalLoaded { data }) => {
-                // Deserialize 3x f32 from 12 bytes (little-endian)
-                let ox = f32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-                let oy = f32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-                let oz = f32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+                let [ox, oy, oz]: [f32; 3] = bytemuck::pod_read_unaligned(&data);
 
                 // Validate: finite and reasonable range (raw counts, max ~65535)
                 if ox.is_finite()
@@ -1543,12 +1540,7 @@ async fn main(spawner: Spawner) {
             if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
                 match result {
                     Some((ox, oy, oz)) => {
-                        // Serialize offsets to 12 bytes (3x f32 little-endian)
-                        let mut data = [0u8; 12];
-                        data[0..4].copy_from_slice(&ox.to_le_bytes());
-                        data[4..8].copy_from_slice(&oy.to_le_bytes());
-                        data[8..12].copy_from_slice(&oz.to_le_bytes());
-
+                        let data: [u8; 12] = bytemuck::cast([ox, oy, oz]);
                         FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data });
                         let save_timeout = Timer::after(Duration::from_secs(5));
                         match embassy_futures::select::select(

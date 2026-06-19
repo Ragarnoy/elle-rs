@@ -20,6 +20,7 @@ embassy-dshot = { workspace = true }
 embedded-hal-bus = { workspace = true }
 
 static_cell = { workspace = true }
+bytemuck = { workspace = true }
 postcard-rpc = { workspace = true, optional = true }
 postcard = { workspace = true, optional = true }
 heapless = { workspace = true, optional = true }

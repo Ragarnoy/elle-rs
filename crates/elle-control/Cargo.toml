@@ -8,6 +8,7 @@ elle-config = { workspace = true }
 
 embassy-time = { workspace = true }
 defmt = { workspace = true }
+bytemuck = { workspace = true }
 
 [features]
 
