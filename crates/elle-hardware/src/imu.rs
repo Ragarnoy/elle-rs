@@ -121,6 +121,10 @@ pub static MAG_CAL_START_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::n
 pub static MAG_CAL_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, Option<(f32, f32, f32)>> =
     Signal::new();
 
+/// Double-tap gesture detected by ICM-42686 APEX tap detection (Core1 → Core0).
+/// Core0 acts on this only when disarmed.
+pub static TAP_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
 /// Channel for LED pattern updates
 pub static LED_COMMAND_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,

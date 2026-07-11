@@ -103,6 +103,9 @@ pub const EVT_MAG_CAL_CLEARED: u16 = 114;
 pub const EVT_MAG_CAL_LOADED: u16 = 115;
 pub const EVT_MAG_CAL_LOAD_EMPTY: u16 = 116;
 
+// Tap detection (120–129)
+pub const EVT_DOUBLE_TAP: u16 = 120;
+
 // ---------------------------------------------------------------------------
 // Macro
 // ---------------------------------------------------------------------------

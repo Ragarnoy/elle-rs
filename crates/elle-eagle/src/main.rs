@@ -85,6 +85,28 @@ fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
     attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
 }
 
+/// Gate for the double-tap arm gesture: only allow arming when throttle is
+/// commanded low and the gyro is quiet, so motor vibration or handling can't
+/// trigger a spurious arm.
+fn tap_arm_allowed(
+    commands: Option<&elle_control::commands::PilotCommands>,
+    attitude: Option<&AttitudeData>,
+) -> bool {
+    use elle_control::commands::PilotCommands;
+    let throttle_low = commands.is_some_and(|cmd| match cmd {
+        PilotCommands::Raw(raw) => {
+            raw.channels[elle_config::THROTTLE_CH] < elle_config::TAP_ARM_THROTTLE_MAX_RAW
+        }
+        PilotCommands::Normalized(n) => n.throttle < elle_config::TAP_ARM_THROTTLE_MAX_NORM,
+    });
+    let gyro_quiet = attitude.is_some_and(|a| {
+        a.pitch_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
+            && a.roll_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
+            && a.yaw_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
+    });
+    throttle_low && gyro_quiet
+}
+
 /// Save PID gains to flash with timeout. Returns true on success.
 async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
     use elle_config::profile::{FlashRequest, FlashResponse};
@@ -676,6 +698,23 @@ async fn main(spawner: Spawner) {
                 }
                 fc.set_safe_positions();
                 DSHOT_THROTTLE.signal((0, 0));
+            }
+
+            // Double-tap arm gesture. Drain the signal every iteration so a double
+            // tap detected while armed (e.g. motor vibration) can't stay latched
+            // and re-arm immediately after a disarm.
+            let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
+            if tapped && !fc.is_armed() && !kill_active {
+                if tap_arm_allowed(last_commands.as_ref(), attitude.as_ref()) {
+                    fc.arm();
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_DOUBLE_TAP,
+                        "Double-tap: armed"
+                    );
+                } else {
+                    info!("Double-tap ignored: throttle not low or gyro not quiet");
+                }
             }
 
             if let Some(commands) = &last_commands {
@@ -1409,6 +1448,22 @@ async fn main(spawner: Spawner) {
                 }
                 fc.set_safe_positions();
                 DSHOT_THROTTLE.signal((0, 0));
+            }
+
+            // Double-tap arm gesture (RPC mode). Drain the signal every iteration
+            // so a tap detected while armed can't latch and re-arm after a disarm.
+            let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
+            if tapped && !fc.is_armed() && !kill_active {
+                if tap_arm_allowed(commands.as_ref(), attitude.as_ref()) {
+                    fc.arm();
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_DOUBLE_TAP,
+                        "Double-tap: armed"
+                    );
+                } else {
+                    info!("Double-tap ignored: throttle not low or gyro not quiet");
+                }
             }
 
             // Update flight controller

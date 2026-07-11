@@ -120,15 +120,22 @@ impl<'a> Imu<'a> {
         {
             let icm = self.icm.as_mut().unwrap();
             let mut bank0 = icm.ll().bank::<0>();
-            // Disable FIFO threshold interrupt, enable data-ready interrupt.
-            // INT1 is already configured as push-pull, active-high, latched
-            // (driver defaults). Latched = stays asserted until INT_STATUS read,
-            // which read_sample() does as part of its SPI transaction.
             bank0
                 .int_source0()
                 .modify(|_, w| w.fifo_ths_int1_en(0).ui_drdy_int1_en(1))
                 .map_err(|_| ImuError::InitializationFailed)?;
             info!("ICM-42686: INT1 configured for DATA_RDY (active-high, latched)");
+
+            // Enable APEX tap detection. dmp_power_save defaults to 1 (off), must be
+            // cleared or the DMP never runs and tap_enable has no effect.
+            // Tap sensitivity runs on chip defaults (jerk-based; APEX_CONFIG7,
+            // TAP_MIN_JERK_THR=17) — the ICM-42686-P has no amplitude threshold.
+            bank0
+                .apex_config0()
+                .modify(|_, w| w.tap_enable(1).dmp_power_save(0))
+                .map_err(|_| ImuError::InitializationFailed)?;
+
+            info!("ICM-42686: APEX tap detection enabled (chip default sensitivity, DMP active)");
         }
 
         // Mark IMU as initialized — ICM-42686 is factory-calibrated
@@ -243,6 +250,7 @@ impl<'a> Imu<'a> {
         let mut consecutive_errors: u32 = 0;
         let mut mag_counter: u32 = 0;
         let mut baro_counter: u32 = 0;
+        let mut tap_counter: u32 = 0;
 
         loop {
             // Wait for DATA_RDY: INT1 goes high when new sample is ready
@@ -344,6 +352,29 @@ impl<'a> Imu<'a> {
                     "Core1: Mag cal offsets applied: ({}, {}, {})",
                     ox as i32, oy as i32, oz as i32
                 );
+            }
+
+            // Poll APEX tap detection every TAP_POLL_INTERVAL samples (~50ms).
+            // INT_STATUS3.tap_det_int clears on read, so no separate clear needed.
+            const TAP_POLL_INTERVAL: u32 = 50;
+            tap_counter += 1;
+            if tap_counter >= TAP_POLL_INTERVAL {
+                tap_counter = 0;
+                let mut bank0 = icm.ll().bank::<0>();
+                if let Ok(s) = bank0.int_status3().read() {
+                    if s.tap_det_int() != 0 {
+                        if let Ok(d) = bank0.apex_data4().read() {
+                            let num = d.tap_num();
+                            // num: 1=single, 2=double
+                            if num == 2 {
+                                crate::imu::TAP_SIGNAL.signal(());
+                                info!("ICM-42686: double-tap detected");
+                            } else if num == 1 {
+                                info!("ICM-42686: single tap (num={})", num);
+                            }
+                        }
+                    }
+                }
             }
 
             // Check for calibration start request

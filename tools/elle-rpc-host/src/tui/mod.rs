@@ -18,7 +18,7 @@ use crossterm::terminal::{
 use elle_rpc_icd::*;
 use futures::StreamExt;
 use postcard_rpc::header::VarSeqKind;
-use postcard_rpc::host_client::HostClient;
+use postcard_rpc::host_client::{HostClient, MultiSubRxError};
 use postcard_rpc::standard_icd::WireError;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -109,11 +109,23 @@ pub async fn run() -> Result<()> {
     let mut engine_interval = tokio::time::interval(Duration::from_millis(200)); // 5Hz engine poll
     let mut event_stream = crossterm::event::EventStream::new();
 
+    let mut log_sub_closed = false;
+
     let result = loop {
         tokio::select! {
-            // Log subscription
-            Ok(msg) = log_sub.recv() => {
-                state.push_log(msg);
+            // Log subscription. Once the subscription reports IoClosed it stays
+            // closed forever, so disable the branch to avoid a busy loop.
+            result = log_sub.recv(), if !log_sub_closed => {
+                match result {
+                    Ok(msg) => state.push_log(msg),
+                    Err(MultiSubRxError::Lagged(n)) => {
+                        state.set_status_message(format!("log stream lagged, dropped {n}"));
+                    }
+                    Err(MultiSubRxError::IoClosed) => {
+                        log_sub_closed = true;
+                        state.set_status_message("log stream closed (device disconnected?)".to_string());
+                    }
+                }
             }
 
             // Keyboard input

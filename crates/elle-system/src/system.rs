@@ -413,18 +413,19 @@ impl<'a> FlightController<'a> {
                         // Compute attitude corrections
                         // Reset integrator when disarmed or throttle near zero
                         let low_throttle = !self.arming.armed || norm.throttle < 0.05;
-                        // Negate measurements to match inverted stick conventions.
-                        // PITCH_INVERT/ROLL_INVERT are applied to the setpoint (via stick),
-                        // so the same inversion must apply to the AHRS measurement + rate
-                        // to keep the PID error and damping signs consistent.
+                        // Measurements stay in raw AHRS frame (nose-up = positive pitch).
+                        // PITCH_INVERT is already baked into the setpoint via norm.pitch
+                        // from to_normalized(), so applying it again here would double-invert
+                        // and produce the wrong correction direction.
+                        // D-term rates are negated because rate = d(error)/dt = -d(measurement)/dt.
                         let (pc, rc) = self.attitude_controller.update(
                             self.filtered_pitch_setpoint_rad,
                             self.filtered_roll_setpoint_rad,
-                            att.pitch * PITCH_INVERT,
-                            att.roll * ROLL_INVERT,
+                            att.pitch,
+                            att.roll,
                             Some((
-                                -att.roll_rate * ROLL_INVERT,
-                                -att.pitch_rate * PITCH_INVERT,
+                                -att.roll_rate,
+                                -att.pitch_rate,
                                 att.yaw_rate,
                             )),
                             low_throttle,

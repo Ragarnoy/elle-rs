@@ -193,6 +193,12 @@ pub const AUTOTUNE_OFF_THRESHOLD: u16 = 500; // Below = off
 pub const AUTOTUNE_PITCH_THRESHOLD: u16 = 1300; // Below = pitch, above = roll
 pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz
 
+// Double-tap arm gesture gating (motor vibration can trip the APEX tap detector,
+// so the gesture only arms when the aircraft is demonstrably idle)
+pub const TAP_ARM_MAX_GYRO_RAD_S: f32 = 0.5; // ~30°/s — gyro must be quiet
+pub const TAP_ARM_THROTTLE_MAX_RAW: u16 = 200; // Raw CRSF throttle must be below this
+pub const TAP_ARM_THROTTLE_MAX_NORM: f32 = 0.05; // Normalized throttle must be below this
+
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)

@@ -689,6 +689,8 @@ const fn log_code_text(code: u16) -> &'static str {
         114 => "Mag cal: cleared",
         115 => "Mag cal: loaded from flash",
         116 => "Mag cal: no saved cal",
+        // Tap detection (120–129)
+        120 => "Double-tap: armed",
         _ => "unknown",
     }
 }
