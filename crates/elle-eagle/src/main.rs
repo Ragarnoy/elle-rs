@@ -85,24 +85,24 @@ fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
     attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
 }
 
-/// Gate for the double-tap arm gesture: only allow arming when throttle is
-/// commanded low and the gyro is quiet, so motor vibration or handling can't
-/// trigger a spurious arm.
-fn tap_arm_allowed(
+/// Gate for the double-tap mag-cal gesture: only start calibration when
+/// throttle is commanded low and the gyro is quiet, so motor vibration or
+/// handling can't trigger a spurious calibration.
+fn tap_cal_allowed(
     commands: Option<&elle_control::commands::PilotCommands>,
     attitude: Option<&AttitudeData>,
 ) -> bool {
     use elle_control::commands::PilotCommands;
     let throttle_low = commands.is_some_and(|cmd| match cmd {
         PilotCommands::Raw(raw) => {
-            raw.channels[elle_config::THROTTLE_CH] < elle_config::TAP_ARM_THROTTLE_MAX_RAW
+            raw.channels[elle_config::THROTTLE_CH] < elle_config::TAP_CAL_THROTTLE_MAX_RAW
         }
-        PilotCommands::Normalized(n) => n.throttle < elle_config::TAP_ARM_THROTTLE_MAX_NORM,
+        PilotCommands::Normalized(n) => n.throttle < elle_config::TAP_CAL_THROTTLE_MAX_NORM,
     });
     let gyro_quiet = attitude.is_some_and(|a| {
-        a.pitch_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
-            && a.roll_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
-            && a.yaw_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
+        a.pitch_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
+            && a.roll_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
+            && a.yaw_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
     });
     throttle_low && gyro_quiet
 }
@@ -643,6 +643,9 @@ async fn main(spawner: Spawner) {
         let mut heading_hold_debounce_count: u32 = 0;
         let mut heading_hold_effective_prev: bool = false;
 
+        // Mag calibration collection in progress (double-tap gesture)
+        let mut mag_cal_collecting: bool = false;
+
         // Create ticker for precise 13ms periods (77Hz)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
 
@@ -705,20 +708,68 @@ async fn main(spawner: Spawner) {
                 DSHOT_THROTTLE.signal((0, 0));
             }
 
-            // Double-tap arm gesture. Drain the signal every iteration so a double
+            // Double-tap mag-cal gesture. Drain the signal every iteration so a
             // tap detected while armed (e.g. motor vibration) can't stay latched
-            // and re-arm immediately after a disarm.
+            // and start a calibration right after a disarm.
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
-            if tapped && !fc.is_armed() && !kill_active {
-                if tap_arm_allowed(last_commands.as_ref(), attitude.as_ref()) {
-                    fc.arm();
+            if tapped && !fc.is_armed() && !kill_active && !mag_cal_collecting {
+                if tap_cal_allowed(last_commands.as_ref(), attitude.as_ref()) {
+                    elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
+                    mag_cal_collecting = true;
                     elle_hardware::elle_event!(
                         info,
-                        elle_hardware::event::EVT_DOUBLE_TAP,
-                        "Double-tap: armed"
+                        elle_hardware::event::EVT_MAG_CAL_STARTED,
+                        "Double-tap: mag calibration started"
                     );
                 } else {
                     info!("Double-tap ignored: throttle not low or gyro not quiet");
+                }
+            }
+
+            // Poll mag calibration result from IMU task (tap-triggered collection)
+            if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
+                mag_cal_collecting = false;
+                match result {
+                    Some((ox, oy, oz)) => {
+                        use elle_config::profile::{FlashRequest, FlashResponse};
+                        use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+                        let data: [u8; 12] = bytemuck::cast([ox, oy, oz]);
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data });
+                        let save_timeout = Timer::after(Duration::from_secs(5));
+                        match embassy_futures::select::select(
+                            FLASH_RESPONSE_SIGNAL.wait(),
+                            save_timeout,
+                        )
+                        .await
+                        {
+                            embassy_futures::select::Either::First(FlashResponse::MagCalSaved) => {
+                                elle_hardware::elle_event!(
+                                    info,
+                                    elle_hardware::event::EVT_MAG_CAL_SAVED,
+                                    "Mag cal saved to flash"
+                                );
+                            }
+                            _ => {
+                                elle_hardware::elle_event!(
+                                    warn,
+                                    elle_hardware::event::EVT_MAG_CAL_FAILED,
+                                    "Mag cal flash save failed"
+                                );
+                            }
+                        }
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_MAG_CAL_COMPLETE,
+                            "Mag calibration complete"
+                        );
+                    }
+                    None => {
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_MAG_CAL_FAILED,
+                            "Mag calibration failed (insufficient rotation)"
+                        );
+                    }
                 }
             }
 
@@ -1053,6 +1104,8 @@ async fn main(spawner: Spawner) {
 
                 let led_pattern = if fc.is_failsafe() {
                     LedPattern::RapidFlash(colors::ORANGE)
+                } else if mag_cal_collecting {
+                    LedPattern::FastBlink(colors::YELLOW)
                 } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
@@ -1518,16 +1571,22 @@ async fn main(spawner: Spawner) {
                 DSHOT_THROTTLE.signal((0, 0));
             }
 
-            // Double-tap arm gesture (RPC mode). Drain the signal every iteration
-            // so a tap detected while armed can't latch and re-arm after a disarm.
+            // Double-tap mag-cal gesture (RPC mode). Drain the signal every iteration
+            // so a tap detected while armed can't latch and fire after a disarm.
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
-            if tapped && !fc.is_armed() && !kill_active {
-                if tap_arm_allowed(commands.as_ref(), attitude.as_ref()) {
-                    fc.arm();
+            if tapped
+                && !fc.is_armed()
+                && !kill_active
+                && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != 1
+            {
+                if tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
+                    elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
+                    rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
+                    rpc_app::MAG_CAL_SAMPLES.store(0, Ordering::Relaxed);
                     elle_hardware::elle_event!(
                         info,
-                        elle_hardware::event::EVT_DOUBLE_TAP,
-                        "Double-tap: armed"
+                        elle_hardware::event::EVT_MAG_CAL_STARTED,
+                        "Double-tap: mag calibration started"
                     );
                 } else {
                     info!("Double-tap ignored: throttle not low or gyro not quiet");

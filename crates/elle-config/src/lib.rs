@@ -206,11 +206,11 @@ pub const HEADING_HOLD_I_LIMIT_DEG: f32 = 10.0; // integral clamp, in roll-degre
 pub const HEADING_HOLD_MAX_ROLL_DEG: f32 = 25.0; // bank angle clamp (< STABILIZED_MAX_ROLL_DEG)
 pub const HEADING_HOLD_MAX_ROLL_RATE_DEG_S: f32 = 15.0; // output slew-rate limiter
 
-// Double-tap arm gesture gating (motor vibration can trip the APEX tap detector,
-// so the gesture only arms when the aircraft is demonstrably idle)
-pub const TAP_ARM_MAX_GYRO_RAD_S: f32 = 0.5; // ~30°/s — gyro must be quiet
-pub const TAP_ARM_THROTTLE_MAX_RAW: u16 = 200; // Raw CRSF throttle must be below this
-pub const TAP_ARM_THROTTLE_MAX_NORM: f32 = 0.05; // Normalized throttle must be below this
+// Double-tap mag-cal gesture gating (motor vibration can trip the APEX tap detector,
+// so the gesture only starts calibration when the aircraft is demonstrably idle)
+pub const TAP_CAL_MAX_GYRO_RAD_S: f32 = 0.5; // ~30°/s — gyro must be quiet
+pub const TAP_CAL_THROTTLE_MAX_RAW: u16 = 200; // Raw CRSF throttle must be below this
+pub const TAP_CAL_THROTTLE_MAX_NORM: f32 = 0.05; // Normalized throttle must be below this
 
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
