@@ -62,8 +62,9 @@ impl EngineUnitReading {
         match *edt {
             ExtendedTelemetry::Temperature(t) => self.temperature = t,
             ExtendedTelemetry::Voltage(mv) => self.voltage_mv = mv,
-            // 255A (raw 0xFF) is the "no current sensor" sentinel on some ESCs
-            ExtendedTelemetry::Current(ma) if ma < 255_000 => self.current_ma = ma,
+            // ESCs without a current sensor emit garbage near the 8-bit ceiling
+            // (240-255A observed); anything >=200A is impossible on this airframe
+            ExtendedTelemetry::Current(ma) if ma < 200_000 => self.current_ma = ma,
             _ => {}
         }
     }
