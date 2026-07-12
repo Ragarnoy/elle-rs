@@ -160,6 +160,21 @@ pub async fn sd_writer_task(
     }
     info!("SD: pre-init clocking done");
 
+    // Bring-up diagnostic: raw CMD0 probe, dumping the response window.
+    // A responding card answers 0x01 (idle) within a few bytes. All-255 means
+    // MISO stuck high / card not responding; all-0 means MISO stuck low.
+    {
+        cs.set_low();
+        let cmd0 = [0x40u8, 0x00, 0x00, 0x00, 0x00, 0x95];
+        let _ = spi.write(&cmd0).await;
+        let mut resp = [0xFFu8; 10];
+        let _ = spi.transfer_in_place(&mut resp).await;
+        cs.set_high();
+        let mut flush = [0xFFu8; 2];
+        let _ = spi.transfer_in_place(&mut flush).await;
+        info!("SD: CMD0 raw response: {}", defmt::Debug2Format(&resp));
+    }
+
     // Move SPI bus into shared mutex (SpiDeviceWithConfig requires this).
     // SD identification phase requires <=400kHz — Config::default() is 1MHz,
     // which some cards reject with init timeouts.

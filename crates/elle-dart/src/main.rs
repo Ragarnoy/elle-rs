@@ -702,11 +702,12 @@ async fn main(spawner: Spawner) {
                 DSHOT_THROTTLE.signal((0, 0));
             }
 
-            // Double-tap mag-cal gesture. Drain the signal every iteration so a
-            // tap detected while armed (e.g. motor vibration) can't stay latched
-            // and start a calibration right after a disarm.
+            // Double-tap mag-cal gesture — only while the kill switch is active
+            // (deliberate service state; motors locked out) so handling bumps
+            // can't start a calibration. Drain the signal every iteration so a
+            // tap detected outside kill mode can't stay latched and fire later.
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
-            if tapped && !fc.is_armed() && !kill_active && !mag_cal_collecting {
+            if tapped && !fc.is_armed() && kill_active && !mag_cal_collecting {
                 if tap_cal_allowed(last_commands.as_ref(), attitude.as_ref()) {
                     elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
                     mag_cal_collecting = true;
@@ -1525,12 +1526,13 @@ async fn main(spawner: Spawner) {
                 DSHOT_THROTTLE.signal((0, 0));
             }
 
-            // Double-tap mag-cal gesture (RPC mode). Drain the signal every iteration
-            // so a tap detected while armed can't latch and fire after a disarm.
+            // Double-tap mag-cal gesture (RPC mode) — only while the kill switch
+            // is active (inert in pure RPC builds where kill_active is always
+            // false — use `mag cal start` there instead).
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
             if tapped
                 && !fc.is_armed()
-                && !kill_active
+                && kill_active
                 && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != 1
             {
                 if tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
