@@ -43,6 +43,8 @@ pub const EVT_EMERGENCY_STOP: u16 = 12;
 pub const EVT_RC_WARNING: u16 = 13;
 pub const EVT_RC_SIGNAL_LOST: u16 = 14;
 pub const EVT_RC_RESTORED: u16 = 15;
+pub const EVT_KILL_ENGAGED: u16 = 16;
+pub const EVT_KILL_RELEASED: u16 = 17;
 
 // CRSF telemetry (20–29)
 pub const EVT_CRSF_TX_STARTED: u16 = 20;

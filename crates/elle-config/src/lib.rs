@@ -7,6 +7,12 @@ pub mod profile;
 pub use lut::*;
 pub use profile::*;
 
+// Platform identification (used for ULog ver_hw, etc.)
+#[cfg(not(feature = "platform-dart"))]
+pub const PLATFORM_NAME: &str = "RP2350-XFly-Eagle";
+#[cfg(feature = "platform-dart")]
+pub const PLATFORM_NAME: &str = "RP2350-Elle-Dart";
+
 // PWM timing parameters
 pub const REFRESH_INTERVAL_US: u32 = 20_000; // 50Hz servo refresh rate
 

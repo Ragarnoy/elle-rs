@@ -652,6 +652,7 @@ async fn main(spawner: Spawner) {
         // Track last commands for consistent update rate
         let mut last_commands: Option<PilotCommands> = None;
         let mut was_armed = false;
+        let mut was_killed = false;
 
         loop {
             ticker.next().await; // Wait for next tick BEFORE processing
@@ -694,15 +695,27 @@ async fn main(spawner: Spawner) {
                 }
             });
 
+            if kill_active != was_killed {
+                if kill_active {
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_KILL_ENGAGED,
+                        "Kill switch engaged"
+                    );
+                } else {
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_KILL_RELEASED,
+                        "Kill switch released"
+                    );
+                }
+                was_killed = kill_active;
+            }
+
             if kill_active {
                 // Kill switch active: disarm, center elevons, zero throttle
                 if fc.is_armed() {
                     fc.disarm();
-                    elle_hardware::elle_event!(
-                        warn,
-                        elle_hardware::event::EVT_MOTORS_DISARMED,
-                        "Kill switch activated"
-                    );
                 }
                 fc.set_safe_positions();
                 DSHOT_THROTTLE.signal((0, 0));
@@ -788,15 +801,25 @@ async fn main(spawner: Spawner) {
                     fc.update(commands, valid_attitude.as_ref());
                 }
 
-                // Detect arm/disarm transitions → beep
+                // Detect arm/disarm transitions → beep + event
                 let now_armed = fc.is_armed();
                 if now_armed && !was_armed {
                     elle_hardware::dshot::BEEP_SIGNAL.signal(
                         elle_hardware::dshot::BeepPattern::ArmBeep,
                     );
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_MOTORS_ARMED,
+                        "Motors armed"
+                    );
                 } else if !now_armed && was_armed {
                     elle_hardware::dshot::BEEP_SIGNAL.signal(
                         elle_hardware::dshot::BeepPattern::DisarmBeep,
+                    );
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_MOTORS_DISARMED,
+                        "Motors disarmed"
                     );
                 }
                 was_armed = now_armed;
@@ -1179,6 +1202,7 @@ async fn main(spawner: Spawner) {
         let mut autotune_tick: u32 = 0;
         let mut rpc_save_pending: Option<[u8; 32]> = None;
         let mut was_armed = false;
+        let mut was_killed = false;
         let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
         let mut autotune_display_timer: u32 = 0;
         const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
@@ -1559,14 +1583,26 @@ async fn main(spawner: Spawner) {
             #[cfg(not(feature = "rpc-rc"))]
             let kill_active = false;
 
+            if kill_active != was_killed {
+                if kill_active {
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_KILL_ENGAGED,
+                        "Kill switch engaged (RPC)"
+                    );
+                } else {
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_KILL_RELEASED,
+                        "Kill switch released (RPC)"
+                    );
+                }
+                was_killed = kill_active;
+            }
+
             if kill_active {
                 if fc.is_armed() {
                     fc.disarm();
-                    elle_hardware::elle_event!(
-                        warn,
-                        elle_hardware::event::EVT_MOTORS_DISARMED,
-                        "Kill switch activated (RPC)"
-                    );
                 }
                 fc.set_safe_positions();
                 DSHOT_THROTTLE.signal((0, 0));
