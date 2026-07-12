@@ -282,9 +282,16 @@ impl<'a> FlightController<'a> {
         )
     }
 
+    /// Record RC packet arrival for link-age tracking / failsafe.
+    /// Call on packet reception, not per control tick — `update()` runs every
+    /// tick with retained commands, so stamping there would mask link loss.
+    pub fn note_rc_packet(&mut self, timestamp: Instant) {
+        self.last_packet_time = timestamp;
+    }
+
     /// Main update method - accepts PilotCommands from any source
     pub fn update(&mut self, commands: &PilotCommands, attitude: Option<&AttitudeData>) {
-        self.last_packet_time = Instant::now();
+        self.last_packet_time = commands.timestamp();
 
         let mode = commands.attitude_mode();
 

@@ -33,7 +33,7 @@ cortex-m-rt = { workspace = true }
 panic-probe = { workspace = true }
 
 [features]
-default = ["defmt-logging"]
+default = ["defmt-logging", "gnss"]
 rpc-rc = []
 disable-imu = ["elle-system/disable-imu"]
 performance-monitoring = ["elle-system/performance-monitoring"]

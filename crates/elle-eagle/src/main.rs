@@ -681,6 +681,7 @@ async fn main(spawner: Spawner) {
                     );
                 }
 
+                fc.note_rc_packet(commands.timestamp());
                 last_commands = Some(commands);
             }
 
@@ -1107,11 +1108,10 @@ async fn main(spawner: Spawner) {
                 }
             }
 
-            // Check for failsafe (triggers after 300ms of no valid packets)
-            // Skip when killed — fc.update() is blocked so last_packet_time never refreshes
-            if !kill_active {
-                fc.check_failsafe();
-            }
+            // Check for failsafe (triggers after 300ms of no valid packets).
+            // Packet arrival is stamped via note_rc_packet(), so this stays
+            // accurate even while the kill switch blocks fc.update().
+            fc.check_failsafe();
 
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
@@ -1551,6 +1551,7 @@ async fn main(spawner: Spawner) {
                             );
                         }
                     }
+                    fc.note_rc_packet(commands.timestamp());
                     last_commands = Some(commands);
                 }
                 last_commands.clone()
@@ -1662,12 +1663,11 @@ async fn main(spawner: Spawner) {
             }
             was_armed = now_armed;
 
-            // Check for RC signal loss (only relevant when RC is the command source)
-            // Skip when killed — fc.update() is blocked so last_packet_time never refreshes
+            // Check for RC signal loss (only relevant when RC is the command source).
+            // Packet arrival is stamped via note_rc_packet(), so this stays
+            // accurate even while the kill switch blocks fc.update().
             #[cfg(feature = "rpc-rc")]
-            if !kill_active {
-                fc.check_failsafe();
-            }
+            fc.check_failsafe();
 
             // Autotuner per-tick update
             if autotuner.is_active()
