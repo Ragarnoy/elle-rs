@@ -7,6 +7,12 @@ pub mod profile;
 pub use lut::*;
 pub use profile::*;
 
+// Platform identification (used for ULog ver_hw, etc.)
+#[cfg(not(feature = "platform-dart"))]
+pub const PLATFORM_NAME: &str = "RP2350-XFly-Eagle";
+#[cfg(feature = "platform-dart")]
+pub const PLATFORM_NAME: &str = "RP2350-Elle-Dart";
+
 // PWM timing parameters
 pub const REFRESH_INTERVAL_US: u32 = 20_000; // 50Hz servo refresh rate
 
@@ -167,7 +173,7 @@ pub const PID_I_LIMIT: f32 = 0.5;
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
 
 // RC aux channel assignments:
-//   CH5 (idx 4) = 2-pos switch left  → Unused
+//   CH5 (idx 4) = 2-pos switch left  → Heading hold (modifier on top of Stabilized)
 //   CH6 (idx 5) = 3-pos switch left  → Attitude mode (Manual/Stabilized/AltitudeHold)
 //   CH7 (idx 6) = 3-pos switch right → Autotune (off/pitch/roll)
 //   CH8 (idx 7) = 2-pos switch right → Kill switch (high = disarm, must re-arm)
@@ -193,11 +199,24 @@ pub const AUTOTUNE_OFF_THRESHOLD: u16 = 500; // Below = off
 pub const AUTOTUNE_PITCH_THRESHOLD: u16 = 1300; // Below = pitch, above = roll
 pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz
 
-// Double-tap arm gesture gating (motor vibration can trip the APEX tap detector,
-// so the gesture only arms when the aircraft is demonstrably idle)
-pub const TAP_ARM_MAX_GYRO_RAD_S: f32 = 0.5; // ~30°/s — gyro must be quiet
-pub const TAP_ARM_THROTTLE_MAX_RAW: u16 = 200; // Raw CRSF throttle must be below this
-pub const TAP_ARM_THROTTLE_MAX_NORM: f32 = 0.05; // Normalized throttle must be below this
+// Heading-hold RC switch (2-position on CH5) — modifier active only while
+// AttitudeMode::Stabilized is selected; captures current heading on engage.
+pub const HEADING_HOLD_CH: usize = 4; // CH5 - 2-pos: off/on
+pub const HEADING_HOLD_THRESHOLD: u16 = 1024; // Above this = engaged
+pub const HEADING_HOLD_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz, matches AUTOTUNE_DEBOUNCE_TICKS
+
+// Heading-hold outer loop: P/PI on heading error (deg) -> roll setpoint (deg)
+pub const HEADING_HOLD_KP: f32 = 1.2;
+pub const HEADING_HOLD_KI: f32 = 0.0; // start P-only; enable after flight-test tuning
+pub const HEADING_HOLD_I_LIMIT_DEG: f32 = 10.0; // integral clamp, in roll-degrees
+pub const HEADING_HOLD_MAX_ROLL_DEG: f32 = 25.0; // bank angle clamp (< STABILIZED_MAX_ROLL_DEG)
+pub const HEADING_HOLD_MAX_ROLL_RATE_DEG_S: f32 = 15.0; // output slew-rate limiter
+
+// Double-tap mag-cal gesture gating (motor vibration can trip the APEX tap detector,
+// so the gesture only starts calibration when the aircraft is demonstrably idle)
+pub const TAP_CAL_MAX_GYRO_RAD_S: f32 = 0.5; // ~30°/s — gyro must be quiet
+pub const TAP_CAL_THROTTLE_MAX_RAW: u16 = 200; // Raw CRSF throttle must be below this
+pub const TAP_CAL_THROTTLE_MAX_NORM: f32 = 0.05; // Normalized throttle must be below this
 
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
@@ -279,6 +298,13 @@ const _: () = assert!(AUTOTUNE_OFF_THRESHOLD < AUTOTUNE_PITCH_THRESHOLD);
 // Channel indices must be distinct and in 0..16
 const _: () = assert!(ROLL_CH < 16 && PITCH_CH < 16 && THROTTLE_CH < 16 && YAW_CH < 16);
 const _: () = assert!(ATTITUDE_ENABLE_CH < 16 && AUTOTUNE_CH < 16 && KILL_SWITCH_CH < 16);
+const _: () = assert!(HEADING_HOLD_CH < 16);
+
+// Heading-hold gains/limits must be sane and bank angle must not exceed the
+// pilot's own Stabilized-mode authority.
+const _: () = assert!(HEADING_HOLD_KP >= 0.0 && HEADING_HOLD_KI >= 0.0 && HEADING_HOLD_I_LIMIT_DEG >= 0.0);
+const _: () = assert!(HEADING_HOLD_MAX_ROLL_DEG > 0.0 && HEADING_HOLD_MAX_ROLL_DEG <= STABILIZED_MAX_ROLL_DEG);
+const _: () = assert!(HEADING_HOLD_MAX_ROLL_RATE_DEG_S > 0.0);
 
 // CONTROL_LOOP_DT must be consistent with CONTROL_LOOP_FREQUENCY_HZ (±1ms tolerance).
 // These are defined independently — if one changes and the other doesn't, PID integrator

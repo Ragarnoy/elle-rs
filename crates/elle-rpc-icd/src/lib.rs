@@ -41,6 +41,15 @@ pub struct SetControlModeReq {
     pub mode: ControlMode,
 }
 
+/// Engage/disengage heading-hold (modifier active only in Stabilized mode).
+/// `heading_cdeg` is only used when `enabled` is true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct SetHeadingHoldReq {
+    pub enabled: bool,
+    /// Target heading in centidegrees (degrees * 100)
+    pub heading_cdeg: i16,
+}
+
 // ============================================================================
 // Wire Types - Responses
 // ============================================================================
@@ -220,6 +229,12 @@ pub struct ControllerOutputResp {
     pub engine_left_dshot: u16,
     /// Right engine DShot throttle (0-1999)
     pub engine_right_dshot: u16,
+    /// True while the heading-hold modifier is engaged
+    pub heading_hold_active: bool,
+    /// Locked heading-hold target in centidegrees (valid only when active)
+    pub heading_target_cdeg: i16,
+    /// Heading error (shortest path) in centidegrees (valid only when active)
+    pub heading_error_cdeg: i16,
 }
 
 /// Set PID gains (integer-scaled: x1000 for gains, x10000 for scale, x10 for i_limit)
@@ -318,6 +333,7 @@ endpoints! {
     | StartMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/start"    |
     | ClearMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/clear"    |
     | GetMagCalEndpoint       | ()                | MagCalResp        | "elle/cal/mag/get"      |
+    | SetHeadingHoldEndpoint  | SetHeadingHoldReq | AckResp           | "elle/ctrl/heading_hold" |
 }
 
 // ============================================================================

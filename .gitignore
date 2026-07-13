@@ -2,3 +2,4 @@
 /.idea
 /logs
 crates/elle-eagle/logs/
+*.ulg

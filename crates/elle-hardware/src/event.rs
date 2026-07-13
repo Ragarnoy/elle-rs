@@ -43,6 +43,8 @@ pub const EVT_EMERGENCY_STOP: u16 = 12;
 pub const EVT_RC_WARNING: u16 = 13;
 pub const EVT_RC_SIGNAL_LOST: u16 = 14;
 pub const EVT_RC_RESTORED: u16 = 15;
+pub const EVT_KILL_ENGAGED: u16 = 16;
+pub const EVT_KILL_RELEASED: u16 = 17;
 
 // CRSF telemetry (20–29)
 pub const EVT_CRSF_TX_STARTED: u16 = 20;
@@ -105,6 +107,11 @@ pub const EVT_MAG_CAL_LOAD_EMPTY: u16 = 116;
 
 // Tap detection (120–129)
 pub const EVT_DOUBLE_TAP: u16 = 120;
+
+// Heading hold (130–139)
+pub const EVT_HEADING_HOLD_ENGAGED: u16 = 130;
+pub const EVT_HEADING_HOLD_DISENGAGED: u16 = 131;
+pub const EVT_HEADING_HOLD_TARGET_SET: u16 = 132;
 
 // ---------------------------------------------------------------------------
 // Macro

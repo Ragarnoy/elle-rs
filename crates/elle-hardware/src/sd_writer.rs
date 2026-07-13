@@ -160,8 +160,11 @@ pub async fn sd_writer_task(
     }
     info!("SD: pre-init clocking done");
 
-    // Move SPI bus into shared mutex (SpiDeviceWithConfig requires this)
-    let init_config = Config::default(); // 400kHz for card init
+    // Move SPI bus into shared mutex (SpiDeviceWithConfig requires this).
+    // SD identification phase requires <=400kHz — Config::default() is 1MHz,
+    // which some cards reject with init timeouts.
+    let mut init_config = Config::default();
+    init_config.frequency = 400_000;
     let spi_bus = SPI_BUS.init(Mutex::new(spi));
     let spid = SpiDeviceWithConfig::new(spi_bus, cs, init_config);
     let mut sd = SdSpi::<_, _, aligned::A1>::new(spid, embassy_time::Delay);

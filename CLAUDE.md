@@ -33,7 +33,7 @@ Key feature flags for elle-eagle:
 - `rpc-rc` — RC/CRSF flight control in RPC mode. When combined with `rpc-control`, pilot commands come from the RC transmitter instead of RPC accumulators. The TUI still provides full monitoring. **Requires `rpc-control`** (enforced via `compile_error!`). Mitigates a build-specific DShot PIO issue in the RPC binary (see memory).
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
-- `gnss` — SAM-M10Q GNSS receiver support (works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames)
+- `gnss` — SAM-M10Q GNSS receiver support (default, both eagle and dart; works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames). RPC builds use `--no-default-features`, so add `gnss` explicitly there if wanted.
 - CRSF telemetry TX is always compiled in (no feature gate) — attitude, flight mode, GPS, baro altitude, battery voltage/current to radio via PIN_20/UART1 TX
 
 ULog flash recording is always compiled in (no feature gate). Recording is idle until explicitly started.

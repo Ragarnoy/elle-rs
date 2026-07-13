@@ -120,6 +120,20 @@ fn handle_set_control_mode(
     send_cmd(ctx, RpcCommand::SetMode(req.mode))
 }
 
+fn handle_set_heading_hold(
+    ctx: &mut RpcContext,
+    _hdr: VarHeader,
+    req: SetHeadingHoldReq,
+) -> AckResp {
+    send_cmd(
+        ctx,
+        RpcCommand::SetHeadingHold {
+            enabled: req.enabled,
+            target_cdeg: req.heading_cdeg,
+        },
+    )
+}
+
 fn handle_arm(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     send_cmd(ctx, RpcCommand::Arm)
 }
@@ -347,6 +361,9 @@ fn handle_get_controller_output(
         elevon_right_us: out.elevon_right_us as u16,
         engine_left_dshot: out.engine_left_dshot,
         engine_right_dshot: out.engine_right_dshot,
+        heading_hold_active: out.heading_hold_active,
+        heading_target_cdeg: (out.heading_target_deg * 100.0) as i16,
+        heading_error_cdeg: (out.heading_error_deg * 100.0) as i16,
     }
 }
 
@@ -482,6 +499,7 @@ postcard_rpc::define_dispatch! {
         | StartMagCalEndpoint       | blocking  | handle_start_mag_cal        |
         | ClearMagCalEndpoint       | blocking  | handle_clear_mag_cal        |
         | GetMagCalEndpoint         | blocking  | handle_get_mag_cal          |
+        | SetHeadingHoldEndpoint    | blocking  | handle_set_heading_hold     |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

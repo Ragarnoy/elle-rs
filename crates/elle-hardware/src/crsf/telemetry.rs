@@ -61,6 +61,8 @@ pub struct CrsfFlightMode {
     pub failsafe: bool,
     pub mode: CrsfControlMode,
     pub autotune: AutotuneDisplay,
+    /// True while the heading-hold modifier is engaged (only meaningful when `mode == Stabilized`).
+    pub heading_hold: bool,
 }
 
 /// Lightweight GPS data for telemetry (avoids dependency on elle-rpc-icd).
@@ -111,10 +113,16 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
             AutotuneDisplay::Roll  => b"AT R\0",
             AutotuneDisplay::Done  => b"DONE\0",
             AutotuneDisplay::Error => b"ERR!\0",
-            AutotuneDisplay::Off => match mode.mode {
-                CrsfControlMode::Manual => b"MANU\0",
-                CrsfControlMode::Stabilized => b"STAB\0",
-                CrsfControlMode::AltitudeHold => b"AHLD\0",
+            AutotuneDisplay::Off => {
+                if mode.heading_hold && mode.mode == CrsfControlMode::Stabilized {
+                    b"HDG \0"
+                } else {
+                    match mode.mode {
+                        CrsfControlMode::Manual => b"MANU\0",
+                        CrsfControlMode::Stabilized => b"STAB\0",
+                        CrsfControlMode::AltitudeHold => b"AHLD\0",
+                    }
+                }
             }
         }
     };
@@ -243,6 +251,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         failsafe: false,
         mode: CrsfControlMode::Manual,
         autotune: AutotuneDisplay::Off,
+        heading_hold: false,
     };
 
     #[cfg(feature = "gnss")]

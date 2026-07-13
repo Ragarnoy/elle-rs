@@ -386,6 +386,16 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         if let Some(edt) = edt_line {
             lines.push(Line::from(edt));
         }
+        if c.heading_hold_active {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  Heading hold: {:.1}\u{00B0} (err {:+.1}\u{00B0})",
+                    c.heading_target_cdeg as f32 / 100.0,
+                    c.heading_error_cdeg as f32 / 100.0,
+                ),
+                Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+            )));
+        }
         lines
     } else {
         vec![Line::from("  Controller: ---")]
@@ -640,6 +650,8 @@ const fn log_code_text(code: u16) -> &'static str {
         13 => "RC: signal warning",
         14 => "RC: SIGNAL LOST",
         15 => "RC: signal restored",
+        16 => "Kill switch ENGAGED",
+        17 => "Kill switch released",
         // CRSF telemetry TX (20–29)
         20 => "CRSF TX: telemetry started",
         21 => "CRSF TX: first second OK",

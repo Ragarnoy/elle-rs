@@ -84,7 +84,7 @@ impl ULogLogger {
         self.writer
             .write_definitions(
                 "ELLE-RS",
-                "RP2350-XFly-Eagle",
+                elle_config::PLATFORM_NAME,
                 env!("CARGO_PKG_VERSION"),
                 epoch_ms,
             )

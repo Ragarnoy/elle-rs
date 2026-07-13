@@ -85,24 +85,24 @@ fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
     attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
 }
 
-/// Gate for the double-tap arm gesture: only allow arming when throttle is
-/// commanded low and the gyro is quiet, so motor vibration or handling can't
-/// trigger a spurious arm.
-fn tap_arm_allowed(
+/// Gate for the double-tap mag-cal gesture: only start calibration when
+/// throttle is commanded low and the gyro is quiet, so motor vibration or
+/// handling can't trigger a spurious calibration.
+fn tap_cal_allowed(
     commands: Option<&elle_control::commands::PilotCommands>,
     attitude: Option<&AttitudeData>,
 ) -> bool {
     use elle_control::commands::PilotCommands;
     let throttle_low = commands.is_some_and(|cmd| match cmd {
         PilotCommands::Raw(raw) => {
-            raw.channels[elle_config::THROTTLE_CH] < elle_config::TAP_ARM_THROTTLE_MAX_RAW
+            raw.channels[elle_config::THROTTLE_CH] < elle_config::TAP_CAL_THROTTLE_MAX_RAW
         }
-        PilotCommands::Normalized(n) => n.throttle < elle_config::TAP_ARM_THROTTLE_MAX_NORM,
+        PilotCommands::Normalized(n) => n.throttle < elle_config::TAP_CAL_THROTTLE_MAX_NORM,
     });
     let gyro_quiet = attitude.is_some_and(|a| {
-        a.pitch_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
-            && a.roll_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
-            && a.yaw_rate.abs() < elle_config::TAP_ARM_MAX_GYRO_RAD_S
+        a.pitch_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
+            && a.roll_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
+            && a.yaw_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
     });
     throttle_low && gyro_quiet
 }
@@ -638,12 +638,21 @@ async fn main(spawner: Spawner) {
         let mut autotune_display_timer: u32 = 0;
         const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
 
+        // Heading-hold state (CH5, 2-pos switch, modifier active only while Stabilized)
+        let mut heading_hold_switch_debounced: bool = false;
+        let mut heading_hold_debounce_count: u32 = 0;
+        let mut heading_hold_effective_prev: bool = false;
+
+        // Mag calibration collection in progress (double-tap gesture)
+        let mut mag_cal_collecting: bool = false;
+
         // Create ticker for precise 13ms periods (77Hz)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
 
         // Track last commands for consistent update rate
         let mut last_commands: Option<PilotCommands> = None;
         let mut was_armed = false;
+        let mut was_killed = false;
 
         loop {
             ticker.next().await; // Wait for next tick BEFORE processing
@@ -672,6 +681,7 @@ async fn main(spawner: Spawner) {
                     );
                 }
 
+                fc.note_rc_packet(commands.timestamp());
                 last_commands = Some(commands);
             }
 
@@ -686,34 +696,95 @@ async fn main(spawner: Spawner) {
                 }
             });
 
+            if kill_active != was_killed {
+                if kill_active {
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_KILL_ENGAGED,
+                        "Kill switch engaged"
+                    );
+                } else {
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_KILL_RELEASED,
+                        "Kill switch released"
+                    );
+                }
+                was_killed = kill_active;
+            }
+
             if kill_active {
                 // Kill switch active: disarm, center elevons, zero throttle
                 if fc.is_armed() {
                     fc.disarm();
-                    elle_hardware::elle_event!(
-                        warn,
-                        elle_hardware::event::EVT_MOTORS_DISARMED,
-                        "Kill switch activated"
-                    );
                 }
                 fc.set_safe_positions();
                 DSHOT_THROTTLE.signal((0, 0));
             }
 
-            // Double-tap arm gesture. Drain the signal every iteration so a double
-            // tap detected while armed (e.g. motor vibration) can't stay latched
-            // and re-arm immediately after a disarm.
+            // Double-tap mag-cal gesture — only while the kill switch is active
+            // (deliberate service state; motors locked out) so handling bumps
+            // can't start a calibration. Drain the signal every iteration so a
+            // tap detected outside kill mode can't stay latched and fire later.
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
-            if tapped && !fc.is_armed() && !kill_active {
-                if tap_arm_allowed(last_commands.as_ref(), attitude.as_ref()) {
-                    fc.arm();
+            if tapped && !fc.is_armed() && kill_active && !mag_cal_collecting {
+                if tap_cal_allowed(last_commands.as_ref(), attitude.as_ref()) {
+                    elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
+                    mag_cal_collecting = true;
                     elle_hardware::elle_event!(
                         info,
-                        elle_hardware::event::EVT_DOUBLE_TAP,
-                        "Double-tap: armed"
+                        elle_hardware::event::EVT_MAG_CAL_STARTED,
+                        "Double-tap: mag calibration started"
                     );
                 } else {
                     info!("Double-tap ignored: throttle not low or gyro not quiet");
+                }
+            }
+
+            // Poll mag calibration result from IMU task (tap-triggered collection)
+            if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
+                mag_cal_collecting = false;
+                match result {
+                    Some((ox, oy, oz)) => {
+                        use elle_config::profile::{FlashRequest, FlashResponse};
+                        use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+                        let data: [u8; 12] = bytemuck::cast([ox, oy, oz]);
+                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data });
+                        let save_timeout = Timer::after(Duration::from_secs(5));
+                        match embassy_futures::select::select(
+                            FLASH_RESPONSE_SIGNAL.wait(),
+                            save_timeout,
+                        )
+                        .await
+                        {
+                            embassy_futures::select::Either::First(FlashResponse::MagCalSaved) => {
+                                elle_hardware::elle_event!(
+                                    info,
+                                    elle_hardware::event::EVT_MAG_CAL_SAVED,
+                                    "Mag cal saved to flash"
+                                );
+                            }
+                            _ => {
+                                elle_hardware::elle_event!(
+                                    warn,
+                                    elle_hardware::event::EVT_MAG_CAL_FAILED,
+                                    "Mag cal flash save failed"
+                                );
+                            }
+                        }
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_MAG_CAL_COMPLETE,
+                            "Mag calibration complete"
+                        );
+                    }
+                    None => {
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_MAG_CAL_FAILED,
+                            "Mag calibration failed (insufficient rotation)"
+                        );
+                    }
                 }
             }
 
@@ -731,15 +802,25 @@ async fn main(spawner: Spawner) {
                     fc.update(commands, valid_attitude.as_ref());
                 }
 
-                // Detect arm/disarm transitions → beep
+                // Detect arm/disarm transitions → beep + event
                 let now_armed = fc.is_armed();
                 if now_armed && !was_armed {
                     elle_hardware::dshot::BEEP_SIGNAL.signal(
                         elle_hardware::dshot::BeepPattern::ArmBeep,
                     );
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_MOTORS_ARMED,
+                        "Motors armed"
+                    );
                 } else if !now_armed && was_armed {
                     elle_hardware::dshot::BEEP_SIGNAL.signal(
                         elle_hardware::dshot::BeepPattern::DisarmBeep,
+                    );
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_MOTORS_DISARMED,
+                        "Motors disarmed"
                     );
                 }
                 was_armed = now_armed;
@@ -777,6 +858,7 @@ async fn main(spawner: Spawner) {
                         elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
                     },
                     autotune: autotune_display,
+                    heading_hold: fc.is_heading_hold_active(),
                 });
 
                 // --- Autotune RC switch logic (CH9, 3-position with debounce) ---
@@ -848,6 +930,46 @@ async fn main(spawner: Spawner) {
 
                         autotune_stable_pos = new_pos;
                     }
+                }
+
+                // --- Heading-hold RC switch logic (CH5, 2-position, debounced) ---
+                // Active only while Stabilized is selected; captures current heading
+                // on the rising edge of (switch on AND mode == Stabilized).
+                if let PilotCommands::Raw(raw) = commands {
+                    let ch5 = raw.channels[elle_config::HEADING_HOLD_CH];
+                    let switch_on = ch5 > elle_config::HEADING_HOLD_THRESHOLD;
+
+                    if switch_on == heading_hold_switch_debounced {
+                        heading_hold_debounce_count = 0;
+                    } else {
+                        heading_hold_debounce_count += 1;
+                        if heading_hold_debounce_count >= elle_config::HEADING_HOLD_DEBOUNCE_TICKS {
+                            heading_hold_switch_debounced = switch_on;
+                            heading_hold_debounce_count = 0;
+                        }
+                    }
+
+                    let heading_hold_effective = heading_hold_switch_debounced
+                        && fc.current_control_mode() == elle_system::ControlMode::Stabilized;
+
+                    if heading_hold_effective && !heading_hold_effective_prev {
+                        if let Some(att) = valid_attitude.as_ref() {
+                            fc.engage_heading_hold(att.yaw);
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_HEADING_HOLD_ENGAGED,
+                                "Heading hold ENGAGED"
+                            );
+                        }
+                    } else if !heading_hold_effective && heading_hold_effective_prev {
+                        fc.disengage_heading_hold();
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_HEADING_HOLD_DISENGAGED,
+                            "Heading hold DISENGAGED"
+                        );
+                    }
+                    heading_hold_effective_prev = heading_hold_effective;
                 }
 
                 // Autotune state machine tick
@@ -986,11 +1108,10 @@ async fn main(spawner: Spawner) {
                 }
             }
 
-            // Check for failsafe (triggers after 300ms of no valid packets)
-            // Skip when killed — fc.update() is blocked so last_packet_time never refreshes
-            if !kill_active {
-                fc.check_failsafe();
-            }
+            // Check for failsafe (triggers after 300ms of no valid packets).
+            // Packet arrival is stamped via note_rc_packet(), so this stays
+            // accurate even while the kill switch blocks fc.update().
+            fc.check_failsafe();
 
             update_control_loop_timing(loop_timer.elapsed_us());
             loop_counter = loop_counter.saturating_add(1);
@@ -1007,11 +1128,17 @@ async fn main(spawner: Spawner) {
 
                 let led_pattern = if fc.is_failsafe() {
                     LedPattern::RapidFlash(colors::ORANGE)
+                } else if mag_cal_collecting {
+                    LedPattern::FastBlink(colors::YELLOW)
                 } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
                     if fc.is_attitude_enabled() {
-                        LedPattern::Pulse(colors::CYAN)
+                        if fc.is_heading_hold_active() {
+                            LedPattern::Pulse(colors::BLUE)
+                        } else {
+                            LedPattern::Pulse(colors::CYAN)
+                        }
                     } else {
                         LedPattern::DoubleBlink(colors::GREEN)
                     }
@@ -1075,6 +1202,7 @@ async fn main(spawner: Spawner) {
         let mut autotune_tick: u32 = 0;
         let mut rpc_save_pending: Option<[u8; 32]> = None;
         let mut was_armed = false;
+        let mut was_killed = false;
         let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
         let mut autotune_display_timer: u32 = 0;
         const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
@@ -1384,6 +1512,24 @@ async fn main(spawner: Spawner) {
                             "Mag calibration cleared"
                         );
                     }
+                    RpcCommand::SetHeadingHold { enabled, target_cdeg } => {
+                        if enabled {
+                            let target_rad = (target_cdeg as f32 / 100.0).to_radians();
+                            fc.engage_heading_hold(target_rad);
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_HEADING_HOLD_TARGET_SET,
+                                "Heading hold target set via RPC"
+                            );
+                        } else {
+                            fc.disengage_heading_hold();
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_HEADING_HOLD_DISENGAGED,
+                                "Heading hold disengaged via RPC"
+                            );
+                        }
+                    }
                 }
             }
 
@@ -1405,6 +1551,7 @@ async fn main(spawner: Spawner) {
                             );
                         }
                     }
+                    fc.note_rc_packet(commands.timestamp());
                     last_commands = Some(commands);
                 }
                 last_commands.clone()
@@ -1437,29 +1584,48 @@ async fn main(spawner: Spawner) {
             #[cfg(not(feature = "rpc-rc"))]
             let kill_active = false;
 
+            if kill_active != was_killed {
+                if kill_active {
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_KILL_ENGAGED,
+                        "Kill switch engaged (RPC)"
+                    );
+                } else {
+                    elle_hardware::elle_event!(
+                        info,
+                        elle_hardware::event::EVT_KILL_RELEASED,
+                        "Kill switch released (RPC)"
+                    );
+                }
+                was_killed = kill_active;
+            }
+
             if kill_active {
                 if fc.is_armed() {
                     fc.disarm();
-                    elle_hardware::elle_event!(
-                        warn,
-                        elle_hardware::event::EVT_MOTORS_DISARMED,
-                        "Kill switch activated (RPC)"
-                    );
                 }
                 fc.set_safe_positions();
                 DSHOT_THROTTLE.signal((0, 0));
             }
 
-            // Double-tap arm gesture (RPC mode). Drain the signal every iteration
-            // so a tap detected while armed can't latch and re-arm after a disarm.
+            // Double-tap mag-cal gesture (RPC mode) — only while the kill switch
+            // is active (rpc-rc builds; inert in pure RPC builds where kill_active
+            // is always false — use `mag cal start` there instead).
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
-            if tapped && !fc.is_armed() && !kill_active {
-                if tap_arm_allowed(commands.as_ref(), attitude.as_ref()) {
-                    fc.arm();
+            if tapped
+                && !fc.is_armed()
+                && kill_active
+                && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != 1
+            {
+                if tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
+                    elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
+                    rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
+                    rpc_app::MAG_CAL_SAMPLES.store(0, Ordering::Relaxed);
                     elle_hardware::elle_event!(
                         info,
-                        elle_hardware::event::EVT_DOUBLE_TAP,
-                        "Double-tap: armed"
+                        elle_hardware::event::EVT_MAG_CAL_STARTED,
+                        "Double-tap: mag calibration started"
                     );
                 } else {
                     info!("Double-tap ignored: throttle not low or gyro not quiet");
@@ -1497,12 +1663,11 @@ async fn main(spawner: Spawner) {
             }
             was_armed = now_armed;
 
-            // Check for RC signal loss (only relevant when RC is the command source)
-            // Skip when killed — fc.update() is blocked so last_packet_time never refreshes
+            // Check for RC signal loss (only relevant when RC is the command source).
+            // Packet arrival is stamped via note_rc_packet(), so this stays
+            // accurate even while the kill switch blocks fc.update().
             #[cfg(feature = "rpc-rc")]
-            if !kill_active {
-                fc.check_failsafe();
-            }
+            fc.check_failsafe();
 
             // Autotuner per-tick update
             if autotuner.is_active()
@@ -1652,6 +1817,7 @@ async fn main(spawner: Spawner) {
                     elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
                 },
                 autotune: autotune_display,
+                heading_hold: fc.is_heading_hold_active(),
             });
 
             // Publish flight state for RPC handlers
@@ -1684,6 +1850,9 @@ async fn main(spawner: Spawner) {
                     elevon_right_us: out.elevon_right_us,
                     engine_left_dshot: out.engine_left_dshot,
                     engine_right_dshot: out.engine_right_dshot,
+                    heading_hold_active: out.heading_hold_active,
+                    heading_target_deg: out.heading_target_deg,
+                    heading_error_deg: out.heading_error_deg,
                 };
                 flight_state::CONTROLLER_OUTPUT.publish(co);
             }
@@ -1724,7 +1893,11 @@ async fn main(spawner: Spawner) {
                 } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
-                    LedPattern::DoubleBlink(colors::PURPLE)
+                    if fc.is_heading_hold_active() {
+                        LedPattern::Pulse(colors::BLUE)
+                    } else {
+                        LedPattern::DoubleBlink(colors::PURPLE)
+                    }
                 } else if imu_status.calibrated {
                     LedPattern::Solid(colors::PURPLE)
                 } else {

@@ -30,6 +30,9 @@ pub struct ControllerOutput {
     pub elevon_right_us: u32,
     pub engine_left_dshot: u16,
     pub engine_right_dshot: u16,
+    pub heading_hold_active: bool,
+    pub heading_target_deg: f32,
+    pub heading_error_deg: f32,
 }
 
 pub static CONTROLLER_OUTPUT: SignalCache<ControllerOutput> = SignalCache::new(ControllerOutput {
@@ -41,4 +44,7 @@ pub static CONTROLLER_OUTPUT: SignalCache<ControllerOutput> = SignalCache::new(C
     elevon_right_us: 0,
     engine_left_dshot: 0,
     engine_right_dshot: 0,
+    heading_hold_active: false,
+    heading_target_deg: 0.0,
+    heading_error_deg: 0.0,
 });

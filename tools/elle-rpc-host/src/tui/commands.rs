@@ -48,6 +48,11 @@ const COMMANDS: &[CmdDef] = &[
         subs: &[],
     },
     CmdDef {
+        name: "heading",
+        aliases: &["hdg"],
+        subs: &["hold", "off"],
+    },
+    CmdDef {
         name: "help",
         aliases: &["?"],
         subs: &[],
@@ -214,6 +219,22 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
                 "stabilized" | "stab" => cmd_mode(client, ControlMode::Stabilized).await,
                 "althold" | "altitudehold" => cmd_mode(client, ControlMode::AltitudeHold).await,
                 _ => CommandResult::Err("Mode must be: manual, stab, or althold".into()),
+            }
+        }
+        Some("heading") => {
+            if parts.len() < 2 {
+                return CommandResult::Err("Usage: heading hold [deg] | heading off".into());
+            }
+            match parts[1].to_lowercase().as_str() {
+                "hold" => match parts.get(2) {
+                    Some(deg_str) => match deg_str.parse::<f32>() {
+                        Ok(deg) => cmd_heading_hold(client, (deg * 100.0) as i16).await,
+                        Err(_) => CommandResult::Err("Heading degrees must be a number".into()),
+                    },
+                    None => cmd_heading_hold_current(client).await,
+                },
+                "off" => cmd_heading_off(client).await,
+                _ => CommandResult::Err("Usage: heading hold [deg] | heading off".into()),
             }
         }
         Some("ulog") => {
@@ -389,6 +410,46 @@ async fn cmd_mode(client: &HostClient<WireError>, mode: ControlMode) -> CommandR
         .await,
         "Mode",
         format!("Mode: {mode:?}"),
+    )
+}
+
+async fn cmd_heading_hold(client: &HostClient<WireError>, heading_cdeg: i16) -> CommandResult {
+    handle_ack(
+        timeout(
+            CMD_TIMEOUT,
+            client.send_resp::<SetHeadingHoldEndpoint>(&SetHeadingHoldReq {
+                enabled: true,
+                heading_cdeg,
+            }),
+        )
+        .await,
+        "Heading hold",
+        format!("Heading hold: ENGAGED @ {:.1}\u{00B0}", heading_cdeg as f32 / 100.0),
+    )
+}
+
+/// Lock heading hold to the current attitude's yaw (mirrors the RC "engage on current
+/// heading" behavior for bench testing without a transmitter).
+async fn cmd_heading_hold_current(client: &HostClient<WireError>) -> CommandResult {
+    match timeout(CMD_TIMEOUT, client.send_resp::<GetAttitudeEndpoint>(&())).await {
+        Ok(Ok(att)) => cmd_heading_hold(client, att.yaw_cdeg).await,
+        Ok(Err(e)) => CommandResult::Err(format!("Heading hold failed: {e}")),
+        Err(_) => CommandResult::Err("Heading hold: attitude query timeout".into()),
+    }
+}
+
+async fn cmd_heading_off(client: &HostClient<WireError>) -> CommandResult {
+    handle_ack(
+        timeout(
+            CMD_TIMEOUT,
+            client.send_resp::<SetHeadingHoldEndpoint>(&SetHeadingHoldReq {
+                enabled: false,
+                heading_cdeg: 0,
+            }),
+        )
+        .await,
+        "Heading hold",
+        "Heading hold: DISENGAGED".into(),
     )
 }
 
