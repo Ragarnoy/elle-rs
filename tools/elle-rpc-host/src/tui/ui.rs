@@ -386,6 +386,16 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         if let Some(edt) = edt_line {
             lines.push(Line::from(edt));
         }
+        if c.heading_hold_active {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  Heading hold: {:.1}\u{00B0} (err {:+.1}\u{00B0})",
+                    c.heading_target_cdeg as f32 / 100.0,
+                    c.heading_error_cdeg as f32 / 100.0,
+                ),
+                Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+            )));
+        }
         lines
     } else {
         vec![Line::from("  Controller: ---")]

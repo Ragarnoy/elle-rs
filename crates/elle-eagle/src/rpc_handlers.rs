@@ -35,6 +35,10 @@ pub enum RpcCommand {
     ClearPidProfile,
     StartMagCal,
     ClearMagCal,
+    SetHeadingHold {
+        enabled: bool,
+        target_cdeg: i16,
+    },
 }
 
 /// Channel for RPC commands to flight controller

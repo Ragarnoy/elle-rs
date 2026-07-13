@@ -167,7 +167,7 @@ pub const PID_I_LIMIT: f32 = 0.5;
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
 
 // RC aux channel assignments:
-//   CH5 (idx 4) = 2-pos switch left  → Unused
+//   CH5 (idx 4) = 2-pos switch left  → Heading hold (modifier on top of Stabilized)
 //   CH6 (idx 5) = 3-pos switch left  → Attitude mode (Manual/Stabilized/AltitudeHold)
 //   CH7 (idx 6) = 3-pos switch right → Autotune (off/pitch/roll)
 //   CH8 (idx 7) = 2-pos switch right → Kill switch (high = disarm, must re-arm)
@@ -192,6 +192,19 @@ pub const AUTOTUNE_CH: usize = 6; // CH7 - 3-pos: off/pitch/roll
 pub const AUTOTUNE_OFF_THRESHOLD: u16 = 500; // Below = off
 pub const AUTOTUNE_PITCH_THRESHOLD: u16 = 1300; // Below = pitch, above = roll
 pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz
+
+// Heading-hold RC switch (2-position on CH5) — modifier active only while
+// AttitudeMode::Stabilized is selected; captures current heading on engage.
+pub const HEADING_HOLD_CH: usize = 4; // CH5 - 2-pos: off/on
+pub const HEADING_HOLD_THRESHOLD: u16 = 1024; // Above this = engaged
+pub const HEADING_HOLD_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz, matches AUTOTUNE_DEBOUNCE_TICKS
+
+// Heading-hold outer loop: P/PI on heading error (deg) -> roll setpoint (deg)
+pub const HEADING_HOLD_KP: f32 = 1.2;
+pub const HEADING_HOLD_KI: f32 = 0.0; // start P-only; enable after flight-test tuning
+pub const HEADING_HOLD_I_LIMIT_DEG: f32 = 10.0; // integral clamp, in roll-degrees
+pub const HEADING_HOLD_MAX_ROLL_DEG: f32 = 25.0; // bank angle clamp (< STABILIZED_MAX_ROLL_DEG)
+pub const HEADING_HOLD_MAX_ROLL_RATE_DEG_S: f32 = 15.0; // output slew-rate limiter
 
 // Double-tap arm gesture gating (motor vibration can trip the APEX tap detector,
 // so the gesture only arms when the aircraft is demonstrably idle)
@@ -279,6 +292,13 @@ const _: () = assert!(AUTOTUNE_OFF_THRESHOLD < AUTOTUNE_PITCH_THRESHOLD);
 // Channel indices must be distinct and in 0..16
 const _: () = assert!(ROLL_CH < 16 && PITCH_CH < 16 && THROTTLE_CH < 16 && YAW_CH < 16);
 const _: () = assert!(ATTITUDE_ENABLE_CH < 16 && AUTOTUNE_CH < 16 && KILL_SWITCH_CH < 16);
+const _: () = assert!(HEADING_HOLD_CH < 16);
+
+// Heading-hold gains/limits must be sane and bank angle must not exceed the
+// pilot's own Stabilized-mode authority.
+const _: () = assert!(HEADING_HOLD_KP >= 0.0 && HEADING_HOLD_KI >= 0.0 && HEADING_HOLD_I_LIMIT_DEG >= 0.0);
+const _: () = assert!(HEADING_HOLD_MAX_ROLL_DEG > 0.0 && HEADING_HOLD_MAX_ROLL_DEG <= STABILIZED_MAX_ROLL_DEG);
+const _: () = assert!(HEADING_HOLD_MAX_ROLL_RATE_DEG_S > 0.0);
 
 // CONTROL_LOOP_DT must be consistent with CONTROL_LOOP_FREQUENCY_HZ (±1ms tolerance).
 // These are defined independently — if one changes and the other doesn't, PID integrator

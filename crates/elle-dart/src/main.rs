@@ -632,6 +632,11 @@ async fn main(spawner: Spawner) {
         let mut autotune_display_timer: u32 = 0;
         const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
 
+        // Heading-hold state (CH5, 2-pos switch, modifier active only while Stabilized)
+        let mut heading_hold_switch_debounced: bool = false;
+        let mut heading_hold_debounce_count: u32 = 0;
+        let mut heading_hold_effective_prev: bool = false;
+
         // Create ticker for precise 13ms periods (77Hz)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
 
@@ -769,6 +774,7 @@ async fn main(spawner: Spawner) {
                         elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
                     },
                     autotune: autotune_display,
+                    heading_hold: fc.is_heading_hold_active(),
                 });
 
                 // --- Autotune RC switch logic (CH9, 3-position with debounce) ---
@@ -840,6 +846,46 @@ async fn main(spawner: Spawner) {
 
                         autotune_stable_pos = new_pos;
                     }
+                }
+
+                // --- Heading-hold RC switch logic (CH5, 2-position, debounced) ---
+                // Active only while Stabilized is selected; captures current heading
+                // on the rising edge of (switch on AND mode == Stabilized).
+                if let PilotCommands::Raw(raw) = commands {
+                    let ch5 = raw.channels[elle_config::HEADING_HOLD_CH];
+                    let switch_on = ch5 > elle_config::HEADING_HOLD_THRESHOLD;
+
+                    if switch_on == heading_hold_switch_debounced {
+                        heading_hold_debounce_count = 0;
+                    } else {
+                        heading_hold_debounce_count += 1;
+                        if heading_hold_debounce_count >= elle_config::HEADING_HOLD_DEBOUNCE_TICKS {
+                            heading_hold_switch_debounced = switch_on;
+                            heading_hold_debounce_count = 0;
+                        }
+                    }
+
+                    let heading_hold_effective = heading_hold_switch_debounced
+                        && fc.current_control_mode() == elle_system::ControlMode::Stabilized;
+
+                    if heading_hold_effective && !heading_hold_effective_prev {
+                        if let Some(att) = valid_attitude.as_ref() {
+                            fc.engage_heading_hold(att.yaw);
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_HEADING_HOLD_ENGAGED,
+                                "Heading hold ENGAGED"
+                            );
+                        }
+                    } else if !heading_hold_effective && heading_hold_effective_prev {
+                        fc.disengage_heading_hold();
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_HEADING_HOLD_DISENGAGED,
+                            "Heading hold DISENGAGED"
+                        );
+                    }
+                    heading_hold_effective_prev = heading_hold_effective;
                 }
 
                 // Autotune state machine tick
@@ -1003,7 +1049,11 @@ async fn main(spawner: Spawner) {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
                     if fc.is_attitude_enabled() {
-                        LedPattern::Pulse(colors::CYAN)
+                        if fc.is_heading_hold_active() {
+                            LedPattern::Pulse(colors::BLUE)
+                        } else {
+                            LedPattern::Pulse(colors::CYAN)
+                        }
                     } else {
                         LedPattern::DoubleBlink(colors::GREEN)
                     }
@@ -1368,6 +1418,24 @@ async fn main(spawner: Spawner) {
                             "Mag calibration cleared"
                         );
                     }
+                    RpcCommand::SetHeadingHold { enabled, target_cdeg } => {
+                        if enabled {
+                            let target_rad = (target_cdeg as f32 / 100.0).to_radians();
+                            fc.engage_heading_hold(target_rad);
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_HEADING_HOLD_TARGET_SET,
+                                "Heading hold target set via RPC"
+                            );
+                        } else {
+                            fc.disengage_heading_hold();
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_HEADING_HOLD_DISENGAGED,
+                                "Heading hold disengaged via RPC"
+                            );
+                        }
+                    }
                 }
             }
 
@@ -1599,6 +1667,7 @@ async fn main(spawner: Spawner) {
                     elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
                 },
                 autotune: autotune_display,
+                heading_hold: fc.is_heading_hold_active(),
             });
 
             // Publish flight state for RPC handlers
@@ -1631,6 +1700,9 @@ async fn main(spawner: Spawner) {
                     elevon_right_us: out.elevon_right_us,
                     engine_left_dshot: out.engine_left_dshot,
                     engine_right_dshot: out.engine_right_dshot,
+                    heading_hold_active: out.heading_hold_active,
+                    heading_target_deg: out.heading_target_deg,
+                    heading_error_deg: out.heading_error_deg,
                 };
                 flight_state::CONTROLLER_OUTPUT.publish(co);
             }
@@ -1671,7 +1743,11 @@ async fn main(spawner: Spawner) {
                 } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
-                    LedPattern::DoubleBlink(colors::PURPLE)
+                    if fc.is_heading_hold_active() {
+                        LedPattern::Pulse(colors::BLUE)
+                    } else {
+                        LedPattern::DoubleBlink(colors::PURPLE)
+                    }
                 } else if imu_status.calibrated {
                     LedPattern::Solid(colors::PURPLE)
                 } else {

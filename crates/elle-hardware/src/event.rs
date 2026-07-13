@@ -106,6 +106,11 @@ pub const EVT_MAG_CAL_LOAD_EMPTY: u16 = 116;
 // Tap detection (120–129)
 pub const EVT_DOUBLE_TAP: u16 = 120;
 
+// Heading hold (130–139)
+pub const EVT_HEADING_HOLD_ENGAGED: u16 = 130;
+pub const EVT_HEADING_HOLD_DISENGAGED: u16 = 131;
+pub const EVT_HEADING_HOLD_TARGET_SET: u16 = 132;
+
 // ---------------------------------------------------------------------------
 // Macro
 // ---------------------------------------------------------------------------

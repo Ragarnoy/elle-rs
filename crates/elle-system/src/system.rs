@@ -9,6 +9,7 @@ use elle_control::mixing::{
 };
 use elle_control::{
     arming::ArmingState,
+    heading::HeadingController,
     pid::{AttitudeController, PidConfig},
 };
 use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
@@ -91,6 +92,9 @@ pub struct ControllerOutputSnapshot {
     pub elevon_right_us: u32,
     pub engine_left_dshot: u16,
     pub engine_right_dshot: u16,
+    pub heading_hold_active: bool,
+    pub heading_target_deg: f32,
+    pub heading_error_deg: f32,
 }
 
 pub struct FlightController<'a> {
@@ -113,6 +117,10 @@ pub struct FlightController<'a> {
     supervisor_enabled: bool,
     // Setpoint override for autotune relay feedback
     setpoint_override: Option<(f32, f32)>,
+    // Heading-hold outer loop: modifier active only while AttitudeMode::Stabilized
+    heading_controller: HeadingController,
+    heading_hold_active: bool,
+    locked_heading_rad: Option<f32>,
     // RC link state machine
     rc_link_state: RcLinkState,
     // When true, arming is only via explicit arm()/disarm() — skips throttle-low auto-arm
@@ -152,6 +160,15 @@ impl<'a> FlightController<'a> {
             last_watchdog_kick: Instant::now(),
             supervisor_enabled: false,
             setpoint_override: None,
+            heading_controller: HeadingController::new(
+                HEADING_HOLD_KP,
+                HEADING_HOLD_KI,
+                HEADING_HOLD_I_LIMIT_DEG,
+                HEADING_HOLD_MAX_ROLL_DEG,
+                HEADING_HOLD_MAX_ROLL_RATE_DEG_S,
+            ),
+            heading_hold_active: false,
+            locked_heading_rad: None,
             rc_link_state: RcLinkState::Ok,
             explicit_arming_only: false,
         }
@@ -345,16 +362,33 @@ impl<'a> FlightController<'a> {
             && self.arming.armed;
 
         // Compute setpoint from mode, with autotune override taking precedence
+        let mut heading_target_deg = 0.0f32;
+        let mut heading_error_deg = 0.0f32;
         let (pitch_sp_deg, roll_sp_deg) = if let Some(ovr) = self.setpoint_override {
             ovr
         } else {
             match norm.attitude_mode {
                 AttitudeMode::Stabilized => {
                     // Stick IS the setpoint: center=level, full deflection=max angle
-                    (
-                        norm.pitch * STABILIZED_MAX_PITCH_DEG,
-                        norm.roll * STABILIZED_MAX_ROLL_DEG,
-                    )
+                    let stick_roll_deg = norm.roll * STABILIZED_MAX_ROLL_DEG;
+                    let roll_sp_deg = if self.heading_hold_active {
+                        match (
+                            self.locked_heading_rad,
+                            attitude.or(self.last_attitude.as_ref()),
+                        ) {
+                            (Some(target_rad), Some(att)) => {
+                                heading_target_deg = target_rad.to_degrees();
+                                heading_error_deg =
+                                    self.heading_controller.heading_error_deg(target_rad, att.yaw);
+                                self.heading_controller.update(target_rad, att.yaw)
+                            }
+                            // No target locked yet or no attitude data — fall back to stick.
+                            _ => stick_roll_deg,
+                        }
+                    } else {
+                        stick_roll_deg
+                    };
+                    (norm.pitch * STABILIZED_MAX_PITCH_DEG, roll_sp_deg)
                 }
                 AttitudeMode::AltitudeHold => {
                     // Level hold: fixed 0°/0° (future: altitude controller adjusts)
@@ -397,6 +431,9 @@ impl<'a> FlightController<'a> {
             AttitudeMode::Manual => {
                 if self.attitude_controller.is_active() {
                     self.attitude_controller.reset();
+                }
+                if self.heading_hold_active {
+                    self.disengage_heading_hold();
                 }
                 pilot_inputs
             }
@@ -474,6 +511,9 @@ impl<'a> FlightController<'a> {
             elevon_right_us: elevon_outputs.right_us,
             engine_left_dshot: left_thrust,
             engine_right_dshot: right_thrust,
+            heading_hold_active: self.heading_hold_active,
+            heading_target_deg,
+            heading_error_deg,
         };
     }
 
@@ -572,6 +612,7 @@ impl<'a> FlightController<'a> {
     /// Manual disarm (for RTT/debug control)
     pub fn disarm(&mut self) {
         self.arming.disarm();
+        self.disengage_heading_hold();
     }
 
     /// Force elevons to center (safe position). Used by kill switch.
@@ -603,6 +644,26 @@ impl<'a> FlightController<'a> {
     /// Clear setpoint override, returning to normal RC/RPC control.
     pub fn clear_setpoint_override(&mut self) {
         self.setpoint_override = None;
+    }
+
+    /// Engage heading-hold with the given target heading (AHRS yaw, radians).
+    /// Only takes effect while `AttitudeMode::Stabilized` is selected.
+    pub fn engage_heading_hold(&mut self, target_rad: f32) {
+        self.heading_hold_active = true;
+        self.locked_heading_rad = Some(target_rad);
+        self.heading_controller.reset();
+    }
+
+    /// Disengage heading-hold, returning roll to stick-derived control.
+    pub fn disengage_heading_hold(&mut self) {
+        self.heading_hold_active = false;
+        self.locked_heading_rad = None;
+        self.heading_controller.reset();
+    }
+
+    #[must_use]
+    pub const fn is_heading_hold_active(&self) -> bool {
+        self.heading_hold_active
     }
 
     /// Get the last controller output snapshot
