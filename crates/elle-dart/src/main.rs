@@ -1869,14 +1869,14 @@ async fn imu_task(
     i2c: Peri<'static, I2C0>,
     sda: Peri<'static, PIN_8>,
     scl: Peri<'static, PIN_9>,
-    // SPI (ICM-42686) — unused in disable-imu stub
-    #[allow(unused_variables)] spi: Peri<'static, SPI0>,
-    #[allow(unused_variables)] spi_miso: Peri<'static, PIN_0>,
-    #[allow(unused_variables)] spi_cs: Peri<'static, PIN_1>,
-    #[allow(unused_variables)] spi_sck: Peri<'static, PIN_2>,
-    #[allow(unused_variables)] spi_mosi: Peri<'static, PIN_3>,
-    // INT1 (DATA_RDY interrupt) — unused in disable-imu stub
-    #[allow(unused_variables)] int1_pin: Peri<'static, PIN_5>,
+    // SPI (ICM-42686)
+    spi: Peri<'static, SPI0>,
+    spi_miso: Peri<'static, PIN_0>,
+    spi_cs: Peri<'static, PIN_1>,
+    spi_sck: Peri<'static, PIN_2>,
+    spi_mosi: Peri<'static, PIN_3>,
+    // INT1 (DATA_RDY interrupt)
+    int1_pin: Peri<'static, PIN_5>,
 ) {
     info!("Core1: IMU task starting");
 
@@ -1892,10 +1892,6 @@ async fn imu_task(
 
     let led_sender = LED_COMMAND_CHANNEL.sender();
 
-    #[cfg(feature = "disable-imu")]
-    let mut imu = Imu::new(i2c_ref, led_sender);
-
-    #[cfg(not(feature = "disable-imu"))]
     let mut imu = {
         use embassy_rp::gpio::{Input, Level, Output, Pull};
         use embassy_rp::spi as rp_spi;

@@ -222,7 +222,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 ## Recent Work / Resume Points
 
 ### Completed
-- Field-readiness cleanup: removed `rtt-control`, `mag-test`, `disable-imu`, `error-strings` features
+- Field-readiness cleanup: removed `rtt-control`, `mag-test`, `error-strings` features; `disable-imu` (stub IMU with synthetic data) removed for good in July 2026 once both platforms flew with the real ICM-42686
 - Removed `TelemetryTopic` from ICD (polling is sufficient for TUI; avoids BlockIfFull backpressure)
 - TUI rewired from dead telemetry subscription to polled `GetAttitudeEndpoint` at 10Hz
 - Extracted inline modules to files: `rpc_handlers.rs`, `log_channel.rs`, `flight_state.rs`
@@ -239,7 +239,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - CRSF telemetry log events forwarded to RPC LogTopic (codes 20-23) for TUI visibility
 - Host TUI/direct mode: proper RTT worker shutdown via `AtomicBool` flag + `JoinHandle::join()`
 - `CrsfReceiver::new()` refactored to accept `UartRx` (UART split for TX telemetry)
-- MMC5616WA magnetometer wired into `disable-imu` stub — reads at ~10 Hz, populates `MAG_SIGNAL` for TUI/RPC. Always-on (no feature gate), the chip is physically on the board.
+- MMC5616WA magnetometer reads at ~10 Hz, populates `MAG_SIGNAL` for TUI/RPC. Always-on (no feature gate), the chip is physically on the board.
 - BMP390 barometer driver integrated via `embedded-hal-bus::RefCellDevice` for I2C0 bus sharing with MMC5616WA. Polls at ~2 Hz, populates `BARO_SIGNAL`. Init tries both addresses (0x77, 0x76). Always-on (no feature gate).
 - I2C bus sharing: I2C0 wrapped in `RefCell` + `StaticCell`, creates `RefCellDevice` handles for MMC5616WA and BMP390. Safe because both run in a single task on Core1.
 - CRSF telemetry expanded to 5 slots: attitude → flight_mode → GPS → baro → battery (~10 Hz each at 50 Hz tick)
@@ -267,7 +267,6 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Code review cleanup**: Replaced `Result<(), ()>` in `ULogLogger` with proper `ULogError` enum (4 variants: NotInitialized, InitFailed, BufferFull, FlushFailed). Extracted `buffer_writer_output()` helper deduplicating extend+flush across 8 log methods. Removed unused `failsafe: bool` parameter from `ArmingState::update()`. Removed misleading `const` from 9 methods across `arming.rs` and `system.rs` (`const fn` with `&mut self` compiles but is semantically wrong). Extracted 9 named constants from magic numbers in main loop divisors (`ULOG_STATUS_DIVISOR`, `ULOG_MAG_DIVISOR`, `ULOG_BARO_DIVISOR`, `ULOG_GNSS_DIVISOR`, `STALE_EVENT_DRAIN_DIVISOR`, `LED_UPDATE_INTERVAL`, `PERF_LOG_INTERVAL`, `GNSS_ERROR_LOG_INITIAL`, `GNSS_ERROR_LOG_INTERVAL`). Reviewed and dismissed 4 theoretical overflow risks (eRPM u32 multiplication fits, governor feedforward clamped by upstream DShot range, deadband discontinuity is 0.25% step, attitude rate i16 overflow only at 327°/s crash tumble in telemetry-only path).
 
 ### Known TODOs in Firmware
-- **`disable-imu` stub generates synthetic test data** (slow sine waves) — for debugging without ICM-42686 hardware
 - **Axis mapping**: ICM-42686 → AHRS Euler angles may need sign adjustment depending on chip orientation on PCB. Start with identity mapping, verify in TUI.
 
 ### ULog Recording
@@ -315,7 +314,7 @@ Compensates PCB hard-iron offsets on the MMC5616WA magnetometer by tracking min/
 
 **Event codes:** 110–116 (started, complete, failed, saved, cleared, loaded, load empty)
 
-Offsets auto-load on boot and survive power cycles. The `disable-imu` stub skips calibration (no AHRS in stub mode).
+Offsets auto-load on boot and survive power cycles.
 
 ### Next Steps
 See `TODO.md` for prioritized task list (waypoint navigation, pitot tube).

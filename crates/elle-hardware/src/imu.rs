@@ -1,7 +1,4 @@
 //! ICM-42686-P IMU integration with AHRS sensor fusion
-//!
-//! When the `disable-imu` feature is enabled, this module provides stub implementations
-//! that return synthetic attitude data for debugging without hardware.
 
 use defmt::*;
 pub use elle_error::ElleResult;
@@ -136,12 +133,5 @@ pub static LED_COMMAND_CHANNEL: embassy_sync::channel::Channel<
 pub static IMU_STATUS: embassy_sync::rwlock::RwLock<CriticalSectionRawMutex, ImuStatus> =
     embassy_sync::rwlock::RwLock::new(ImuStatus::new());
 
-#[cfg(not(feature = "disable-imu"))]
 mod driver;
-#[cfg(not(feature = "disable-imu"))]
 pub use driver::Imu;
-
-#[cfg(feature = "disable-imu")]
-mod stub;
-#[cfg(feature = "disable-imu")]
-pub use stub::Imu;
