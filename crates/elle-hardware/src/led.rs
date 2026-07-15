@@ -43,7 +43,7 @@ pub struct StatusLed<'a, PIO, const SM: usize>
 where
     PIO: embassy_rp::pio::Instance,
 {
-    ws2812: PioWs2812<'a, PIO, SM, 1, Grb>,
+    ws2812: PioWs2812<'a, PIO, SM, Grb>,
     current_pattern: LedPattern,
     pattern_counter: u32,
     brightness: u8,
@@ -158,8 +158,7 @@ where
             }
         };
 
-        let data = [color; 1];
-        self.ws2812.write(&data).await;
+        self.ws2812.write_slice(&[color; 1]).await;
 
         self.pattern_counter = self.pattern_counter.wrapping_add(1);
     }
@@ -175,9 +174,9 @@ where
     /// Quick helper to show a color briefly
     pub async fn flash(&mut self, color: RGB8, duration_ms: u64) {
         let scaled = self.scale_brightness(color);
-        self.ws2812.write(&[scaled; 1]).await;
+        self.ws2812.write_slice(&[scaled; 1]).await;
         Timer::after(Duration::from_millis(duration_ms)).await;
-        self.ws2812.write(&[colors::OFF; 1]).await;
+        self.ws2812.write_slice(&[colors::OFF; 1]).await;
     }
 
     /// Show calibration progress with color gradient

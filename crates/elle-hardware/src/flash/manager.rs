@@ -10,11 +10,16 @@ use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
-use sequential_storage::cache::NoCache;
+use sequential_storage::cache::key_pointers::ArrayKeyPointers;
+use sequential_storage::cache::page_pointers::ArrayPagePointers;
+use sequential_storage::cache::page_states::{ArrayPageStates, CalculatedPageStates};
+use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
 use sequential_storage::queue::{QueueConfig, QueueStorage};
 
-use super::constants::{PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_START};
+use super::constants::{
+    ERASE_SIZE, PROFILE_FLASH_END, PROFILE_FLASH_START, ULOG_FLASH_SIZE, ULOG_FLASH_START,
+};
 
 /// Mask SIO_IRQ_FIFO on Core0 before flash operations.
 ///
@@ -59,18 +64,49 @@ pub static ULOG_ITEMS_STORED: AtomicU32 = AtomicU32::new(0);
 
 type FlashDevice<'a> = Flash<'a, FLASH, Async, { elle_config::profile::FLASH_SIZE }>;
 
+/// Number of erase pages in the PID/mag-cal profile map region (64KB / 4KB = 16)
+const PROFILE_PAGE_COUNT: usize = ((PROFILE_FLASH_END - PROFILE_FLASH_START) as usize) / ERASE_SIZE;
+/// Number of erase pages in the ULog queue region (~14MB / 4KB = 3584)
+const ULOG_PAGE_COUNT: usize = ULOG_FLASH_SIZE / ERASE_SIZE;
+/// Key slots in the map cache — keys in use: 1 (PID profile), 2 (mag cal), plus headroom
+const MAP_KEY_SLOTS: usize = 4;
+
+/// Persistent cache for the profile map region: full page states/pointers plus key
+/// pointers (tiny at 16 pages), so repeated loads/saves skip the page scan.
+type MapCache =
+    Cache<ArrayPageStates<PROFILE_PAGE_COUNT>, ArrayPagePointers<PROFILE_PAGE_COUNT>, ArrayKeyPointers<u8, MAP_KEY_SLOTS>, u8>;
+/// Persistent cache for the ULog queue region: `CalculatedPageStates` has fixed memory
+/// use (array caches would cost ~KBs at 3584 pages), page/key pointers stay uncached.
+type QueueCache = Cache<CalculatedPageStates, Uncached, Uncached>;
+
+fn fresh_map_cache() -> MapCache {
+    Cache::new(ArrayPageStates::new(), ArrayPagePointers::new(), ArrayKeyPointers::new())
+}
+
+fn fresh_queue_cache() -> QueueCache {
+    Cache::new(CalculatedPageStates::new(ULOG_PAGE_COUNT), Uncached, Uncached)
+}
+
 pub struct SequentialFlashManager<'a> {
     /// Flash device wrapped in Option for take/put ownership transfer.
     /// `pop()` requires `MultiwriteNorFlash` which isn't impl'd for `&mut Flash`,
     /// so we move flash into QueueStorage and back via destroy().
     flash: Option<FlashDevice<'a>>,
+    /// Persistent map cache, moved into each MapStorage and recovered via destroy().
+    /// Must be reset whenever the profile region is mutated outside sequential-storage
+    /// (see `erase_pid_profile_internal`).
+    map_cache: Option<MapCache>,
+    /// Persistent queue cache, same protocol as `map_cache` (see `erase_ulog_internal`).
+    queue_cache: Option<QueueCache>,
 }
 
 impl<'a> SequentialFlashManager<'a> {
     #[must_use]
-    pub const fn new(flash: FlashDevice<'a>) -> Self {
+    pub fn new(flash: FlashDevice<'a>) -> Self {
         Self {
             flash: Some(flash),
+            map_cache: Some(fresh_map_cache()),
+            queue_cache: Some(fresh_queue_cache()),
         }
     }
 
@@ -145,8 +181,9 @@ impl<'a> SequentialFlashManager<'a> {
     /// Peek at the oldest ULog entry without removing it
     async fn peek_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.take_flash();
+        let cache = self.queue_cache.take().expect("queue cache already taken");
         let config = QueueConfig::new(ULOG_FLASH_START..super::constants::ULOG_FLASH_END_EXCL);
-        let mut queue = QueueStorage::new(flash, config, NoCache::new());
+        let mut queue = QueueStorage::new(flash, config, cache);
 
         mask_sio_fifo();
         let mut buf = [0u8; ULOG_CHUNK_SIZE];
@@ -171,8 +208,9 @@ impl<'a> SequentialFlashManager<'a> {
             }
         };
 
-        let (flash, _cache) = queue.destroy();
+        let (flash, cache) = queue.destroy();
         self.put_flash(flash);
+        self.queue_cache = Some(cache);
 
         response
     }
@@ -180,8 +218,9 @@ impl<'a> SequentialFlashManager<'a> {
     /// Pop the oldest ULog entry from the queue
     async fn pop_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.take_flash();
+        let cache = self.queue_cache.take().expect("queue cache already taken");
         let config = QueueConfig::new(ULOG_FLASH_START..super::constants::ULOG_FLASH_END_EXCL);
-        let mut queue = QueueStorage::new(flash, config, NoCache::new());
+        let mut queue = QueueStorage::new(flash, config, cache);
 
         mask_sio_fifo();
         let mut buf = [0u8; ULOG_CHUNK_SIZE];
@@ -201,8 +240,9 @@ impl<'a> SequentialFlashManager<'a> {
             }
         };
 
-        let (flash, _cache) = queue.destroy();
+        let (flash, cache) = queue.destroy();
         self.put_flash(flash);
+        self.queue_cache = Some(cache);
 
         response
     }
@@ -210,16 +250,18 @@ impl<'a> SequentialFlashManager<'a> {
     /// Save a value to flash map storage by key.
     async fn save_to_map(&mut self, key: u8, value: &[u8]) -> bool {
         let flash = self.take_flash();
+        let cache = self.map_cache.take().expect("map cache already taken");
         let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
-        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
+        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, cache);
 
         let mut data_buffer = [0u8; 128];
         mask_sio_fifo();
         let result = map.store_item(&mut data_buffer, &key, &value).await;
         unsafe { unmask_sio_fifo() };
 
-        let (flash, _cache) = map.destroy();
+        let (flash, cache) = map.destroy();
         self.put_flash(flash);
+        self.map_cache = Some(cache);
 
         result.is_ok()
     }
@@ -227,8 +269,9 @@ impl<'a> SequentialFlashManager<'a> {
     /// Load a value from flash map storage by key, returning up to `N` bytes.
     async fn load_from_map<const N: usize>(&mut self, key: u8) -> Option<[u8; N]> {
         let flash = self.take_flash();
+        let cache = self.map_cache.take().expect("map cache already taken");
         let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
-        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, NoCache::new());
+        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, cache);
 
         let mut data_buffer = [0u8; 128];
         mask_sio_fifo();
@@ -253,8 +296,9 @@ impl<'a> SequentialFlashManager<'a> {
             }
         };
 
-        let (flash, _cache) = map.destroy();
+        let (flash, cache) = map.destroy();
         self.put_flash(flash);
+        self.map_cache = Some(cache);
 
         loaded
     }
@@ -272,6 +316,9 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Erase the PID profile flash region (64KB)
     async fn erase_pid_profile_internal(&mut self) -> FlashResponse {
+        // Direct erase bypasses sequential-storage, so the persistent cache
+        // is stale afterwards (even on partial/failed erase) — reset it.
+        self.map_cache = Some(fresh_map_cache());
         let flash = self.flash.as_mut().expect("flash not available");
         mask_sio_fifo();
         match flash.erase(PROFILE_FLASH_START, PROFILE_FLASH_END).await {
@@ -329,6 +376,9 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Erase the entire ULog flash region
     async fn erase_ulog_internal(&mut self) -> FlashResponse {
+        // Direct erase bypasses sequential-storage, so the persistent cache
+        // is stale afterwards (even on partial/failed erase) — reset it.
+        self.queue_cache = Some(fresh_queue_cache());
         let flash = self.flash.as_mut().expect("flash not available");
         let mut addr = ULOG_FLASH_START;
         let end = super::constants::ULOG_FLASH_END_EXCL;

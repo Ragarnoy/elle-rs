@@ -33,11 +33,12 @@ mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt"] }
 sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
 
 # External dependencies - Embassy ecosystem (pinned to git HEAD for multicore executor support)
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt"] }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "executor-thread", "executor-interrupt"] }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d", features = ["defmt"] }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "executor-thread", "executor-interrupt"] }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d", default-features = false }
 
 # External dependencies - Hardware drivers
 icm426xx = { path = "../icm426xx", default-features = false, features = ["defmt"] }
@@ -53,7 +54,7 @@ libm = "0.2.15"
 static_cell = "2.1"
 rtt-target = { version = "0.6", features = ["defmt"] }
 thiserror = { version = "2.0", default-features = false }
-sequential-storage = { version = "7.1", default-features = false }
+sequential-storage = { version = "8.0", default-features = false }
 heapless = { version = "0.9", features = ["serde"] }
 postcard = { version = "1.1", default-features = false }
 postcard-rpc = { version = "0.12", default-features = false }
@@ -62,7 +63,7 @@ bmp390 = { version = "0.4", default-features = false, features = ["sync"] }
 embedded-hal-bus = { version = "0.3", default-features = false }
 ahrs = { version = "0.8", default-features = false }
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
-uom = { version = "0.36.0", default-features = false, features = ["f32", "si"] }
+uom = { version = "0.38.0", default-features = false, features = ["f32", "si"] }
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
 cobs = { version = "0.5", default-features = false }
 crc = { version = "3.4", default-features = false }
@@ -70,8 +71,8 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 embassy-dshot = { path = "../dshot-pio", default-features = false, features = ["rp2350", "defmt"] }
 
 [patch.crates-io]
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "5565326e" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d" }
 bmp390 = { path = "drivers/bmp390" }
 
 [profile.release]
