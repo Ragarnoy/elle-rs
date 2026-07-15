@@ -4,7 +4,8 @@
 
 Cargo workspace with embedded firmware and host tooling:
 
-- **`crates/elle-eagle/`** — Main firmware binary (RP2350, Embassy async, `no_std`)
+- **`crates/elle-eagle/`** — Main firmware binary, twin-engine flying wing (RP2350, Embassy async, `no_std`)
+- **`crates/elle-dart/`** — Dart firmware binary, single-engine platform (same stack, `single-engine` feature)
 - **`crates/elle-system/`** — System-level firmware support (RPC transport, supervisor, etc.)
 - **`crates/elle-rpc-icd/`** — Shared RPC Interface Control Document (types, endpoints, topics)
 - **`crates/elle-hardware/`** — Hardware drivers (IMU, LED, PWM, CRSF, flash)
@@ -12,6 +13,8 @@ Cargo workspace with embedded firmware and host tooling:
 - **`crates/elle-config/`** — Configuration constants
 - **`crates/elle-error/`** — Error types
 - **`crates/elle-ulog/`** — ULog flight data recording
+- **`crates/elle-nav/`** — Navigation math placeholder (not yet a workspace member)
+- **`drivers/`** — Vendored sensor drivers: `mmc5616wa` (mag), `sam-m10q` (GNSS), `bmp390` (baro, patched over crates.io)
 - **`tools/elle-rpc-host/`** — Host CLI tool (TUI dashboard + direct probe commands)
 
 ## Building
@@ -104,19 +107,20 @@ The firmware uses postcard-rpc's `define_dispatch!` macro for type-safe dispatch
 No extra postcard-rpc features needed — the macro works with elle's own WireTx/WireRx.
 
 - **ICD**: `crates/elle-rpc-icd/src/lib.rs` — Uses `endpoints!`/`topics!` macros generating `ENDPOINT_LIST`, `TOPICS_IN_LIST`, `TOPICS_OUT_LIST`
-- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 28 blocking handler functions
+- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 31 blocking handler functions
 - **Server task**: `crates/elle-eagle/src/main.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
 
 ### RPC Protocol
 
-28 endpoints + 1 outgoing topic defined in the ICD:
+31 endpoints + 1 outgoing topic defined in the ICD:
 
 **Endpoints** (request/response):
-- Control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetAttitudeSetpoint
+- Control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold
 - Safety: Arm, Disarm, EmergencyStop
 - Query: GetStatus, GetAttitude, GetPerformance, ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels, GetControllerOutput, GetEngine
 - ULog: StartULog, StopULog, ReadULogChunk, EraseULog, GetULogInfo
 - Autotune: StartAutotune, AbortAutotune
+- Mag calibration: StartMagCal, ClearMagCal, GetMagCal
 - System: Ping, GetVersion, GetTime
 
 **Topics** (device -> host, streaming):
@@ -150,7 +154,7 @@ Key modules:
 - `tui/` — ratatui dashboard (mod.rs event loop, state.rs, ui.rs, commands.rs)
 - `direct.rs` — Single-command mode using HostClient
 
-TUI polling rates: attitude 10Hz, status 0.5Hz, magnetometer 5Hz, barometer 1Hz, GNSS 1Hz, engine 5Hz.
+TUI polling rates: attitude 10Hz, status 0.5Hz, magnetometer 5Hz, barometer 1Hz, GNSS 1Hz, engine 5Hz, RC channels 20Hz, controller output 10Hz.
 
 **Important**: Host `probe.rs` reads from RTT up channel 1 (index 1), not channel 0 (which is defmt).
 
@@ -161,12 +165,12 @@ Three independent logging systems coexist, each serving a different purpose:
 | System | Transport | Rate | Persistence | Audience |
 |--------|-----------|------|-------------|----------|
 | **defmt** | RTT channel 0 | Event-driven | Only if host captures | Developer at debug probe |
-| **RPC LogTopic** | RTT channel 1 (postcard-RPC) | Event-driven (6 call sites) | No — streaming | Host TUI dashboard |
-| **ULog** | Flash storage | 77Hz attitude+commands+engine, 7.7Hz status | Yes — survives power loss | Post-flight analysis |
+| **RPC LogTopic** | RTT channel 1 (postcard-RPC) | Event-driven (`elle_event!` sites throughout firmware) | No — streaming | Host TUI dashboard |
+| **ULog** | SD card (FAT32 over SPI1) | 77Hz attitude+commands+engine, 7.7Hz status | Yes — survives power loss | Post-flight analysis |
 
 - defmt macros (`info!`, `warn!`, etc.) are always compiled in; the transport (`defmt-rtt`) is gated on `defmt-logging` (default on). Without the transport, macros become no-ops.
 - RPC LogTopic carries `(level: u8, code: u16)` — numeric event codes mapped to strings on the host side in `tui/ui.rs::log_code_text()`. ULog-related codes: 30=recording started, 31=init failed, 33=recording stopped, 34=flash erased.
-- ULog records full-fidelity flight data (attitude, commands, engine, status, baro, mag) to flash via `elle-hardware::ULogLogger`. Always compiled in (no feature gate). Recording is explicitly started/stopped — in RPC mode via `ulog start`/`ulog stop` TUI commands, in flight mode via RC aux channel switch (CH7, threshold 1500).
+- ULog records full-fidelity flight data (attitude, commands, engine, status, baro, mag) via `elle-hardware::ULogLogger` → `ULOG_WRITE_CHANNEL` → `sd_writer_task` (FAT32 on SD card). Always compiled in (no feature gate). In flight mode recording auto-starts when the SD card is ready (`SD_READY`) and runs until power-off; in RPC mode it is started/stopped via `ulog start`/`ulog stop` TUI commands. The flash ULog region (0x210000–0xFFFFFF) is a legacy store — extraction/erase RPC still targets it, but new recordings go to SD.
 
 ### Control Loop Architecture
 
@@ -183,10 +187,12 @@ The firmware main loop runs at 77Hz (13ms ticker). Engine output is decoupled: t
 1. Reads CRSF/ELRS commands from dedicated receiver task
 2. Updates FlightController with attitude + pilot commands
 3. Publishes engine output via `DSHOT_THROTTLE` signal
-4. Autotune state machine (RC CH9 3-position switch with debounce)
+4. Autotune state machine (RC CH7 3-position switch with debounce: off/pitch/roll)
 5. Failsafe check, LED pattern updates
-6. ULog recording controlled by RC aux channel switch (edge detection, CH7 > 1500 = on)
+6. ULog recording auto-starts once the SD card is ready (`SD_READY`), runs until power-off
 7. Auto-saves PID gains to flash on autotune completion
+
+RC aux channel map (`elle-config/src/lib.rs`): CH5 = heading hold (2-pos), CH6 = flight mode (3-pos: Manual/Stabilized/AltitudeHold), CH7 = autotune (3-pos: off/pitch/roll), CH8 = kill switch (2-pos, high = disarm).
 
 **RPC mode** (`rpc-control` feature):
 1. Reads RPC commands from `RPC_CMD_CHANNEL`
@@ -209,12 +215,12 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 |-------|----------|------|---------|
 | postcard-rpc 0.12 | server (define_dispatch!) | host_client | RPC framework |
 | embassy-* (git) | yes | - | Async embedded runtime |
-| probe-rs 0.30 | - | yes | Debug probe + RTT access |
+| probe-rs 0.31 | - | yes | Debug probe + RTT access |
 | icm426xx 0.4 | yes | - | ICM-42686-P IMU driver (SPI, FIFO, 20-bit) |
 | ahrs 0.8 | yes | - | Madgwick AHRS sensor fusion (no_std) |
 | nalgebra 0.34 | yes | - | Linear algebra (no_std + libm) |
-| bmp390 0.4 | yes (sync) | - | BMP390 barometer driver |
-| embedded-hal-bus 0.2 | yes | - | I2C/SPI bus sharing (RefCellDevice, ExclusiveDevice) |
+| bmp390 (vendored, drivers/bmp390) | yes (sync) | - | BMP390 barometer driver, patched over crates.io 0.4 |
+| embedded-hal-bus 0.3 | yes | - | I2C/SPI bus sharing (RefCellDevice, ExclusiveDevice) |
 | cobs 0.5 | yes | yes | Frame encoding |
 | ratatui 0.30 | - | yes | TUI dashboard |
 | rtt-target 0.6 | yes | - | RTT channel API |
@@ -277,11 +283,11 @@ Always compiled in. TUI commands:
 - `ulog extract [file]` — downloads all queued ULog data (auto-stops recording first, fragments 4KB queue items into 512B RPC chunks, default filename `flight_YYYYMMDD_HHMMSS.ulg`)
 - `ulog erase` — erases entire ULog flash region (0x210000–0xFFFFFF, auto-stops recording)
 
-Flight mode: RC aux channel (CH7, `ULOG_ENABLE_CH`) controls recording via edge detection (high ~2047 = on).
+Flight mode: recording auto-starts when the SD card is detected and initialized (`SD_READY`), and runs until power-off — no RC switch. `ulog extract`/`ulog erase` operate on the legacy flash region; new recordings land on the SD card as FAT32 files.
 
 ### PID Autotune
 
-Relay-based autotuner with 3-position RC switch (CH9) in flight mode, or RPC commands in ground test mode.
+Relay-based autotuner with 3-position RC switch (CH7: off/pitch/roll) in flight mode, or RPC commands in ground test mode.
 
 TUI commands:
 - `autotune pitch [relay_deg] [cycles] [tl|zn|so]` — start pitch autotune
