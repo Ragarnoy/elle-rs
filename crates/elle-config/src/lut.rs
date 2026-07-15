@@ -217,8 +217,7 @@ pub fn rc_to_engine_pulse_lut(rc_value: u16) -> u32 {
 pub fn rc_to_normalized(rc_value: u16) -> f32 {
     unsafe {
         // SAFETY: We clamp the index to valid range
-        let fixed_point =
-            *NORMALIZED_LUT.get_unchecked((rc_value as usize).min(RC_MAX_VALUE));
+        let fixed_point = *NORMALIZED_LUT.get_unchecked((rc_value as usize).min(RC_MAX_VALUE));
         fixed_point as f32 / 1024.0
     }
 }
@@ -290,8 +289,8 @@ const GOVERNOR_FF_TABLE: [(u32, u16); 11] = [
     (127_932, 1198), // avg(18338,18214) RPM × 7
     (140_284, 1348), // avg(20121,19960) RPM × 7
     (149_800, 1473), // right engine saturation (MAX_ERPM)
-    // Above this the right engine is voltage-limited; left can go slightly higher
-    // but governor caps at MAX_ERPM to keep thrust symmetric.
+                     // Above this the right engine is voltage-limited; left can go slightly higher
+                     // but governor caps at MAX_ERPM to keep thrust symmetric.
 ];
 
 /// Governor feedforward: estimate DShot output for a target eRPM using measured LUT.
@@ -306,8 +305,7 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 
     // Below the first entry: extrapolate linearly from origin
     if target_erpm <= GOVERNOR_FF_TABLE[0].0 {
-        return ((target_erpm * GOVERNOR_FF_TABLE[0].1 as u32) / GOVERNOR_FF_TABLE[0].0)
-            as u16;
+        return ((target_erpm * GOVERNOR_FF_TABLE[0].1 as u32) / GOVERNOR_FF_TABLE[0].0) as u16;
     }
 
     // Above the last entry: clamp to max DShot
@@ -335,9 +333,9 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 /// RPM × 7 (14-pole assumed). Covers DShot 48–1148; above 1148 RPM declines (prop stall).
 #[cfg(feature = "platform-dart")]
 const GOVERNOR_FF_TABLE: [(u32, u16); 13] = [
-    (2_373,  48),   //   339 RPM
-    (4_641,  98),   //   663 RPM
-    (9_198,  148),  // 1,314 RPM
+    (2_373, 48),    //   339 RPM
+    (4_641, 98),    //   663 RPM
+    (9_198, 148),   // 1,314 RPM
     (16_800, 248),  // 2,400 RPM
     (23_485, 348),  // 3,355 RPM
     (29_316, 448),  // 4,188 RPM

@@ -47,7 +47,10 @@ impl WireTx for ProbeRttTx {
     type Error = ProbeRttTxError;
 
     async fn send(&mut self, data: Vec<u8>) -> Result<(), Self::Error> {
-        self.out.send(data).await.map_err(|_| ProbeRttTxError::Closed)
+        self.out
+            .send(data)
+            .await
+            .map_err(|_| ProbeRttTxError::Closed)
     }
 }
 

@@ -123,8 +123,7 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             );
         }
         DirectCommand::Attitude => {
-            let a =
-                timeout(CMD_TIMEOUT, client.send_resp::<GetAttitudeEndpoint>(&())).await??;
+            let a = timeout(CMD_TIMEOUT, client.send_resp::<GetAttitudeEndpoint>(&())).await??;
             println!(
                 "Pitch: {:.1}, Roll: {:.1}, Yaw: {:.1}",
                 a.pitch_cdeg as f32 / 100.0,
@@ -158,7 +157,14 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
         }
         DirectCommand::Arm => {
             let ack = timeout(CMD_TIMEOUT, client.send_resp::<ArmEndpoint>(&())).await??;
-            println!("{}", if ack.success { "ARMED" } else { "Failed to arm" });
+            println!(
+                "{}",
+                if ack.success {
+                    "ARMED"
+                } else {
+                    "Failed to arm"
+                }
+            );
         }
         DirectCommand::Disarm => {
             let ack = timeout(CMD_TIMEOUT, client.send_resp::<DisarmEndpoint>(&())).await??;
@@ -184,21 +190,22 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             );
         }
         DirectCommand::Perf => {
-            let p =
-                timeout(CMD_TIMEOUT, client.send_resp::<GetPerformanceEndpoint>(&())).await??;
+            let p = timeout(CMD_TIMEOUT, client.send_resp::<GetPerformanceEndpoint>(&())).await??;
             println!(
                 "Control: {}us avg, {}us max | IMU: {}us avg",
                 p.control_loop_avg_us, p.control_loop_max_us, p.imu_avg_us
             );
         }
         DirectCommand::Mag => {
-            let m =
-                timeout(CMD_TIMEOUT, client.send_resp::<GetMagnetometerEndpoint>(&())).await??;
+            let m = timeout(
+                CMD_TIMEOUT,
+                client.send_resp::<GetMagnetometerEndpoint>(&()),
+            )
+            .await??;
             println!("Mag: X={} Y={} Z={}", m.x, m.y, m.z);
         }
         DirectCommand::Gnss => {
-            let g =
-                timeout(CMD_TIMEOUT, client.send_resp::<GetGnssEndpoint>(&())).await??;
+            let g = timeout(CMD_TIMEOUT, client.send_resp::<GetGnssEndpoint>(&())).await??;
             println!(
                 "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} hdop={:.1}",
                 g.latitude, g.longitude, g.altitude_m, g.fix_quality, g.num_satellites, g.hdop
@@ -240,8 +247,7 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             }
         },
         DirectCommand::Engine => {
-            let e =
-                timeout(CMD_TIMEOUT, client.send_resp::<GetEngineEndpoint>(&())).await??;
+            let e = timeout(CMD_TIMEOUT, client.send_resp::<GetEngineEndpoint>(&())).await??;
             let l_status = if e.left.valid { "OK" } else { "STALE" };
             let r_status = if e.right.valid { "OK" } else { "STALE" };
             let l_target = if e.left.target_erpm > 0 {
@@ -256,8 +262,14 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             };
             println!(
                 "Engine L: {} eRPM{} (cmd:{}) [{}] | R: {} eRPM{} (cmd:{}) [{}]",
-                e.left.erpm, l_target, e.left.throttle, l_status,
-                e.right.erpm, r_target, e.right.throttle, r_status,
+                e.left.erpm,
+                l_target,
+                e.left.throttle,
+                l_status,
+                e.right.erpm,
+                r_target,
+                e.right.throttle,
+                r_status,
             );
             if e.left.voltage_mv > 0 || e.right.voltage_mv > 0 {
                 println!(

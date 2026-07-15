@@ -73,18 +73,30 @@ const MAP_KEY_SLOTS: usize = 4;
 
 /// Persistent cache for the profile map region: full page states/pointers plus key
 /// pointers (tiny at 16 pages), so repeated loads/saves skip the page scan.
-type MapCache =
-    Cache<ArrayPageStates<PROFILE_PAGE_COUNT>, ArrayPagePointers<PROFILE_PAGE_COUNT>, ArrayKeyPointers<u8, MAP_KEY_SLOTS>, u8>;
+type MapCache = Cache<
+    ArrayPageStates<PROFILE_PAGE_COUNT>,
+    ArrayPagePointers<PROFILE_PAGE_COUNT>,
+    ArrayKeyPointers<u8, MAP_KEY_SLOTS>,
+    u8,
+>;
 /// Persistent cache for the ULog queue region: `CalculatedPageStates` has fixed memory
 /// use (array caches would cost ~KBs at 3584 pages), page/key pointers stay uncached.
 type QueueCache = Cache<CalculatedPageStates, Uncached, Uncached>;
 
 fn fresh_map_cache() -> MapCache {
-    Cache::new(ArrayPageStates::new(), ArrayPagePointers::new(), ArrayKeyPointers::new())
+    Cache::new(
+        ArrayPageStates::new(),
+        ArrayPagePointers::new(),
+        ArrayKeyPointers::new(),
+    )
 }
 
 fn fresh_queue_cache() -> QueueCache {
-    Cache::new(CalculatedPageStates::new(ULOG_PAGE_COUNT), Uncached, Uncached)
+    Cache::new(
+        CalculatedPageStates::new(ULOG_PAGE_COUNT),
+        Uncached,
+        Uncached,
+    )
 }
 
 pub struct SequentialFlashManager<'a> {
@@ -130,48 +142,48 @@ impl<'a> SequentialFlashManager<'a> {
         loop {
             let request = FLASH_REQUEST_SIGNAL.wait().await;
             match request {
-                    FlashRequest::PeekULog => {
-                        let response = self.peek_ulog_internal().await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
-                    FlashRequest::PopULog => {
-                        let response = self.pop_ulog_internal().await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
-                    FlashRequest::EraseULog => {
-                        info!("Flash: erasing ULog region");
-                        let response = self.erase_ulog_internal().await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
-                    FlashRequest::SavePidProfile { data } => {
-                        let response = self.save_pid_profile_internal(&data).await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
-                    FlashRequest::LoadPidProfile => {
-                        let response = self.load_pid_profile_internal().await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
-                    FlashRequest::ErasePidProfile => {
-                        info!("Flash: erasing PID profile region");
-                        let response = self.erase_pid_profile_internal().await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
-                    FlashRequest::SaveMagCal { data } => {
-                        let response = self.save_mag_cal_internal(&data).await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
-
-                    FlashRequest::LoadMagCal => {
-                        let response = self.load_mag_cal_internal().await;
-                        FLASH_RESPONSE_SIGNAL.signal(response);
-                    }
+                FlashRequest::PeekULog => {
+                    let response = self.peek_ulog_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
                 }
+
+                FlashRequest::PopULog => {
+                    let response = self.pop_ulog_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::EraseULog => {
+                    info!("Flash: erasing ULog region");
+                    let response = self.erase_ulog_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::SavePidProfile { data } => {
+                    let response = self.save_pid_profile_internal(&data).await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::LoadPidProfile => {
+                    let response = self.load_pid_profile_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::ErasePidProfile => {
+                    info!("Flash: erasing PID profile region");
+                    let response = self.erase_pid_profile_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::SaveMagCal { data } => {
+                    let response = self.save_mag_cal_internal(&data).await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::LoadMagCal => {
+                    let response = self.load_mag_cal_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+            }
 
             // Small yield to ensure other tasks can run
             Timer::after(Duration::from_millis(1)).await;
@@ -275,8 +287,7 @@ impl<'a> SequentialFlashManager<'a> {
 
         let mut data_buffer = [0u8; 128];
         mask_sio_fifo();
-        let result: Result<Option<&[u8]>, _> =
-            map.fetch_item(&mut data_buffer, &key).await;
+        let result: Result<Option<&[u8]>, _> = map.fetch_item(&mut data_buffer, &key).await;
         unsafe { unmask_sio_fifo() };
 
         let loaded = match result {
@@ -286,7 +297,12 @@ impl<'a> SequentialFlashManager<'a> {
                 Some(out)
             }
             Ok(Some(slice)) => {
-                warn!("Flash: key {} wrong size ({}), expected {}", key, slice.len(), N);
+                warn!(
+                    "Flash: key {} wrong size ({}), expected {}",
+                    key,
+                    slice.len(),
+                    N
+                );
                 None
             }
             Ok(None) => None,

@@ -86,7 +86,8 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
                                                 frame_count, parse_error_count, error_count
                                             );
                                         }
-                                        let scaled = core::array::from_fn(|i| crsf_to_rc(channels.0[i]));
+                                        let scaled =
+                                            core::array::from_fn(|i| crsf_to_rc(channels.0[i]));
                                         let commands = PilotCommands::Raw(RawCommands {
                                             channels: scaled,
                                             timestamp: Instant::now(),
@@ -96,7 +97,9 @@ pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
                                 }
                                 Err(_) => {
                                     parse_error_count += 1;
-                                    if parse_error_count <= 3 || parse_error_count.is_multiple_of(1000) {
+                                    if parse_error_count <= 3
+                                        || parse_error_count.is_multiple_of(1000)
+                                    {
                                         warn!("CRSF: parse error (total={})", parse_error_count);
                                     }
                                 }

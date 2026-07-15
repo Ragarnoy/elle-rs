@@ -34,7 +34,6 @@ pub struct ElevonOutputs {
     pub right_us: u32,
 }
 
-
 /// Mixes pitch, roll and yaw inputs into elevon control surface positions
 #[must_use]
 #[inline(always)]

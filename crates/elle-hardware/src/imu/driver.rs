@@ -204,7 +204,10 @@ impl<'a> Imu<'a> {
             match bmp390::sync::Bmp390::try_new(baro_i2c, addr, embassy_time::Delay, &baro_config) {
                 Ok(baro) => {
                     self.baro = Some(baro);
-                    info!("BMP390: initialized at {} (pressure + temperature)", addr_str);
+                    info!(
+                        "BMP390: initialized at {} (pressure + temperature)",
+                        addr_str
+                    );
                     break;
                 }
                 Err(e) => {
@@ -361,18 +364,17 @@ impl<'a> Imu<'a> {
             if tap_counter >= TAP_POLL_INTERVAL {
                 tap_counter = 0;
                 let mut bank0 = icm.ll().bank::<0>();
-                if let Ok(s) = bank0.int_status3().read() {
-                    if s.tap_det_int() != 0 {
-                        if let Ok(d) = bank0.apex_data4().read() {
-                            let num = d.tap_num();
-                            // num: 1=single, 2=double
-                            if num == 2 {
-                                crate::imu::TAP_SIGNAL.signal(());
-                                info!("ICM-42686: double-tap detected");
-                            } else if num == 1 {
-                                info!("ICM-42686: single tap (num={})", num);
-                            }
-                        }
+                if let Ok(s) = bank0.int_status3().read()
+                    && s.tap_det_int() != 0
+                    && let Ok(d) = bank0.apex_data4().read()
+                {
+                    let num = d.tap_num();
+                    // num: 1=single, 2=double
+                    if num == 2 {
+                        crate::imu::TAP_SIGNAL.signal(());
+                        info!("ICM-42686: double-tap detected");
+                    } else if num == 1 {
+                        info!("ICM-42686: single tap (num={})", num);
                     }
                 }
             }
@@ -502,7 +504,6 @@ impl<'a> Imu<'a> {
                     }
                 }
             }
-
         }
     }
 }

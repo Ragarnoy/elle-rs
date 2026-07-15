@@ -34,7 +34,12 @@ pub struct NmeaFrame<'a> {
 #[cfg(feature = "defmt")]
 impl defmt::Format for NmeaFrame<'_> {
     fn format(&self, fmt: defmt::Formatter<'_>) {
-        defmt::write!(fmt, "NmeaFrame {{ raw: {:?}, parsed: {} }}", self.raw, self.parsed.is_some());
+        defmt::write!(
+            fmt,
+            "NmeaFrame {{ raw: {:?}, parsed: {} }}",
+            self.raw,
+            self.parsed.is_some()
+        );
     }
 }
 

@@ -116,8 +116,7 @@ impl<U: Read + Write> SamM10q<U> {
     /// on the stack and writes it to the UART.
     pub fn send_ubx(&mut self, class: u8, id: u8, payload: &[u8]) -> Result<(), Error<U::Error>> {
         let mut buf = [0u8; types::MAX_FRAME_SIZE + ubx::HEADER_SIZE + ubx::CHECKSUM_SIZE];
-        let len = ubx::build_frame(&mut buf, class, id, payload)
-            .ok_or(Error::FrameTooLarge)?;
+        let len = ubx::build_frame(&mut buf, class, id, payload).ok_or(Error::FrameTooLarge)?;
         self.uart.write_all(&buf[..len])?;
         Ok(())
     }
@@ -254,7 +253,8 @@ mod tests {
     fn poll_ubx_frame() {
         let mut frame_data = vec![0u8; 16];
         let payload = [0x06, 0x01];
-        let len = ubx::build_frame(&mut frame_data, ubx::class::ACK, ubx::ack::ACK, &payload).unwrap();
+        let len =
+            ubx::build_frame(&mut frame_data, ubx::class::ACK, ubx::ack::ACK, &payload).unwrap();
         let uart = MockUart::new(&frame_data[..len]);
         let mut gnss = SamM10q::new(uart);
 
@@ -289,8 +289,12 @@ mod tests {
         let uart = MockUart::new(&[]);
         let mut gnss = SamM10q::new(uart);
 
-        gnss.send_ubx(ubx::class::CFG, ubx::cfg::RATE, &[0xE8, 0x03, 0x01, 0x00, 0x01, 0x00])
-            .unwrap();
+        gnss.send_ubx(
+            ubx::class::CFG,
+            ubx::cfg::RATE,
+            &[0xE8, 0x03, 0x01, 0x00, 0x01, 0x00],
+        )
+        .unwrap();
 
         let written = gnss.uart().written();
         // Verify sync bytes
@@ -384,10 +388,7 @@ mod tests {
                         assert_eq!(sats, 8);
                         assert!((hdop - 0.9).abs() < 0.01, "hdop={hdop}");
 
-                        assert!(matches!(
-                            gga.fix_type,
-                            Some(nmea::sentences::FixType::Gps)
-                        ));
+                        assert!(matches!(gga.fix_type, Some(nmea::sentences::FixType::Gps)));
                     }
                     other => panic!("expected GGA, got {:?}", other),
                 }

@@ -301,8 +301,13 @@ impl ULogLogger {
             return Err(ULogError::NotInitialized);
         }
 
-        let msg =
-            elle_ulog::BarometerMessage::new(Instant::now(), pressure_hpa, temperature_c, altitude_m, vario_ms);
+        let msg = elle_ulog::BarometerMessage::new(
+            Instant::now(),
+            pressure_hpa,
+            temperature_c,
+            altitude_m,
+            vario_ms,
+        );
 
         self.writer.clear_buffer();
         self.writer

@@ -1,4 +1,4 @@
-/// UBX protocol constants and helpers.
+//! UBX protocol constants and helpers.
 
 /// UBX sync byte 1.
 pub const SYNC1: u8 = 0xB5;

@@ -1,8 +1,8 @@
-use elle_config::{
-    DSHOT_THROTTLE_MAX, GOVERNOR_DEADBAND_ERPM, GOVERNOR_DT, GOVERNOR_ERPM_MAX_JUMP,
-    GOVERNOR_KI, GOVERNOR_KP,
-};
 use elle_config::lut::governor_feedforward;
+use elle_config::{
+    DSHOT_THROTTLE_MAX, GOVERNOR_DEADBAND_ERPM, GOVERNOR_DT, GOVERNOR_ERPM_MAX_JUMP, GOVERNOR_KI,
+    GOVERNOR_KP,
+};
 
 /// Per-engine PI controller for RPM governing.
 /// Converts target eRPM to DShot output using feedforward + PI correction.

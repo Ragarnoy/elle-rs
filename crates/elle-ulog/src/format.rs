@@ -121,12 +121,12 @@ pub struct FlagBits {
 /// Header: msg_size=40 (0x28), msg_type='B'
 /// Payload: all zeros (compat_flags, incompat_flags, appended_offsets)
 pub const FLAG_BITS_MSG: [u8; 43] = [
-    0x28, 0x00, b'B',  // Header: size=40, type='B'
-    0, 0, 0, 0, 0, 0, 0, 0,  // compat_flags
-    0, 0, 0, 0, 0, 0, 0, 0,  // incompat_flags
-    0, 0, 0, 0, 0, 0, 0, 0,  // appended_offsets[0]
-    0, 0, 0, 0, 0, 0, 0, 0,  // appended_offsets[1]
-    0, 0, 0, 0, 0, 0, 0, 0,  // appended_offsets[2]
+    0x28, 0x00, b'B', // Header: size=40, type='B'
+    0, 0, 0, 0, 0, 0, 0, 0, // compat_flags
+    0, 0, 0, 0, 0, 0, 0, 0, // incompat_flags
+    0, 0, 0, 0, 0, 0, 0, 0, // appended_offsets[0]
+    0, 0, 0, 0, 0, 0, 0, 0, // appended_offsets[1]
+    0, 0, 0, 0, 0, 0, 0, 0, // appended_offsets[2]
 ];
 
 impl FlagBits {

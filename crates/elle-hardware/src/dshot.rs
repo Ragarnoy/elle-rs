@@ -53,8 +53,13 @@ impl EngineUnitReading {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            erpm: 0, throttle: 0, valid: false, target_erpm: 0,
-            temperature: 0, voltage_mv: 0, current_ma: 0,
+            erpm: 0,
+            throttle: 0,
+            valid: false,
+            target_erpm: 0,
+            temperature: 0,
+            voltage_mv: 0,
+            current_ma: 0,
         }
     }
 
@@ -223,11 +228,7 @@ impl<'a> DshotEngines<'a> {
     }
 
     /// Send throttle to left engine with optional bidir telemetry + timeout.
-    async fn send_one_engine_left(
-        &mut self,
-        value: u16,
-        bidir: bool,
-    ) -> Option<ExtendedTelemetry> {
+    async fn send_one_engine_left(&mut self, value: u16, bidir: bool) -> Option<ExtendedTelemetry> {
         if value == 0 {
             self.left
                 .send_command_async(embassy_dshot::Command::MotorStop)
@@ -438,8 +439,20 @@ pub async fn dshot_task(
             )
             .await;
 
-        update_engine_unit(&mut reading.left, &mut left_state, l_edt, left_dshot, target.0);
-        update_engine_unit(&mut reading.right, &mut right_state, r_edt, right_dshot, target.1);
+        update_engine_unit(
+            &mut reading.left,
+            &mut left_state,
+            l_edt,
+            left_dshot,
+            target.0,
+        );
+        update_engine_unit(
+            &mut reading.right,
+            &mut right_state,
+            r_edt,
+            right_dshot,
+            target.1,
+        );
 
         ENGINE_CACHE.lock(|c| c.set(reading));
         ticker.next().await;

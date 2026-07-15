@@ -16,7 +16,12 @@ pub(crate) struct RegisterCache {
 }
 
 /// Write a single register.
-pub(crate) fn write_reg<I: I2c>(i2c: &mut I, addr: u8, reg: u8, val: u8) -> Result<(), Error<I::Error>> {
+pub(crate) fn write_reg<I: I2c>(
+    i2c: &mut I,
+    addr: u8,
+    reg: u8,
+    val: u8,
+) -> Result<(), Error<I::Error>> {
     i2c.write(addr, &[reg, val])?;
     Ok(())
 }
@@ -29,7 +34,12 @@ pub(crate) fn read_reg<I: I2c>(i2c: &mut I, addr: u8, reg: u8) -> Result<u8, Err
 }
 
 /// Read multiple consecutive registers into `buf`.
-pub(crate) fn read_regs<I: I2c>(i2c: &mut I, addr: u8, start: u8, buf: &mut [u8]) -> Result<(), Error<I::Error>> {
+pub(crate) fn read_regs<I: I2c>(
+    i2c: &mut I,
+    addr: u8,
+    start: u8,
+    buf: &mut [u8],
+) -> Result<(), Error<I::Error>> {
     i2c.write_read(addr, &[start], buf)?;
     Ok(())
 }

@@ -444,7 +444,10 @@ mod tests {
             assert_eq!(dec.feed(b'A'), FeedResult::Pending);
         }
         // Next byte should trigger FrameTooLarge
-        assert_eq!(dec.feed(b'A'), FeedResult::Error(DecodeError::FrameTooLarge));
+        assert_eq!(
+            dec.feed(b'A'),
+            FeedResult::Error(DecodeError::FrameTooLarge)
+        );
     }
 
     #[test]

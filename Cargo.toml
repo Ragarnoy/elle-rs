@@ -10,6 +10,7 @@ members = [
     "crates/elle-rpc-icd",
     "crates/elle-eagle",
     "crates/elle-dart",
+    "crates/elle-nav",
     "tools/elle-rpc-host",
     "drivers/mmc5616wa",
     "drivers/sam-m10q",
@@ -29,6 +30,7 @@ elle-control = { path = "crates/elle-control" }
 elle-system = { path = "crates/elle-system" }
 elle-ulog = { path = "crates/elle-ulog" }
 elle-rpc-icd = { path = "crates/elle-rpc-icd" }
+elle-nav = { path = "crates/elle-nav" }
 mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt"] }
 sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
 

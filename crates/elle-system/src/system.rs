@@ -385,8 +385,9 @@ impl<'a> FlightController<'a> {
                         ) {
                             (Some(target_rad), Some(att)) => {
                                 heading_target_deg = target_rad.to_degrees();
-                                heading_error_deg =
-                                    self.heading_controller.heading_error_deg(target_rad, att.yaw);
+                                heading_error_deg = self
+                                    .heading_controller
+                                    .heading_error_deg(target_rad, att.yaw);
                                 self.heading_controller.update(target_rad, att.yaw)
                             }
                             // No target locked yet or no attitude data — fall back to stick.
@@ -467,11 +468,7 @@ impl<'a> FlightController<'a> {
                             self.filtered_roll_setpoint_rad,
                             att.pitch,
                             att.roll,
-                            Some((
-                                -att.roll_rate,
-                                -att.pitch_rate,
-                                att.yaw_rate,
-                            )),
+                            Some((-att.roll_rate, -att.pitch_rate, att.yaw_rate)),
                             low_throttle,
                         );
                         pitch_correction = pc;

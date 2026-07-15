@@ -326,8 +326,7 @@ pub struct BarometerMessage {
 
 impl BarometerMessage {
     /// Format definition string for ULog
-    pub const FORMAT: &'static str =
-        "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m;float vario_ms";
+    pub const FORMAT: &'static str = "barometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m;float vario_ms";
 
     /// Message name
     pub const NAME: &'static str = "barometer_data";
@@ -340,7 +339,13 @@ impl BarometerMessage {
 
     /// Create a new barometer message
     #[must_use]
-    pub fn new(timestamp: Instant, pressure_hpa: f32, temperature_c: f32, altitude_m: f32, vario_ms: f32) -> Self {
+    pub fn new(
+        timestamp: Instant,
+        pressure_hpa: f32,
+        temperature_c: f32,
+        altitude_m: f32,
+        vario_ms: f32,
+    ) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
             pressure_hpa,

@@ -58,7 +58,8 @@ where
         sm: StateMachine<'static, PIO, SM>,
         pin: Peri<'static, impl embassy_rp::pio::PioPin>,
         dma: Peri<'static, D>,
-        irq: impl embassy_rp::interrupt::typelevel::Binding<D::Interrupt, dma::InterruptHandler<D>> + 'static,
+        irq: impl embassy_rp::interrupt::typelevel::Binding<D::Interrupt, dma::InterruptHandler<D>>
+        + 'static,
     ) -> Self {
         let program = PioWs2812Program::new(common);
         let ws2812 = PioWs2812::new(common, sm, dma, irq, pin, &program);

@@ -302,8 +302,11 @@ const _: () = assert!(HEADING_HOLD_CH < 16);
 
 // Heading-hold gains/limits must be sane and bank angle must not exceed the
 // pilot's own Stabilized-mode authority.
-const _: () = assert!(HEADING_HOLD_KP >= 0.0 && HEADING_HOLD_KI >= 0.0 && HEADING_HOLD_I_LIMIT_DEG >= 0.0);
-const _: () = assert!(HEADING_HOLD_MAX_ROLL_DEG > 0.0 && HEADING_HOLD_MAX_ROLL_DEG <= STABILIZED_MAX_ROLL_DEG);
+const _: () =
+    assert!(HEADING_HOLD_KP >= 0.0 && HEADING_HOLD_KI >= 0.0 && HEADING_HOLD_I_LIMIT_DEG >= 0.0);
+const _: () = assert!(
+    HEADING_HOLD_MAX_ROLL_DEG > 0.0 && HEADING_HOLD_MAX_ROLL_DEG <= STABILIZED_MAX_ROLL_DEG
+);
 const _: () = assert!(HEADING_HOLD_MAX_ROLL_RATE_DEG_S > 0.0);
 
 // CONTROL_LOOP_DT must be consistent with CONTROL_LOOP_FREQUENCY_HZ (±1ms tolerance).

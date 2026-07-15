@@ -15,7 +15,9 @@ pub enum RpcCommand {
     Arm,
     Disarm,
     EmergencyStop,
-    SetPidGains { config: PidConfig },
+    SetPidGains {
+        config: PidConfig,
+    },
     StartULog,
     StopULog,
     ReadULogChunk,

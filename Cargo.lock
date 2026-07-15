@@ -23,9 +23,9 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4060d852f1a761d677c6f50499475735d8619f622a5d32b9fa8044e349827aef"
 dependencies = [
- "nalgebra",
+ "nalgebra 0.34.2",
  "num-traits",
- "simba",
+ "simba 0.9.1",
 ]
 
 [[package]]
@@ -1227,12 +1227,24 @@ dependencies = [
  "icm426xx",
  "libm",
  "mmc5616wa",
- "nalgebra",
+ "nalgebra 0.34.2",
  "sdspi",
  "sequential-storage",
  "smart-leds",
  "static_cell",
  "uom",
+]
+
+[[package]]
+name = "elle-nav"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.1.1",
+ "elle-config",
+ "elle-control",
+ "libm",
+ "nalgebra 0.34.2",
+ "sguaba",
 ]
 
 [[package]]
@@ -2098,6 +2110,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.33.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f22fb22f065b308be0d8724e3706c7fa3fc2a6c7d6899df4cad7860e7a75436"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2786,7 +2807,26 @@ dependencies = [
  "num-complex",
  "num-rational",
  "num-traits",
- "simba",
+ "simba 0.9.1",
+ "typenum",
+]
+
+[[package]]
+name = "nalgebra"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adc43a60c217b0c6ff46e47f26911015ad8d2e5a8be1af668c67e370d99a4346"
+dependencies = [
+ "approx",
+ "glam 0.30.10",
+ "glam 0.31.1",
+ "glam 0.32.1",
+ "glam 0.33.2",
+ "num-complex",
+ "num-rational",
+ "num-traits",
+ "serde",
+ "simba 0.10.0",
  "typenum",
 ]
 
@@ -2890,12 +2930,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+dependencies = [
+ "num-integer",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "num-complex"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
 dependencies = [
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -2932,6 +2984,7 @@ checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -3980,6 +4033,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sguaba"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "266abed93ce6a7ee18ca5a8c48a5caac0984158e076c970323c2b44f5c61901d"
+dependencies = [
+ "libm",
+ "nalgebra 0.35.0",
+ "serde",
+ "typenum",
+ "uom",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4074,6 +4140,17 @@ dependencies = [
  "num-complex",
  "num-traits",
  "paste",
+]
+
+[[package]]
+name = "simba"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f45c644a9f3a386f9288625d9f0c1e999e1acf07a37df35d0516c7f199d9cb2"
+dependencies = [
+ "approx",
+ "num-complex",
+ "num-traits",
 ]
 
 [[package]]
@@ -4716,7 +4793,11 @@ version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a739f83872836c82a4f2527d4e54b37007b3de68cafe7edde95fd695968bf4b9"
 dependencies = [
+ "num-bigint",
+ "num-complex",
+ "num-rational",
  "num-traits",
+ "serde_core",
  "typenum",
 ]
 

@@ -424,7 +424,10 @@ async fn cmd_heading_hold(client: &HostClient<WireError>, heading_cdeg: i16) -> 
         )
         .await,
         "Heading hold",
-        format!("Heading hold: ENGAGED @ {:.1}\u{00B0}", heading_cdeg as f32 / 100.0),
+        format!(
+            "Heading hold: ENGAGED @ {:.1}\u{00B0}",
+            heading_cdeg as f32 / 100.0
+        ),
     )
 }
 

@@ -338,12 +338,20 @@ async fn main(spawner: Spawner) {
         let mut sd_spi_config = embassy_rp::spi::Config::default();
         sd_spi_config.frequency = 400_000; // 400kHz for SD card init
         let sd_spi = embassy_rp::spi::Spi::new(
-            p.SPI1, p.PIN_26, p.PIN_27, p.PIN_24,
-            p.DMA_CH5, p.DMA_CH6, Irqs, sd_spi_config,
+            p.SPI1,
+            p.PIN_26,
+            p.PIN_27,
+            p.PIN_24,
+            p.DMA_CH5,
+            p.DMA_CH6,
+            Irqs,
+            sd_spi_config,
         );
         let sd_cs = embassy_rp::gpio::Output::new(p.PIN_25, embassy_rp::gpio::Level::High);
         let sd_detect = embassy_rp::gpio::Input::new(p.PIN_23, embassy_rp::gpio::Pull::Up);
-        spawner.spawn(elle_hardware::sd_writer::sd_writer_task(sd_spi, sd_cs, sd_detect, epoch_ms).unwrap());
+        spawner.spawn(
+            elle_hardware::sd_writer::sd_writer_task(sd_spi, sd_cs, sd_detect, epoch_ms).unwrap(),
+        );
     }
 
     // Setup PIO0: elevon PWM (SM0, SM1) + WS2812B LED (SM2)
@@ -802,18 +810,16 @@ async fn main(spawner: Spawner) {
                 // Detect arm/disarm transitions → beep + event
                 let now_armed = fc.is_armed();
                 if now_armed && !was_armed {
-                    elle_hardware::dshot::BEEP_SIGNAL.signal(
-                        elle_hardware::dshot::BeepPattern::ArmBeep,
-                    );
+                    elle_hardware::dshot::BEEP_SIGNAL
+                        .signal(elle_hardware::dshot::BeepPattern::ArmBeep);
                     elle_hardware::elle_event!(
                         info,
                         elle_hardware::event::EVT_MOTORS_ARMED,
                         "Motors armed"
                     );
                 } else if !now_armed && was_armed {
-                    elle_hardware::dshot::BEEP_SIGNAL.signal(
-                        elle_hardware::dshot::BeepPattern::DisarmBeep,
-                    );
+                    elle_hardware::dshot::BEEP_SIGNAL
+                        .signal(elle_hardware::dshot::BeepPattern::DisarmBeep);
                     elle_hardware::elle_event!(
                         warn,
                         elle_hardware::event::EVT_MOTORS_DISARMED,
@@ -848,9 +854,15 @@ async fn main(spawner: Spawner) {
                     armed: fc.is_armed(),
                     failsafe: fc.is_failsafe(),
                     mode: match fc.current_control_mode() {
-                        elle_system::ControlMode::Manual => elle_hardware::crsf::CrsfControlMode::Manual,
-                        elle_system::ControlMode::Stabilized => elle_hardware::crsf::CrsfControlMode::Stabilized,
-                        elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
+                        elle_system::ControlMode::Manual => {
+                            elle_hardware::crsf::CrsfControlMode::Manual
+                        }
+                        elle_system::ControlMode::Stabilized => {
+                            elle_hardware::crsf::CrsfControlMode::Stabilized
+                        }
+                        elle_system::ControlMode::AltitudeHold => {
+                            elle_hardware::crsf::CrsfControlMode::AltitudeHold
+                        }
                     },
                     autotune: autotune_display,
                     heading_hold: fc.is_heading_hold_active(),
@@ -1065,15 +1077,15 @@ async fn main(spawner: Spawner) {
 
                 // Auto-start ULog on SD card ready (runs until power off)
                 if !ulog_recording
-                    && elle_hardware::sd_writer::SD_READY.load(core::sync::atomic::Ordering::Acquire)
+                    && elle_hardware::sd_writer::SD_READY
+                        .load(core::sync::atomic::Ordering::Acquire)
                 {
                     if !ulog_logger.is_initialized() {
                         let wall_ms =
                             compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                         let _ = ulog_logger.initialize(wall_ms).await;
-                        elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
-                            elle_hardware::sd_writer::SdCommand::Start,
-                        );
+                        elle_hardware::sd_writer::SD_CMD_SIGNAL
+                            .signal(elle_hardware::sd_writer::SdCommand::Start);
                     }
                     if ulog_logger.is_initialized() {
                         ulog_recording = true;
@@ -1286,18 +1298,14 @@ async fn main(spawner: Spawner) {
                     }
                     RpcCommand::StartULog => {
                         let mut ok = ulog_logger.is_initialized();
-                        if !ok
-                            && elle_hardware::sd_writer::SD_READY
-                                .load(Ordering::Acquire)
-                        {
+                        if !ok && elle_hardware::sd_writer::SD_READY.load(Ordering::Acquire) {
                             let wall_ms =
                                 compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                             ok = ulog_logger.initialize(wall_ms).await.is_ok();
                         }
                         if ok {
-                            elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
-                                elle_hardware::sd_writer::SdCommand::Start,
-                            );
+                            elle_hardware::sd_writer::SD_CMD_SIGNAL
+                                .signal(elle_hardware::sd_writer::SdCommand::Start);
                             ULOG_ENABLED.store(true, Ordering::Release);
                             elle_hardware::elle_event!(
                                 info,
@@ -1315,9 +1323,8 @@ async fn main(spawner: Spawner) {
                     RpcCommand::StopULog => {
                         ULOG_ENABLED.store(false, Ordering::Release);
                         let _ = ulog_logger.flush();
-                        elle_hardware::sd_writer::SD_CMD_SIGNAL.signal(
-                            elle_hardware::sd_writer::SdCommand::Stop,
-                        );
+                        elle_hardware::sd_writer::SD_CMD_SIGNAL
+                            .signal(elle_hardware::sd_writer::SdCommand::Stop);
                         elle_hardware::elle_event!(
                             info,
                             elle_hardware::event::EVT_ULOG_STOPPED,
@@ -1388,11 +1395,20 @@ async fn main(spawner: Spawner) {
                         } else if axis == 0xFE {
                             // Magic value: erase PID profile from flash
                             use elle_config::profile::{FlashRequest, FlashResponse};
-                            use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+                            use elle_hardware::flash::{
+                                FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
+                            };
                             FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
                             let timeout = Timer::after(Duration::from_secs(5));
-                            match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
-                                embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
+                            match embassy_futures::select::select(
+                                FLASH_RESPONSE_SIGNAL.wait(),
+                                timeout,
+                            )
+                            .await
+                            {
+                                embassy_futures::select::Either::First(
+                                    FlashResponse::PidProfileErased,
+                                ) => {
                                     info!("PID profile erased from flash");
                                 }
                                 _ => {
@@ -1460,8 +1476,12 @@ async fn main(spawner: Spawner) {
                         use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
                         FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
                         let timeout = Timer::after(Duration::from_secs(5));
-                        match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
-                            embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
+                        match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout)
+                            .await
+                        {
+                            embassy_futures::select::Either::First(
+                                FlashResponse::PidProfileErased,
+                            ) => {
                                 info!("PID profile erased from flash");
                             }
                             _ => {
@@ -1499,7 +1519,10 @@ async fn main(spawner: Spawner) {
                             "Mag calibration cleared"
                         );
                     }
-                    RpcCommand::SetHeadingHold { enabled, target_cdeg } => {
+                    RpcCommand::SetHeadingHold {
+                        enabled,
+                        target_cdeg,
+                    } => {
                         if enabled {
                             let target_rad = (target_cdeg as f32 / 100.0).to_radians();
                             fc.engage_heading_hold(target_rad);
@@ -1587,28 +1610,28 @@ async fn main(spawner: Spawner) {
 
             // Update flight controller
             let valid_attitude = validate_attitude(attitude);
-            if let Some(ref commands) = commands && !kill_active {
+            if let Some(ref commands) = commands
+                && !kill_active
+            {
                 fc.update(commands, valid_attitude.as_ref());
             }
 
             // Send engine commands via DShot (governor converts eRPM target to DShot)
             if !kill_active {
                 let (engine_l, _) = fc.engine_output();
-                let l_erpm =
-                    (engine_l as u32 * elle_config::MAX_ERPM) / elle_config::DSHOT_THROTTLE_MAX as u32;
+                let l_erpm = (engine_l as u32 * elle_config::MAX_ERPM)
+                    / elle_config::DSHOT_THROTTLE_MAX as u32;
                 DSHOT_THROTTLE.signal((l_erpm, 0));
             }
 
             // Detect arm/disarm transitions → beep
             let now_armed = fc.is_armed();
             if now_armed && !was_armed {
-                elle_hardware::dshot::BEEP_SIGNAL.signal(
-                    elle_hardware::dshot::BeepPattern::ArmBeep,
-                );
+                elle_hardware::dshot::BEEP_SIGNAL
+                    .signal(elle_hardware::dshot::BeepPattern::ArmBeep);
             } else if !now_armed && was_armed {
-                elle_hardware::dshot::BEEP_SIGNAL.signal(
-                    elle_hardware::dshot::BeepPattern::DisarmBeep,
-                );
+                elle_hardware::dshot::BEEP_SIGNAL
+                    .signal(elle_hardware::dshot::BeepPattern::DisarmBeep);
             }
             was_armed = now_armed;
 
@@ -1619,8 +1642,12 @@ async fn main(spawner: Spawner) {
                 && let Some(att) = valid_attitude.as_ref()
             {
                 let measurement_deg = match autotuner.axis() {
-                    AutotuneAxis::Pitch => att.pitch * elle_config::PITCH_INVERT * (180.0 / core::f32::consts::PI),
-                    AutotuneAxis::Roll => att.roll * elle_config::ROLL_INVERT * (180.0 / core::f32::consts::PI),
+                    AutotuneAxis::Pitch => {
+                        att.pitch * elle_config::PITCH_INVERT * (180.0 / core::f32::consts::PI)
+                    }
+                    AutotuneAxis::Roll => {
+                        att.roll * elle_config::ROLL_INVERT * (180.0 / core::f32::consts::PI)
+                    }
                 };
                 match autotuner.update(measurement_deg, autotune_tick) {
                     AutotuneAction::None => {}
@@ -1762,9 +1789,15 @@ async fn main(spawner: Spawner) {
                 armed: fc.is_armed(),
                 failsafe: fc.is_failsafe(),
                 mode: match fc.current_control_mode() {
-                    elle_system::ControlMode::Manual => elle_hardware::crsf::CrsfControlMode::Manual,
-                    elle_system::ControlMode::Stabilized => elle_hardware::crsf::CrsfControlMode::Stabilized,
-                    elle_system::ControlMode::AltitudeHold => elle_hardware::crsf::CrsfControlMode::AltitudeHold,
+                    elle_system::ControlMode::Manual => {
+                        elle_hardware::crsf::CrsfControlMode::Manual
+                    }
+                    elle_system::ControlMode::Stabilized => {
+                        elle_hardware::crsf::CrsfControlMode::Stabilized
+                    }
+                    elle_system::ControlMode::AltitudeHold => {
+                        elle_hardware::crsf::CrsfControlMode::AltitudeHold
+                    }
                 },
                 autotune: autotune_display,
                 heading_hold: fc.is_heading_hold_active(),
@@ -1781,7 +1814,11 @@ async fn main(spawner: Spawner) {
                 },
                 rc_age_ms: fc.rc_signal_age_ms(),
                 autotune_state: if autotuner.is_active() {
-                    if autotuner.axis() == AutotuneAxis::Pitch { 1 } else { 2 }
+                    if autotuner.axis() == AutotuneAxis::Pitch {
+                        1
+                    } else {
+                        2
+                    }
                 } else {
                     0
                 },

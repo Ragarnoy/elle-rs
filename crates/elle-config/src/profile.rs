@@ -19,14 +19,10 @@ pub enum FlashRequest {
     PeekULog,
     PopULog,
     EraseULog,
-    SavePidProfile {
-        data: [u8; 32],
-    },
+    SavePidProfile { data: [u8; 32] },
     LoadPidProfile,
     ErasePidProfile,
-    SaveMagCal {
-        data: [u8; 12],
-    },
+    SaveMagCal { data: [u8; 12] },
     LoadMagCal,
 }
 

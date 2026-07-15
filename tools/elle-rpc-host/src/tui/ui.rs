@@ -133,7 +133,10 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
 
     let header_cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(time_str.len() as u16 + 1)])
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(time_str.len() as u16 + 1),
+        ])
         .split(inner);
 
     let left = Paragraph::new(Line::from(vec![
@@ -193,7 +196,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         .constraints([
             Constraint::Length(14), // attitude data + mag + heading + baro + gnss + rc age
             Constraint::Length(4),  // controller output + engine + EDT
-            Constraint::Min(8),    // artificial horizon canvas
+            Constraint::Min(8),     // artificial horizon canvas
         ])
         .split(inner);
 
@@ -243,7 +246,10 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(format!("{}ms", age), Style::default().fg(color)),
         ]
     } else {
-        vec![Span::styled("  RC age: ---", Style::default().fg(Color::Gray))]
+        vec![Span::styled(
+            "  RC age: ---",
+            Style::default().fg(Color::Gray),
+        )]
     };
 
     let (mag_line, heading_line) = if let Some(m) = state.magnetometer {
@@ -267,7 +273,10 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                 "  Baro: {:.1} hPa | {:.1}\u{00B0}C",
                 b.pressure_hpa, b.temperature_c
             ),
-            format!("  Alt:  {:.1}m | Vario: {:+.1} m/s", b.altitude_m, b.vario_ms),
+            format!(
+                "  Alt:  {:.1}m | Vario: {:+.1} m/s",
+                b.altitude_m, b.vario_ms
+            ),
         )
     } else {
         ("  Baro: ---".into(), "  Alt:  --- (baro)".into())
@@ -320,7 +329,10 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         let err_str = if let Some(a) = state.attitude {
             let pitch_err = (c.pitch_setpoint_cdeg - a.pitch_cdeg) as f32 / 100.0;
             let roll_err = (c.roll_setpoint_cdeg - a.roll_cdeg) as f32 / 100.0;
-            format!("  Err: P={:+.1}\u{00B0} R={:+.1}\u{00B0}", pitch_err, roll_err)
+            format!(
+                "  Err: P={:+.1}\u{00B0} R={:+.1}\u{00B0}",
+                pitch_err, roll_err
+            )
         } else {
             String::new()
         };
@@ -393,7 +405,9 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                     c.heading_target_cdeg as f32 / 100.0,
                     c.heading_error_cdeg as f32 / 100.0,
                 ),
-                Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
         lines
@@ -457,7 +471,8 @@ fn draw_horizon(f: &mut Frame, area: Rect, state: &AppState) {
             for &angle in &[-30.0, -20.0, -10.0, 10.0, 20.0, 30.0_f64] {
                 let y_off = pitch_shift + (-angle);
                 ctx.draw(&CanvasLine {
-                    x1: -ladder_half * cos_r + (y_off * sin_r).copysign(-1.0) * ladder_half / half_w,
+                    x1: -ladder_half * cos_r
+                        + (y_off * sin_r).copysign(-1.0) * ladder_half / half_w,
                     y1: y_off - ladder_half * sin_r,
                     x2: ladder_half * cos_r + (y_off * sin_r).copysign(1.0) * ladder_half / half_w,
                     y2: ladder_half.mul_add(sin_r, y_off),
@@ -751,4 +766,3 @@ fn draw_command(f: &mut Frame, area: Rect, state: &AppState) {
     )));
     f.render_widget(help, chunks[1]);
 }
-

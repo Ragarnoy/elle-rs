@@ -93,10 +93,7 @@ impl AppState {
 
     pub fn push_attitude(&mut self, att: AttitudeResp) {
         // Skip all-zero responses — firmware returns zeros before first real sample.
-        if att.pitch_cdeg == 0
-            && att.roll_cdeg == 0
-            && att.yaw_cdeg == 0
-            && self.attitude.is_some()
+        if att.pitch_cdeg == 0 && att.roll_cdeg == 0 && att.yaw_cdeg == 0 && self.attitude.is_some()
         {
             self.mark_poll_success();
             return;

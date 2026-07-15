@@ -110,8 +110,8 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
     } else {
         match mode.autotune {
             AutotuneDisplay::Pitch => b"AT P\0",
-            AutotuneDisplay::Roll  => b"AT R\0",
-            AutotuneDisplay::Done  => b"DONE\0",
+            AutotuneDisplay::Roll => b"AT R\0",
+            AutotuneDisplay::Done => b"DONE\0",
             AutotuneDisplay::Error => b"ERR!\0",
             AutotuneDisplay::Off => {
                 if mode.heading_hold && mode.mode == CrsfControlMode::Stabilized {

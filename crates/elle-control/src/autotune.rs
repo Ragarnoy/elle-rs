@@ -543,9 +543,7 @@ impl Autotuner {
                 }
 
                 // No oscillation timeout
-                if !self.first_crossing
-                    && elapsed >= SETTLE_TICKS + NO_OSC_TIMEOUT_TICKS
-                {
+                if !self.first_crossing && elapsed >= SETTLE_TICKS + NO_OSC_TIMEOUT_TICKS {
                     self.phase = Phase::Aborted;
                     return AutotuneAction::RestoreGains(self.saved_gains);
                 }

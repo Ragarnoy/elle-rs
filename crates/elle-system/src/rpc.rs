@@ -7,10 +7,10 @@ use core::cell::RefCell;
 use core::fmt::Arguments;
 
 use defmt::info;
-use embassy_sync::blocking_mutex::{raw::CriticalSectionRawMutex, Mutex};
+use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
 use postcard_rpc::header::VarHeader;
-use postcard_rpc::server::{WireRx, WireRxErrorKind, WireTx, WireTxErrorKind};
 use postcard_rpc::header::VarKeyKind;
+use postcard_rpc::server::{WireRx, WireRxErrorKind, WireTx, WireTxErrorKind};
 use rtt_target::{ChannelMode, DownChannel, UpChannel, rtt_init, set_defmt_channel};
 use serde::Serialize;
 use static_cell::StaticCell;
@@ -84,9 +84,7 @@ impl WireTx for RttTx {
     async fn send_raw(&self, buf: &[u8]) -> Result<(), Self::Error> {
         self.inner.lock(|inner| {
             let mut inner = inner.borrow_mut();
-            let RttTxInner {
-                channel, buf2, ..
-            } = &mut *inner;
+            let RttTxInner { channel, buf2, .. } = &mut *inner;
 
             // COBS encode raw data into buf2
             let encoded_len = cobs::encode(buf, &mut buf2[..]);
@@ -150,8 +148,10 @@ impl WireRx for RttRx {
                                     let remaining_start = idx + 1;
                                     let remaining_len = self.used + count - remaining_start;
                                     if remaining_len > 0 {
-                                        self.buf
-                                            .copy_within(remaining_start..remaining_start + remaining_len, 0);
+                                        self.buf.copy_within(
+                                            remaining_start..remaining_start + remaining_len,
+                                            0,
+                                        );
                                     }
                                     self.used = remaining_len;
 
@@ -162,8 +162,10 @@ impl WireRx for RttRx {
                                     let remaining_start = idx + 1;
                                     let remaining_len = self.used + count - remaining_start;
                                     if remaining_len > 0 {
-                                        self.buf
-                                            .copy_within(remaining_start..remaining_start + remaining_len, 0);
+                                        self.buf.copy_within(
+                                            remaining_start..remaining_start + remaining_len,
+                                            0,
+                                        );
                                     }
                                     self.used = remaining_len;
                                 }

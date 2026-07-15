@@ -197,11 +197,7 @@ impl ULogWriter {
     }
 
     /// Write an engine data message
-    pub fn write_engine(
-        &mut self,
-        msg_id: u16,
-        data: &EngineMessage,
-    ) -> Result<(), WriteError> {
+    pub fn write_engine(&mut self, msg_id: u16, data: &EngineMessage) -> Result<(), WriteError> {
         self.write_data_payload(msg_id, &data.to_bytes())
     }
 

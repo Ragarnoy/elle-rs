@@ -97,9 +97,18 @@ impl<I: I2c> Mmc5616wa<I> {
     ///
     /// Triggers TM_M with AUTO_SR_EN, polls Status1 for completion,
     /// burst-reads all 9 output bytes, and returns signed counts.
-    pub fn measure_magnetic(&mut self, delay: &mut impl DelayNs) -> Result<MagData, Error<I::Error>> {
+    pub fn measure_magnetic(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<MagData, Error<I::Error>> {
         // Trigger measurement: TM_M + AUTO_SR_EN
-        interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, TM_M | AUTO_SR_EN, 0)?;
+        interface::modify_ctrl0(
+            &mut self.i2c,
+            self.addr,
+            &mut self.cache,
+            TM_M | AUTO_SR_EN,
+            0,
+        )?;
 
         // Poll for measurement done
         self.poll_status(MEAS_M_DONE, delay)?;
@@ -118,7 +127,10 @@ impl<I: I2c> Mmc5616wa<I> {
     ///
     /// Executes SET → measure → RESET → measure, then computes H = (SET - RESET) / 2
     /// to cancel the sensor offset. Respects tSR = 1 ms between SET/RESET operations.
-    pub fn measure_compensated(&mut self, delay: &mut impl DelayNs) -> Result<MagData, Error<I::Error>> {
+    pub fn measure_compensated(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<MagData, Error<I::Error>> {
         // SET pulse
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, DO_SET, 0)?;
         delay.delay_ms(1); // tSR
@@ -146,7 +158,10 @@ impl<I: I2c> Mmc5616wa<I> {
     }
 
     /// Read the raw temperature register value.
-    pub fn measure_temperature_raw(&mut self, delay: &mut impl DelayNs) -> Result<u8, Error<I::Error>> {
+    pub fn measure_temperature_raw(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<u8, Error<I::Error>> {
         // Trigger temperature measurement
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, TM_T, 0)?;
 
@@ -157,7 +172,10 @@ impl<I: I2c> Mmc5616wa<I> {
     }
 
     /// Measure temperature and convert to degrees Celsius.
-    pub fn measure_temperature(&mut self, delay: &mut impl DelayNs) -> Result<f32, Error<I::Error>> {
+    pub fn measure_temperature(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<f32, Error<I::Error>> {
         let raw = self.measure_temperature_raw(delay)?;
         Ok(tout_to_celsius(raw))
     }
@@ -166,7 +184,13 @@ impl<I: I2c> Mmc5616wa<I> {
 
     /// Set the measurement bandwidth (BW1:BW0 in Ctrl1).
     pub fn set_bandwidth(&mut self, bw: Bandwidth) -> Result<(), Error<I::Error>> {
-        interface::modify_ctrl1(&mut self.i2c, self.addr, &mut self.cache, bw.bits(), BW_MASK)
+        interface::modify_ctrl1(
+            &mut self.i2c,
+            self.addr,
+            &mut self.cache,
+            bw.bits(),
+            BW_MASK,
+        )
     }
 
     /// Set the output data rate register.
@@ -179,7 +203,13 @@ impl<I: I2c> Mmc5616wa<I> {
     /// Writes the ODR value, enables CMM_FREQ_EN in Ctrl0, and sets CMM_EN in Ctrl2.
     pub fn start_continuous(&mut self, odr: u8) -> Result<(), Error<I::Error>> {
         self.set_odr(odr)?;
-        interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, CMM_FREQ_EN | AUTO_SR_EN, 0)?;
+        interface::modify_ctrl0(
+            &mut self.i2c,
+            self.addr,
+            &mut self.cache,
+            CMM_FREQ_EN | AUTO_SR_EN,
+            0,
+        )?;
         interface::modify_ctrl2(&mut self.i2c, self.addr, &mut self.cache, CMM_EN, 0)?;
         Ok(())
     }
@@ -232,9 +262,9 @@ extern crate alloc;
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use super::types::*;
     use super::registers::*;
+    use super::types::*;
+    use alloc::vec;
 
     // --- Pure logic tests ---
 
@@ -254,7 +284,10 @@ mod tests {
         // Null field = 524288 = 0x80000
         // out0 = 0x80, out1 = 0x00, out2 = 0x00
         assert_eq!(reconstruct_20bit(0x80, 0x00, 0x00), 0x80000);
-        assert_eq!(reconstruct_20bit(0x80, 0x00, 0x00), NULL_FIELD_OUTPUT as u32);
+        assert_eq!(
+            reconstruct_20bit(0x80, 0x00, 0x00),
+            NULL_FIELD_OUTPUT as u32
+        );
     }
 
     #[test]
@@ -331,8 +364,8 @@ mod tests {
 
     // --- Mock I2C tests ---
 
-    use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
     use super::Mmc5616wa;
+    use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
 
     #[test]
     fn validate_success() {
@@ -349,9 +382,11 @@ mod tests {
 
     #[test]
     fn validate_wrong_id() {
-        let expectations = [
-            I2cTrans::write_read(DEFAULT_ADDRESS, vec![CHIP_ID], vec![0xAB]),
-        ];
+        let expectations = [I2cTrans::write_read(
+            DEFAULT_ADDRESS,
+            vec![CHIP_ID],
+            vec![0xAB],
+        )];
         let i2c = I2cMock::new(&expectations);
         let mut dev = Mmc5616wa::new_default(i2c);
 
@@ -442,11 +477,16 @@ mod tests {
     #[test]
     fn timeout_on_poll() {
         // Status never becomes ready
-        let mut expectations = vec![
-            I2cTrans::write(DEFAULT_ADDRESS, vec![CTRL0, TM_M | AUTO_SR_EN]),
-        ];
+        let mut expectations = vec![I2cTrans::write(
+            DEFAULT_ADDRESS,
+            vec![CTRL0, TM_M | AUTO_SR_EN],
+        )];
         for _ in 0..500 {
-            expectations.push(I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![0x00]));
+            expectations.push(I2cTrans::write_read(
+                DEFAULT_ADDRESS,
+                vec![STATUS1],
+                vec![0x00],
+            ));
         }
         let i2c = I2cMock::new(&expectations);
         let mut dev = Mmc5616wa::new_default(i2c);
