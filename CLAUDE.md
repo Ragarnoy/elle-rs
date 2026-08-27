@@ -216,10 +216,11 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 | postcard-rpc 0.12 | server (define_dispatch!) | host_client | RPC framework |
 | embassy-* (git) | yes | - | Async embedded runtime |
 | probe-rs 0.31 | - | yes | Debug probe + RTT access |
-| icm426xx 0.4 | yes | - | ICM-42686-P IMU driver (SPI, FIFO, 20-bit) |
+| icm426xx 0.4 (git, Ragarnoy fork, branch `add-icm42686p-support`) | yes | - | ICM-42686-P IMU driver (SPI, FIFO, 20-bit) — the 42686-P generic `Device` support is not in upstream's published 0.4.0 |
 | ahrs 0.8 | yes | - | Madgwick AHRS sensor fusion (no_std) |
 | nalgebra 0.34 | yes | - | Linear algebra (no_std + libm) |
 | bmp390 (vendored, drivers/bmp390) | yes (sync) | - | BMP390 barometer driver, patched over crates.io 0.4 |
+| embassy-dshot 0.3 | yes | - | DShot ESC driver over PIO (own crate, published to crates.io) |
 | embedded-hal-bus 0.3 | yes | - | I2C/SPI bus sharing (RefCellDevice, ExclusiveDevice) |
 | cobs 0.5 | yes | yes | Frame encoding |
 | ratatui 0.30 | - | yes | TUI dashboard |
@@ -271,9 +272,18 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Failsafe state machine**: `RcLinkState` enum (Ok/Warning/Lost) replaces simple threshold check. `RC_WARNING_MS=200` → `RC_TIMEOUT_MS=300` two-stage detection. Events (codes 13-15) fire on transitions only, not every iteration. `signal_restored()` clears failsafe on recovery. `rc_age_ms` in `StatusResp`, `FlightState`, ULog `system_status`. LED warning pattern (FastBlink/orange) at Warning, RapidFlash/orange at Lost.
 - **Interrupt-driven IMU reads**: INT1 (PIN_5) configured for DATA_RDY (`ui_drdy_int1_en=1`). `Imu::run()` polls `int1.is_low()` + `yield_now()` instead of FIFO polling with 500µs sleep. Eliminates wasted SPI reads, gives deterministic attitude latency. Async GPIO not used (Core1 lacks IRQ infrastructure). INT2 (GPIO4) free for crash detection SMD interrupt.
 - **Code review cleanup**: Replaced `Result<(), ()>` in `ULogLogger` with proper `ULogError` enum (4 variants: NotInitialized, InitFailed, BufferFull, FlushFailed). Extracted `buffer_writer_output()` helper deduplicating extend+flush across 8 log methods. Removed unused `failsafe: bool` parameter from `ArmingState::update()`. Removed misleading `const` from 9 methods across `arming.rs` and `system.rs` (`const fn` with `&mut self` compiles but is semantically wrong). Extracted 9 named constants from magic numbers in main loop divisors (`ULOG_STATUS_DIVISOR`, `ULOG_MAG_DIVISOR`, `ULOG_BARO_DIVISOR`, `ULOG_GNSS_DIVISOR`, `STALE_EVENT_DRAIN_DIVISOR`, `LED_UPDATE_INTERVAL`, `PERF_LOG_INTERVAL`, `GNSS_ERROR_LOG_INITIAL`, `GNSS_ERROR_LOG_INTERVAL`). Reviewed and dismissed 4 theoretical overflow risks (eRPM u32 multiplication fits, governor feedforward clamped by upstream DShot range, deadband discontinuity is 0.25% step, attitude rate i16 overflow only at 327°/s crash tumble in telemetry-only path).
+- **RPM governor windup fix**: `RpmGovernor::update()` (`elle-control/src/governor.rs`) was clamping its PI correction/anti-windup against `DSHOT_THROTTLE_MAX` (1999) instead of each platform's measured stall/saturation boundary — at full throttle (target eRPM sitting right at the peak), any normal RPM dip wound the integrator past that boundary, pushing DShot into a region where more throttle means *less* RPM (dart prop stalls above DShot 1148; eagle right engine saturates above 1473), causing runaway progressive RPM sag. Added platform-specific `GOVERNOR_DSHOT_MAX` const (`elle-config/src/lib.rs`) matching each platform's last `GOVERNOR_FF_TABLE` entry and used it for all governor clamps.
+- **Roll axis sign fix**: `Imu::run()` (`elle-hardware/src/imu/driver.rs`) now negates `roll`/`roll_rate` from the AHRS quaternion — field-confirmed the identity mapping had roll backwards (aircraft rolled the wrong way in response to PID correction) on this PCB orientation.
+- **Autotune measurement invert bug fix**: The per-tick measurement fed to `Autotuner::update()` (both `main.rs` files, flight-mode + RPC-mode tasks) was multiplying `att.pitch`/`att.roll` by `PITCH_INVERT`/`ROLL_INVERT`, but the real `FlightController` PID loop compares its setpoint against raw, uninverted attitude (`PITCH_INVERT` only corrects the pilot stick mapping, per the comment at `elle-system/src/system.rs:462`). With `PITCH_INVERT = -1.0`, this turned the pitch relay test into positive feedback instead of a self-correcting oscillation. Removed the invert multiplication from all 4 sites per platform file. Roll was unaffected only because `ROLL_INVERT = 1.0` was a no-op. Untested since the fix — retest pitch autotune specifically before trusting it.
+- **Autotune Ku formula fix**: `finish_relay()` (`elle-control/src/autotune.rs`) computed `Ku = 4h/(πa)` as if the excitation were a pure relay, but the setpoint-relay method drives the plant with `u = K·(r − y)` (`K = scale·TEST_KP`) — a relay of amplitude `h = K·d` **in parallel with proportional feedback K**. The oscillation condition is `(4h/(πa) + K)·G = −1`, so Ku must include `+ K` (5.0 in effective units with `PID_SCALE = 5.0`); omitting it underestimated Ku by ~40% when the measured amplitude ≈ relay amplitude, making all previously autotuned gains softer than the tuning rules intended. Any gains autotuned before this fix should be re-tuned.
+- **Autotune setpoint filter bypass**: `FlightController::update()` (`elle-system/src/system.rs`) now skips `SETPOINT_FILTER_ALPHA` smoothing when `setpoint_override` is active — the autotune relay is an intentional square wave, and the filter (τ ≈ 87 ms at 77 Hz) was attenuating/phase-lagging the excitation that the Ku/Tu math assumes reaches the plant unmodified.
+- **Frozen-mag fusion fix**: `Imu::run()` mag error path (`elle-hardware/src/imu/driver.rs`) now clears `has_mag` alongside `mag_ok` on I2C error — previously the AHRS kept fusing the stale `last_mag` vector forever after the mag died mid-session, dragging yaw toward a fixed garbage heading regardless of calibration.
+- **Mag cal progress counter fix**: `MAG_CAL_SAMPLES` in both `rpc_app.rs` files was read by `handle_get_mag_cal` but only ever written as 0 — Core1's real sample count never left the driver, so `mag cal` status showed 0 samples throughout collection. Replaced with `elle_hardware::imu::MAG_CAL_PROGRESS` (AtomicU16), written by the Core1 driver during collection, read by the RPC handlers. Note: `GetMagnetometer`/TUI mag panel intentionally shows **raw** counts (offsets only apply to the AHRS feed), so calibration is only observable via yaw behavior and the `mag cal` status offsets.
+
+- **No out-of-tree path dependencies**: `embassy-dshot` was a `path = "../dshot-pio"` dep and `icm426xx` a `path = "../icm426xx"` dep, so the workspace only built on a machine with those sibling checkouts. `embassy-dshot` 0.3.0 was published to crates.io (upgraded to `embassy-rp` 0.10 / `embassy-time` 0.5.1, no `[patch.crates-io]` in the library) and is now a registry dep; `icm426xx` points at the `add-icm42686p-support` branch of the `Ragarnoy/icm426xx` fork, since upstream's published 0.4.0 lacks the 42686-P generic `Device` support. A fresh clone now builds all four configurations (eagle, dart, eagle `rpc-control`, host tool) with no local checkouts.
 
 ### Known TODOs in Firmware
-- **Axis mapping**: ICM-42686 → AHRS Euler angles may need sign adjustment depending on chip orientation on PCB. Start with identity mapping, verify in TUI.
+None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).
 
 ### ULog Recording
 
@@ -316,7 +326,7 @@ Compensates PCB hard-iron offsets on the MMC5616WA magnetometer by tracking min/
 
 **Cross-core signals:** `MAG_CAL_START_SIGNAL` (Core0→Core1 start), `MAG_CAL_RESULT_SIGNAL` (Core1→Core0 result), `MAG_CALIBRATION_SIGNAL` (Core0→Core1 loaded offsets at boot)
 
-**Statics for RPC visibility:** `MAG_CAL_OFFSET`, `MAG_CAL_STATUS` (0=uncalibrated, 1=collecting, 2=calibrated), `MAG_CAL_SAMPLES`
+**Statics for RPC visibility:** `MAG_CAL_OFFSET`, `MAG_CAL_STATUS` (0=uncalibrated, 1=collecting, 2=calibrated) in `rpc_app.rs`; live sample count in `elle_hardware::imu::MAG_CAL_PROGRESS` (written by Core1 driver)
 
 **Event codes:** 110–116 (started, complete, failed, saved, cleared, loaded, load empty)
 

@@ -1,6 +1,6 @@
 use elle_config::lut::governor_feedforward;
 use elle_config::{
-    DSHOT_THROTTLE_MAX, GOVERNOR_DEADBAND_ERPM, GOVERNOR_DT, GOVERNOR_ERPM_MAX_JUMP, GOVERNOR_KI,
+    GOVERNOR_DEADBAND_ERPM, GOVERNOR_DSHOT_MAX, GOVERNOR_DT, GOVERNOR_ERPM_MAX_JUMP, GOVERNOR_KI,
     GOVERNOR_KP,
 };
 
@@ -34,7 +34,7 @@ impl RpmGovernor {
 
         if !valid {
             // No telemetry — use feedforward only, freeze integrator
-            return (ff as u16).min(DSHOT_THROTTLE_MAX);
+            return (ff as u16).min(GOVERNOR_DSHOT_MAX);
         }
 
         // Rate-limit telemetry: reject readings that jump too far from previous
@@ -50,22 +50,25 @@ impl RpmGovernor {
 
         // Inside deadband: no correction, freeze integrator
         if error.abs() < GOVERNOR_DEADBAND_ERPM {
-            return (ff + self.integrator).clamp(0.0, DSHOT_THROTTLE_MAX as f32) as u16;
+            return (ff + self.integrator).clamp(0.0, GOVERNOR_DSHOT_MAX as f32) as u16;
         }
 
         let p_term = GOVERNOR_KP * error;
 
         // Anti-windup: only integrate if output is not saturated
-        // (or if error would reduce saturation)
+        // (or if error would reduce saturation). Saturation ceiling is
+        // GOVERNOR_DSHOT_MAX, not DSHOT_THROTTLE_MAX — pushing past it moves into
+        // a region the feedforward table refuses to enter (declining RPM for a
+        // given throttle increase), so windup there is runaway, not correction.
         let candidate = ff + p_term + self.integrator;
-        if (candidate > 0.0 && candidate < DSHOT_THROTTLE_MAX as f32)
+        if (candidate > 0.0 && candidate < GOVERNOR_DSHOT_MAX as f32)
             || (candidate <= 0.0 && error > 0.0)
-            || (candidate >= DSHOT_THROTTLE_MAX as f32 && error < 0.0)
+            || (candidate >= GOVERNOR_DSHOT_MAX as f32 && error < 0.0)
         {
             self.integrator += GOVERNOR_KI * error * GOVERNOR_DT;
         }
 
-        (ff + p_term + self.integrator).clamp(0.0, DSHOT_THROTTLE_MAX as f32) as u16
+        (ff + p_term + self.integrator).clamp(0.0, GOVERNOR_DSHOT_MAX as f32) as u16
     }
 
     /// Reset integrator (e.g. on disarm or mode switch)

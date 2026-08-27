@@ -998,9 +998,9 @@ async fn main(spawner: Spawner) {
                     && let Some(att) = valid_attitude.as_ref()
                 {
                     let measurement_deg = if autotune_stable_pos == 1 {
-                        att.pitch * elle_config::PITCH_INVERT * (180.0 / core::f32::consts::PI)
+                        att.pitch * (180.0 / core::f32::consts::PI)
                     } else {
-                        att.roll * elle_config::ROLL_INVERT * (180.0 / core::f32::consts::PI)
+                        att.roll * (180.0 / core::f32::consts::PI)
                     };
 
                     match autotuner.update(measurement_deg, autotune_tick) {
@@ -1492,7 +1492,6 @@ async fn main(spawner: Spawner) {
                     RpcCommand::StartMagCal => {
                         elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
                         rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
-                        rpc_app::MAG_CAL_SAMPLES.store(0, Ordering::Relaxed);
                         elle_hardware::elle_event!(
                             info,
                             elle_hardware::event::EVT_MAG_CAL_STARTED,
@@ -1512,7 +1511,6 @@ async fn main(spawner: Spawner) {
                         elle_hardware::imu::MAG_CALIBRATION_SIGNAL.signal((0.0, 0.0, 0.0));
                         rpc_app::MAG_CAL_STATUS.store(0, Ordering::Relaxed);
                         rpc_app::MAG_CAL_OFFSET.lock(|c| c.set((0.0, 0.0, 0.0)));
-                        rpc_app::MAG_CAL_SAMPLES.store(0, Ordering::Relaxed);
                         elle_hardware::elle_event!(
                             info,
                             elle_hardware::event::EVT_MAG_CAL_CLEARED,
@@ -1597,7 +1595,6 @@ async fn main(spawner: Spawner) {
                 if tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
                     elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
                     rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
-                    rpc_app::MAG_CAL_SAMPLES.store(0, Ordering::Relaxed);
                     elle_hardware::elle_event!(
                         info,
                         elle_hardware::event::EVT_MAG_CAL_STARTED,
@@ -1643,10 +1640,10 @@ async fn main(spawner: Spawner) {
             {
                 let measurement_deg = match autotuner.axis() {
                     AutotuneAxis::Pitch => {
-                        att.pitch * elle_config::PITCH_INVERT * (180.0 / core::f32::consts::PI)
+                        att.pitch * (180.0 / core::f32::consts::PI)
                     }
                     AutotuneAxis::Roll => {
-                        att.roll * elle_config::ROLL_INVERT * (180.0 / core::f32::consts::PI)
+                        att.roll * (180.0 / core::f32::consts::PI)
                     }
                 };
                 match autotuner.update(measurement_deg, autotune_tick) {

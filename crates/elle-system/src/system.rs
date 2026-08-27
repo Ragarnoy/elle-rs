@@ -411,10 +411,17 @@ impl<'a> FlightController<'a> {
         let roll_setpoint_rad = roll_sp_deg.to_radians();
 
         if norm.attitude_mode != AttitudeMode::Manual {
-            self.filtered_pitch_setpoint_rad +=
-                SETPOINT_FILTER_ALPHA * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
-            self.filtered_roll_setpoint_rad +=
-                SETPOINT_FILTER_ALPHA * (roll_setpoint_rad - self.filtered_roll_setpoint_rad);
+            if self.setpoint_override.is_some() {
+                // Autotune relay is an intentional square wave — smoothing it would
+                // attenuate the excitation the Ku/Tu computation assumes.
+                self.filtered_pitch_setpoint_rad = pitch_setpoint_rad;
+                self.filtered_roll_setpoint_rad = roll_setpoint_rad;
+            } else {
+                self.filtered_pitch_setpoint_rad +=
+                    SETPOINT_FILTER_ALPHA * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
+                self.filtered_roll_setpoint_rad +=
+                    SETPOINT_FILTER_ALPHA * (roll_setpoint_rad - self.filtered_roll_setpoint_rad);
+            }
         }
 
         // Build control inputs from normalized commands

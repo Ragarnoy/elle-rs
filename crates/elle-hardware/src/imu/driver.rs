@@ -290,14 +290,15 @@ impl<'a> Imu<'a> {
                     // 3. Extract Euler angles from quaternion
                     let (roll, pitch, yaw) = q.euler_angles();
 
-                    // NOTE: Axis mapping may need sign adjustment on hardware.
-                    // Verify: board flat → pitch≈0, roll≈0; nose up → pitch>0; right wing down → roll>0.
+                    // Board flat → pitch≈0, roll≈0; nose up → pitch>0; right wing down → roll>0.
+                    // Roll sign is inverted relative to the ICM-42686's raw frame on this PCB
+                    // orientation — field-confirmed rolling the wrong way with identity mapping.
                     let attitude = AttitudeData {
                         pitch,
-                        roll,
+                        roll: -roll,
                         yaw,
                         pitch_rate: gy,
-                        roll_rate: gx,
+                        roll_rate: -gx,
                         yaw_rate: gz,
                         timestamp: Instant::now(),
                     };
@@ -385,6 +386,7 @@ impl<'a> Imu<'a> {
                 self.mag_cal_min = [f32::MAX; 3];
                 self.mag_cal_max = [f32::MIN; 3];
                 self.mag_cal_samples = 0;
+                crate::imu::MAG_CAL_PROGRESS.store(0, core::sync::atomic::Ordering::Relaxed);
                 info!("Core1: Mag calibration started — rotate board in all orientations");
             }
 
@@ -415,6 +417,10 @@ impl<'a> Imu<'a> {
                                 }
                             }
                             self.mag_cal_samples += 1;
+                            crate::imu::MAG_CAL_PROGRESS.store(
+                                self.mag_cal_samples as u16,
+                                core::sync::atomic::Ordering::Relaxed,
+                            );
 
                             // After 300 samples (~30s at 10Hz): compute and validate
                             if self.mag_cal_samples >= 300 {
@@ -451,9 +457,12 @@ impl<'a> Imu<'a> {
                     }
                     Err(e) => {
                         // Any I2C error leaves the bus stuck on this hardware — the next call
-                        // would block Core1 indefinitely. Disable mag immediately.
+                        // would block Core1 indefinitely. Disable mag immediately, and drop
+                        // has_mag so the AHRS falls back to 6-DOF instead of fusing the
+                        // frozen last_mag vector forever (which drags yaw to a stale heading).
                         warn!("MMC5616WA: read error: {}", e);
                         self.mag_ok = false;
+                        self.has_mag = false;
                         crate::elle_event!(
                             warn,
                             crate::event::EVT_IMU_INIT_FAILED,

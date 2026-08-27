@@ -593,11 +593,13 @@ impl Autotuner {
         let a_rad = a_deg.to_radians();
         let relay_rad = self.relay_deg.to_radians();
 
-        // h = scale * kp_test * d_rad (effective relay amplitude seen by plant)
-        let h = self.saved_gains.scale * TEST_KP * relay_rad;
-
-        // Ku = 4h / (pi * a_rad)
-        let ku = 4.0 * h / (core::f32::consts::PI * a_rad);
+        // Setpoint-relay method: plant input is u = K·(r − y) with K = scale·TEST_KP,
+        // i.e. a relay of amplitude h = K·d_rad in parallel with proportional feedback K.
+        // Oscillation condition: (4h/(πa) + K)·G(jω) = −1, so Ku includes the K term —
+        // omitting it underestimates Ku by K (≈40% when a ≈ d).
+        let k_eff = self.saved_gains.scale * TEST_KP;
+        let h = k_eff * relay_rad;
+        let ku = 4.0 * h / (core::f32::consts::PI * a_rad) + k_eff;
 
         // Compute effective gains
         let (kp_eff, ki_eff, kd_eff) = self.rule.compute(ku, tu);

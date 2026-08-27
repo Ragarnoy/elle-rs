@@ -118,6 +118,11 @@ pub static MAG_CAL_START_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::n
 pub static MAG_CAL_RESULT_SIGNAL: Signal<CriticalSectionRawMutex, Option<(f32, f32, f32)>> =
     Signal::new();
 
+/// Live sample count during mag calibration collection (Core1 → RPC status handler).
+/// Reset to 0 when collection starts; final count remains after completion.
+pub static MAG_CAL_PROGRESS: core::sync::atomic::AtomicU16 =
+    core::sync::atomic::AtomicU16::new(0);
+
 /// Double-tap gesture detected by ICM-42686 APEX tap detection (Core1 → Core0).
 /// Core0 acts on this only when disarmed.
 pub static TAP_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();

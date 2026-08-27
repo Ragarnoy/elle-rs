@@ -265,6 +265,18 @@ pub const GOVERNOR_DEADBAND_ERPM: f32 = 500.0;
 #[cfg(feature = "platform-dart")]
 pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000;
 
+/// Hard ceiling on governor DShot output — independent of `DSHOT_THROTTLE_MAX`.
+/// Must match the last `GOVERNOR_FF_TABLE` entry: the PI correction must never push
+/// output past the point the feedforward table itself refuses to cross, or the
+/// integrator can wind up past it under normal RPM sag (battery/thermal/prop wash),
+/// driving DShot further into a region where RPM falls as throttle rises — a runaway
+/// positive-feedback loop (dart prop stalls above DShot 1148; eagle right engine
+/// saturates/goes asymmetric above DShot 1473).
+#[cfg(not(feature = "platform-dart"))]
+pub const GOVERNOR_DSHOT_MAX: u16 = 1_473;
+#[cfg(feature = "platform-dart")]
+pub const GOVERNOR_DSHOT_MAX: u16 = 1_148;
+
 // ---------------------------------------------------------------------------
 // Compile-time validation
 // ---------------------------------------------------------------------------

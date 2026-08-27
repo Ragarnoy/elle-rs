@@ -43,7 +43,7 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d", default-features = false }
 
 # External dependencies - Hardware drivers
-icm426xx = { path = "../icm426xx", default-features = false, features = ["defmt"] }
+icm426xx = { git = "https://github.com/Ragarnoy/icm426xx", branch = "add-icm42686p-support", default-features = false, features = ["defmt"] }
 crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = false, features = ["defmt"] }
 smart-leds = "0.4.0"
 
@@ -70,7 +70,7 @@ bytemuck = { version = "1", default-features = false, features = ["derive"] }
 cobs = { version = "0.5", default-features = false }
 crc = { version = "3.4", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-embassy-dshot = { path = "../dshot-pio", default-features = false, features = ["rp2350", "defmt"] }
+embassy-dshot = { version = "0.3.0", default-features = false, features = ["rp2350", "defmt"] }
 
 [patch.crates-io]
 embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d" }

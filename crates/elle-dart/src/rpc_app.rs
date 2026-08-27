@@ -50,7 +50,7 @@ pub static MAG_CAL_OFFSET: Mutex<CriticalSectionRawMutex, Cell<(f32, f32, f32)>>
 /// 0=uncalibrated, 1=collecting, 2=calibrated
 pub static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(0);
 /// Number of calibration samples collected so far
-pub static MAG_CAL_SAMPLES: AtomicU16 = AtomicU16::new(0);
+
 
 /// Context passed to all RPC handlers
 pub struct RpcContext {
@@ -412,7 +412,7 @@ fn handle_clear_mag_cal(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckR
 fn handle_get_mag_cal(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagCalResp {
     let (ox, oy, oz) = MAG_CAL_OFFSET.lock(|c| c.get());
     let status = MAG_CAL_STATUS.load(Ordering::Relaxed);
-    let samples = MAG_CAL_SAMPLES.load(Ordering::Relaxed);
+    let samples = elle_hardware::imu::MAG_CAL_PROGRESS.load(Ordering::Relaxed);
     MagCalResp {
         offset_x: ox,
         offset_y: oy,
