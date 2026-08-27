@@ -216,7 +216,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 | postcard-rpc 0.12 | server (define_dispatch!) | host_client | RPC framework |
 | embassy-* (git) | yes | - | Async embedded runtime |
 | probe-rs 0.31 | - | yes | Debug probe + RTT access |
-| icm426xx 0.4 (git, Ragarnoy fork, branch `add-icm42686p-support`) | yes | - | ICM-42686-P IMU driver (SPI, FIFO, 20-bit) — the 42686-P generic `Device` support is not in upstream's published 0.4.0 |
+| icm426xx 0.4 (git, upstream `ProfFan/icm426xx` rev `7e22a5a`) | yes | - | ICM-42686-P IMU driver (SPI, FIFO, 20-bit). Pinned to a git rev, not crates.io: the 42686-P generic `Device` support (PR #10, merged 2026-02-11) landed after 0.4.0 was published (2025-10-28), and upstream has not cut a release since. Switch to the registry once they do. |
 | ahrs 0.8 | yes | - | Madgwick AHRS sensor fusion (no_std) |
 | nalgebra 0.34 | yes | - | Linear algebra (no_std + libm) |
 | bmp390 (vendored, drivers/bmp390) | yes (sync) | - | BMP390 barometer driver, patched over crates.io 0.4 |
@@ -280,7 +280,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Frozen-mag fusion fix**: `Imu::run()` mag error path (`elle-hardware/src/imu/driver.rs`) now clears `has_mag` alongside `mag_ok` on I2C error — previously the AHRS kept fusing the stale `last_mag` vector forever after the mag died mid-session, dragging yaw toward a fixed garbage heading regardless of calibration.
 - **Mag cal progress counter fix**: `MAG_CAL_SAMPLES` in both `rpc_app.rs` files was read by `handle_get_mag_cal` but only ever written as 0 — Core1's real sample count never left the driver, so `mag cal` status showed 0 samples throughout collection. Replaced with `elle_hardware::imu::MAG_CAL_PROGRESS` (AtomicU16), written by the Core1 driver during collection, read by the RPC handlers. Note: `GetMagnetometer`/TUI mag panel intentionally shows **raw** counts (offsets only apply to the AHRS feed), so calibration is only observable via yaw behavior and the `mag cal` status offsets.
 
-- **No out-of-tree path dependencies**: `embassy-dshot` was a `path = "../dshot-pio"` dep and `icm426xx` a `path = "../icm426xx"` dep, so the workspace only built on a machine with those sibling checkouts. `embassy-dshot` 0.3.0 was published to crates.io (upgraded to `embassy-rp` 0.10 / `embassy-time` 0.5.1, no `[patch.crates-io]` in the library) and is now a registry dep; `icm426xx` points at the `add-icm42686p-support` branch of the `Ragarnoy/icm426xx` fork, since upstream's published 0.4.0 lacks the 42686-P generic `Device` support. A fresh clone now builds all four configurations (eagle, dart, eagle `rpc-control`, host tool) with no local checkouts.
+- **No out-of-tree path dependencies**: `embassy-dshot` was a `path = "../dshot-pio"` dep and `icm426xx` a `path = "../icm426xx"` dep, so the workspace only built on a machine with those sibling checkouts. `embassy-dshot` 0.3.0 was published to crates.io (upgraded to `embassy-rp` 0.10 / `embassy-time` 0.5.1, no `[patch.crates-io]` in the library) and is now a registry dep; `icm426xx` is pinned to upstream rev `7e22a5a` — the 42686-P support is merged into `ProfFan/icm426xx` main but postdates the published 0.4.0, so a git rev is needed until upstream releases again. A fresh clone now builds all four configurations (eagle, dart, eagle `rpc-control`, host tool) with no local checkouts.
 
 ### Known TODOs in Firmware
 None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).

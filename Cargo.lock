@@ -2268,7 +2268,7 @@ dependencies = [
 [[package]]
 name = "icm426xx"
 version = "0.4.0"
-source = "git+https://github.com/Ragarnoy/icm426xx?branch=add-icm42686p-support#30bffe4d7244fec6c42647b945d1896e4a5ced52"
+source = "git+https://github.com/ProfFan/icm426xx.git?rev=7e22a5a#7e22a5a84d330cb74fa9bf5778b935196a9125c3"
 dependencies = [
  "bilge",
  "bytemuck",

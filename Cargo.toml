@@ -43,7 +43,7 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "e5921a9d", default-features = false }
 
 # External dependencies - Hardware drivers
-icm426xx = { git = "https://github.com/Ragarnoy/icm426xx", branch = "add-icm42686p-support", default-features = false, features = ["defmt"] }
+icm426xx = { git = "https://github.com/ProfFan/icm426xx.git", rev = "7e22a5a", default-features = false, features = ["defmt"] }
 crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = false, features = ["defmt"] }
 smart-leds = "0.4.0"
 
