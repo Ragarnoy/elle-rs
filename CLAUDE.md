@@ -148,6 +148,9 @@ Two modes:
 - **Default (no subcommand)**: TUI monitoring dashboard with polled attitude/status/mag/baro/gnss + log streaming
 - **`direct <cmd>`**: Single RPC commands for scripting
 
+See `tools/elle-rpc-host/README.md` for the dashboard layout, the horizon widget's
+`ROLL_SIGN` caveat, and the list of UI improvements still outstanding.
+
 Key modules:
 - `probe.rs` — probe-rs connection, RTT attach, blocking I/O worker thread
 - `wire.rs` — WireTx/WireRx/WireSpawn bridging tokio mpsc channels to HostClient

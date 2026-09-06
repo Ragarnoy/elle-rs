@@ -21,6 +21,16 @@ struct CmdDef {
     subs: &'static [&'static str],
 }
 
+/// Command names for the help bar, in table order, minus the two that are obvious
+/// from the key hints next to it.
+pub fn command_names() -> Vec<&'static str> {
+    COMMANDS
+        .iter()
+        .filter(|c| c.name != "help" && c.name != "quit")
+        .map(|c| c.name)
+        .collect()
+}
+
 const COMMANDS: &[CmdDef] = &[
     CmdDef {
         name: "arm",

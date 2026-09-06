@@ -753,7 +753,11 @@ const fn log_code_text(code: u16) -> &'static str {
 fn draw_command(f: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(3), // input box
+            Constraint::Length(1), // transient status message
+            Constraint::Length(1), // permanent help bar
+        ])
         .split(area);
 
     // Command input
@@ -770,27 +774,99 @@ fn draw_command(f: &mut Frame, area: Rect, state: &AppState) {
     let cursor_y = chunks[0].y + 1;
     f.set_cursor_position((cursor_x, cursor_y));
 
-    // Status/help line — show status messages with timeout, otherwise empty
+    // Transient status message, cleared after 10s unless a background task is running
     let has_bg_task = state.background_task.is_some();
-    let help_text = if let Some((msg, when)) = &state.status_message {
-        if has_bg_task || when.elapsed().as_secs() < 10 {
-            msg.clone()
-        } else {
-            String::new()
+    let status_text = state
+        .status_message
+        .as_ref()
+        .filter(|(_, when)| has_bg_task || when.elapsed().as_secs() < 10)
+        .map_or_else(String::new, |(msg, _)| msg.clone());
+
+    let status_color = if has_bg_task { WARN } else { Color::Cyan };
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(" {status_text}"),
+            Style::default().fg(status_color),
+        ))),
+        chunks[1],
+    );
+
+    draw_help_bar(f, chunks[2]);
+}
+
+/// Always-on key and command reference along the bottom edge. Commands come from
+/// the command table so this cannot drift from what the parser accepts.
+fn draw_help_bar(f: &mut Frame, area: Rect) {
+    const KEYS: &str = " Enter run \u{00B7} Tab complete \u{00B7} \u{2191}\u{2193} history \u{00B7} Esc clear \u{00B7} ^C quit";
+
+    let mut spans = vec![Span::styled(KEYS, Style::default().fg(LABEL))];
+
+    // Fill the remaining width with as many command names as fit, so narrow
+    // terminals keep the keys rather than truncating mid-word.
+    let commands = super::commands::command_names();
+    let mut remaining = (area.width as usize).saturating_sub(KEYS.chars().count() + 4);
+    let mut listed = String::new();
+    for name in commands {
+        if name.len() + 2 > remaining {
+            break;
         }
-    } else {
-        String::new()
-    };
+        listed.push_str(name);
+        listed.push(' ');
+        remaining -= name.len() + 1;
+    }
+    if !listed.is_empty() {
+        spans.push(Span::styled("  \u{2502}  ", Style::default().fg(MUTED)));
+        spans.push(Span::styled(listed, Style::default().fg(MUTED)));
+    }
 
-    let help_color = if has_bg_task {
-        Color::Yellow
-    } else {
-        Color::Cyan
-    };
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
 
-    let help = Paragraph::new(Line::from(Span::styled(
-        format!(" {help_text}"),
-        Style::default().fg(help_color),
-    )));
-    f.render_widget(help, chunks[1]);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Render the command area at `width` and return its rows.
+    fn command_rows(width: u16) -> Vec<String> {
+        // Height matches the constraint draw() gives this area.
+        let mut term = Terminal::new(TestBackend::new(width, 5)).unwrap();
+        let state = AppState::new();
+        term.draw(|f| draw_command(f, f.area(), &state)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|row| {
+                (0..buf.area.width)
+                    .map(|col| {
+                        buf.cell((col, row))
+                            .unwrap()
+                            .symbol()
+                            .chars()
+                            .next()
+                            .unwrap_or(' ')
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn help_bar_occupies_the_last_row() {
+        let rows = command_rows(173);
+        let last = rows.last().expect("command area must render");
+        assert!(last.contains("Enter run"), "help bar missing: {last}");
+        assert!(last.contains("autotune"), "command list missing: {last}");
+    }
+
+    /// A narrow terminal drops command names rather than truncating the key hints.
+    #[test]
+    fn help_bar_degrades_to_keys_only() {
+        let last = command_rows(60).last().cloned().unwrap();
+        assert!(last.contains("^C quit"), "keys were truncated: {last}");
+        assert!(
+            !last.contains('\u{2502}'),
+            "command list should be dropped at this width: {last}"
+        );
+    }
 }
