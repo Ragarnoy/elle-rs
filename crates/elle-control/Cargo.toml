@@ -11,6 +11,9 @@ defmt = { workspace = true }
 bytemuck = { workspace = true }
 
 [features]
+# Passthrough so host tests can select the dart tables:
+#   cargo test -p elle-control --target x86_64-unknown-linux-gnu --features platform-dart
+platform-dart = ["elle-config/platform-dart"]
 
 [lib]
 test = false

@@ -161,7 +161,12 @@ fn update_engine_unit(
             unit.apply_edt(edt);
             state.record_success();
         }
-        None if dshot_value == 0 => {
+        // Only a commanded stop (target 0) means the engine is genuinely winding
+        // down to zero. A governor output of 0 does NOT: it means the PI wants less
+        // than the feedforward can express while the prop is still spinning fast,
+        // and fabricating erpm=0 there feeds a bogus measurement straight back into
+        // the loop (and into ULog).
+        None if target == 0 => {
             unit.erpm = 0;
             unit.valid = true;
         }
@@ -225,6 +230,10 @@ impl<'a> DshotEngines<'a> {
 
     /// Send throttle commands to both engines and return extended telemetry results.
     ///
+    /// `left_stop`/`right_stop` come from the *target* eRPM being zero, not from the
+    /// governor output being zero — see `update_engine_unit`. A governor output of 0
+    /// is the protocol's minimum spin value (frame 48), which still returns telemetry.
+    ///
     /// Returns `(Option<ExtendedTelemetry>, Option<ExtendedTelemetry>)` per engine.
     /// When bidir is disabled for an engine, uses fire-and-forget (no telemetry).
     /// Bidir reads are wrapped with a timeout to prevent the task from hanging
@@ -235,8 +244,10 @@ impl<'a> DshotEngines<'a> {
         right: u16,
         left_bidir: bool,
         right_bidir: bool,
+        left_stop: bool,
+        right_stop: bool,
     ) -> (Option<ExtendedTelemetry>, Option<ExtendedTelemetry>) {
-        match (left == 0, right == 0) {
+        match (left_stop, right_stop) {
             (true, true) => {
                 embassy_futures::join::join(
                     self.left
@@ -248,16 +259,23 @@ impl<'a> DshotEngines<'a> {
                 (None, None)
             }
             _ => {
-                let l_edt = self.send_one_engine_left(left, left_bidir).await;
-                let r_edt = self.send_one_engine_right(right, right_bidir).await;
+                let l_edt = self.send_one_engine_left(left, left_bidir, left_stop).await;
+                let r_edt = self
+                    .send_one_engine_right(right, right_bidir, right_stop)
+                    .await;
                 (l_edt, r_edt)
             }
         }
     }
 
     /// Send throttle to left engine with optional bidir telemetry + timeout.
-    async fn send_one_engine_left(&mut self, value: u16, bidir: bool) -> Option<ExtendedTelemetry> {
-        if value == 0 {
+    async fn send_one_engine_left(
+        &mut self,
+        value: u16,
+        bidir: bool,
+        stop: bool,
+    ) -> Option<ExtendedTelemetry> {
+        if stop {
             self.left
                 .send_command_async(embassy_dshot::Command::MotorStop)
                 .await;
@@ -283,8 +301,9 @@ impl<'a> DshotEngines<'a> {
         &mut self,
         value: u16,
         bidir: bool,
+        stop: bool,
     ) -> Option<ExtendedTelemetry> {
-        if value == 0 {
+        if stop {
             self.right
                 .send_command_async(embassy_dshot::Command::MotorStop)
                 .await;
@@ -378,7 +397,10 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
             state.bidir_enabled && reading.left.valid,
         );
 
-        let edt = if dshot_val == 0 {
+        // MotorStop only on a commanded stop. A governor output of 0 is the
+        // protocol's minimum spin value, not a stop — cutting the ESC there loses
+        // telemetry and leaves the loop with no way back up.
+        let edt = if target_erpm == 0 {
             engine
                 .send_command_async(embassy_dshot::Command::MotorStop)
                 .await;
@@ -476,6 +498,8 @@ pub async fn dshot_task(
                 right_dshot,
                 left_state.bidir_enabled,
                 right_state.bidir_enabled,
+                target.0 == 0,
+                target.1 == 0,
             )
             .await;
 
