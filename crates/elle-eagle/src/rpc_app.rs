@@ -49,8 +49,6 @@ pub static MAG_CAL_OFFSET: Mutex<CriticalSectionRawMutex, Cell<(f32, f32, f32)>>
     Mutex::new(Cell::new((0.0, 0.0, 0.0)));
 /// 0=uncalibrated, 1=collecting, 2=calibrated
 pub static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(0);
-/// Number of calibration samples collected so far
-
 /// Context passed to all RPC handlers
 pub struct RpcContext {
     pub cmd_sender: Sender<'static, CriticalSectionRawMutex, RpcCommand, 16>,
@@ -152,7 +150,7 @@ fn handle_get_status(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Status
         armed: state.armed,
         failsafe: state.failsafe,
         mode: state.mode,
-        imu_calibrated: imu_status.as_ref().map_or(false, |s| s.calibrated),
+        imu_calibrated: imu_status.as_ref().is_ok_and(|s| s.calibrated),
         imu_error_count: imu_status.as_ref().map_or(0, |s| s.error_count),
         rc_age_ms: state.rc_age_ms,
         autotune_state: state.autotune_state,

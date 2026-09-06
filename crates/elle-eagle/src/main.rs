@@ -1654,10 +1654,10 @@ async fn main(spawner: Spawner) {
 
             // Update flight controller
             let valid_attitude = validate_attitude(attitude);
-            if let Some(ref commands) = commands {
-                if !kill_active {
-                    fc.update(commands, valid_attitude.as_ref());
-                }
+            if let Some(ref commands) = commands
+                && !kill_active
+            {
+                fc.update(commands, valid_attitude.as_ref());
             }
 
             // Send engine commands via DShot (governor converts eRPM target to DShot)
