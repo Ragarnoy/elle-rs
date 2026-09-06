@@ -51,7 +51,6 @@ pub static MAG_CAL_OFFSET: Mutex<CriticalSectionRawMutex, Cell<(f32, f32, f32)>>
 pub static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(0);
 /// Number of calibration samples collected so far
 
-
 /// Context passed to all RPC handlers
 pub struct RpcContext {
     pub cmd_sender: Sender<'static, CriticalSectionRawMutex, RpcCommand, 16>,

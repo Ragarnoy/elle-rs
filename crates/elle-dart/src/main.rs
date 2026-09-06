@@ -1639,12 +1639,8 @@ async fn main(spawner: Spawner) {
                 && let Some(att) = valid_attitude.as_ref()
             {
                 let measurement_deg = match autotuner.axis() {
-                    AutotuneAxis::Pitch => {
-                        att.pitch * (180.0 / core::f32::consts::PI)
-                    }
-                    AutotuneAxis::Roll => {
-                        att.roll * (180.0 / core::f32::consts::PI)
-                    }
+                    AutotuneAxis::Pitch => att.pitch * (180.0 / core::f32::consts::PI),
+                    AutotuneAxis::Roll => att.roll * (180.0 / core::f32::consts::PI),
                 };
                 match autotuner.update(measurement_deg, autotune_tick) {
                     AutotuneAction::None => {}
