@@ -13,7 +13,7 @@ elle-rpc-icd = { workspace = true, features = ["use-std"] }
 postcard-rpc = { workspace = true, features = ["use-std"] }
 cobs = { workspace = true }
 
-probe-rs = { version = "0.31", default-features = false, features = ["builtin-targets"] }
+probe-rs = { version = "0.32", default-features = false, features = ["builtin-targets"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
