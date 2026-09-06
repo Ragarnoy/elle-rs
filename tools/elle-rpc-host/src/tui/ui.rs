@@ -4,11 +4,11 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 
 use elle_rpc_icd::EngineUnit;
 
+use super::horizon::Horizon;
 use super::state::AppState;
 
 // Semantic colours. A full theme module is a larger job; these at least keep the
@@ -551,140 +551,30 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_horizon(f: &mut Frame, area: Rect, state: &AppState) {
-    let pitch_deg = state
-        .attitude
-        .map(|a| a.pitch_cdeg as f64 / 100.0)
-        .unwrap_or(0.0);
-    let roll_deg = state
-        .attitude
-        .map(|a| a.roll_cdeg as f64 / 100.0)
-        .unwrap_or(0.0);
+    let block = Block::default().title(" Horizon ").borders(Borders::ALL);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
-    let (pitch_cp, roll_cp) = state
-        .controller_output
-        .map(|c| (c.pitch_correction_cp as i32, c.roll_correction_cp as i32))
-        .unwrap_or((0, 0));
+    let (pitch_cp, roll_cp) = state.controller_output.map_or((0, 0), |c| {
+        (
+            i32::from(c.pitch_correction_cp),
+            i32::from(c.roll_correction_cp),
+        )
+    });
 
-    let roll_rad = -roll_deg.to_radians();
-    let cos_r = roll_rad.cos();
-    let sin_r = roll_rad.sin();
-    let pitch_shift = -pitch_deg;
-
-    let pid_color = |mag: i32| -> Color {
-        let abs = mag.unsigned_abs();
-        if abs >= 3000 {
-            Color::Red
-        } else if abs >= 1000 {
-            Color::Yellow
-        } else {
-            Color::Green
-        }
-    };
-
-    let canvas = Canvas::default()
-        .block(Block::default().title(" Horizon ").borders(Borders::TOP))
-        .x_bounds([-100.0, 100.0])
-        .y_bounds([-45.0, 45.0])
-        .paint(move |ctx| {
-            // Horizon line (full width, rotated by roll, shifted by pitch)
-            let half_w = 100.0;
-            ctx.draw(&CanvasLine {
-                x1: -half_w * cos_r,
-                y1: pitch_shift - half_w * sin_r,
-                x2: half_w * cos_r,
-                y2: pitch_shift + half_w * sin_r,
-                color: Color::White,
-            });
-
-            // Pitch ladder at ±10°, ±20°, ±30°
-            let ladder_half = 25.0;
-            for &angle in &[-30.0, -20.0, -10.0, 10.0, 20.0, 30.0_f64] {
-                let y_off = pitch_shift + (-angle);
-                ctx.draw(&CanvasLine {
-                    x1: -ladder_half * cos_r
-                        + (y_off * sin_r).copysign(-1.0) * ladder_half / half_w,
-                    y1: y_off - ladder_half * sin_r,
-                    x2: ladder_half * cos_r + (y_off * sin_r).copysign(1.0) * ladder_half / half_w,
-                    y2: ladder_half.mul_add(sin_r, y_off),
-                    color: Color::DarkGray,
-                });
-                // Simplified ladder: short horizontal segments at the pitch offset
-                let lx = ladder_half + 2.0;
-                ctx.print(
-                    lx * cos_r,
-                    y_off + lx * sin_r,
-                    ratatui::text::Line::from(Span::styled(
-                        format!("{:+.0}", angle),
-                        Style::default().fg(Color::DarkGray),
-                    )),
-                );
-            }
-
-            // Center reference (fixed aircraft symbol)
-            ctx.draw(&CanvasLine {
-                x1: -18.0,
-                y1: 0.0,
-                x2: -5.0,
-                y2: 0.0,
-                color: Color::Cyan,
-            });
-            ctx.draw(&CanvasLine {
-                x1: 5.0,
-                y1: 0.0,
-                x2: 18.0,
-                y2: 0.0,
-                color: Color::Cyan,
-            });
-            ctx.draw(&CanvasLine {
-                x1: 0.0,
-                y1: -2.0,
-                x2: 0.0,
-                y2: 2.0,
-                color: Color::Cyan,
-            });
-
-            // PID pitch arrow — fixed position on right edge, direction indicates sign
-            if pitch_cp.unsigned_abs() >= 10 {
-                let arrow = if pitch_cp > 0 { "^" } else { "v" };
-                ctx.print(
-                    88.0,
-                    0.0,
-                    ratatui::text::Line::from(Span::styled(
-                        arrow,
-                        Style::default()
-                            .fg(pid_color(pitch_cp))
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                );
-            }
-
-            // PID roll arrow — fixed position on bottom, direction indicates sign
-            if roll_cp.unsigned_abs() >= 10 {
-                let arrow = if roll_cp > 0 { ">>>" } else { "<<<" };
-                ctx.print(
-                    -8.0,
-                    -38.0,
-                    ratatui::text::Line::from(Span::styled(
-                        arrow,
-                        Style::default()
-                            .fg(pid_color(roll_cp))
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                );
-            }
-
-            // Debug: show raw correction values on horizon
-            ctx.print(
-                -95.0,
-                -40.0,
-                ratatui::text::Line::from(Span::styled(
-                    format!("P:{pitch_cp} R:{roll_cp}"),
-                    Style::default().fg(Color::DarkGray),
-                )),
-            );
-        });
-
-    f.render_widget(canvas, area);
+    f.render_widget(
+        Horizon {
+            pitch_deg: state
+                .attitude
+                .map_or(0.0, |a| f64::from(a.pitch_cdeg) / 100.0),
+            roll_deg: state
+                .attitude
+                .map_or(0.0, |a| f64::from(a.roll_cdeg) / 100.0),
+            pitch_cp,
+            roll_cp,
+        },
+        inner,
+    );
 }
 
 fn draw_rc_channels(f: &mut Frame, area: Rect, state: &AppState) {
