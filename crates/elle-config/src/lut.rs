@@ -330,26 +330,32 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 }
 
 /// Measured eRPM→DShot mapping for dart (500-sample per step, rpm_range sweep).
-/// RPM × 7 (14-pole assumed). Covers DShot 48–1148; above 1148 RPM declines (prop stall).
+/// RPM × 7 (14-pole assumed). Covers DShot 48–1748; RPM plateaus 1748–1798 and
+/// declines above that (prop stall), so the table stops at the last rising point.
 #[cfg(feature = "platform-dart")]
-const GOVERNOR_FF_TABLE: [(u32, u16); 13] = [
-    (2_373, 48),    //   339 RPM
-    (4_641, 98),    //   663 RPM
-    (9_198, 148),   // 1,314 RPM
-    (16_800, 248),  // 2,400 RPM
-    (23_485, 348),  // 3,355 RPM
-    (29_316, 448),  // 4,188 RPM
-    (34_503, 548),  // 4,929 RPM
-    (39_655, 648),  // 5,665 RPM
-    (43_876, 748),  // 6,268 RPM
-    (48_279, 848),  // 6,897 RPM
-    (51_541, 948),  // 7,363 RPM
-    (54_145, 1048), // 7,735 RPM
-    (56_707, 1148), // 8,101 RPM — peak; governor caps here
+const GOVERNOR_FF_TABLE: [(u32, u16); 18] = [
+    (2_534, 48),    //    362 RPM
+    (9_569, 148),   //  1,367 RPM
+    (17_997, 248),  //  2,571 RPM
+    (25_816, 348),  //  3,688 RPM
+    (33_096, 448),  //  4,728 RPM
+    (39_690, 548),  //  5,670 RPM
+    (46_270, 648),  //  6,610 RPM
+    (53_039, 748),  //  7,577 RPM
+    (57_988, 848),  //  8,284 RPM
+    (63_126, 948),  //  9,018 RPM
+    (68_810, 1048), //  9,830 RPM
+    (73_325, 1148), // 10,475 RPM
+    (77_287, 1248), // 11,041 RPM
+    (80_808, 1348), // 11,544 RPM
+    (84_462, 1448), // 12,066 RPM
+    (87_955, 1548), // 12,565 RPM
+    (91_084, 1648), // 13,012 RPM
+    (93_968, 1748), // 13,424 RPM — last rising point; governor caps here
 ];
 
 /// Governor feedforward for dart: piecewise linear interpolation over measured LUT.
-/// Returns DShot 0–1148 (capped at peak-RPM throttle to avoid prop stall region).
+/// Returns DShot 0–1748 (capped below the RPM plateau to avoid the prop stall region).
 #[cfg(feature = "platform-dart")]
 #[must_use]
 pub fn governor_feedforward(target_erpm: u32) -> u16 {
@@ -363,7 +369,7 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 
     let last = GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1];
     if target_erpm >= last.0 {
-        return last.1; // 1148 — never enter prop stall region
+        return last.1; // 1748 — never enter prop stall region
     }
 
     for i in 1..GOVERNOR_FF_TABLE.len() {
@@ -391,4 +397,12 @@ pub fn apply_differential_lut(base_thrust: u16, ch4_value: u16) -> (u16, u16) {
     let left = ((base_thrust as u32 * left_mult / 100) as u16).min(DSHOT_THROTTLE_MAX);
     let right = ((base_thrust as u32 * right_mult / 100) as u16).min(DSHOT_THROTTLE_MAX);
     (left, right)
+}
+
+/// DShot value of the last `GOVERNOR_FF_TABLE` entry — the highest output the
+/// feedforward will ever produce. `GOVERNOR_DSHOT_MAX` must equal this (asserted
+/// in `lib.rs`), or the PI correction could push past where the table refuses to go.
+#[must_use]
+pub const fn governor_ff_max_dshot() -> u16 {
+    GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1].1
 }

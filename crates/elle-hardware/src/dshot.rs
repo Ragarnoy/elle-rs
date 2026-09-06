@@ -34,6 +34,18 @@ const BIDIR_READ_TIMEOUT: Duration = Duration::from_millis(2);
 /// Number of times to send ExtendedTelemetryEnable command (DShot protocol requirement).
 const EDT_ENABLE_REPEAT: u8 = 6;
 
+/// Number of times to send the spin-direction command (DShot settings commands need 6).
+const SPIN_DIRECTION_REPEAT: u8 = 6;
+
+/// Spin direction asserted at arm time, from the platform config. Sent every boot and
+/// never followed by `SettingsSave`: no ESC EEPROM wear, and the direction is correct
+/// even after an ESC swap or factory reset.
+const SPIN_DIRECTION_CMD: embassy_dshot::Command = if elle_config::ENGINE_SPIN_REVERSED {
+    embassy_dshot::Command::SpinDirectonReversed
+} else {
+    embassy_dshot::Command::SpinDirectionNormal
+};
+
 /// Per-engine telemetry snapshot.
 #[derive(Clone, Copy, Default, defmt::Format)]
 pub struct EngineUnitReading {
@@ -181,6 +193,22 @@ impl<'a> DshotEngines<'a> {
         )
         .await;
 
+        // Assert spin direction before enabling telemetry — the ESC is stopped here
+        // (arm_async just spent its whole duration sending MotorStop), which is what
+        // settings commands require.
+        for _ in 0..SPIN_DIRECTION_REPEAT {
+            embassy_futures::join::join(
+                self.left.send_command_async(SPIN_DIRECTION_CMD),
+                self.right.send_command_async(SPIN_DIRECTION_CMD),
+            )
+            .await;
+            Timer::after(Duration::from_micros(300)).await;
+        }
+        defmt::info!(
+            "DShot: spin direction set (reversed: {})",
+            elle_config::ENGINE_SPIN_REVERSED
+        );
+
         // Enable extended telemetry (must send command 6 times per DShot protocol)
         for _ in 0..EDT_ENABLE_REPEAT {
             embassy_futures::join::join(
@@ -286,6 +314,18 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
     defmt::info!("DShot single-engine task: arming ESC (2s)");
     let mut engine = engine;
     engine.arm_async(Duration::from_secs(2)).await;
+
+    // Assert spin direction before enabling telemetry — the ESC is stopped here
+    // (arm_async just spent its whole duration sending MotorStop), which is what
+    // settings commands require.
+    for _ in 0..SPIN_DIRECTION_REPEAT {
+        engine.send_command_async(SPIN_DIRECTION_CMD).await;
+        Timer::after(Duration::from_micros(300)).await;
+    }
+    defmt::info!(
+        "DShot: spin direction set (reversed: {})",
+        elle_config::ENGINE_SPIN_REVERSED
+    );
 
     // Enable extended telemetry (must send command 6 times per DShot protocol)
     for _ in 0..EDT_ENABLE_REPEAT {

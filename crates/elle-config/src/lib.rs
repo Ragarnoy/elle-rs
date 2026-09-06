@@ -233,15 +233,25 @@ pub const MAX_RPM: u32 = 21_400; // Measured: right engine saturation under EDF 
 #[cfg(not(feature = "platform-dart"))]
 pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 149,800
 
-// Motor specs (dart): measured via rpm_range sweep (500-sample per step, DShot 48–2000)
-// Peak RPM 8101 at DShot 1148; RPM declines above that (prop stall). Governor FF LUT
-// caps at DShot 1148. MOTOR_POLES assumed 14 — verify against motor spec sheet.
+// Motor specs (dart): measured via rpm_range sweep on the replacement 2-blade prop
+// (500-sample per step, DShot 48–2000). RPM peaks at 13,555 @ DShot 1798 and declines
+// above; the governor caps at DShot 1748 (13,424 RPM), the last strictly-rising point,
+// so the PI can never wind into the falling region.
+// MOTOR_POLES assumed 14 — verify against motor spec sheet.
 #[cfg(feature = "platform-dart")]
 pub const MOTOR_POLES: u8 = 14;
 #[cfg(feature = "platform-dart")]
-pub const MAX_RPM: u32 = 8_101; // Measured peak at DShot 1148
+pub const MAX_RPM: u32 = 13_424; // Measured at DShot 1748 (last rising point)
 #[cfg(feature = "platform-dart")]
-pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 56,707
+pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 93,968
+
+/// ESC spin direction. The dart's replacement prop is handed opposite to the original,
+/// so the ESC is commanded reversed on every boot — session-only, never `SettingsSave`:
+/// no EEPROM wear, and still correct after an ESC swap or factory reset.
+#[cfg(feature = "platform-dart")]
+pub const ENGINE_SPIN_REVERSED: bool = true;
+#[cfg(not(feature = "platform-dart"))]
+pub const ENGINE_SPIN_REVERSED: bool = false;
 
 /// Governor PI gains — normalized to eRPM scale.
 /// Kp=0.01 gives ~14 DShot counts per 1000 eRPM error — fast enough to reduce
@@ -270,12 +280,15 @@ pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000;
 /// output past the point the feedforward table itself refuses to cross, or the
 /// integrator can wind up past it under normal RPM sag (battery/thermal/prop wash),
 /// driving DShot further into a region where RPM falls as throttle rises — a runaway
-/// positive-feedback loop (dart prop stalls above DShot 1148; eagle right engine
+/// positive-feedback loop (dart prop RPM plateaus/declines above DShot 1748; eagle right engine
 /// saturates/goes asymmetric above DShot 1473).
 #[cfg(not(feature = "platform-dart"))]
 pub const GOVERNOR_DSHOT_MAX: u16 = 1_473;
 #[cfg(feature = "platform-dart")]
-pub const GOVERNOR_DSHOT_MAX: u16 = 1_148;
+pub const GOVERNOR_DSHOT_MAX: u16 = 1_748;
+
+// The doc comment above is a real contract: enforce it so the two can't drift.
+const _: () = assert!(GOVERNOR_DSHOT_MAX == lut::governor_ff_max_dshot());
 
 // ---------------------------------------------------------------------------
 // Compile-time validation
