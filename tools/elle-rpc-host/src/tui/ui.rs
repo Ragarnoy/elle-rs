@@ -7,7 +7,41 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 
+use elle_rpc_icd::EngineUnit;
+
 use super::state::AppState;
+
+// Semantic colours. A full theme module is a larger job; these at least keep the
+// health-coded values consistent, and give one place to change them.
+const MUTED: Color = Color::DarkGray;
+const LABEL: Color = Color::Gray;
+const OK: Color = Color::Green;
+const WARN: Color = Color::Yellow;
+const CRIT: Color = Color::Red;
+
+/// A "no data yet" line, dimmed so empty fields stop shouting.
+fn muted_line(text: &str) -> Line<'static> {
+    Line::from(Span::styled(text.to_string(), Style::default().fg(MUTED)))
+}
+
+/// Label + value, with the value carrying the health colour.
+fn kv(label: &str, value: String, color: Color) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(label.to_string(), Style::default().fg(LABEL)),
+        Span::styled(value, Style::default().fg(color)),
+    ])
+}
+
+/// Green below `warn`, yellow below `crit`, red at or above `crit`.
+fn scale(value: f64, warn: f64, crit: f64) -> Color {
+    if value >= crit {
+        CRIT
+    } else if value >= warn {
+        WARN
+    } else {
+        OK
+    }
+}
 
 pub fn draw(f: &mut Frame, state: &AppState) {
     let chunks = Layout::default()
@@ -195,132 +229,205 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(14), // attitude data + mag + heading + baro + gnss + rc age
-            Constraint::Length(4),  // controller output + engine + EDT
-            Constraint::Min(8),     // artificial horizon canvas
+            Constraint::Length(5),  // controller output + engine + EDT + heading hold
+            Constraint::Min(8),     // artificial horizon
         ])
         .split(inner);
 
     // Attitude data (from polled GetAttitude endpoint)
-    let (pitch, roll, yaw) = if let Some(a) = state.attitude {
-        (
-            a.pitch_cdeg as f32 / 100.0,
-            a.roll_cdeg as f32 / 100.0,
-            format!("{:.2}", a.yaw_cdeg as f32 / 100.0),
-        )
-    } else {
-        (0.0, 0.0, "---".into())
-    };
-
-    let perf_line = state
-        .performance
-        .map(|p| {
-            format!(
-                "  Loop: {}us avg / {}us max",
-                p.control_loop_avg_us, p.control_loop_max_us,
-            )
-        })
-        .unwrap_or_else(|| "  Loop: ---".into());
-
-    let imu_line = state
-        .status
-        .map(|s| {
-            format!(
-                "  IMU: {} | Errors: {}",
-                if s.imu_calibrated { "Cal" } else { "NO CAL" },
-                s.imu_error_count,
-            )
-        })
-        .unwrap_or_else(|| "  IMU: ---".into());
-
-    let rc_age_spans: Vec<Span> = if let Some(s) = state.status {
-        let age = s.rc_age_ms;
-        let color = if age < 100 {
-            Color::Green
-        } else if age < 200 {
-            Color::Yellow
-        } else {
-            Color::Red
-        };
+    let attitude_lines = if let Some(a) = state.attitude {
+        let pitch = f64::from(a.pitch_cdeg) / 100.0;
+        let roll = f64::from(a.roll_cdeg) / 100.0;
+        let yaw = f64::from(a.yaw_cdeg) / 100.0;
         vec![
-            Span::raw("  RC age: "),
-            Span::styled(format!("{}ms", age), Style::default().fg(color)),
+            kv(
+                "  Pitch: ",
+                format!("{pitch:>7.2}\u{00B0}"),
+                scale(pitch.abs(), 20.0, 45.0),
+            ),
+            kv(
+                "  Roll:  ",
+                format!("{roll:>7.2}\u{00B0}"),
+                scale(roll.abs(), 20.0, 45.0),
+            ),
+            kv("  Yaw:   ", format!("{yaw:>7.2}\u{00B0}"), Color::White),
         ]
     } else {
-        vec![Span::styled(
-            "  RC age: ---",
-            Style::default().fg(Color::Gray),
-        )]
+        vec![
+            muted_line("  Pitch:     ---"),
+            muted_line("  Roll:      ---"),
+            muted_line("  Yaw:       ---"),
+        ]
     };
 
-    let (mag_line, heading_line) = if let Some(m) = state.magnetometer {
-        let heading = (m.y as f64).atan2(m.x as f64).to_degrees();
-        let heading = if heading < 0.0 {
-            heading + 360.0
-        } else {
-            heading
-        };
-        (
-            format!("  Mag: X={:>7} Y={:>7} Z={:>7}", m.x, m.y, m.z),
-            format!("  Heading: {:>6.1}°", heading),
-        )
-    } else {
-        ("  Mag: ---".into(), "  Heading: ---".into())
-    };
+    let perf_line = state.performance.map_or_else(
+        || muted_line("  Loop: ---"),
+        |p| {
+            kv(
+                "  Loop: ",
+                format!(
+                    "{}us avg / {}us max",
+                    p.control_loop_avg_us, p.control_loop_max_us
+                ),
+                // 77Hz control loop => 13ms budget per iteration.
+                scale(f64::from(p.control_loop_max_us), 10_000.0, 13_000.0),
+            )
+        },
+    );
 
-    let (baro_line1, baro_line2) = if let Some(b) = state.barometer {
-        (
-            format!(
-                "  Baro: {:.1} hPa | {:.1}\u{00B0}C",
-                b.pressure_hpa, b.temperature_c
-            ),
-            format!(
-                "  Alt:  {:.1}m | Vario: {:+.1} m/s",
-                b.altitude_m, b.vario_ms
-            ),
-        )
-    } else {
-        ("  Baro: ---".into(), "  Alt:  --- (baro)".into())
-    };
+    let imu_line = state.status.map_or_else(
+        || muted_line("  IMU: ---"),
+        |s| {
+            Line::from(vec![
+                Span::styled("  IMU: ", Style::default().fg(LABEL)),
+                if s.imu_calibrated {
+                    Span::styled("Cal", Style::default().fg(OK))
+                } else {
+                    Span::styled("NO CAL", Style::default().fg(CRIT))
+                },
+                Span::styled(" | Errors: ", Style::default().fg(LABEL)),
+                Span::styled(
+                    s.imu_error_count.to_string(),
+                    Style::default().fg(if s.imu_error_count == 0 { OK } else { WARN }),
+                ),
+            ])
+        },
+    );
 
-    let (gnss_pos_line, gnss_fix_line, gnss_alt_line) = if let Some(g) = state.gnss {
-        let fix_str = match g.fix_quality {
-            0 => "No fix",
-            1 => "GPS",
-            2 => "DGPS",
-            _ => "Other",
-        };
-        (
-            format!("  GPS: {:.6}, {:.6}", g.latitude, g.longitude),
-            format!(
-                "  Fix: {} | Sats: {} | HDOP: {:.1}",
-                fix_str, g.num_satellites, g.hdop
-            ),
-            format!("  Alt: {:.1}m MSL", g.altitude_m),
-        )
-    } else {
-        (
-            "  GPS: ---".into(),
-            "  Fix: ---".into(),
-            "  Alt: ---".into(),
-        )
-    };
+    let rc_age_line = state.status.map_or_else(
+        || muted_line("  RC age: ---"),
+        |s| {
+            kv(
+                "  RC age: ",
+                format!("{}ms", s.rc_age_ms),
+                // Matches the firmware's RC_WARNING_MS / RC_TIMEOUT_MS staging.
+                scale(f64::from(s.rc_age_ms), 200.0, 300.0),
+            )
+        },
+    );
 
-    let attitude_text = vec![
-        Line::from(format!("  Pitch: {:>7.2}°", pitch)),
-        Line::from(format!("  Roll:  {:>7.2}°", roll)),
-        Line::from(format!("  Yaw:   {:>7}°", yaw)),
+    let (mag_line, heading_line) = state.magnetometer.map_or_else(
+        || (muted_line("  Mag: ---"), muted_line("  Heading: ---")),
+        |m| {
+            let heading = f64::from(m.y).atan2(f64::from(m.x)).to_degrees();
+            let heading = if heading < 0.0 {
+                heading + 360.0
+            } else {
+                heading
+            };
+            (
+                kv(
+                    "  Mag: ",
+                    format!("X={:>7} Y={:>7} Z={:>7}", m.x, m.y, m.z),
+                    Color::White,
+                ),
+                kv(
+                    "  Heading: ",
+                    format!("{heading:>6.1}\u{00B0}"),
+                    Color::White,
+                ),
+            )
+        },
+    );
+
+    let (baro_line1, baro_line2) = state.barometer.map_or_else(
+        || (muted_line("  Baro: ---"), muted_line("  Alt:  ---")),
+        |b| {
+            (
+                Line::from(vec![
+                    Span::styled("  Baro: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        format!("{:.1} hPa", b.pressure_hpa),
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::styled(" | ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        format!("{:.1}\u{00B0}C", b.temperature_c),
+                        Style::default().fg(scale(f64::from(b.temperature_c), 50.0, 70.0)),
+                    ),
+                ]),
+                kv(
+                    "  Alt:  ",
+                    format!("{:.1}m | Vario: {:+.1} m/s", b.altitude_m, b.vario_ms),
+                    Color::White,
+                ),
+            )
+        },
+    );
+
+    let (gnss_pos_line, gnss_fix_line, gnss_alt_line) = state.gnss.map_or_else(
+        || {
+            (
+                muted_line("  GPS: ---"),
+                muted_line("  Fix: ---"),
+                muted_line("  Alt: ---"),
+            )
+        },
+        |g| {
+            let (fix_str, fix_color) = match g.fix_quality {
+                0 => ("No fix", CRIT),
+                1 => ("GPS", OK),
+                2 => ("DGPS", OK),
+                _ => ("Other", WARN),
+            };
+            (
+                kv(
+                    "  GPS: ",
+                    format!("{:.6}, {:.6}", g.latitude, g.longitude),
+                    if g.fix_quality == 0 {
+                        MUTED
+                    } else {
+                        Color::White
+                    },
+                ),
+                Line::from(vec![
+                    Span::styled("  Fix: ", Style::default().fg(LABEL)),
+                    Span::styled(fix_str, Style::default().fg(fix_color)),
+                    Span::styled(" | Sats: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        g.num_satellites.to_string(),
+                        // A 3D fix needs 4; 6+ is comfortable.
+                        Style::default().fg(if g.num_satellites >= 6 {
+                            OK
+                        } else if g.num_satellites >= 4 {
+                            WARN
+                        } else {
+                            CRIT
+                        }),
+                    ),
+                    Span::styled(" | HDOP: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        format!("{:.1}", g.hdop),
+                        Style::default().fg(scale(f64::from(g.hdop), 2.0, 5.0)),
+                    ),
+                ]),
+                kv(
+                    "  Alt: ",
+                    format!("{:.1}m MSL", g.altitude_m),
+                    if g.fix_quality == 0 {
+                        MUTED
+                    } else {
+                        Color::White
+                    },
+                ),
+            )
+        },
+    );
+
+    let mut attitude_text = attitude_lines;
+    attitude_text.extend([
         Line::from(""),
-        Line::from(mag_line),
-        Line::from(heading_line),
-        Line::from(baro_line1),
-        Line::from(baro_line2),
-        Line::from(gnss_pos_line),
-        Line::from(gnss_fix_line),
-        Line::from(gnss_alt_line),
-        Line::from(perf_line),
-        Line::from(imu_line),
-        Line::from(rc_age_spans),
-    ];
+        mag_line,
+        heading_line,
+        baro_line1,
+        baro_line2,
+        gnss_pos_line,
+        gnss_fix_line,
+        gnss_alt_line,
+        perf_line,
+        imu_line,
+        rc_age_line,
+    ]);
 
     f.render_widget(Paragraph::new(attitude_text), chunks[0]);
 
@@ -339,17 +446,15 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
 
         const POLE_PAIRS: u32 = 7; // 14-pole motor
         let (engine_line, edt_line) = if let Some(e) = state.engine {
-            let l_rpm_str = if e.left.valid {
-                let rpm = e.left.erpm / POLE_PAIRS;
-                format!("{rpm} RPM")
-            } else {
-                "STALE".into()
-            };
-            let r_rpm_str = if e.right.valid {
-                let rpm = e.right.erpm / POLE_PAIRS;
-                format!("{rpm} RPM")
-            } else {
-                "STALE".into()
+            let rpm_span = |u: &EngineUnit| {
+                if u.valid {
+                    Span::styled(
+                        format!("{} RPM", u.erpm / POLE_PAIRS),
+                        Style::default().fg(Color::White),
+                    )
+                } else {
+                    Span::styled("STALE", Style::default().fg(CRIT))
+                }
             };
             let l_target = if e.left.target_erpm > 0 {
                 format!("\u{2192}{}", e.left.target_erpm / POLE_PAIRS)
@@ -361,26 +466,51 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
             } else {
                 String::new()
             };
+            let edt_spans = |u: &EngineUnit| {
+                vec![
+                    Span::styled(
+                        format!(
+                            "{:.1}V {:.1}A ",
+                            u.voltage_mv as f32 / 1000.0,
+                            u.current_ma as f32 / 1000.0
+                        ),
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::styled(
+                        format!("{}\u{00B0}C", u.temperature),
+                        // ESC/motor temperature — the prop swap was about heat.
+                        Style::default().fg(scale(f64::from(u.temperature), 70.0, 90.0)),
+                    ),
+                ]
+            };
             let edt_line = if e.left.voltage_mv > 0 || e.right.voltage_mv > 0 {
-                Some(format!(
-                    "  EDT: {:.1}V {:.1}A {}°C | {:.1}V {:.1}A {}°C",
-                    e.left.voltage_mv as f32 / 1000.0,
-                    e.left.current_ma as f32 / 1000.0,
-                    e.left.temperature,
-                    e.right.voltage_mv as f32 / 1000.0,
-                    e.right.current_ma as f32 / 1000.0,
-                    e.right.temperature,
-                ))
+                let mut spans = vec![Span::styled("  EDT: ", Style::default().fg(LABEL))];
+                spans.extend(edt_spans(&e.left));
+                spans.push(Span::styled(" | ", Style::default().fg(LABEL)));
+                spans.extend(edt_spans(&e.right));
+                Some(Line::from(spans))
             } else {
                 None
             };
-            let eng = format!(
-                "  Eng L: {l_rpm_str}{l_target} (cmd:{}) | R: {r_rpm_str}{r_target} (cmd:{})",
-                e.left.throttle, e.right.throttle,
-            );
+            let eng = Line::from(vec![
+                Span::styled("  Eng L: ", Style::default().fg(LABEL)),
+                rpm_span(&e.left),
+                Span::styled(l_target, Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!(" (cmd:{})", e.left.throttle),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(" | R: ", Style::default().fg(LABEL)),
+                rpm_span(&e.right),
+                Span::styled(r_target, Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!(" (cmd:{})", e.right.throttle),
+                    Style::default().fg(MUTED),
+                ),
+            ]);
             (eng, edt_line)
         } else {
-            ("  Eng: ---".into(), None)
+            (muted_line("  Eng: ---"), None)
         };
 
         let mut lines = vec![
@@ -393,10 +523,10 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                 "  Elevon L={} R={}  Eng L={} R={}",
                 c.elevon_left_us, c.elevon_right_us, c.engine_left_dshot, c.engine_right_dshot,
             )),
-            Line::from(engine_line),
+            engine_line,
         ];
         if let Some(edt) = edt_line {
-            lines.push(Line::from(edt));
+            lines.push(edt);
         }
         if c.heading_hold_active {
             lines.push(Line::from(Span::styled(
@@ -412,7 +542,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         }
         lines
     } else {
-        vec![Line::from("  Controller: ---")]
+        vec![muted_line("  Controller: ---")]
     };
     f.render_widget(Paragraph::new(ctrl_lines), chunks[1]);
 
@@ -567,10 +697,7 @@ fn draw_rc_channels(f: &mut Frame, area: Rect, state: &AppState) {
     let channels = match &state.rc_channels {
         Some(rc) => &rc.channels,
         None => {
-            let empty = Paragraph::new(Line::from(Span::styled(
-                "  No RC data",
-                Style::default().fg(Color::Gray),
-            )));
+            let empty = Paragraph::new(muted_line("  No RC data"));
             f.render_widget(empty, inner);
             return;
         }
@@ -626,25 +753,36 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
         .rev()
         .map(|log| {
             let (label, color) = match log.level {
-                0 => ("TRACE", Color::Gray),
+                0 => ("TRACE", MUTED),
                 1 => ("DEBUG", Color::Blue),
-                2 => ("INFO ", Color::Green),
-                3 => ("WARN ", Color::Yellow),
-                4 => ("ERROR", Color::Red),
+                2 => ("INFO ", OK),
+                3 => ("WARN ", WARN),
+                4 => ("ERROR", CRIT),
                 _ => ("?????", Color::White),
             };
+            // Repeats are collapsed in state::push_log; show how many.
+            let repeat = if log.count > 1 {
+                Span::styled(format!(" \u{00D7}{}", log.count), Style::default().fg(WARN))
+            } else {
+                Span::raw("")
+            };
             Line::from(vec![
-                Span::styled(format!("[{label}]"), Style::default().fg(color)),
-                Span::raw(format!(" {}", log_code_text(log.code))),
+                Span::styled(
+                    log.at.format("%H:%M:%S ").to_string(),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(format!("[{label}] "), Style::default().fg(color)),
+                Span::styled(
+                    log_code_text(log.code),
+                    Style::default().fg(if log.level >= 3 { color } else { Color::White }),
+                ),
+                repeat,
             ])
         })
         .collect();
 
     if log_lines.is_empty() {
-        let empty = Paragraph::new(Line::from(Span::styled(
-            "  No logs received",
-            Style::default().fg(Color::Gray),
-        )));
+        let empty = Paragraph::new(muted_line("  No logs received"));
         f.render_widget(empty, inner);
     } else {
         let log_widget = Paragraph::new(log_lines).wrap(Wrap { trim: false });

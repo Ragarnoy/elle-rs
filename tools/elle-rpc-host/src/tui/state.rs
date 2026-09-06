@@ -3,11 +3,21 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
+use chrono::{DateTime, Local};
 use elle_rpc_icd::*;
 
 const LOG_HISTORY: usize = 256;
 const ATTITUDE_HISTORY: usize = 60;
 const COMMAND_HISTORY: usize = 64;
+
+/// A log line as displayed: the device event plus host-side arrival time and a
+/// repeat count for collapsed duplicates.
+pub struct LogEntry {
+    pub level: u8,
+    pub code: u16,
+    pub at: DateTime<Local>,
+    pub count: u32,
+}
 
 pub struct AppState {
     // Device info (polled)
@@ -47,7 +57,7 @@ pub struct AppState {
     pub pid_history: VecDeque<(i16, i16)>, // (pitch_correction_cp, roll_correction_cp)
 
     // Logs
-    pub logs: VecDeque<LogMsg>,
+    pub logs: VecDeque<LogEntry>,
 
     // Connection state
     pub connected: bool,
@@ -118,8 +128,25 @@ impl AppState {
         self.controller_output = Some(c);
     }
 
+    /// Append a log message, collapsing consecutive repeats of the same event into
+    /// a single entry with a repeat count. Periodic events (CRSF TX heartbeat, GNSS
+    /// updates) otherwise fill the whole panel with identical lines.
     pub fn push_log(&mut self, msg: LogMsg) {
-        self.logs.push_back(msg);
+        if let Some(last) = self.logs.back_mut()
+            && last.level == msg.level
+            && last.code == msg.code
+        {
+            last.count += 1;
+            last.at = Local::now();
+            return;
+        }
+
+        self.logs.push_back(LogEntry {
+            level: msg.level,
+            code: msg.code,
+            at: Local::now(),
+            count: 1,
+        });
         if self.logs.len() > LOG_HISTORY {
             self.logs.pop_front();
         }
