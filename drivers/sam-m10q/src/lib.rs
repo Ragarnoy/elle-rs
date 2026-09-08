@@ -74,8 +74,10 @@ impl<U: Read + Write> SamM10q<U> {
 
         match self.decoder.feed(byte[0]) {
             FeedResult::Pending => Ok(None),
-            FeedResult::FrameReady => Ok(Some(self.decoder.take_frame())),
-            FeedResult::Error(decoder::DecodeError::UbxChecksum) => Err(Error::Checksum),
+            FeedResult::FrameReady => Ok(self.decoder.take_frame()),
+            FeedResult::Error(
+                decoder::DecodeError::UbxChecksum | decoder::DecodeError::NmeaChecksum,
+            ) => Err(Error::Checksum),
             FeedResult::Error(decoder::DecodeError::FrameTooLarge) => Err(Error::FrameTooLarge),
             FeedResult::Error(decoder::DecodeError::InvalidSync) => {
                 // Invalid sync is non-fatal — just means garbage, treat as no frame
@@ -100,14 +102,20 @@ impl<U: Read + Write> SamM10q<U> {
 
             match self.decoder.feed(byte[0]) {
                 FeedResult::Pending => continue,
-                FeedResult::FrameReady => return Ok(self.decoder.take_frame()),
-                FeedResult::Error(decoder::DecodeError::UbxChecksum) => continue,
+                FeedResult::FrameReady => break,
+                FeedResult::Error(
+                    decoder::DecodeError::UbxChecksum | decoder::DecodeError::NmeaChecksum,
+                ) => continue,
                 FeedResult::Error(decoder::DecodeError::FrameTooLarge) => {
                     return Err(Error::FrameTooLarge);
                 }
                 FeedResult::Error(decoder::DecodeError::InvalidSync) => continue,
             }
         }
+
+        // `FrameReady` guarantees the decoder holds a frame, so the `None` arm
+        // is unreachable — it is mapped to an error rather than a panic.
+        self.decoder.take_frame().ok_or(Error::Timeout)
     }
 
     /// Send a UBX command to the module.
@@ -231,7 +239,7 @@ mod tests {
 
     #[test]
     fn poll_nmea_frame() {
-        let data = b"$GPGGA,test*00\r\n";
+        let data = b"$GPGGA,test*6C\r\n";
         let uart = MockUart::new(data);
         let mut gnss = SamM10q::new(uart);
 
@@ -349,7 +357,7 @@ mod tests {
     #[test]
     fn read_frame_skips_garbage() {
         let mut data = vec![0xFF, 0x00, 0x42]; // garbage
-        data.extend_from_slice(b"$GPRMC,test*00\r\n");
+        data.extend_from_slice(b"$GPRMC,test*71\r\n");
         let uart = MockUart::new(&data);
         let mut gnss = SamM10q::new(uart);
 

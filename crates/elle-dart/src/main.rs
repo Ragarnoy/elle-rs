@@ -2039,7 +2039,7 @@ async fn gnss_task(
         match decoder.feed(byte[0]) {
             FeedResult::Pending => {}
             FeedResult::FrameReady => {
-                if let Frame::Nmea(nmea_frame) = decoder.take_frame()
+                if let Some(Frame::Nmea(nmea_frame)) = decoder.take_frame()
                     && let Some(ParseResult::GGA(gga)) = nmea_frame.parsed
                 {
                     gga_count = gga_count.wrapping_add(1);
