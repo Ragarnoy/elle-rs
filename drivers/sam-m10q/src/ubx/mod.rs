@@ -1,5 +1,8 @@
 //! UBX protocol constants and helpers.
 
+pub mod cfg;
+pub mod nav;
+
 /// UBX sync byte 1.
 pub const SYNC1: u8 = 0xB5;
 /// UBX sync byte 2.
@@ -28,31 +31,6 @@ pub mod class {
 pub mod ack {
     pub const NAK: u8 = 0x00;
     pub const ACK: u8 = 0x01;
-}
-
-/// Well-known CFG message IDs.
-pub mod cfg {
-    pub const PRT: u8 = 0x00;
-    pub const MSG: u8 = 0x01;
-    pub const RST: u8 = 0x04;
-    pub const RATE: u8 = 0x08;
-    pub const CFG: u8 = 0x09;
-    pub const VALSET: u8 = 0x8A;
-    pub const VALGET: u8 = 0x8B;
-    pub const VALDEL: u8 = 0x8C;
-}
-
-/// Well-known NAV message IDs.
-pub mod nav {
-    pub const POSLLH: u8 = 0x02;
-    pub const STATUS: u8 = 0x03;
-    pub const DOP: u8 = 0x04;
-    pub const SOL: u8 = 0x06;
-    pub const PVT: u8 = 0x07;
-    pub const VELNED: u8 = 0x12;
-    pub const TIMEUTC: u8 = 0x21;
-    pub const SAT: u8 = 0x35;
-    pub const SIG: u8 = 0x43;
 }
 
 /// Compute the UBX Fletcher-8 checksum over the given data.

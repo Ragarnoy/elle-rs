@@ -2040,7 +2040,7 @@ async fn gnss_task(
             FeedResult::Pending => {}
             FeedResult::FrameReady => {
                 if let Some(Frame::Nmea(nmea_frame)) = decoder.take_frame()
-                    && let Some(ParseResult::GGA(gga)) = nmea_frame.parsed
+                    && let Some(ParseResult::GGA(gga)) = nmea_frame.parse()
                 {
                     gga_count = gga_count.wrapping_add(1);
                     let sats = gga.fix_satellites.unwrap_or(0) as u8;

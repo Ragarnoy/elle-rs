@@ -132,13 +132,9 @@ impl Decoder {
                 id: self.ubx_id,
                 payload: &self.buf[..self.ubx_payload_len as usize],
             })),
-            FrameType::Nmea => {
-                let raw = &self.buf[..self.pos];
-                let parsed = core::str::from_utf8(raw)
-                    .ok()
-                    .and_then(|s| nmea::parse_bytes(s.as_bytes()).ok());
-                Some(Frame::Nmea(NmeaFrame { raw, parsed }))
-            }
+            FrameType::Nmea => Some(Frame::Nmea(NmeaFrame {
+                raw: &self.buf[..self.pos],
+            })),
             FrameType::None => None,
         }
     }

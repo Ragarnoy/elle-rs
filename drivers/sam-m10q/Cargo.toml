@@ -7,9 +7,10 @@ description = "Driver for the u-blox SAM-M10Q GNSS module"
 [dependencies]
 embedded-io = "0.7"
 embedded-hal = "1.0"
+ublox = { version = "0.10.0", default-features = false, features = ["ubx_proto33"] }
 
 [dependencies.nmea]
-version = "0.7"
+version = "0.8"
 default-features = false
 features = ["GNSS", "other"]
 
