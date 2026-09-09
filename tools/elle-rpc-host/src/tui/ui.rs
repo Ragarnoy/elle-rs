@@ -728,6 +728,7 @@ const fn log_code_text(code: u16) -> &'static str {
         6 => "GNSS: PVT stale, NMEA fallback",
         7 => "GNSS: 115200 baud, 5Hz",
         8 => "GNSS: baud switch failed, 9600",
+        9 => "GNSS: NO DATA from module",
         // Safety (10–19)
         10 => "Motors ARMED",
         11 => "Motors DISARMED",

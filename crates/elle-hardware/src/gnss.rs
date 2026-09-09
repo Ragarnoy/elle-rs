@@ -62,8 +62,14 @@ pub const DEFAULT_BAUD: u32 = 9600;
 /// Baud rate we switch to. 9600 is 960 B/s; the default sentence set already
 /// uses most of that at 1 Hz, leaving no room for a faster solution.
 pub const TARGET_BAUD: u32 = 115_200;
-/// Solution interval in milliseconds — 200 ms is 5 Hz.
+/// Solution interval at 115200 baud — 200 ms is 5 Hz.
 const NAV_RATE_MS: u16 = 200;
+/// Solution interval to use if we are stuck at 9600 baud.
+///
+/// 1 Hz keeps NAV-PVT + GGA at roughly 180 B/s, comfortably inside the 960 B/s
+/// a 9600 link carries. Asking for 5 Hz here saturates the port and the module
+/// silently drops frames.
+const SLOW_NAV_RATE_MS: u16 = 1_000;
 
 /// How long a NAV-PVT stays authoritative before GGA takes over again.
 const PVT_STALE: Duration = Duration::from_millis(3_000);
@@ -73,6 +79,15 @@ const ACK_TIMEOUT: Duration = Duration::from_millis(1_500);
 const BAUD_PROBE_TIMEOUT: Duration = Duration::from_millis(2_000);
 /// Settling time after the cold-start reset.
 const COLD_START_SETTLE: Duration = Duration::from_millis(500);
+/// Upper bound on waiting for the UART to clock out a queued message.
+const TX_DRAIN_TIMEOUT: Duration = Duration::from_millis(200);
+/// How long the module may say nothing before we report the link as silent.
+///
+/// Comfortably longer than the slowest configured solution interval, so a
+/// healthy 1 Hz link never trips it.
+const SILENCE_TIMEOUT: Duration = Duration::from_millis(3_000);
+/// After the first few, report continued silence only every Nth period.
+const GNSS_SILENCE_LOG_INTERVAL: u32 = 20;
 
 type Gnss<'a> = SamM10q<&'a mut BufferedUartRx, &'a mut BufferedUartTx>;
 
@@ -81,10 +96,15 @@ type Gnss<'a> = SamM10q<&'a mut BufferedUartRx, &'a mut BufferedUartTx>;
 /// Key IDs and value types come from `ublox`'s typed `CfgVal`, so they are not
 /// transcribed by hand. The dynamic model matters: the default is *Portable*,
 /// whose motion assumptions fight a fixed-wing aircraft's velocity estimate.
-fn config_items() -> [CfgVal; 10] {
+///
+/// `rate_ms` is the solution interval, which **must** match the link speed we
+/// actually achieved. NAV-PVT is 100 bytes and GGA about 80; at 5 Hz that is
+/// 900 B/s against the 960 B/s a 9600-baud link can carry, which the module
+/// answers by dropping messages. See [`slow_rate_ms`].
+fn config_items(rate_ms: u16) -> [CfgVal; 10] {
     [
         CfgVal::NavSpgDynModel(NavDynamicModel::AirborneWithLess4gAcceleration),
-        CfgVal::RateMeas(NAV_RATE_MS),
+        CfgVal::RateMeas(rate_ms),
         CfgVal::RateNav(1),
         CfgVal::MsgOutUbxNavPvtUart1(1),
         // GGA is the fallback source; the rest is bandwidth we never read.
@@ -129,6 +149,19 @@ async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> bool {
     }
 }
 
+/// Wait until the UART has physically transmitted everything queued.
+///
+/// `embedded_io_async::Write::flush` returns once the software ring buffer is
+/// empty; `busy()` is what covers the hardware FIFO and shift register.
+async fn drain_tx(uart: &mut BufferedUart) {
+    let deadline = Instant::now() + TX_DRAIN_TIMEOUT;
+    while uart.busy() && Instant::now() < deadline {
+        Timer::after(Duration::from_millis(1)).await;
+    }
+    // A little margin for the final stop bit to clear the shift register.
+    Timer::after(Duration::from_millis(5)).await;
+}
+
 /// Wait for any decodable frame, to prove the link works at the current baud.
 async fn link_alive(gnss: &mut Gnss<'_>) -> bool {
     matches!(
@@ -143,7 +176,11 @@ pub async fn gnss_task(mut uart: BufferedUart) {
     {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
-        // UBX-CFG-RST: navBbrMask = 0x0000 (cold), resetMode = 0x02 (GNSS only).
+        // UBX-CFG-RST: navBbrMask = 0x0000, resetMode = 0x02 (GNSS-only
+        // software reset). 0x0000 is a *hot* start — ephemeris and almanac are
+        // kept, which is what we want: it gives the fastest time to first fix.
+        // (A cold start would be 0xFFFF; the previous comment here said "cold"
+        // and was simply wrong.)
         if gnss
             .send_ubx(ubx::class::CFG, ubx::cfg::RST, &[0x00, 0x00, 0x02, 0x00])
             .await
@@ -158,32 +195,44 @@ pub async fn gnss_task(mut uart: BufferedUart) {
     }
     Timer::after(COLD_START_SETTLE).await;
 
-    // Configure at the power-on baud rate, then move to the faster one. The
-    // baud change is last: everything before it must be acknowledged first.
-    let configured = {
+    // Change baud FIRST, then configure at whatever rate we actually achieved.
+    // The reverse order is a trap: a solution rate that only fits at 115200,
+    // applied before a baud switch that then fails, leaves the module pushing
+    // more bytes than a 9600 link can carry and silently dropping frames.
+    let sent = {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
-        apply_valset(&mut gnss, &config_items()).await
+        gnss.send_valset(LAYER_RAM, &[CfgVal::Uart1Baudrate(TARGET_BAUD)])
+            .await
+            .is_ok()
     };
 
     let mut fast = false;
-    if configured {
-        let sent = {
-            let (tx, rx) = uart.split_ref();
-            let mut gnss = SamM10q::new(rx, tx);
-            gnss.send_valset(LAYER_RAM, &[CfgVal::Uart1Baudrate(TARGET_BAUD)])
-                .await
-                .is_ok()
-        };
-        if sent {
-            // The module switches as soon as the message is consumed; there is
-            // no ACK to read at the old rate.
-            uart.set_baudrate(TARGET_BAUD);
-            let (tx, rx) = uart.split_ref();
-            let mut gnss = SamM10q::new(rx, tx);
-            fast = link_alive(&mut gnss).await;
-        }
+    if sent {
+        // `flush()` only drains the software ring buffer; the hardware FIFO and
+        // shift register can still hold ~32 bytes, which is 33 ms at 9600.
+        // Changing the divisor before they are on the wire corrupts the tail of
+        // the message we just sent, and the module never switches.
+        drain_tx(&mut uart).await;
+        uart.set_baudrate(TARGET_BAUD);
+
+        let (tx, rx) = uart.split_ref();
+        let mut gnss = SamM10q::new(rx, tx);
+        fast = link_alive(&mut gnss).await;
     }
+
+    if !fast {
+        // The module never answered at the new rate, so it is still at its
+        // power-on baud. Go back and stay there.
+        uart.set_baudrate(DEFAULT_BAUD);
+    }
+
+    let rate_ms = if fast { NAV_RATE_MS } else { SLOW_NAV_RATE_MS };
+    let configured = {
+        let (tx, rx) = uart.split_ref();
+        let mut gnss = SamM10q::new(rx, tx);
+        apply_valset(&mut gnss, &config_items(rate_ms)).await
+    };
 
     if fast {
         elle_event!(
@@ -191,17 +240,24 @@ pub async fn gnss_task(mut uart: BufferedUart) {
             event::EVT_GNSS_BAUD_SWITCHED,
             "GNSS: {} baud, {} ms solution",
             TARGET_BAUD,
-            NAV_RATE_MS
+            rate_ms
         );
     } else {
-        // Either configuration failed or the module never answered at the new
-        // rate. Fall back rather than lose GNSS: 9600 with GGA still flies.
-        uart.set_baudrate(DEFAULT_BAUD);
         elle_event!(
             warn,
             event::EVT_GNSS_BAUD_FALLBACK,
-            "GNSS: staying at {} baud, NMEA fallback",
-            DEFAULT_BAUD
+            "GNSS: {} baud, {} ms solution (baud switch failed)",
+            DEFAULT_BAUD,
+            rate_ms
+        );
+    }
+    if !configured {
+        // Nothing was applied, so the module is at its factory defaults: 1 Hz
+        // NMEA, no NAV-PVT. The GGA fallback path carries us.
+        elle_event!(
+            warn,
+            event::EVT_GNSS_CFG_NAK,
+            "GNSS: running on module defaults, NMEA only"
         );
     }
 
@@ -222,11 +278,30 @@ async fn run(uart: &mut BufferedUart) {
     let mut announced_fallback = false;
     let mut fix_count: u32 = 0;
     let mut uart_errors: u32 = 0;
+    let mut silent_periods: u32 = 0;
 
     loop {
-        let frame = match gnss.next_frame().await {
-            Ok(frame) => frame,
+        // A silent link and a link with no satellite fix look identical from
+        // the outside — both just never report a position. Time out the read so
+        // "the module is not talking to us at all" is a distinct, visible state.
+        let frame = match with_timeout(SILENCE_TIMEOUT, gnss.next_frame()).await {
             Err(_) => {
+                silent_periods += 1;
+                if silent_periods <= elle_config::GNSS_ERROR_LOG_INITIAL
+                    || silent_periods.is_multiple_of(GNSS_SILENCE_LOG_INTERVAL)
+                {
+                    elle_event!(
+                        warn,
+                        event::EVT_GNSS_NO_DATA,
+                        "GNSS: no data for {} ms (x{})",
+                        SILENCE_TIMEOUT.as_millis(),
+                        silent_periods
+                    );
+                }
+                continue;
+            }
+            Ok(Ok(frame)) => frame,
+            Ok(Err(_)) => {
                 uart_errors += 1;
                 if uart_errors <= elle_config::GNSS_ERROR_LOG_INITIAL
                     || uart_errors.is_multiple_of(elle_config::GNSS_ERROR_LOG_INTERVAL)
@@ -243,6 +318,7 @@ async fn run(uart: &mut BufferedUart) {
             }
         };
         uart_errors = 0;
+        silent_periods = 0;
 
         let now = Instant::now();
         let pvt_fresh = last_pvt.is_some_and(|t| now.duration_since(t) < PVT_STALE);

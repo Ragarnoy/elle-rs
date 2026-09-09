@@ -40,6 +40,7 @@ pub const EVT_GNSS_PVT_ACQUIRED: u16 = 5;
 pub const EVT_GNSS_NMEA_FALLBACK: u16 = 6;
 pub const EVT_GNSS_BAUD_SWITCHED: u16 = 7;
 pub const EVT_GNSS_BAUD_FALLBACK: u16 = 8;
+pub const EVT_GNSS_NO_DATA: u16 = 9;
 
 // Safety (10–19)
 pub const EVT_MOTORS_ARMED: u16 = 10;
