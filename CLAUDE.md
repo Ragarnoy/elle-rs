@@ -26,17 +26,22 @@ Target is RP2350 (`thumbv8m.main-none-eabihf`), configured in `.cargo/config.tom
 ```sh
 cd crates/elle-eagle
 cargo build --release                                              # default features (CRSF/ELRS flight mode)
-cargo build --release --no-default-features --features rpc-control    # with RPC server (ground test mode)
-cargo build --release --no-default-features --features rpc-control,rpc-rc # RPC monitoring + RC flight control
-cargo run --release --no-default-features --features rpc-control      # flash via probe-rs
+cargo build --release --no-default-features --features rpc-control,gnss    # with RPC server (ground test mode)
+cargo build --release --no-default-features --features rpc-control,rpc-rc,gnss # RPC monitoring + RC flight control
+cargo run --release --no-default-features --features rpc-control,gnss      # flash via probe-rs
 ```
+
+**Do not omit `gnss` from RPC builds.** It is in `default`, and
+`--no-default-features` drops it — the GNSS task is then never compiled or
+spawned, so the TUI shows no satellites and no GNSS log lines at all, which
+looks exactly like a hardware or reception failure.
 
 Key feature flags for elle-eagle:
 - `rpc-control` — postcard-RPC server over RTT (ground test mode). **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`); build with `--no-default-features --features rpc-control`. Enforced via `compile_error!`.
 - `rpc-rc` — RC/CRSF flight control in RPC mode. When combined with `rpc-control`, pilot commands come from the RC transmitter instead of RPC accumulators. The TUI still provides full monitoring. **Requires `rpc-control`** (enforced via `compile_error!`). Mitigates a build-specific DShot PIO issue in the RPC binary (see memory).
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
-- `gnss` — SAM-M10Q GNSS receiver support (default, both eagle and dart; works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames). RPC builds use `--no-default-features`, so add `gnss` explicitly there if wanted. Enables `elle-hardware/gnss`, which carries the shared `gnss` module.
+- `gnss` — SAM-M10Q GNSS receiver support (in `default`, both eagle and dart; works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames). **RPC builds use `--no-default-features`, so `gnss` must be listed explicitly or there is no GNSS task at all.** Enables `elle-hardware/gnss`, which carries the shared `gnss` module.
 - CRSF telemetry TX is always compiled in (no feature gate) — attitude, flight mode, GPS, baro altitude, battery voltage/current to radio via PIN_20/UART1 TX
 
 ULog flash recording is always compiled in (no feature gate). Recording is idle until explicitly started.

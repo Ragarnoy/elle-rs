@@ -261,11 +261,16 @@ pub async fn gnss_task(mut uart: BufferedUart) {
         );
     }
 
-    run(&mut uart).await;
+    run(&mut uart, fast).await;
 }
 
 /// Steady-state receive loop.
-async fn run(uart: &mut BufferedUart) {
+///
+/// `fast` records which link speed the boot sequence settled on, so it can be
+/// re-announced periodically. The boot events themselves fire about a second
+/// after power-up and `LogTopic` keeps no backlog, so a host that attaches
+/// later would otherwise never learn which mode the receiver is in.
+async fn run(uart: &mut BufferedUart, fast: bool) {
     let (tx, rx) = uart.split_ref();
     let mut gnss = SamM10q::new(rx, tx);
 
@@ -386,6 +391,22 @@ async fn run(uart: &mut BufferedUart) {
                 data.fix_quality,
                 data.num_satellites
             );
+            // Re-announce the link mode for anyone who attached after boot.
+            if fast {
+                elle_event!(
+                    debug,
+                    event::EVT_GNSS_BAUD_SWITCHED,
+                    "GNSS: {} baud",
+                    TARGET_BAUD
+                );
+            } else {
+                elle_event!(
+                    warn,
+                    event::EVT_GNSS_BAUD_FALLBACK,
+                    "GNSS: {} baud",
+                    DEFAULT_BAUD
+                );
+            }
         }
 
         GNSS_SIGNAL.signal(data);
@@ -399,8 +420,12 @@ async fn run(uart: &mut BufferedUart) {
     }
 }
 
-/// Log a periodic summary roughly once a minute at 5 Hz.
-const GNSS_PERIODIC_LOG_EVERY: u32 = 300;
+/// Log a periodic summary every N fixes — 20 s at 5 Hz, 100 s at 1 Hz.
+///
+/// Kept short enough to be useful for diagnosis: this is how a host that
+/// attached after boot learns the receiver is alive and which link mode it is
+/// running in.
+const GNSS_PERIODIC_LOG_EVERY: u32 = 100;
 
 fn apply_pvt(data: &mut GnssData, pvt: &nav::NavPvtRef<'_>) {
     // NAV-PVT fixType: 0 none, 1 dead reckoning, 2 2-D, 3 3-D, 4 GNSS+DR, 5 time.
