@@ -68,6 +68,9 @@ use embassy_rp::peripherals::{
     SPI0, UART0, UART1,
 };
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
+use embassy_rp::uart::BufferedInterruptHandler as BufferedUartIrqHandler;
+#[cfg(feature = "gnss")]
+use embassy_rp::uart::BufferedUart;
 use embassy_rp::uart::InterruptHandler as UartIrqHandler;
 use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{Peri, bind_interrupts};
@@ -227,17 +230,10 @@ fn log_flight_data(
     // Log GNSS at ~1Hz — feature-gated
     #[cfg(feature = "gnss")]
     if loop_counter.is_multiple_of(elle_config::ULOG_GNSS_DIVISOR)
-        && let Some(gnss) = gnss_signal::GNSS_SIGNAL.try_take()
+        && let Some(gnss) = elle_hardware::gnss::GNSS_SIGNAL.try_take()
     {
-        gnss_signal::GNSS_SIGNAL.signal(gnss); // put back for other readers
-        let _ = logger.log_gnss(
-            gnss.latitude,
-            gnss.longitude,
-            gnss.altitude_m,
-            gnss.fix_quality,
-            gnss.num_satellites,
-            gnss.hdop,
-        );
+        elle_hardware::gnss::GNSS_SIGNAL.signal(gnss); // put back for other readers
+        let _ = logger.log_gnss(&gnss);
     }
 
     // Drain event channel into ULog
@@ -253,7 +249,7 @@ bind_interrupts!(
     struct Irqs {
         PIO0_IRQ_0 => PioIrqHandler<PIO0>;
         PIO1_IRQ_0 => PioIrqHandler<PIO1>;
-        UART0_IRQ => UartIrqHandler<UART0>;
+        UART0_IRQ => BufferedUartIrqHandler<UART0>;
         UART1_IRQ => UartIrqHandler<UART1>;
         POWMAN_IRQ_TIMER => embassy_rp::aon_timer::InterruptHandler;
         DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<embassy_rp::peripherals::DMA_CH0>,
@@ -280,25 +276,6 @@ pub mod rc_signal {
     pub static RC_SIGNAL: Signal<CriticalSectionRawMutex, [u16; 16]> = Signal::new();
 }
 
-// GNSS signal for sharing position data (ULog, CRSF telemetry, RPC)
-#[cfg(feature = "gnss")]
-pub mod gnss_signal {
-    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-    use embassy_sync::signal::Signal;
-
-    /// GNSS position data — independent of RPC ICD types
-    #[derive(Clone, Copy)]
-    pub struct GnssData {
-        pub latitude: f32,
-        pub longitude: f32,
-        pub altitude_m: f32,
-        pub fix_quality: u8,
-        pub num_satellites: u8,
-        pub hdop: f32,
-    }
-
-    pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssData> = Signal::new();
-}
 
 #[cfg(feature = "rpc-control")]
 mod rpc_handlers;
@@ -413,18 +390,14 @@ async fn main(spawner: Spawner) {
         },
     );
 
-    // Always spawn CRSF receiver — use DMA_CH3 when rpc-control or gnss is enabled
-    // (DMA_CH0 is reserved for GNSS UART0 RX in those configurations)
+    // CRSF receiver on UART1. DMA_CH3 unconditionally: the old cfg split that
+    // reserved DMA_CH0 for GNSS is obsolete now that the GNSS UART is
+    // interrupt-buffered and uses no DMA channel at all.
     {
         info!("Core0: Starting CRSF receiver task (UART1, GPIO21)");
         let config = crsf_uart_config();
 
         // Split UART1: RX for CRSF receiver, TX for telemetry
-        #[cfg(not(any(feature = "rpc-control", feature = "gnss")))]
-        let uart = embassy_rp::uart::Uart::new(
-            p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH0, config,
-        );
-        #[cfg(any(feature = "rpc-control", feature = "gnss"))]
         let uart = embassy_rp::uart::Uart::new(
             p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH3, config,
         );
@@ -439,7 +412,23 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "gnss")]
     {
         info!("Core0: Starting GNSS task (UART0, GPIO28/29)");
-        spawner.spawn(gnss_task(p.UART0, p.PIN_28, p.PIN_29, p.DMA_CH0, p.DMA_CH7).unwrap());
+        // BufferedUart, not the DMA Uart: only the interrupt-buffered variant
+        // implements embedded-io-async, and its partial reads suit a bursty
+        // GNSS stream, and frees DMA_CH0 and DMA_CH7.
+        static GNSS_TX_BUF: StaticCell<[u8; 256]> = StaticCell::new();
+        static GNSS_RX_BUF: StaticCell<[u8; 512]> = StaticCell::new();
+        let mut gnss_config = embassy_rp::uart::Config::default();
+        gnss_config.baudrate = elle_hardware::gnss::DEFAULT_BAUD;
+        let gnss_uart = BufferedUart::new(
+            p.UART0,
+            p.PIN_28,
+            p.PIN_29,
+            Irqs,
+            GNSS_TX_BUF.init([0; 256]),
+            GNSS_RX_BUF.init([0; 512]),
+            gnss_config,
+        );
+        spawner.spawn(elle_hardware::gnss::gnss_task(gnss_uart).unwrap());
     }
     let mut fc = FlightController::new(pwm);
 
@@ -1963,149 +1952,6 @@ async fn imu_task(
 
     // Run continuous IMU reading
     imu.run().await;
-}
-
-#[cfg(feature = "gnss")]
-#[embassy_executor::task]
-async fn gnss_task(
-    uart: Peri<'static, UART0>,
-    tx_pin: Peri<'static, embassy_rp::peripherals::PIN_28>,
-    rx_pin: Peri<'static, embassy_rp::peripherals::PIN_29>,
-    rx_dma: Peri<'static, embassy_rp::peripherals::DMA_CH0>,
-    tx_dma: Peri<'static, embassy_rp::peripherals::DMA_CH7>,
-) {
-    use embassy_rp::uart::{self, Uart};
-    use sam_m10q::decoder::{Decoder, FeedResult};
-    use sam_m10q::nmea::ParseResult;
-    use sam_m10q::types::Frame;
-
-    info!("GNSS task starting (9600 baud, UART0 TX=GPIO28 RX=GPIO29)");
-
-    let mut uart_config = uart::Config::default();
-    uart_config.baudrate = 9600;
-
-    let mut uart_full = Uart::new(uart, tx_pin, rx_pin, Irqs, tx_dma, rx_dma, uart_config);
-
-    // Send UBX-CFG-RST cold start to force fresh satellite acquisition
-    {
-        let mut buf = [0u8; 12];
-        // UBX-CFG-RST: class=0x06, id=0x04, payload=[0x00, 0x00, 0x02, 0x00]
-        // navBbrMask=0x0000 (cold start), resetMode=0x02 (software reset GNSS only)
-        let payload = [0x00u8, 0x00, 0x02, 0x00];
-        if let Some(len) = sam_m10q::ubx::build_frame(&mut buf, 0x06, 0x04, &payload) {
-            if let Err(e) = uart_full.write(&buf[..len]).await {
-                warn!("GNSS: cold start send failed: {}", e);
-            } else {
-                info!("GNSS: UBX cold start sent");
-            }
-        }
-        // Wait for module to restart
-        Timer::after(Duration::from_millis(500)).await;
-    }
-
-    // Split to RX-only for the receive loop
-    let (_, mut rx) = uart_full.split();
-    let mut decoder = Decoder::new();
-    let mut gga_count: u32 = 0;
-    let mut uart_error_count: u32 = 0;
-    let mut last_lat: f32 = 0.0;
-    let mut last_lon: f32 = 0.0;
-    let mut last_alt: f32 = 0.0;
-
-    loop {
-        let mut byte = [0u8; 1];
-        match rx.read(&mut byte).await {
-            Ok(()) => {
-                uart_error_count = 0;
-            }
-            Err(e) => {
-                uart_error_count += 1;
-                if uart_error_count <= elle_config::GNSS_ERROR_LOG_INITIAL
-                    || uart_error_count.is_multiple_of(elle_config::GNSS_ERROR_LOG_INTERVAL)
-                {
-                    elle_hardware::elle_event!(
-                        warn,
-                        elle_hardware::event::EVT_GNSS_UART_ERROR,
-                        "GNSS UART read error: {} (total={})",
-                        e,
-                        uart_error_count
-                    );
-                }
-                Timer::after(Duration::from_millis(10)).await;
-                continue;
-            }
-        }
-
-        match decoder.feed(byte[0]) {
-            FeedResult::Pending => {}
-            FeedResult::FrameReady => {
-                if let Some(Frame::Nmea(nmea_frame)) = decoder.take_frame()
-                    && let Some(ParseResult::GGA(gga)) = nmea_frame.parse()
-                {
-                    gga_count = gga_count.wrapping_add(1);
-                    let sats = gga.fix_satellites.unwrap_or(0) as u8;
-                    let fix = match gga.fix_type {
-                        Some(sam_m10q::nmea::sentences::FixType::Invalid) | None => 0,
-                        Some(sam_m10q::nmea::sentences::FixType::Gps) => 1,
-                        Some(sam_m10q::nmea::sentences::FixType::DGps) => 2,
-                        Some(_) => 3,
-                    };
-
-                    if gga_count == 1 {
-                        elle_hardware::elle_event!(
-                            info,
-                            elle_hardware::event::EVT_GNSS_FIRST_FIX,
-                            "GNSS: first GGA received (fix={}, sats={})",
-                            fix,
-                            sats
-                        );
-                    } else if gga_count.is_multiple_of(60) {
-                        elle_hardware::elle_event!(
-                            debug,
-                            elle_hardware::event::EVT_GNSS_PERIODIC,
-                            "GNSS: {} GGA sentences (fix={}, sats={})",
-                            gga_count,
-                            fix,
-                            sats
-                        );
-                    }
-
-                    if fix > 0 {
-                        if let Some(lat) = gga.latitude {
-                            last_lat = lat as f32;
-                        }
-                        if let Some(lon) = gga.longitude {
-                            last_lon = lon as f32;
-                        }
-                        if let Some(alt) = gga.altitude {
-                            last_alt = alt;
-                        }
-                    }
-
-                    gnss_signal::GNSS_SIGNAL.signal(gnss_signal::GnssData {
-                        latitude: last_lat,
-                        longitude: last_lon,
-                        altitude_m: last_alt,
-                        fix_quality: fix,
-                        num_satellites: sats,
-                        hdop: gga.hdop.unwrap_or(99.9),
-                    });
-
-                    elle_hardware::crsf::TELEMETRY_GNSS.signal(
-                        elle_hardware::crsf::TelemetryGpsData {
-                            latitude: last_lat,
-                            longitude: last_lon,
-                            altitude_m: last_alt,
-                            num_satellites: sats,
-                        },
-                    );
-                }
-            }
-            FeedResult::Error(_) => {
-                // Non-fatal decode error, continue
-            }
-        }
-    }
 }
 
 #[embassy_executor::task]

@@ -228,7 +228,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(14), // attitude data + mag + heading + baro + gnss + rc age
+            Constraint::Length(15), // attitude data + mag + heading + baro + gnss + rc age
             Constraint::Length(5),  // controller output + engine + EDT + heading hold
             Constraint::Min(8),     // artificial horizon
         ])
@@ -355,12 +355,13 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         },
     );
 
-    let (gnss_pos_line, gnss_fix_line, gnss_alt_line) = state.gnss.map_or_else(
+    let (gnss_pos_line, gnss_fix_line, gnss_alt_line, gnss_vel_line) = state.gnss.map_or_else(
         || {
             (
                 muted_line("  GPS: ---"),
                 muted_line("  Fix: ---"),
                 muted_line("  Alt: ---"),
+                muted_line("  Spd: ---"),
             )
         },
         |g| {
@@ -410,6 +411,41 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                         Color::White
                     },
                 ),
+                Line::from(vec![
+                    Span::styled("  Spd: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        format!("{:.1} m/s", g.ground_speed_ms),
+                        Style::default().fg(if g.fix_quality == 0 {
+                            MUTED
+                        } else {
+                            Color::White
+                        }),
+                    ),
+                    Span::styled(" | Trk: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        format!("{:.0}°", g.heading_motion_deg),
+                        Style::default().fg(if g.fix_quality == 0 {
+                            MUTED
+                        } else {
+                            Color::White
+                        }),
+                    ),
+                    Span::styled(" | hAcc: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        // hAcc is 0 until the first NAV-PVT; show that as
+                        // unknown rather than as a perfect fix.
+                        if g.h_acc_m > 0.0 {
+                            format!("{:.1}m", g.h_acc_m)
+                        } else {
+                            "---".to_string()
+                        },
+                        Style::default().fg(if g.h_acc_m > 0.0 {
+                            scale(f64::from(g.h_acc_m), 3.0, 10.0)
+                        } else {
+                            MUTED
+                        }),
+                    ),
+                ]),
             )
         },
     );
@@ -424,6 +460,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         gnss_pos_line,
         gnss_fix_line,
         gnss_alt_line,
+        gnss_vel_line,
         perf_line,
         imu_line,
         rc_age_line,
@@ -683,9 +720,14 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
 const fn log_code_text(code: u16) -> &'static str {
     match code {
         // GNSS (1–9)
-        1 => "GNSS: first GGA received",
+        1 => "GNSS: first fix",
         2 => "GNSS: periodic update",
         3 => "GNSS: UART error",
+        4 => "GNSS: config rejected (NAK)",
+        5 => "GNSS: NAV-PVT acquired",
+        6 => "GNSS: PVT stale, NMEA fallback",
+        7 => "GNSS: 115200 baud, 5Hz",
+        8 => "GNSS: baud switch failed, 9600",
         // Safety (10–19)
         10 => "Motors ARMED",
         11 => "Motors DISARMED",

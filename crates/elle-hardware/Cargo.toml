@@ -20,6 +20,7 @@ icm426xx = { workspace = true }
 bmp390 = { workspace = true }
 crsf = { workspace = true }
 mmc5616wa = { workspace = true }
+sam-m10q = { workspace = true }
 embedded-hal = { version = "1.0", default-features = false }
 embedded-hal-bus = { workspace = true }
 uom = { workspace = true }

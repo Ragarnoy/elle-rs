@@ -1117,6 +1117,7 @@ dependencies = [
  "libm",
  "mmc5616wa",
  "nalgebra 0.34.2",
+ "sam-m10q",
  "sdspi",
  "sequential-storage",
  "smart-leds",
@@ -3462,6 +3463,8 @@ dependencies = [
  "defmt 1.1.1",
  "embedded-hal 1.0.0",
  "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "futures",
  "nmea",
  "ublox",
 ]

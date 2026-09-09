@@ -4,6 +4,8 @@ pub mod crsf;
 pub mod dshot;
 pub mod event;
 pub mod flash;
+#[cfg(feature = "gnss")]
+pub mod gnss;
 pub mod imu;
 pub mod led;
 pub mod pwm;

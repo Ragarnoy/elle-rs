@@ -424,7 +424,10 @@ impl MagnetometerMessage {
 
 /// GNSS data message - logs GPS position fix
 ///
-/// Format: "gnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop"
+/// Position, velocity and accuracy come from UBX-NAV-PVT. On the NMEA GGA
+/// fallback path only the position fields and `hdop` are meaningful; the
+/// velocity and accuracy fields hold the last NAV-PVT values, or zero if none
+/// was ever received.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct GnssMessage {
@@ -440,22 +443,42 @@ pub struct GnssMessage {
     pub fix_quality: u8,
     /// Number of satellites
     pub num_satellites: u8,
-    /// Horizontal dilution of precision
+    /// Horizontal dilution of precision (GGA path only)
     pub hdop: f32,
+    /// Velocity north in m/s (NAV-PVT only)
+    pub vel_n_ms: f32,
+    /// Velocity east in m/s (NAV-PVT only)
+    pub vel_e_ms: f32,
+    /// Velocity down in m/s (NAV-PVT only)
+    pub vel_d_ms: f32,
+    /// Ground speed in m/s (NAV-PVT only)
+    pub ground_speed_ms: f32,
+    /// Course over ground in degrees (NAV-PVT only)
+    pub heading_motion_deg: f32,
+    /// Horizontal accuracy estimate in m (NAV-PVT only)
+    pub h_acc_m: f32,
+    /// Vertical accuracy estimate in m (NAV-PVT only)
+    pub v_acc_m: f32,
+    /// Speed accuracy estimate in m/s (NAV-PVT only)
+    pub s_acc_ms: f32,
 }
 
 impl GnssMessage {
     /// Format definition string for ULog
-    pub const FORMAT: &'static str = "gnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop";
+    pub const FORMAT: &'static str = "gnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop;float vel_n_ms;float vel_e_ms;float vel_d_ms;float ground_speed_ms;float heading_motion_deg;float h_acc_m;float v_acc_m;float s_acc_ms";
 
     /// Message name
     pub const NAME: &'static str = "gnss_data";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub const FORMAT_MSG: &'static [u8] = b"\x82\x00Fgnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop";
+    /// Pre-serialized format definition message (header + payload)
+    ///
+    /// The two leading bytes are `FORMAT.len()` as a little-endian u16, then
+    /// the `'F'` message type. The `const` assertions below make a mismatch a
+    /// compile error — this literal is hand-written and nothing else checks it.
+    pub const FORMAT_MSG: &'static [u8] = b"\x09\x01Fgnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop;float vel_n_ms;float vel_e_ms;float vel_d_ms;float ground_speed_ms;float heading_motion_deg;float h_acc_m;float v_acc_m;float s_acc_ms";
 
     /// Size of the message in bytes
-    pub const SIZE: usize = 26; // 8 + 3*4 + 1 + 1 + 4
+    pub const SIZE: usize = 58; // 8 + 3*4 + 1 + 1 + 4 + 8*4
 
     /// Create a new GNSS message
     #[must_use]
@@ -468,6 +491,14 @@ impl GnssMessage {
         fix_quality: u8,
         num_satellites: u8,
         hdop: f32,
+        vel_n_ms: f32,
+        vel_e_ms: f32,
+        vel_d_ms: f32,
+        ground_speed_ms: f32,
+        heading_motion_deg: f32,
+        h_acc_m: f32,
+        v_acc_m: f32,
+        s_acc_ms: f32,
     ) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
@@ -477,6 +508,14 @@ impl GnssMessage {
             fix_quality,
             num_satellites,
             hdop,
+            vel_n_ms,
+            vel_e_ms,
+            vel_d_ms,
+            ground_speed_ms,
+            heading_motion_deg,
+            h_acc_m,
+            v_acc_m,
+            s_acc_ms,
         }
     }
 
@@ -491,9 +530,37 @@ impl GnssMessage {
         buf[20] = self.fix_quality;
         buf[21] = self.num_satellites;
         buf[22..26].copy_from_slice(&self.hdop.to_le_bytes());
+        buf[26..30].copy_from_slice(&self.vel_n_ms.to_le_bytes());
+        buf[30..34].copy_from_slice(&self.vel_e_ms.to_le_bytes());
+        buf[34..38].copy_from_slice(&self.vel_d_ms.to_le_bytes());
+        buf[38..42].copy_from_slice(&self.ground_speed_ms.to_le_bytes());
+        buf[42..46].copy_from_slice(&self.heading_motion_deg.to_le_bytes());
+        buf[46..50].copy_from_slice(&self.h_acc_m.to_le_bytes());
+        buf[50..54].copy_from_slice(&self.v_acc_m.to_le_bytes());
+        buf[54..58].copy_from_slice(&self.s_acc_ms.to_le_bytes());
         buf
     }
 }
+
+// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
+const _: () = assert!(
+    GnssMessage::FORMAT_MSG.len() == GnssMessage::FORMAT.len() + 3,
+    "GnssMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
+);
+const _: () = assert!(
+    GnssMessage::FORMAT_MSG[0] as usize | ((GnssMessage::FORMAT_MSG[1] as usize) << 8)
+        == GnssMessage::FORMAT.len(),
+    "GnssMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
+);
+const _: () = assert!(
+    GnssMessage::FORMAT_MSG[2] == b'F',
+    "GnssMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
+);
+// 8 (u64) + 3 f32 + 2 u8 + 1 f32 + 8 f32
+const _: () = assert!(
+    GnssMessage::SIZE == 8 + 3 * 4 + 1 + 1 + 4 + 8 * 4,
+    "GnssMessage::SIZE does not match its field widths"
+);
 
 /// Engine data message - logs DShot engine RPM, throttle, governor targets, and EDT
 ///

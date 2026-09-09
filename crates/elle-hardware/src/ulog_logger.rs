@@ -340,27 +340,33 @@ impl ULogLogger {
 
     /// Log GNSS data
     #[allow(clippy::too_many_arguments)]
-    pub fn log_gnss(
-        &mut self,
-        latitude: f32,
-        longitude: f32,
-        altitude_m: f32,
-        fix_quality: u8,
-        num_satellites: u8,
-        hdop: f32,
-    ) -> Result<(), ULogError> {
+    /// Log a GNSS solution.
+    ///
+    /// Takes the whole `GnssData` rather than positional arguments: the record
+    /// carries fourteen fields since NAV-PVT was added, and a long argument
+    /// list is easy to mis-order silently.
+    #[cfg(feature = "gnss")]
+    pub fn log_gnss(&mut self, gnss: &crate::gnss::GnssData) -> Result<(), ULogError> {
         if !self.initialized {
             return Err(ULogError::NotInitialized);
         }
 
         let msg = elle_ulog::GnssMessage::new(
             Instant::now(),
-            latitude,
-            longitude,
-            altitude_m,
-            fix_quality,
-            num_satellites,
-            hdop,
+            gnss.latitude,
+            gnss.longitude,
+            gnss.altitude_m,
+            gnss.fix_quality,
+            gnss.num_satellites,
+            gnss.hdop,
+            gnss.vel_n_ms,
+            gnss.vel_e_ms,
+            gnss.vel_d_ms,
+            gnss.ground_speed_ms,
+            gnss.heading_motion_deg,
+            gnss.h_acc_m,
+            gnss.v_acc_m,
+            gnss.s_acc_ms,
         );
 
         self.writer.clear_buffer();

@@ -278,8 +278,27 @@ pub struct GnssResp {
     pub fix_quality: u8,
     /// Number of satellites used for fix
     pub num_satellites: u8,
-    /// Horizontal dilution of precision
+    /// Horizontal dilution of precision.
+    ///
+    /// Only meaningful on the NMEA GGA fallback path — NAV-PVT supplies
+    /// `h_acc_m` instead, an error estimate rather than a geometry figure.
     pub hdop: f32,
+    /// Velocity north in m/s (NAV-PVT only)
+    pub vel_n_ms: f32,
+    /// Velocity east in m/s (NAV-PVT only)
+    pub vel_e_ms: f32,
+    /// Velocity down in m/s (NAV-PVT only)
+    pub vel_d_ms: f32,
+    /// Ground speed in m/s (NAV-PVT only)
+    pub ground_speed_ms: f32,
+    /// Course over ground in degrees (NAV-PVT only)
+    pub heading_motion_deg: f32,
+    /// Horizontal accuracy estimate in meters (NAV-PVT only)
+    pub h_acc_m: f32,
+    /// Vertical accuracy estimate in meters (NAV-PVT only)
+    pub v_acc_m: f32,
+    /// Speed accuracy estimate in m/s (NAV-PVT only)
+    pub s_acc_ms: f32,
 }
 
 // ============================================================================

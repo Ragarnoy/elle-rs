@@ -6,6 +6,7 @@
 
 #![no_std]
 
+pub mod asynch;
 pub mod decoder;
 pub mod error;
 pub mod types;

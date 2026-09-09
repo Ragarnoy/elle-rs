@@ -36,7 +36,7 @@ Key feature flags for elle-eagle:
 - `rpc-rc` — RC/CRSF flight control in RPC mode. When combined with `rpc-control`, pilot commands come from the RC transmitter instead of RPC accumulators. The TUI still provides full monitoring. **Requires `rpc-control`** (enforced via `compile_error!`). Mitigates a build-specific DShot PIO issue in the RPC binary (see memory).
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
-- `gnss` — SAM-M10Q GNSS receiver support (default, both eagle and dart; works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames). RPC builds use `--no-default-features`, so add `gnss` explicitly there if wanted.
+- `gnss` — SAM-M10Q GNSS receiver support (default, both eagle and dart; works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames). RPC builds use `--no-default-features`, so add `gnss` explicitly there if wanted. Enables `elle-hardware/gnss`, which carries the shared `gnss` module.
 - CRSF telemetry TX is always compiled in (no feature gate) — attitude, flight mode, GPS, baro altitude, battery voltage/current to radio via PIN_20/UART1 TX
 
 ULog flash recording is always compiled in (no feature gate). Recording is idle until explicitly started.
@@ -82,9 +82,9 @@ cargo build -p elle-rpc-host --target x86_64-unknown-linux-gnu
 | PIN_25 | SPI1 CS | SD card |
 | PIN_26 | SPI1 SCK | SD card |
 | PIN_27 | SPI1 MOSI | SD card |
-| PIN_29 | UART0 RX | SAM-M10Q GNSS (DMA_CH0, feature `gnss`) |
+| PIN_29 | UART0 RX | SAM-M10Q GNSS (BufferedUart/UART0_IRQ, feature `gnss`) |
 
-DMA channels: CH0=GNSS UART, CH1=Flash async, CH2=LED, CH3=CRSF RX, CH4=CRSF TX, CH5=SD SPI1 TX, CH6=SD SPI1 RX.
+DMA channels: CH1=Flash async, CH2=LED, CH3=CRSF RX, CH4=CRSF TX, CH5=SD SPI1 TX, CH6=SD SPI1 RX. CH0 and CH7 are free — the GNSS UART is interrupt-buffered (`BufferedUart`), not DMA-driven, because only the buffered variant implements `embedded-io-async`.
 
 ## Architecture
 
@@ -160,6 +160,30 @@ Key modules:
 TUI polling rates: attitude 10Hz, status 0.5Hz, magnetometer 5Hz, barometer 1Hz, GNSS 1Hz, engine 5Hz, RC channels 20Hz, controller output 10Hz.
 
 **Important**: Host `probe.rs` reads from RTT up channel 1 (index 1), not channel 0 (which is defmt).
+
+### GNSS (`crates/elle-hardware/src/gnss.rs`)
+
+One shared task for both airframes, replacing the byte-identical `gnss_task` and
+`gnss_signal` module that used to be duplicated in each `main.rs`.
+
+- **Primary source: UBX-NAV-PVT** at 5 Hz — position, velocity NED, ground speed,
+  course over ground, and `hAcc`/`vAcc`/`sAcc` accuracy estimates. Parsed by the
+  `ublox` crate (`sam_m10q::ubx::nav::parse_pvt`), so field offsets and scaling
+  are not hand-transcribed.
+- **Fallback: NMEA GGA.** If configuration fails, or PVT goes stale for 3 s, GGA
+  drives position again and an event fires. A misconfigured module still flies.
+- **Boot sequence**: cold start → CFG-VALSET (Airborne <4g dynamic model, 5 Hz
+  solution, NAV-PVT on, GLL/GSA/GSV/VTG/RMC off) → ACK check → baud to 115200 →
+  probe for traffic; on no answer, fall back to 9600 and NMEA. 9600 is 960 B/s,
+  which the default sentence set nearly saturates at 1 Hz — hence the switch.
+- **RAM layer only** (`LAYER_RAM`). Config is reapplied every boot from the
+  module's known power-on defaults rather than inherited from flash, and the
+  part sees no config-write wear. Same reasoning as ESC spin direction.
+- `GNSS_SIGNAL` carries `GnssData` to ULog, the RPC `GetGnss` handler, and CRSF
+  telemetry. `hdop` is only meaningful on the GGA path; `h_acc_m` is the real
+  fix-quality gate.
+- UART is `BufferedUart`, not the DMA `Uart`: only the interrupt-buffered variant
+  implements `embedded-io-async`, and its partial reads suit a bursty stream.
 
 ### Logging Systems
 
@@ -286,6 +310,18 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Mag cal progress counter fix**: `MAG_CAL_SAMPLES` in both `rpc_app.rs` files was read by `handle_get_mag_cal` but only ever written as 0 — Core1's real sample count never left the driver, so `mag cal` status showed 0 samples throughout collection. Replaced with `elle_hardware::imu::MAG_CAL_PROGRESS` (AtomicU16), written by the Core1 driver during collection, read by the RPC handlers. Note: `GetMagnetometer`/TUI mag panel intentionally shows **raw** counts (offsets only apply to the AHRS feed), so calibration is only observable via yaw behavior and the `mag cal` status offsets.
 
 - **No out-of-tree path dependencies**: `embassy-dshot` was a `path = "../dshot-pio"` dep and `icm426xx` a `path = "../icm426xx"` dep, so the workspace only built on a machine with those sibling checkouts. `embassy-dshot` 0.3.0 was published to crates.io (upgraded to `embassy-rp` 0.10 / `embassy-time` 0.5.1, no `[patch.crates-io]` in the library) and is now a registry dep; `icm426xx` is pinned to upstream rev `7e22a5a` — the 42686-P support is merged into `ProfFan/icm426xx` main but postdates the published 0.4.0, so a git rev is needed until upstream releases again. A fresh clone now builds all four configurations (eagle, dart, eagle `rpc-control`, host tool) with no local checkouts.
+
+- **GNSS via UBX-NAV-PVT + shared task**: `drivers/sam-m10q` gained an async API
+  (`sam_m10q::asynch::SamM10q<RX, TX>`) over `embedded-io-async`, NAV-PVT parsing and
+  CFG-VALSET building delegated to the `ublox` crate (0.10, `ubx_proto33`, no_std,
+  ~1 KB flash), and ACK/NAK handling. The two byte-identical `gnss_task` copies
+  collapsed into `elle_hardware::gnss`. Module now runs at 115200/5 Hz with the
+  Airborne <4g dynamic model, GGA kept as a fallback. Velocity NED, ground speed,
+  course and accuracy estimates plumbed through `GnssData`, `elle_ulog::GnssMessage`
+  (now 58 bytes, with `const` assertions guarding the hand-written `FORMAT_MSG`
+  length prefix that nothing checked before), `GnssResp`, the TUI panel and
+  `direct gnss`. CRSF GPS groundspeed was hardcoded to 0 and is now real.
+  **Not yet bench-tested** — the baud/rate switch needs hardware verification.
 
 ### Known TODOs in Firmware
 None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).

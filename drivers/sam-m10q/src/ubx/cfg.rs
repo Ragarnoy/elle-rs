@@ -6,6 +6,7 @@
 
 use super::{CHECKSUM_SIZE, HEADER_SIZE, build_frame, class};
 
+pub use ublox::cfg_nav5::NavDynamicModel;
 pub use ublox::cfg_val::{CfgKey, CfgVal};
 
 /// UBX CFG message IDs.

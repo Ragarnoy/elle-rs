@@ -210,6 +210,18 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                 "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} hdop={:.1}",
                 g.latitude, g.longitude, g.altitude_m, g.fix_quality, g.num_satellites, g.hdop
             );
+            println!(
+                "      spd={:.2}m/s trk={:.1}° vel_ned=({:.2},{:.2},{:.2})m/s",
+                g.ground_speed_ms,
+                g.heading_motion_deg,
+                g.vel_n_ms,
+                g.vel_e_ms,
+                g.vel_d_ms
+            );
+            println!(
+                "      hAcc={:.2}m vAcc={:.2}m sAcc={:.2}m/s",
+                g.h_acc_m, g.v_acc_m, g.s_acc_ms
+            );
         }
         DirectCommand::MagCal { action } => match action {
             MagCalAction::Start => {
