@@ -222,6 +222,12 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                 "      hAcc={:.2}m vAcc={:.2}m sAcc={:.2}m/s",
                 g.h_acc_m, g.v_acc_m, g.s_acc_ms
             );
+            println!(
+                "      source={} link={} baud rate={} ms",
+                if g.pvt_active { "NAV-PVT" } else { "NMEA (fallback)" },
+                g.link_baud,
+                g.nav_rate_ms
+            );
         }
         DirectCommand::MagCal { action } => match action {
             MagCalAction::Start => {

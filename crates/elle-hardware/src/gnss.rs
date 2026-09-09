@@ -53,6 +53,17 @@ pub struct GnssData {
     pub v_acc_m: f32,
     /// Speed accuracy estimate, m/s. NAV-PVT only.
     pub s_acc_ms: f32,
+    /// True while NAV-PVT is arriving; false when the GGA fallback is driving.
+    ///
+    /// Polled rather than inferred from a boot event: the RTT attach takes long
+    /// enough that one-shot boot messages are easily missed, and `LogTopic` is
+    /// `BlockIfFull` with a 16-slot upstream channel, so early events can be
+    /// dropped outright when no host is draining yet.
+    pub pvt_active: bool,
+    /// Link speed the boot sequence settled on, in baud.
+    pub link_baud: u32,
+    /// Solution interval actually configured, in milliseconds.
+    pub nav_rate_ms: u16,
 }
 
 pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssData> = Signal::new();
@@ -276,8 +287,14 @@ async fn run(uart: &mut BufferedUart, fast: bool) {
 
     let mut data = GnssData {
         hdop: 99.9,
+        link_baud: if fast { TARGET_BAUD } else { DEFAULT_BAUD },
+        nav_rate_ms: if fast { NAV_RATE_MS } else { SLOW_NAV_RATE_MS },
         ..GnssData::default()
     };
+    // Publish once up front so the link state is visible even before the first
+    // fix — a receiver that never gets a fix should still report its baud rate
+    // rather than leaving the host with nothing to read.
+    GNSS_SIGNAL.signal(data);
     let mut last_pvt: Option<Instant> = None;
     let mut announced_pvt = false;
     let mut announced_fallback = false;
@@ -332,6 +349,7 @@ async fn run(uart: &mut BufferedUart, fast: bool) {
             Frame::Ubx(u) => match nav::parse_pvt(u.class, u.id, u.payload) {
                 Some(pvt) => {
                     apply_pvt(&mut data, &pvt);
+                    data.pvt_active = true;
                     last_pvt = Some(now);
                     if !announced_pvt {
                         announced_pvt = true;
@@ -349,6 +367,7 @@ async fn run(uart: &mut BufferedUart, fast: bool) {
             // GGA only steers while PVT is absent or stale, so the two sources
             // never fight over the same fields.
             Frame::Nmea(n) if !pvt_fresh => {
+                data.pvt_active = false;
                 if announced_pvt && !announced_fallback {
                     announced_fallback = true;
                     announced_pvt = false;

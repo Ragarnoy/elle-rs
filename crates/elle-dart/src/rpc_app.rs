@@ -440,6 +440,9 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
                 h_acc_m: gnss.h_acc_m,
                 v_acc_m: gnss.v_acc_m,
                 s_acc_ms: gnss.s_acc_ms,
+                pvt_active: gnss.pvt_active,
+                link_baud: gnss.link_baud,
+                nav_rate_ms: gnss.nav_rate_ms,
             };
         }
     }
@@ -458,6 +461,9 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
         h_acc_m: 0.0,
         v_acc_m: 0.0,
         s_acc_ms: 0.0,
+        pvt_active: false,
+        link_baud: 0,
+        nav_rate_ms: 0,
     }
 }
 

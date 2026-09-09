@@ -299,6 +299,12 @@ pub struct GnssResp {
     pub v_acc_m: f32,
     /// Speed accuracy estimate in m/s (NAV-PVT only)
     pub s_acc_ms: f32,
+    /// True while NAV-PVT is arriving; false when the GGA fallback is driving
+    pub pvt_active: bool,
+    /// Link speed the receiver settled on, in baud
+    pub link_baud: u32,
+    /// Configured solution interval, in milliseconds
+    pub nav_rate_ms: u16,
 }
 
 // ============================================================================

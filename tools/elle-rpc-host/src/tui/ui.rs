@@ -228,7 +228,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(15), // attitude data + mag + heading + baro + gnss + rc age
+            Constraint::Length(16), // attitude data + mag + heading + baro + gnss + rc age
             Constraint::Length(5),  // controller output + engine + EDT + heading hold
             Constraint::Min(8),     // artificial horizon
         ])
@@ -355,13 +355,15 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         },
     );
 
-    let (gnss_pos_line, gnss_fix_line, gnss_alt_line, gnss_vel_line) = state.gnss.map_or_else(
+    let (gnss_pos_line, gnss_fix_line, gnss_alt_line, gnss_vel_line, gnss_src_line) =
+        state.gnss.map_or_else(
         || {
             (
                 muted_line("  GPS: ---"),
                 muted_line("  Fix: ---"),
                 muted_line("  Alt: ---"),
                 muted_line("  Spd: ---"),
+                muted_line("  Src: ---"),
             )
         },
         |g| {
@@ -446,6 +448,32 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                         }),
                     ),
                 ]),
+                Line::from(vec![
+                    Span::styled("  Src: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        if g.pvt_active { "NAV-PVT" } else { "NMEA" },
+                        Style::default().fg(if g.pvt_active { OK } else { WARN }),
+                    ),
+                    Span::styled(" | ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        if g.link_baud == 0 {
+                            "---".to_string()
+                        } else {
+                            format!("{} baud", g.link_baud)
+                        },
+                        // 9600 means the baud switch did not take.
+                        Style::default().fg(if g.link_baud >= 115_200 { OK } else { WARN }),
+                    ),
+                    Span::styled(" | ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        if g.nav_rate_ms == 0 {
+                            "---".to_string()
+                        } else {
+                            format!("{:.0} Hz", 1000.0 / f64::from(g.nav_rate_ms))
+                        },
+                        Style::default().fg(Color::White),
+                    ),
+                ]),
             )
         },
     );
@@ -461,6 +489,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         gnss_fix_line,
         gnss_alt_line,
         gnss_vel_line,
+        gnss_src_line,
         perf_line,
         imu_line,
         rc_age_line,
