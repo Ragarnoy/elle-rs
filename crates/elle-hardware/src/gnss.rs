@@ -62,8 +62,10 @@ pub struct GnssData {
     pub pvt_active: bool,
     /// Link speed the boot sequence settled on, in baud.
     pub link_baud: u32,
-    /// Solution interval actually configured, in milliseconds.
+    /// Solution interval the module actually accepted, in milliseconds.
     pub nav_rate_ms: u16,
+    /// Bitmask of configuration keys the module acknowledged at boot.
+    pub cfg_mask: u16,
 }
 
 pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssData> = Signal::new();
@@ -85,7 +87,19 @@ const SLOW_NAV_RATE_MS: u16 = 1_000;
 /// How long a NAV-PVT stays authoritative before GGA takes over again.
 const PVT_STALE: Duration = Duration::from_millis(3_000);
 /// Budget for the module to answer a configuration message.
-const ACK_TIMEOUT: Duration = Duration::from_millis(1_500);
+///
+/// Acknowledgements normally arrive in well under 100 ms. Kept short because
+/// keys are applied one at a time, so this is paid per key.
+const ACK_TIMEOUT: Duration = Duration::from_millis(400);
+/// Give up on configuration after this many consecutive unanswered keys.
+const MAX_SILENT_KEYS: u8 = 3;
+/// Every bit of the configuration mask set — a fully applied configuration.
+const CFG_MASK_ALL: u16 = (1 << 10) - 1;
+/// Bit position of the solution-rate key within the configuration mask.
+const CFG_BIT_RATE_MEAS: u16 = 1 << 1;
+/// The module's own default solution interval, used when our rate key did not
+/// take, so the reported rate is what the receiver is really doing.
+const MODULE_DEFAULT_RATE_MS: u16 = 1_000;
 /// How long to wait for traffic after a baud change before declaring it failed.
 const BAUD_PROBE_TIMEOUT: Duration = Duration::from_millis(2_000);
 /// Settling time after the cold-start reset.
@@ -128,10 +142,22 @@ fn config_items(rate_ms: u16) -> [CfgVal; 10] {
     ]
 }
 
+/// What the module said about one configuration message.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CfgOutcome {
+    /// Applied.
+    Ack,
+    /// Understood and refused — an unknown or unsupported key.
+    Nak,
+    /// Nothing came back. A different fault from a refusal: the link may be
+    /// wrong rather than the key.
+    NoAnswer,
+}
+
 /// Send a CFG-VALSET and wait for the module to acknowledge it.
-async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> bool {
+async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> CfgOutcome {
     if gnss.send_valset(LAYER_RAM, items).await.is_err() {
-        return false;
+        return CfgOutcome::NoAnswer;
     }
     match with_timeout(
         ACK_TIMEOUT,
@@ -139,25 +165,59 @@ async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> bool {
     )
     .await
     {
-        Ok(Ok(AckStatus::Ack)) => true,
-        Ok(Ok(AckStatus::Nak)) => {
-            elle_event!(
-                warn,
-                event::EVT_GNSS_CFG_NAK,
-                "GNSS: module rejected configuration (NAK)"
-            );
-            false
-        }
+        Ok(Ok(AckStatus::Ack)) => CfgOutcome::Ack,
+        Ok(Ok(AckStatus::Nak)) => CfgOutcome::Nak,
         // Timed out, or the link failed.
-        _ => {
-            elle_event!(
-                warn,
-                event::EVT_GNSS_CFG_NAK,
-                "GNSS: no answer to configuration"
-            );
-            false
+        _ => CfgOutcome::NoAnswer,
+    }
+}
+
+/// Apply each configuration key on its own, reporting which ones stuck.
+///
+/// A CFG-VALSET carrying several keys is rejected in full if the module
+/// dislikes any one of them, so a single unsupported key would otherwise cost
+/// us the dynamic model, the solution rate and NAV-PVT together — and the NAK
+/// says nothing about which key was at fault. One key per message trades a
+/// slightly longer boot for a precise answer and keeps whatever does work.
+///
+/// Returns a bitmask of accepted keys, one bit per [`config_items`] entry.
+async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16) -> u16 {
+    let items = config_items(rate_ms);
+    let mut mask: u16 = 0;
+    let mut silent = 0u8;
+
+    for (i, item) in items.iter().enumerate() {
+        match apply_valset(gnss, core::slice::from_ref(item)).await {
+            CfgOutcome::Ack => {
+                mask |= 1 << i;
+                silent = 0;
+            }
+            CfgOutcome::Nak => {
+                silent = 0;
+                elle_event!(
+                    warn,
+                    event::EVT_GNSS_CFG_NAK,
+                    "GNSS: key {} rejected (NAK)",
+                    i
+                );
+            }
+            CfgOutcome::NoAnswer => {
+                silent += 1;
+                elle_event!(
+                    warn,
+                    event::EVT_GNSS_CFG_TIMEOUT,
+                    "GNSS: key {} unanswered",
+                    i
+                );
+                // The module is not talking to us; stop rather than spend the
+                // per-key timeout another seven times over.
+                if silent >= MAX_SILENT_KEYS {
+                    break;
+                }
+            }
         }
     }
+    mask
 }
 
 /// Wait until the UART has physically transmitted everything queued.
@@ -238,11 +298,17 @@ pub async fn gnss_task(mut uart: BufferedUart) {
         uart.set_baudrate(DEFAULT_BAUD);
     }
 
-    let rate_ms = if fast { NAV_RATE_MS } else { SLOW_NAV_RATE_MS };
-    let configured = {
+    let requested_rate_ms = if fast { NAV_RATE_MS } else { SLOW_NAV_RATE_MS };
+    let cfg_mask = {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
-        apply_valset(&mut gnss, &config_items(rate_ms)).await
+        apply_config(&mut gnss, requested_rate_ms).await
+    };
+    // Report the rate the module actually runs at, not the one we asked for.
+    let rate_ms = if cfg_mask & CFG_BIT_RATE_MEAS != 0 {
+        requested_rate_ms
+    } else {
+        MODULE_DEFAULT_RATE_MS
     };
 
     if fast {
@@ -262,17 +328,16 @@ pub async fn gnss_task(mut uart: BufferedUart) {
             rate_ms
         );
     }
-    if !configured {
-        // Nothing was applied, so the module is at its factory defaults: 1 Hz
-        // NMEA, no NAV-PVT. The GGA fallback path carries us.
+    if cfg_mask != CFG_MASK_ALL {
         elle_event!(
             warn,
-            event::EVT_GNSS_CFG_NAK,
-            "GNSS: running on module defaults, NMEA only"
+            event::EVT_GNSS_CFG_PARTIAL,
+            "GNSS: configuration partially applied (mask {:#06x})",
+            cfg_mask
         );
     }
 
-    run(&mut uart, fast).await;
+    run(&mut uart, fast, rate_ms, cfg_mask).await;
 }
 
 /// Steady-state receive loop.
@@ -281,14 +346,15 @@ pub async fn gnss_task(mut uart: BufferedUart) {
 /// re-announced periodically. The boot events themselves fire about a second
 /// after power-up and `LogTopic` keeps no backlog, so a host that attaches
 /// later would otherwise never learn which mode the receiver is in.
-async fn run(uart: &mut BufferedUart, fast: bool) {
+async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u16) {
     let (tx, rx) = uart.split_ref();
     let mut gnss = SamM10q::new(rx, tx);
 
     let mut data = GnssData {
         hdop: 99.9,
         link_baud: if fast { TARGET_BAUD } else { DEFAULT_BAUD },
-        nav_rate_ms: if fast { NAV_RATE_MS } else { SLOW_NAV_RATE_MS },
+        nav_rate_ms,
+        cfg_mask,
         ..GnssData::default()
     };
     // Publish once up front so the link state is visible even before the first

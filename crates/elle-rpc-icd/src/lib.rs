@@ -303,9 +303,30 @@ pub struct GnssResp {
     pub pvt_active: bool,
     /// Link speed the receiver settled on, in baud
     pub link_baud: u32,
-    /// Configured solution interval, in milliseconds
+    /// Configured solution interval, in milliseconds.
+    ///
+    /// Reports what the module actually accepted, not what was requested — if
+    /// the rate key was rejected this is the module's own default.
     pub nav_rate_ms: u16,
+    /// Bitmask of configuration keys the module acknowledged, one bit per entry
+    /// of [`GNSS_CFG_KEY_NAMES`]. A clear bit is a key this receiver rejected.
+    pub cfg_mask: u16,
 }
+
+/// Names of the configuration keys applied at GNSS boot, in the order their
+/// bits appear in [`GnssResp::cfg_mask`].
+pub const GNSS_CFG_KEY_NAMES: [&str; 10] = [
+    "DYNMODEL",
+    "RATE-MEAS",
+    "RATE-NAV",
+    "MSGOUT-NAV-PVT",
+    "MSGOUT-GGA",
+    "MSGOUT-GLL",
+    "MSGOUT-GSA",
+    "MSGOUT-GSV",
+    "MSGOUT-VTG",
+    "MSGOUT-RMC",
+];
 
 // ============================================================================
 // Wire Types - Topics (streaming data)

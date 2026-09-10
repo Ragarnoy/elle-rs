@@ -42,6 +42,10 @@ pub const EVT_GNSS_BAUD_SWITCHED: u16 = 7;
 pub const EVT_GNSS_BAUD_FALLBACK: u16 = 8;
 pub const EVT_GNSS_NO_DATA: u16 = 9;
 
+// GNSS, continued (140–149) — the 1–9 block is full
+pub const EVT_GNSS_CFG_TIMEOUT: u16 = 140;
+pub const EVT_GNSS_CFG_PARTIAL: u16 = 141;
+
 // Safety (10–19)
 pub const EVT_MOTORS_ARMED: u16 = 10;
 pub const EVT_MOTORS_DISARMED: u16 = 11;

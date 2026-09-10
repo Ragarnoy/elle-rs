@@ -473,6 +473,15 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                         },
                         Style::default().fg(Color::White),
                     ),
+                    Span::styled(" | ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        gnss_cfg_text(g.cfg_mask),
+                        Style::default().fg(if g.cfg_mask == GNSS_CFG_MASK_ALL {
+                            OK
+                        } else {
+                            WARN
+                        }),
+                    ),
                 ]),
             )
         },
@@ -746,6 +755,32 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
     }
 }
 
+/// Every configuration key accepted.
+const GNSS_CFG_MASK_ALL: u16 = (1 << 10) - 1;
+
+/// Summarise the GNSS configuration mask, naming the first rejected key.
+///
+/// The module NAKs per key, so a partial mask says exactly which setting did
+/// not take — far more use than "config failed".
+fn gnss_cfg_text(mask: u16) -> String {
+    use elle_rpc_icd::GNSS_CFG_KEY_NAMES;
+
+    if mask == GNSS_CFG_MASK_ALL {
+        return "cfg ok".to_string();
+    }
+    let failed: Vec<&str> = GNSS_CFG_KEY_NAMES
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| mask & (1 << i) == 0)
+        .map(|(_, name)| *name)
+        .collect();
+    match failed.len() {
+        0 => "cfg ok".to_string(),
+        1 => format!("cfg: {} failed", failed[0]),
+        n => format!("cfg: {} failed +{}", failed[0], n - 1),
+    }
+}
+
 const fn log_code_text(code: u16) -> &'static str {
     match code {
         // GNSS (1–9)
@@ -757,6 +792,8 @@ const fn log_code_text(code: u16) -> &'static str {
         6 => "GNSS: PVT stale, NMEA fallback",
         7 => "GNSS: 115200 baud, 5Hz",
         8 => "GNSS: baud switch failed, 9600",
+        140 => "GNSS: config key unanswered",
+        141 => "GNSS: config only partly applied",
         9 => "GNSS: NO DATA from module",
         // Safety (10–19)
         10 => "Motors ARMED",

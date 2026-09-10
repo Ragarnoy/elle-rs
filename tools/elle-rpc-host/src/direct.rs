@@ -228,6 +228,20 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                 g.link_baud,
                 g.nav_rate_ms
             );
+            {
+                use elle_rpc_icd::GNSS_CFG_KEY_NAMES;
+                let failed: Vec<&str> = GNSS_CFG_KEY_NAMES
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| g.cfg_mask & (1 << i) == 0)
+                    .map(|(_, n)| *n)
+                    .collect();
+                if failed.is_empty() {
+                    println!("      config: all {} keys accepted", GNSS_CFG_KEY_NAMES.len());
+                } else {
+                    println!("      config: REJECTED {}", failed.join(", "));
+                }
+            }
         }
         DirectCommand::MagCal { action } => match action {
             MagCalAction::Start => {
