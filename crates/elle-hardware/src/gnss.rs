@@ -18,7 +18,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use sam_m10q::asynch::{AckStatus, SamM10q};
 use sam_m10q::nmea::ParseResult;
 use sam_m10q::types::Frame;
-use sam_m10q::ubx::cfg::{CfgVal, LAYER_RAM, NavDynamicModel};
+use sam_m10q::ubx::cfg::{CfgVal, LAYER_RAM, NavDynamicModel, NavFixMode};
 use sam_m10q::ubx::{self, nav};
 
 use crate::elle_event;
@@ -116,30 +116,73 @@ const GNSS_SILENCE_LOG_INTERVAL: u32 = 20;
 
 type Gnss<'a> = SamM10q<&'a mut BufferedUartRx, &'a mut BufferedUartTx>;
 
-/// Every setting we apply, in one CFG-VALSET.
+/// Number of configuration groups applied at boot.
+pub const CFG_GROUP_COUNT: usize = 10;
+
+/// The settings we apply, grouped by what must be applied together.
 ///
 /// Key IDs and value types come from `ublox`'s typed `CfgVal`, so they are not
-/// transcribed by hand. The dynamic model matters: the default is *Portable*,
-/// whose motion assumptions fight a fixed-wing aircraft's velocity estimate.
+/// transcribed by hand.
+///
+/// **Grouping is not cosmetic.** A CFG-VALSET aimed at the RAM layer is
+/// validity-checked as a whole, and rejected outright if the resulting
+/// configuration is inconsistent — not merely if a key is unknown. The dynamic
+/// model and the fix mode are exactly such a pair: airborne models do not
+/// support 2D fixes, so `DYNMODEL=AIR4` against the default `FIXMODE=AUTO` is
+/// refused. Sent in either order as separate messages, one of them always
+/// passes through an invalid intermediate state and NAKs. Sent together, the
+/// configuration is valid at the moment it is checked.
+///
+/// 3D-only is what an aircraft wants regardless: a 2D fix invents an altitude.
 ///
 /// `rate_ms` is the solution interval, which **must** match the link speed we
 /// actually achieved. NAV-PVT is 100 bytes and GGA about 80; at 5 Hz that is
 /// 900 B/s against the 960 B/s a 9600-baud link can carry, which the module
-/// answers by dropping messages. See [`slow_rate_ms`].
-fn config_items(rate_ms: u16) -> [CfgVal; 10] {
+/// answers by dropping messages.
+fn config_groups(rate_ms: u16) -> [CfgGroup; CFG_GROUP_COUNT] {
     [
-        CfgVal::NavSpgDynModel(NavDynamicModel::AirborneWithLess4gAcceleration),
-        CfgVal::RateMeas(rate_ms),
-        CfgVal::RateNav(1),
-        CfgVal::MsgOutUbxNavPvtUart1(1),
+        // Must travel together — see the note above.
+        CfgGroup::pair(
+            CfgVal::NavSpgDynModel(NavDynamicModel::AirborneWithLess4gAcceleration),
+            CfgVal::NavSpgFixMode(NavFixMode::Only3D),
+        ),
+        CfgGroup::one(CfgVal::RateMeas(rate_ms)),
+        CfgGroup::one(CfgVal::RateNav(1)),
+        CfgGroup::one(CfgVal::MsgOutUbxNavPvtUart1(1)),
         // GGA is the fallback source; the rest is bandwidth we never read.
-        CfgVal::MsgOutNmeaIdGgaUart1(1),
-        CfgVal::MsgOutNmeaIdGllUart1(0),
-        CfgVal::MsgOutNmeaIdGsaUart1(0),
-        CfgVal::MsgOutNmeaIdGsvUart1(0),
-        CfgVal::MsgOutNmeaIdVtgUart1(0),
-        CfgVal::MsgOutNmeaIdRmcUart1(0),
+        CfgGroup::one(CfgVal::MsgOutNmeaIdGgaUart1(1)),
+        CfgGroup::one(CfgVal::MsgOutNmeaIdGllUart1(0)),
+        CfgGroup::one(CfgVal::MsgOutNmeaIdGsaUart1(0)),
+        CfgGroup::one(CfgVal::MsgOutNmeaIdGsvUart1(0)),
+        CfgGroup::one(CfgVal::MsgOutNmeaIdVtgUart1(0)),
+        CfgGroup::one(CfgVal::MsgOutNmeaIdRmcUart1(0)),
     ]
+}
+
+/// One or two configuration keys that must be applied in a single message.
+struct CfgGroup {
+    items: [CfgVal; 2],
+    len: usize,
+}
+
+impl CfgGroup {
+    fn one(item: CfgVal) -> Self {
+        Self {
+            items: [item, item],
+            len: 1,
+        }
+    }
+
+    fn pair(a: CfgVal, b: CfgVal) -> Self {
+        Self {
+            items: [a, b],
+            len: 2,
+        }
+    }
+
+    fn as_slice(&self) -> &[CfgVal] {
+        &self.items[..self.len]
+    }
 }
 
 /// What the module said about one configuration message.
@@ -172,22 +215,22 @@ async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> CfgOutcome {
     }
 }
 
-/// Apply each configuration key on its own, reporting which ones stuck.
+/// Apply each configuration group on its own, reporting which ones stuck.
 ///
-/// A CFG-VALSET carrying several keys is rejected in full if the module
-/// dislikes any one of them, so a single unsupported key would otherwise cost
-/// us the dynamic model, the solution rate and NAV-PVT together — and the NAK
-/// says nothing about which key was at fault. One key per message trades a
-/// slightly longer boot for a precise answer and keeps whatever does work.
+/// A CFG-VALSET is rejected in full if the module dislikes any part of it, so
+/// sending everything at once would cost us the dynamic model, the solution
+/// rate and NAV-PVT together, with a NAK that names no culprit. One group per
+/// message trades a slightly longer boot for a precise answer and keeps
+/// whatever does work. Keys that must agree with each other share a group.
 ///
-/// Returns a bitmask of accepted keys, one bit per [`config_items`] entry.
+/// Returns a bitmask of accepted groups, one bit per [`config_groups`] entry.
 async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16) -> u16 {
-    let items = config_items(rate_ms);
+    let groups = config_groups(rate_ms);
     let mut mask: u16 = 0;
     let mut silent = 0u8;
 
-    for (i, item) in items.iter().enumerate() {
-        match apply_valset(gnss, core::slice::from_ref(item)).await {
+    for (i, group) in groups.iter().enumerate() {
+        match apply_valset(gnss, group.as_slice()).await {
             CfgOutcome::Ack => {
                 mask |= 1 << i;
                 silent = 0;

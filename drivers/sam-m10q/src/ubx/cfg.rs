@@ -6,7 +6,7 @@
 
 use super::{CHECKSUM_SIZE, HEADER_SIZE, build_frame, class};
 
-pub use ublox::cfg_nav5::NavDynamicModel;
+pub use ublox::cfg_nav5::{NavDynamicModel, NavFixMode};
 pub use ublox::cfg_val::{CfgKey, CfgVal};
 
 /// UBX CFG message IDs.
@@ -24,13 +24,19 @@ pub const VALSET_HEADER_SIZE: usize = 4;
 
 /// CFG-VALSET message version.
 ///
-/// Sources disagree on whether this should be 0x00 or 0x01 — 0x01 is documented
-/// as adding transaction support. We send 0x00 (no transaction) and rely on the
-/// ACK/NAK check to catch it if a module disagrees.
+/// 0x00 is the non-transactional form, confirmed against the u-blox M10
+/// SPG 5.10 interface description (UBX-21035062 R03, §3.10.5.1: "Message
+/// version (0x00 for this version)"). Version 1 exists only to support
+/// transactions, which we do not use.
 pub const VALSET_VERSION: u8 = 0x00;
 
 /// Apply to the RAM layer only — lost on reset, so every boot reconfigures from
 /// the module's known power-on defaults instead of inheriting unknown state.
+///
+/// Note that RAM is also the only layer whose *validity* the receiver checks:
+/// per UBX-21035062 §3.10.5.1, a VALSET aimed at RAM is NAKed if "the requested
+/// configuration is not valid", not merely if a key is unknown. Keys that
+/// constrain one another must therefore be sent in the same message.
 pub const LAYER_RAM: u8 = 0x01;
 /// Apply to battery-backed RAM (survives a warm start).
 pub const LAYER_BBR: u8 = 0x02;

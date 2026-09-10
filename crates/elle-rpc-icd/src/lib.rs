@@ -316,7 +316,7 @@ pub struct GnssResp {
 /// Names of the configuration keys applied at GNSS boot, in the order their
 /// bits appear in [`GnssResp::cfg_mask`].
 pub const GNSS_CFG_KEY_NAMES: [&str; 10] = [
-    "DYNMODEL",
+    "DYNMODEL+FIXMODE",
     "RATE-MEAS",
     "RATE-NAV",
     "MSGOUT-NAV-PVT",
