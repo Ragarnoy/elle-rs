@@ -398,6 +398,17 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                             CRIT
                         }),
                     ),
+                    // Satellites in view, when the firmware reports it: `Sats`
+                    // alone counts only those used in the fix, which stays at
+                    // zero for the whole of acquisition.
+                    Span::styled(
+                        if g.sats_in_view > 0 {
+                            format!("/{}", g.sats_in_view)
+                        } else {
+                            String::new()
+                        },
+                        Style::default().fg(MUTED),
+                    ),
                     Span::styled(" | HDOP: ", Style::default().fg(LABEL)),
                     Span::styled(
                         format!("{:.1}", g.hdop),

@@ -35,7 +35,7 @@ panic-probe = { workspace = true }
 default = ["defmt-logging", "gnss"]
 performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
-rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless"]
+rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless", "elle-hardware/gnss-gsv"]
 gnss = ["sam-m10q", "elle-hardware/gnss"]
 
 [[bin]]

@@ -445,6 +445,7 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
                 link_baud: gnss.link_baud,
                 nav_rate_ms: gnss.nav_rate_ms,
                 cfg_mask: gnss.cfg_mask,
+                sats_in_view: gnss.sats_in_view,
             };
         }
     }
@@ -467,6 +468,7 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
         link_baud: 0,
         nav_rate_ms: 0,
         cfg_mask: 0,
+        sats_in_view: 0,
     }
 }
 

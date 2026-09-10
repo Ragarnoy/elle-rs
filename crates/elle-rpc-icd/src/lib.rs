@@ -311,6 +311,13 @@ pub struct GnssResp {
     /// Bitmask of configuration keys the module acknowledged, one bit per entry
     /// of [`GNSS_CFG_KEY_NAMES`]. A clear bit is a key this receiver rejected.
     pub cfg_mask: u16,
+    /// Satellites in view, summed across constellations (NMEA GSV).
+    ///
+    /// Unlike `num_satellites`, which counts satellites *used in the fix* and
+    /// so reads zero throughout acquisition, this shows what the receiver can
+    /// actually see. Zero unless the firmware was built with `gnss-gsv` and
+    /// the fast link was achieved.
+    pub sats_in_view: u8,
 }
 
 /// Names of the configuration keys applied at GNSS boot, in the order their

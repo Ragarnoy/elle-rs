@@ -184,6 +184,16 @@ One shared task for both airframes, replacing the byte-identical `gnss_task` and
 - **RAM layer only** (`LAYER_RAM`). Config is reapplied every boot from the
   module's known power-on defaults rather than inherited from flash, and the
   part sees no config-write wear. Same reasoning as ESC spin direction.
+  RAM is also the only layer whose *validity* the receiver checks
+  (UBX-21035062 §3.10.5.1), which is why keys that constrain one another —
+  `DYNMODEL` and `FIXMODE` — must be sent in a single VALSET. Config is applied
+  in groups, one message each, so a rejection names the group rather than
+  losing the whole batch; the accepted set is reported as `cfg_mask`.
+- **`gnss-gsv` feature** (enabled by `rpc-control`): asks for NMEA GSV so
+  `sats_in_view` is populated. The fix reports only satellites *used*, which
+  reads zero throughout acquisition, so GSV is the only way to watch a receiver
+  acquire. Costs ~2.4 kB/s at 5 Hz — 29% of the 115200 link but 69% of a 9600
+  one, so it is requested only when the fast link was achieved.
 - `GNSS_SIGNAL` carries `GnssData` to ULog, the RPC `GetGnss` handler, and CRSF
   telemetry. `hdop` is only meaningful on the GGA path; `h_acc_m` is the real
   fix-quality gate.

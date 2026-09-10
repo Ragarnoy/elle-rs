@@ -207,8 +207,14 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
         DirectCommand::Gnss => {
             let g = timeout(CMD_TIMEOUT, client.send_resp::<GetGnssEndpoint>(&())).await??;
             println!(
-                "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} hdop={:.1}",
-                g.latitude, g.longitude, g.altitude_m, g.fix_quality, g.num_satellites, g.hdop
+                "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} (in view {}) hdop={:.1}",
+                g.latitude,
+                g.longitude,
+                g.altitude_m,
+                g.fix_quality,
+                g.num_satellites,
+                g.sats_in_view,
+                g.hdop
             );
             println!(
                 "      spd={:.2}m/s trk={:.1}° vel_ned=({:.2},{:.2},{:.2})m/s",

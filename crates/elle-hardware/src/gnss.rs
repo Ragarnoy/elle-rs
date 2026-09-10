@@ -16,7 +16,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 
 use sam_m10q::asynch::{AckStatus, SamM10q};
-use sam_m10q::nmea::ParseResult;
+use sam_m10q::nmea::{ParseResult, sentences::GnssType};
 use sam_m10q::types::Frame;
 use sam_m10q::ubx::cfg::{CfgVal, LAYER_RAM, NavDynamicModel, NavFixMode};
 use sam_m10q::ubx::{self, nav};
@@ -66,6 +66,47 @@ pub struct GnssData {
     pub nav_rate_ms: u16,
     /// Bitmask of configuration keys the module acknowledged at boot.
     pub cfg_mask: u16,
+    /// Satellites *in view*, summed across constellations, from NMEA GSV.
+    ///
+    /// Distinct from `num_satellites`, which counts satellites *used in the
+    /// fix* and therefore reads zero throughout acquisition. Zero unless the
+    /// `gnss-gsv` feature is on and the fast link was achieved.
+    pub sats_in_view: u8,
+}
+
+/// Satellites in view, tracked per constellation and summed.
+///
+/// Each constellation sends its own GSV set with its own count, so a single
+/// sentence never carries the total.
+#[derive(Default)]
+struct SatsInView {
+    /// One count per [`GnssType`] we might hear from, indexed by `gnss_index`.
+    per_gnss: [u8; GNSS_KINDS],
+}
+
+/// Number of constellations [`SatsInView`] tracks separately.
+const GNSS_KINDS: usize = 6;
+
+/// Stable index for a constellation, so counts can be kept side by side.
+fn gnss_index(kind: GnssType) -> usize {
+    match kind {
+        GnssType::Gps => 0,
+        GnssType::Galileo => 1,
+        GnssType::Glonass => 2,
+        GnssType::Beidou => 3,
+        GnssType::Qzss => 4,
+        GnssType::NavIC => 5,
+    }
+}
+
+impl SatsInView {
+    /// Record one constellation's count and return the running total.
+    fn update(&mut self, kind: GnssType, in_view: u16) -> u8 {
+        self.per_gnss[gnss_index(kind)] = in_view.min(u16::from(u8::MAX)) as u8;
+        self.per_gnss
+            .iter()
+            .fold(0u8, |acc, n| acc.saturating_add(*n))
+    }
 }
 
 pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssData> = Signal::new();
@@ -135,11 +176,19 @@ pub const CFG_GROUP_COUNT: usize = 10;
 ///
 /// 3D-only is what an aircraft wants regardless: a 2D fix invents an altitude.
 ///
+/// `gsv` asks for NMEA satellites-in-view. It is the only way to observe
+/// satellites being *tracked* — every fix message reports satellites *used*,
+/// which stays at zero right up until a fix appears, so acquisition is
+/// otherwise invisible. It is expensive: roughly six sentences per epoch
+/// across GPS/SBAS, Galileo and QZSS, about 480 bytes, or 2.4 kB/s at 5 Hz.
+/// That is 29% of a 115200 link and would be 69% of a 9600 one, so the caller
+/// only asks for it on the fast link.
+///
 /// `rate_ms` is the solution interval, which **must** match the link speed we
 /// actually achieved. NAV-PVT is 100 bytes and GGA about 80; at 5 Hz that is
 /// 900 B/s against the 960 B/s a 9600-baud link can carry, which the module
 /// answers by dropping messages.
-fn config_groups(rate_ms: u16) -> [CfgGroup; CFG_GROUP_COUNT] {
+fn config_groups(rate_ms: u16, gsv: bool) -> [CfgGroup; CFG_GROUP_COUNT] {
     [
         // Must travel together — see the note above.
         CfgGroup::pair(
@@ -153,7 +202,7 @@ fn config_groups(rate_ms: u16) -> [CfgGroup; CFG_GROUP_COUNT] {
         CfgGroup::one(CfgVal::MsgOutNmeaIdGgaUart1(1)),
         CfgGroup::one(CfgVal::MsgOutNmeaIdGllUart1(0)),
         CfgGroup::one(CfgVal::MsgOutNmeaIdGsaUart1(0)),
-        CfgGroup::one(CfgVal::MsgOutNmeaIdGsvUart1(0)),
+        CfgGroup::one(CfgVal::MsgOutNmeaIdGsvUart1(u8::from(gsv))),
         CfgGroup::one(CfgVal::MsgOutNmeaIdVtgUart1(0)),
         CfgGroup::one(CfgVal::MsgOutNmeaIdRmcUart1(0)),
     ]
@@ -224,8 +273,8 @@ async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> CfgOutcome {
 /// whatever does work. Keys that must agree with each other share a group.
 ///
 /// Returns a bitmask of accepted groups, one bit per [`config_groups`] entry.
-async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16) -> u16 {
-    let groups = config_groups(rate_ms);
+async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16, gsv: bool) -> u16 {
+    let groups = config_groups(rate_ms, gsv);
     let mut mask: u16 = 0;
     let mut silent = 0u8;
 
@@ -342,10 +391,13 @@ pub async fn gnss_task(mut uart: BufferedUart) {
     }
 
     let requested_rate_ms = if fast { NAV_RATE_MS } else { SLOW_NAV_RATE_MS };
+    // Satellites-in-view is a bench aid, and only affordable on the fast link:
+    // on the 9600 fallback it would take roughly 69% of the port.
+    let want_gsv = cfg!(feature = "gnss-gsv") && fast;
     let cfg_mask = {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
-        apply_config(&mut gnss, requested_rate_ms).await
+        apply_config(&mut gnss, requested_rate_ms, want_gsv).await
     };
     // Report the rate the module actually runs at, not the one we asked for.
     let rate_ms = if cfg_mask & CFG_BIT_RATE_MEAS != 0 {
@@ -398,6 +450,7 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
         link_baud: if fast { TARGET_BAUD } else { DEFAULT_BAUD },
         nav_rate_ms,
         cfg_mask,
+        sats_in_view: 0,
         ..GnssData::default()
     };
     // Publish once up front so the link state is visible even before the first
@@ -405,6 +458,7 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
     // rather than leaving the host with nothing to read.
     GNSS_SIGNAL.signal(data);
     let mut last_pvt: Option<Instant> = None;
+    let mut in_view = SatsInView::default();
     let mut announced_pvt = false;
     let mut announced_fallback = false;
     let mut fix_count: u32 = 0;
@@ -473,28 +527,36 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
                 }
                 None => false,
             },
-            // GGA only steers while PVT is absent or stale, so the two sources
-            // never fight over the same fields.
-            Frame::Nmea(n) if !pvt_fresh => {
-                data.pvt_active = false;
-                if announced_pvt && !announced_fallback {
-                    announced_fallback = true;
-                    announced_pvt = false;
-                    elle_event!(
-                        warn,
-                        event::EVT_GNSS_NMEA_FALLBACK,
-                        "GNSS: NAV-PVT stale, falling back to NMEA"
-                    );
+            // Parsed once: `parse()` runs the whole NMEA parser, so the
+            // sentence type is matched here rather than in a guard.
+            Frame::Nmea(n) => match n.parse() {
+                // Satellites in view is diagnostic and never competes with the
+                // fix, so it is read whichever source is driving position.
+                // Gating it on the fallback path would discard it exactly when
+                // it is enabled — on a healthy PVT link — costing bandwidth
+                // for nothing.
+                Some(ParseResult::GSV(gsv)) => {
+                    data.sats_in_view = in_view.update(gsv.gnss_type, gsv.sats_in_view);
+                    false
                 }
-                match n.parse() {
-                    Some(ParseResult::GGA(gga)) => {
-                        apply_gga(&mut data, &gga);
-                        true
+                // GGA only steers while PVT is absent or stale, so the two
+                // sources never fight over the same fields.
+                Some(ParseResult::GGA(gga)) if !pvt_fresh => {
+                    data.pvt_active = false;
+                    if announced_pvt && !announced_fallback {
+                        announced_fallback = true;
+                        announced_pvt = false;
+                        elle_event!(
+                            warn,
+                            event::EVT_GNSS_NMEA_FALLBACK,
+                            "GNSS: NAV-PVT stale, falling back to NMEA"
+                        );
                     }
-                    _ => false,
+                    apply_gga(&mut data, &gga);
+                    true
                 }
-            }
-            Frame::Nmea(_) => false,
+                _ => false,
+            },
         };
 
         if !updated {

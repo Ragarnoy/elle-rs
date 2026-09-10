@@ -46,6 +46,11 @@ block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", re
 
 [features]
 gnss = []  # Enable GPS telemetry frames
+# Ask the receiver for NMEA GSV (satellites in view). Bench diagnosis only:
+# GSV is the only way to see satellites being *tracked*, since the fix reports
+# only satellites *used*. Costs ~2.4 kB/s at 5 Hz, so it is enabled solely on
+# the fast link — see gnss::config_groups.
+gnss-gsv = ["gnss"]
 single-engine = []  # Single-engine platform (dart) — uses dshot_single_task instead of dshot_task
 
 [lib]
