@@ -37,12 +37,37 @@ ahrs = { workspace = true }
 nalgebra = { workspace = true }
 heapless = { workspace = true }
 static_cell = { workspace = true }
-sdspi = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "518528cc", version = "0.1.0", default-features = false }
-embedded-fatfs = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "518528cc", version = "0.1.0", default-features = false }
+# MabezDev/embedded-fatfs, pinned to a git rev: crates.io only carries a 0.0.0
+# placeholder for `embedded-fatfs`, and published `block-device-adapters` 0.2.0
+# predates the fixes below. `919e569f` (2026-08-28) is upstream HEAD and moves us
+# past four bugs this airframe actually hits — no API change from the previous
+# `518528cc` pin:
+#   - whole-sector writes went straight to DMA, so `write_zeros`' `const [0u8;
+#     512]` handed DMA a flash-resident buffer; now copied via a word-aligned
+#     stack buffer.
+#   - cluster numbers off the disk were used unvalidated, so a directory entry
+#     left half-written by a power cut (pointing at the 0x0FFFFFFF erase
+#     pattern) overflowed `offset_from_cluster`. We power the aircraft off with
+#     logging running, so every flight ends on an unclean unmount.
+#   - `File::is_dir` was false for a directory opened by cluster, including the
+#     root, so growing the root past one cluster skipped zeroing and reinterpreted
+#     stale bytes as entries. Enabling `lfn` below makes each log consume more
+#     root-directory entries, which brings that boundary closer.
+#   - `block-device-adapters` truncated u64→usize before `min`, so a remaining
+#     size that was an exact multiple of 4 GiB produced a zero-length write and a
+#     DMA panic.
+sdspi = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.1.0", default-features = false }
+# `lfn` (long filenames) is required for lowercase log names: FAT 8.3 short
+# names are uppercase by definition, so `LOG_NNNN.ulg` only survives to the card
+# as a long-name entry. Costs ~4.2 KB flash and one extra 32-byte directory
+# entry per file. See `sd_writer::next_log_name`.
+embedded-fatfs = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.1.0", default-features = false, features = [
+    "lfn",
+] }
 embassy-embedded-hal = { workspace = true }
 aligned = { version = "0.4", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
-block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "518528cc", version = "0.2.0", default-features = false }
+block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.2.0", default-features = false }
 
 [features]
 gnss = []  # Enable GPS telemetry frames

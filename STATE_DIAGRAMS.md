@@ -89,7 +89,7 @@
   ULog LIFECYCLE (independent of flight state):
   ┌──────────┐  SD mounted  ┌───────────┐          ┌──────────┐
   │  IDLE    │─────────────►│ RECORDING │─────────►│  DONE    │
-  │          │  auto-start  │ LOG_N.ULG │  power   │          │
+  │          │  auto-start  │ LOG_N.ulg │  power   │          │
   └──────────┘              │ flush 1Hz │  off     └──────────┘
                             └───────────┘
 ```
@@ -196,7 +196,7 @@ stateDiagram-v2
     Rec --> Rec: Flush every 1s
 
     note right of Rec
-        LOG_NNNN.ULG
+        LOG_NNNN.ulg
         ~11 KB/s
         Runs until power off
     end note

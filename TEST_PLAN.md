@@ -158,8 +158,8 @@ ULog auto-starts only in flight firmware.
 |---|---------------------------|-----------------------------------------------------|------|
 | 1 | Power on with SD inserted | TUI: REC is dark gray (not recording yet)           | [x]  |
 | 2 | TUI: `ulog start`         | TUI: REC blinks red                                 | [x]  |
-| 3 | Power off, pull SD card   | LOG_0000.ULG exists with data                       | [x]  |
-| 4 | Power on again            | Next file is LOG_0001.ULG (not overwritten)         | [x]  |
+| 3 | Power off, pull SD card   | LOG_0000.ulg exists with data                       | [x]  |
+| 4 | Power on again            | Next file is LOG_0001.ulg (not overwritten)         | [x]  |
 
 ### 3.2 ULog Data Validation
 
