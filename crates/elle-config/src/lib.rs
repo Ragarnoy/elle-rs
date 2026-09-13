@@ -145,11 +145,11 @@ pub const ROLL_KI: f32 = 0.03;
 pub const ROLL_KD: f32 = 0.12;
 
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KP: f32 = 0.5;
+pub const ROLL_KP: f32 = 0.125;
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KI: f32 = 0.03;
+pub const ROLL_KI: f32 = 0.0075;
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KD: f32 = 0.12;
+pub const ROLL_KD: f32 = 0.03;
 
 #[cfg(not(feature = "platform-dart"))]
 pub const PITCH_KP: f32 = 1.0;
@@ -158,16 +158,26 @@ pub const PITCH_KI: f32 = 0.1;
 #[cfg(not(feature = "platform-dart"))]
 pub const PITCH_KD: f32 = 0.25;
 
+// Dart copied eagle's gains and oscillated hard in pitch and roll.
+// Detuned ~75% on both axes, P/I/D ratios held.
 #[cfg(feature = "platform-dart")]
-pub const PITCH_KP: f32 = 1.0;
+pub const PITCH_KP: f32 = 0.25;
 #[cfg(feature = "platform-dart")]
-pub const PITCH_KI: f32 = 0.1;
+pub const PITCH_KI: f32 = 0.025;
 #[cfg(feature = "platform-dart")]
-pub const PITCH_KD: f32 = 0.25;
+pub const PITCH_KD: f32 = 0.0625;
 
 // PID operating scale and integral limit (must match SavedGains validation ranges)
 pub const PID_SCALE: f32 = 5.0;
 pub const PID_I_LIMIT: f32 = 0.5;
+
+// Skip flash PID load/save/erase. Firmware defaults always apply.
+// `clearpid` erases the whole 64KB profile region (mag cal is in the same
+// map) and has crashed the MCU — leave this on until that path is fixed.
+#[cfg(feature = "platform-dart")]
+pub const IGNORE_PID_FLASH: bool = true;
+#[cfg(not(feature = "platform-dart"))]
+pub const IGNORE_PID_FLASH: bool = false;
 
 // Control authority limits (0.0 to 1.0)
 pub const ATTITUDE_MAX_AUTHORITY: f32 = 0.8; // Increased authority for better response
@@ -234,16 +244,15 @@ pub const MAX_RPM: u32 = 21_400; // Measured: right engine saturation under EDF 
 pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 149,800
 
 // Motor specs (dart): measured via rpm_range sweep on the replacement 2-blade prop
-// (500-sample per step, DShot 48–2000). RPM peaks at 13,555 @ DShot 1798 and declines
-// above; the governor caps at DShot 1748 (13,424 RPM), the last strictly-rising point,
-// so the PI can never wind into the falling region.
-// MOTOR_POLES assumed 14 — verify against motor spec sheet.
+// (500-sample per step, DShot 48–1998, 11.75 V). RPM is strictly rising through
+// full throttle (avg 20,305 @ DShot 1998); the governor caps there.
+// MOTOR_POLES = 14 (confirmed by the sweep).
 #[cfg(feature = "platform-dart")]
 pub const MOTOR_POLES: u8 = 14;
 #[cfg(feature = "platform-dart")]
-pub const MAX_RPM: u32 = 13_424; // Measured at DShot 1748 (last rising point)
+pub const MAX_RPM: u32 = 20_305; // Measured avg at DShot 1998
 #[cfg(feature = "platform-dart")]
-pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 93,968
+pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 142,135
 
 /// ESC spin direction. The dart's replacement prop is handed opposite to the original,
 /// so the ESC is commanded reversed on every boot — session-only, never `SettingsSave`:
@@ -280,12 +289,12 @@ pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000;
 /// output past the point the feedforward table itself refuses to cross, or the
 /// integrator can wind up past it under normal RPM sag (battery/thermal/prop wash),
 /// driving DShot further into a region where RPM falls as throttle rises — a runaway
-/// positive-feedback loop (dart prop RPM plateaus/declines above DShot 1748; eagle right engine
-/// saturates/goes asymmetric above DShot 1473).
+/// positive-feedback loop (eagle right engine saturates/goes asymmetric above DShot 1473;
+/// dart currently rises through DShot 1998, the last measured point).
 #[cfg(not(feature = "platform-dart"))]
 pub const GOVERNOR_DSHOT_MAX: u16 = 1_473;
 #[cfg(feature = "platform-dart")]
-pub const GOVERNOR_DSHOT_MAX: u16 = 1_748;
+pub const GOVERNOR_DSHOT_MAX: u16 = 1_998;
 
 // The doc comment above is a real contract: enforce it so the two can't drift.
 const _: () = assert!(GOVERNOR_DSHOT_MAX == lut::governor_ff_max_dshot());

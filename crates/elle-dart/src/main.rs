@@ -110,6 +110,11 @@ fn tap_cal_allowed(
 
 /// Save PID gains to flash with timeout. Returns true on success.
 async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
+    if elle_config::IGNORE_PID_FLASH {
+        warn!("PID flash ignored — skip save ({})", context);
+        return false;
+    }
+
     use elle_config::profile::{FlashRequest, FlashResponse};
     use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 
@@ -133,6 +138,30 @@ async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
                 context
             );
             false
+        }
+    }
+}
+
+/// Erase the PID profile map entry. No-op while `IGNORE_PID_FLASH` is set —
+/// the erase is a 64KB sector wipe (shared with mag cal) and has crashed the MCU.
+#[cfg(feature = "rpc-control")]
+async fn erase_pid_from_flash() {
+    use elle_config::profile::{FlashRequest, FlashResponse};
+    use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+
+    if elle_config::IGNORE_PID_FLASH {
+        info!("PID flash ignored — skip erase");
+        return;
+    }
+
+    FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
+    let timeout = Timer::after(Duration::from_secs(5));
+    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
+        embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
+            info!("PID profile erased from flash");
+        }
+        _ => {
+            warn!("PID profile erase failed or timed out");
         }
     }
 }
@@ -482,7 +511,9 @@ async fn main(spawner: Spawner) {
     let mut ulog_logger = ULogLogger::new();
 
     // Boot-time PID profile load from flash
-    {
+    if elle_config::IGNORE_PID_FLASH {
+        info!("Core0: IGNORE_PID_FLASH — using firmware PID defaults");
+    } else {
         use elle_config::profile::{FlashRequest, FlashResponse};
         use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 
@@ -1383,27 +1414,7 @@ async fn main(spawner: Spawner) {
                             save_pid_to_flash(gains.to_bytes(), "savepid").await;
                         } else if axis == 0xFE {
                             // Magic value: erase PID profile from flash
-                            use elle_config::profile::{FlashRequest, FlashResponse};
-                            use elle_hardware::flash::{
-                                FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL,
-                            };
-                            FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
-                            let timeout = Timer::after(Duration::from_secs(5));
-                            match embassy_futures::select::select(
-                                FLASH_RESPONSE_SIGNAL.wait(),
-                                timeout,
-                            )
-                            .await
-                            {
-                                embassy_futures::select::Either::First(
-                                    FlashResponse::PidProfileErased,
-                                ) => {
-                                    info!("PID profile erased from flash");
-                                }
-                                _ => {
-                                    warn!("PID profile erase failed or timed out");
-                                }
-                            }
+                            erase_pid_from_flash().await;
                         } else {
                             use elle_control::autotune::TuningRule;
                             if fc.is_armed() && fc.is_attitude_enabled() && !autotuner.is_active() {
@@ -1461,22 +1472,7 @@ async fn main(spawner: Spawner) {
                         save_pid_to_flash(data, "RPC").await;
                     }
                     RpcCommand::ClearPidProfile => {
-                        use elle_config::profile::{FlashRequest, FlashResponse};
-                        use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
-                        FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
-                        let timeout = Timer::after(Duration::from_secs(5));
-                        match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout)
-                            .await
-                        {
-                            embassy_futures::select::Either::First(
-                                FlashResponse::PidProfileErased,
-                            ) => {
-                                info!("PID profile erased from flash");
-                            }
-                            _ => {
-                                warn!("PID profile erase failed or timed out");
-                            }
-                        }
+                        erase_pid_from_flash().await;
                     }
                     RpcCommand::StartMagCal => {
                         elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
