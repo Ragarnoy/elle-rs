@@ -145,11 +145,11 @@ pub const ROLL_KI: f32 = 0.03;
 pub const ROLL_KD: f32 = 0.12;
 
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KP: f32 = 0.125;
+pub const ROLL_KP: f32 = 0.25;
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KI: f32 = 0.0075;
+pub const ROLL_KI: f32 = 0.012;
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KD: f32 = 0.03;
+pub const ROLL_KD: f32 = 0.07;
 
 #[cfg(not(feature = "platform-dart"))]
 pub const PITCH_KP: f32 = 1.0;
@@ -158,14 +158,14 @@ pub const PITCH_KI: f32 = 0.1;
 #[cfg(not(feature = "platform-dart"))]
 pub const PITCH_KD: f32 = 0.25;
 
-// Dart copied eagle's gains and oscillated hard in pitch and roll.
-// Detuned ~75% on both axes, P/I/D ratios held.
+// Dart: inverted from LOG_0026 / 0032 / 0035 holds (docs/DART_PID.md).
+// 0.25/0.125 flew but sagged; 0.50/0.40 punched / blew roll. I stays low.
 #[cfg(feature = "platform-dart")]
-pub const PITCH_KP: f32 = 0.25;
+pub const PITCH_KP: f32 = 0.45;
 #[cfg(feature = "platform-dart")]
-pub const PITCH_KI: f32 = 0.025;
+pub const PITCH_KI: f32 = 0.020;
 #[cfg(feature = "platform-dart")]
-pub const PITCH_KD: f32 = 0.0625;
+pub const PITCH_KD: f32 = 0.16;
 
 // PID operating scale and integral limit (must match SavedGains validation ranges)
 pub const PID_SCALE: f32 = 5.0;
