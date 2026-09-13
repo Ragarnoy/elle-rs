@@ -410,10 +410,17 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                         Style::default().fg(MUTED),
                     ),
                     Span::styled(" | HDOP: ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        format!("{:.1}", g.hdop),
-                        Style::default().fg(scale(f64::from(g.hdop), 2.0, 5.0)),
-                    ),
+                    // NAV-PVT carries no DOP, so on the primary path `hdop`
+                    // keeps its "unavailable" seed. Printing that as 99.9 in red
+                    // reads as a failing receiver for an entire healthy flight.
+                    if g.pvt_active {
+                        Span::styled("---", Style::default().fg(MUTED))
+                    } else {
+                        Span::styled(
+                            format!("{:.1}", g.hdop),
+                            Style::default().fg(scale(f64::from(g.hdop), 2.0, 5.0)),
+                        )
+                    },
                 ]),
                 kv(
                     "  Alt: ",
@@ -487,7 +494,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                     Span::styled(" | ", Style::default().fg(LABEL)),
                     Span::styled(
                         gnss_cfg_text(g.cfg_mask),
-                        Style::default().fg(if g.cfg_mask == GNSS_CFG_MASK_ALL {
+                        Style::default().fg(if g.cfg_mask == elle_rpc_icd::GNSS_CFG_MASK_ALL {
                             OK
                         } else {
                             WARN
@@ -766,29 +773,40 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
     }
 }
 
-/// Every configuration key accepted.
-const GNSS_CFG_MASK_ALL: u16 = (1 << 10) - 1;
-
-/// Summarise the GNSS configuration mask, naming the first rejected key.
+/// Summarise the GNSS configuration mask, naming the first key that is not in
+/// force.
 ///
 /// The module NAKs per key, so a partial mask says exactly which setting did
-/// not take — far more use than "config failed".
+/// not take — far more use than "config failed". A mask carrying
+/// `GNSS_CFG_ABANDONED` is reported differently: the firmware stopped sending
+/// after the module went quiet, so the clear bits are keys never tried, and
+/// calling them rejected would send the reader after the wrong fault.
 fn gnss_cfg_text(mask: u16) -> String {
-    use elle_rpc_icd::GNSS_CFG_KEY_NAMES;
+    use elle_rpc_icd::{GNSS_CFG_ABANDONED, GNSS_CFG_KEY_NAMES, GNSS_CFG_MASK_ALL};
 
-    if mask == GNSS_CFG_MASK_ALL {
+    let abandoned = mask & GNSS_CFG_ABANDONED != 0;
+    let applied = mask & GNSS_CFG_MASK_ALL;
+
+    if !abandoned && applied == GNSS_CFG_MASK_ALL {
         return "cfg ok".to_string();
     }
-    let failed: Vec<&str> = GNSS_CFG_KEY_NAMES
+    let missing: Vec<&str> = GNSS_CFG_KEY_NAMES
         .iter()
         .enumerate()
-        .filter(|(i, _)| mask & (1 << i) == 0)
+        .filter(|(i, _)| applied & (1 << i) == 0)
         .map(|(_, name)| *name)
         .collect();
-    match failed.len() {
+    if abandoned {
+        return match missing.first() {
+            // Configuration stopped at the first key we never heard back on.
+            Some(first) => format!("cfg abandoned at {first} (module silent)"),
+            None => "cfg abandoned (module silent)".to_string(),
+        };
+    }
+    match missing.len() {
         0 => "cfg ok".to_string(),
-        1 => format!("cfg: {} failed", failed[0]),
-        n => format!("cfg: {} failed +{}", failed[0], n - 1),
+        1 => format!("cfg: {} failed", missing[0]),
+        n => format!("cfg: {} failed +{}", missing[0], n - 1),
     }
 }
 

@@ -420,6 +420,15 @@ fn handle_get_mag_cal(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagCa
     }
 }
 
+// `cfg_mask` is produced by the firmware against its own group list and read by
+// the host against the ICD's name list. Nothing else ties the two together, so
+// adding a group on one side would silently shift every key label on the other.
+#[cfg(feature = "gnss")]
+const _: () = assert!(
+    elle_hardware::gnss::CFG_GROUP_COUNT == elle_rpc_icd::GNSS_CFG_KEY_COUNT,
+    "GNSS config group count is out of step with GNSS_CFG_KEY_NAMES"
+);
+
 fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp {
     #[cfg(feature = "gnss")]
     {

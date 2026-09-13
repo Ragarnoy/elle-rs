@@ -207,14 +207,20 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
         DirectCommand::Gnss => {
             let g = timeout(CMD_TIMEOUT, client.send_resp::<GetGnssEndpoint>(&())).await??;
             println!(
-                "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} (in view {}) hdop={:.1}",
+                "GNSS: {:.6},{:.6} alt={:.1}m fix={} sats={} (in view {}) hdop={}",
                 g.latitude,
                 g.longitude,
                 g.altitude_m,
                 g.fix_quality,
                 g.num_satellites,
                 g.sats_in_view,
-                g.hdop
+                // NAV-PVT carries no DOP; `hdop` only means something on the
+                // GGA fallback path.
+                if g.pvt_active {
+                    "n/a".to_string()
+                } else {
+                    format!("{:.1}", g.hdop)
+                }
             );
             println!(
                 "      spd={:.2}m/s trk={:.1}° vel_ned=({:.2},{:.2},{:.2})m/s",
@@ -235,17 +241,26 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                 g.nav_rate_ms
             );
             {
-                use elle_rpc_icd::GNSS_CFG_KEY_NAMES;
-                let failed: Vec<&str> = GNSS_CFG_KEY_NAMES
+                use elle_rpc_icd::{GNSS_CFG_ABANDONED, GNSS_CFG_KEY_NAMES, GNSS_CFG_MASK_ALL};
+                let abandoned = g.cfg_mask & GNSS_CFG_ABANDONED != 0;
+                let applied = g.cfg_mask & GNSS_CFG_MASK_ALL;
+                let missing: Vec<&str> = GNSS_CFG_KEY_NAMES
                     .iter()
                     .enumerate()
-                    .filter(|(i, _)| g.cfg_mask & (1 << i) == 0)
+                    .filter(|(i, _)| applied & (1 << i) == 0)
                     .map(|(_, n)| *n)
                     .collect();
-                if failed.is_empty() {
+                if abandoned {
+                    // These keys were never sent, so they were not refused —
+                    // the fault is the link, not the settings.
+                    println!(
+                        "      config: ABANDONED after the module stopped answering; NOT APPLIED {}",
+                        missing.join(", ")
+                    );
+                } else if missing.is_empty() {
                     println!("      config: all {} keys accepted", GNSS_CFG_KEY_NAMES.len());
                 } else {
-                    println!("      config: REJECTED {}", failed.join(", "));
+                    println!("      config: REJECTED {}", missing.join(", "));
                 }
             }
         }

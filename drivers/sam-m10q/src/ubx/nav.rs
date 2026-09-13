@@ -13,6 +13,31 @@ pub const TIMEUTC: u8 = 0x21;
 pub const SAT: u8 = 0x35;
 pub const SIG: u8 = 0x43;
 
+/// Fix quality from a NAV-PVT, in the GGA convention: 0 none, 1 GNSS, 2 DGNSS.
+///
+/// `fixType` alone is **not** the answer. UBX specifies that `fixType` is only
+/// meaningful when `flags` bit 0 (`gnssFixOK`) is set, and an M10 acquiring
+/// under a partial sky routinely reports `fixType = 3` with `gnssFixOK = 0` —
+/// a solution that has not passed the receiver's own DOP and accuracy masks.
+/// Reading `fixType` on its own turns that into a confident 3-D fix, which is
+/// how a bad position reaches the CRSF GPS frame and becomes a home point.
+///
+/// Kept next to the parsing so the rule lives with the field it guards.
+#[must_use]
+pub fn fix_quality(pvt: &NavPvtRef<'_>) -> u8 {
+    use ublox::nav_pvt::common::NavPvtFlags;
+
+    if !pvt.flags().contains(NavPvtFlags::GPS_FIX_OK) {
+        return 0;
+    }
+    // fixType: 0 none, 1 dead reckoning, 2 2-D, 3 3-D, 4 GNSS+DR, 5 time only.
+    match pvt.fix_type() as u8 {
+        2 | 3 => 1,
+        4 => 2,
+        _ => 0,
+    }
+}
+
 /// Interpret a decoded UBX frame as NAV-PVT, if that is what it is.
 ///
 /// Returns `None` for any other message and for a payload too short to be a
@@ -57,6 +82,7 @@ mod tests {
         p[9] = 34; // min
         p[10] = 56; // sec
         p[20] = 3; // fixType = 3D
+        p[21] = 0x01; // flags: gnssFixOK
         p[23] = 8; // numSV
         p[24..28].copy_from_slice(&115_167_000_i32.to_le_bytes()); // lon 11.5167 deg
         p[28..32].copy_from_slice(&481_173_000_i32.to_le_bytes()); // lat 48.1173 deg
@@ -89,6 +115,34 @@ mod tests {
         assert!((pvt.heading_motion() - 90.0).abs() < 1e-6);
         assert!((pvt.speed_accuracy() - 0.25).abs() < 1e-6);
         assert_eq!(pvt.num_satellites(), 8);
+    }
+
+    #[test]
+    fn fix_quality_requires_gnss_fix_ok() {
+        let mut payload = sample_pvt_payload();
+
+        // fixType 3 with gnssFixOK set: a real 3-D fix.
+        let pvt = parse_pvt(ubx::class::NAV, PVT, &payload).unwrap();
+        assert_eq!(fix_quality(&pvt), 1);
+
+        // Same fixType, gnssFixOK clear — acquiring, outside the DOP/accuracy
+        // masks. Must not read as a fix.
+        payload[21] = 0x00;
+        let pvt = parse_pvt(ubx::class::NAV, PVT, &payload).unwrap();
+        assert_eq!(fix_quality(&pvt), 0);
+
+        // DGNSS is reported separately, and still needs the flag.
+        payload[20] = 4;
+        payload[21] = 0x01;
+        let pvt = parse_pvt(ubx::class::NAV, PVT, &payload).unwrap();
+        assert_eq!(fix_quality(&pvt), 2);
+
+        // Dead reckoning and time-only are not positions we will fly on.
+        for ft in [0u8, 1, 5] {
+            payload[20] = ft;
+            let pvt = parse_pvt(ubx::class::NAV, PVT, &payload).unwrap();
+            assert_eq!(fix_quality(&pvt), 0, "fixType {ft} should not be a fix");
+        }
     }
 
     #[test]

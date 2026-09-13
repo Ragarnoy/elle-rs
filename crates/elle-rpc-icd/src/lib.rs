@@ -309,7 +309,11 @@ pub struct GnssResp {
     /// the rate key was rejected this is the module's own default.
     pub nav_rate_ms: u16,
     /// Bitmask of configuration keys the module acknowledged, one bit per entry
-    /// of [`GNSS_CFG_KEY_NAMES`]. A clear bit is a key this receiver rejected.
+    /// of [`GNSS_CFG_KEY_NAMES`].
+    ///
+    /// A clear bit means the key is not in force, which is not the same as
+    /// rejected: if [`GNSS_CFG_ABANDONED`] is set, configuration was given up
+    /// on partway through and the remaining groups were never attempted.
     pub cfg_mask: u16,
     /// Satellites in view, summed across constellations (NMEA GSV).
     ///
@@ -319,6 +323,27 @@ pub struct GnssResp {
     /// the fast link was achieved.
     pub sats_in_view: u8,
 }
+
+/// Number of GNSS configuration key groups, and so of meaningful bits in
+/// [`GnssResp::cfg_mask`].
+///
+/// Firmware has its own `CFG_GROUP_COUNT`; the two are checked against each
+/// other at compile time where the handler bridges them.
+pub const GNSS_CFG_KEY_COUNT: usize = GNSS_CFG_KEY_NAMES.len();
+
+/// Every configuration group applied — the all-clear value of
+/// [`GnssResp::cfg_mask`], ignoring [`GNSS_CFG_ABANDONED`].
+pub const GNSS_CFG_MASK_ALL: u16 = (1 << GNSS_CFG_KEY_COUNT) - 1;
+
+/// Set in [`GnssResp::cfg_mask`] when the firmware stopped configuring partway
+/// through because the module went silent, rather than running every group.
+///
+/// Groups after that point were never sent, so their clear bits say nothing
+/// about whether the receiver would have accepted them.
+pub const GNSS_CFG_ABANDONED: u16 = 1 << 15;
+
+// The abandoned marker must stay clear of the per-group bits.
+const _: () = assert!(GNSS_CFG_KEY_COUNT < 15);
 
 /// Names of the configuration keys applied at GNSS boot, in the order their
 /// bits appear in [`GnssResp::cfg_mask`].

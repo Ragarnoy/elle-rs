@@ -135,7 +135,21 @@ const ACK_TIMEOUT: Duration = Duration::from_millis(400);
 /// Give up on configuration after this many consecutive unanswered keys.
 const MAX_SILENT_KEYS: u8 = 3;
 /// Every bit of the configuration mask set — a fully applied configuration.
-const CFG_MASK_ALL: u16 = (1 << 10) - 1;
+///
+/// Derived from [`CFG_GROUP_COUNT`] rather than written out, so adding a
+/// configuration group cannot leave "cfg ok" permanently unreachable.
+const CFG_MASK_ALL: u16 = (1 << CFG_GROUP_COUNT) - 1;
+/// Set in the configuration mask when configuration was given up on partway
+/// through, rather than run to the end.
+///
+/// Without this a group that was never attempted is indistinguishable from one
+/// the module refused, and the host names it as rejected — pointing diagnosis
+/// at, say, `MSGOUT-GGA` when the real fault was the link going silent three
+/// keys earlier. Lives in the top bit so it can never collide with a group.
+const CFG_ABANDONED: u16 = 1 << 15;
+
+// The abandoned marker must stay clear of the per-group bits.
+const _: () = assert!(CFG_GROUP_COUNT < 15);
 /// Bit position of the solution-rate key within the configuration mask.
 const CFG_BIT_RATE_MEAS: u16 = 1 << 1;
 /// The module's own default solution interval, used when our rate key did not
@@ -302,8 +316,10 @@ async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16, gsv: bool) -> u16 {
                     i
                 );
                 // The module is not talking to us; stop rather than spend the
-                // per-key timeout another seven times over.
+                // per-key timeout another seven times over. Flag it, so the
+                // groups we never got to are not reported as refusals.
                 if silent >= MAX_SILENT_KEYS {
+                    mask |= CFG_ABANDONED;
                     break;
                 }
             }
@@ -437,6 +453,35 @@ pub async fn gnss_task(mut uart: BufferedUart) {
 
 /// Steady-state receive loop.
 ///
+/// Push a sample to every consumer: the RPC/ULog signal and CRSF telemetry.
+///
+/// The two must not drift apart — a stale CRSF frame is a wrong home point on
+/// the radio, which is worse than a stale TUI panel.
+fn publish(data: &GnssData) {
+    GNSS_SIGNAL.signal(*data);
+    crate::crsf::TELEMETRY_GNSS.signal(crate::crsf::TelemetryGpsData {
+        latitude: data.latitude,
+        longitude: data.longitude,
+        altitude_m: data.altitude_m,
+        num_satellites: data.num_satellites,
+        ground_speed_ms: data.ground_speed_ms,
+    });
+}
+
+/// Mark the fix as no longer trustworthy, keeping the last known position.
+///
+/// `GnssData` carries no timestamp, so a consumer cannot tell a live fix from
+/// one frozen minutes ago. Without this, a receiver that stops talking leaves
+/// `handle_get_gnss` returning a confident fix forever and CRSF still feeding
+/// the radio a position. Holding the coordinates matches what the GGA path has
+/// always done; zeroing the satellite count and quality is what says "do not
+/// trust this any more" to every consumer, including the radio.
+fn mark_fix_lost(data: &mut GnssData) {
+    data.fix_quality = 0;
+    data.num_satellites = 0;
+    data.pvt_active = false;
+}
+
 /// `fast` records which link speed the boot sequence settled on, so it can be
 /// re-announced periodically. The boot events themselves fire about a second
 /// after power-up and `LogTopic` keeps no backlog, so a host that attaches
@@ -464,6 +509,9 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
     let mut fix_count: u32 = 0;
     let mut uart_errors: u32 = 0;
     let mut silent_periods: u32 = 0;
+    // Whether consumers have already been told the fix went away, so the
+    // transition is published once rather than every timeout.
+    let mut fix_lost = false;
 
     loop {
         // A silent link and a link with no satellite fix look identical from
@@ -482,6 +530,11 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
                         SILENCE_TIMEOUT.as_millis(),
                         silent_periods
                     );
+                }
+                if !fix_lost {
+                    fix_lost = true;
+                    mark_fix_lost(&mut data);
+                    publish(&data);
                 }
                 continue;
             }
@@ -560,8 +613,20 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
         };
 
         if !updated {
+            // The link is alive — GSV or some other sentence is still arriving
+            // — but nothing has driven the fix for `PVT_STALE`. That happens
+            // whenever NAV-PVT stops and GGA is not enabled to take over, which
+            // is exactly the state `apply_config` is allowed to leave us in.
+            // The silence timeout never fires here, so without this the last
+            // good sample would stand indefinitely.
+            if data.fix_quality > 0 && !pvt_fresh && !fix_lost {
+                fix_lost = true;
+                mark_fix_lost(&mut data);
+                publish(&data);
+            }
             continue;
         }
+        fix_lost = false;
 
         fix_count = fix_count.wrapping_add(1);
         if fix_count == 1 {
@@ -599,14 +664,7 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
             }
         }
 
-        GNSS_SIGNAL.signal(data);
-        crate::crsf::TELEMETRY_GNSS.signal(crate::crsf::TelemetryGpsData {
-            latitude: data.latitude,
-            longitude: data.longitude,
-            altitude_m: data.altitude_m,
-            num_satellites: data.num_satellites,
-            ground_speed_ms: data.ground_speed_ms,
-        });
+        publish(&data);
     }
 }
 
@@ -618,14 +676,13 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
 const GNSS_PERIODIC_LOG_EVERY: u32 = 100;
 
 fn apply_pvt(data: &mut GnssData, pvt: &nav::NavPvtRef<'_>) {
-    // NAV-PVT fixType: 0 none, 1 dead reckoning, 2 2-D, 3 3-D, 4 GNSS+DR, 5 time.
-    let fix_type = pvt.fix_type() as u8;
-    data.fix_quality = match fix_type {
-        2 | 3 => 1,
-        4 => 2,
-        _ => 0,
-    };
+    // Honours `gnssFixOK` as well as `fixType` — see `nav::fix_quality`. An
+    // acquiring M10 will claim `fixType = 3` before its solution passes the
+    // DOP/accuracy masks, and that position must not reach the radio.
+    data.fix_quality = nav::fix_quality(pvt);
     data.num_satellites = pvt.num_satellites();
+    // `hdop` is deliberately left at its "unavailable" seed: NAV-PVT carries no
+    // DOP, and hAcc/vAcc are the real fix-quality gate on this path.
 
     // Hold the last good position through a dropout rather than snapping to
     // zero, matching what the GGA path has always done.
