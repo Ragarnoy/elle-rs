@@ -336,6 +336,11 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 /// Measured eRPM→DShot mapping for dart (500-sample per step, rpm_range sweep).
 /// RPM × 7 (14-pole). Covers DShot 48–1998; RPM is strictly rising through full
 /// throttle, so the table (and `GOVERNOR_DSHOT_MAX`) go to the last measured point.
+///
+/// STALE: swept on the 2-blade prop that broke on 13 Sep 2026. The 3-blade now
+/// fitted makes ~20% less eRPM for the same DShot, so this over-commands
+/// feedforward across the range. Re-run `rpm_range` on the 3-blade and replace
+/// the table. See the `MAX_RPM` note in `lib.rs`.
 #[cfg(feature = "platform-dart")]
 const GOVERNOR_FF_TABLE: [(u32, u16); 21] = [
     (2_667, 48),     //    381 RPM
