@@ -25,6 +25,21 @@ pub mod class {
     pub const SEC: u8 = 0x27;
     pub const NMEA: u8 = 0xF0;
     pub const PUBX: u8 = 0xF1;
+
+    /// Whether `class_id` is a UBX class this protocol defines at all.
+    ///
+    /// Used only to decide how far to trust a frame header that has already
+    /// failed a sanity check — see the decoder's oversized-payload handling.
+    /// It is deliberately *not* applied to well-formed frames: the checksum
+    /// already validates those, and rejecting an unlisted class there would
+    /// drop real messages for no gain.
+    #[must_use]
+    pub const fn is_known(class_id: u8) -> bool {
+        matches!(
+            class_id,
+            NAV | RXM | INF | ACK | CFG | UPD | MON | TIM | SEC | NMEA | PUBX
+        )
+    }
 }
 
 /// Well-known ACK message IDs.

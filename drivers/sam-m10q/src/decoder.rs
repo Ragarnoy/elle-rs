@@ -16,15 +16,44 @@ enum State {
     UbxPayload,
     /// Receiving UBX checksum bytes (ck_a, ck_b).
     UbxChecksum { ck_idx: u8 },
-    /// Discarding a known number of bytes belonging to a frame we cannot buffer.
+    /// Discarding a bounded number of bytes belonging to a frame we cannot
+    /// buffer.
     ///
     /// Used after an oversized UBX payload length is announced: the declared
     /// payload plus checksum are dropped without being rescanned, so payload
     /// bytes that happen to equal `$` or `0xB5` cannot start a phantom frame.
+    /// The count is capped at [`MAX_SKIP_BYTES`] — see there for why.
     Skipping { remaining: u32 },
     /// Discarding bytes until the next `\n`, used for over-long NMEA sentences.
-    SkipToNewline,
+    ///
+    /// Bounded for the same reason as [`State::Skipping`]: a stray `$` on a
+    /// link carrying only binary would otherwise park the decoder until some
+    /// byte happened to be `0x0A`.
+    SkipToNewline { remaining: u32 },
 }
+
+/// Upper bound on bytes discarded in one resynchronisation.
+///
+/// A UBX length field is two raw bytes with no redundancy, and the checksum
+/// that would expose a lie sits *after* the payload it describes — so at the
+/// moment the length is read there is no way to tell a real oversized frame
+/// from noise that happens to start `B5 62`. What can be bounded is the cost of
+/// being wrong.
+///
+/// Obeying a bogus 65535-byte length blackholes 65,537 bytes: 5.7 s at 115200
+/// baud and 68 s at 9600, against a 3 s stale-fix threshold in the caller — so
+/// one corrupted length byte takes the receiver offline, and does it worst on
+/// the slow fallback link, which is where things already are when it matters.
+/// 1 KiB caps that at 89 ms and 1.1 s respectively, both comfortably inside the
+/// threshold.
+///
+/// 1 KiB is safe to impose because nothing this driver asks for comes close:
+/// NAV-PVT is 92 bytes and the buffer is [`MAX_FRAME_SIZE`] (256). A declared
+/// payload above that is already anomalous, and this still leaves 4x headroom
+/// for a genuinely larger message. Past the cap the decoder resyncs blind and
+/// accepts the risk of one phantom frame — a bounded cost in place of an
+/// unbounded one.
+const MAX_SKIP_BYTES: u32 = 1024;
 
 /// Tracks which frame type was last decoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +143,7 @@ impl Decoder {
             State::UbxPayload => self.feed_ubx_payload(byte),
             State::UbxChecksum { ck_idx } => self.feed_ubx_checksum(byte, ck_idx),
             State::Skipping { remaining } => self.feed_skipping(remaining),
-            State::SkipToNewline => self.feed_skip_to_newline(byte),
+            State::SkipToNewline { remaining } => self.feed_skip_to_newline(byte, remaining),
         }
     }
 
@@ -182,7 +211,9 @@ impl Decoder {
                     // Drop the rest of the sentence rather than rescanning it:
                     // returning to Idle mid-sentence risks a stray byte
                     // starting a phantom frame.
-                    self.state = State::SkipToNewline;
+                    self.state = State::SkipToNewline {
+                        remaining: MAX_SKIP_BYTES,
+                    };
                     self.pos = 0;
                     return FeedResult::Error(DecodeError::FrameTooLarge);
                 }
@@ -203,9 +234,15 @@ impl Decoder {
         FeedResult::Pending
     }
 
-    fn feed_skip_to_newline(&mut self, byte: u8) -> FeedResult {
-        if byte == b'\n' {
+    fn feed_skip_to_newline(&mut self, byte: u8, remaining: u32) -> FeedResult {
+        if byte == b'\n' || remaining <= 1 {
+            // Either the sentence ended, or it never will — give up and let
+            // the stream resynchronise rather than waiting out the link.
             self.state = State::Idle;
+        } else {
+            self.state = State::SkipToNewline {
+                remaining: remaining - 1,
+            };
         }
         FeedResult::Pending
     }
@@ -250,14 +287,25 @@ impl Decoder {
             3 => {
                 self.ubx_payload_len |= (byte as u16) << 8;
                 if self.ubx_payload_len as usize > MAX_FRAME_SIZE {
-                    // Skip the announced payload and its checksum instead of
-                    // resyncing blind — payload bytes equal to `$` or SYNC1
-                    // would otherwise start a phantom frame and swallow the
-                    // next genuine one.
                     self.pos = 0;
-                    // + 2 for the trailing ck_a / ck_b (`ubx::CHECKSUM_SIZE`).
-                    self.state = State::Skipping {
-                        remaining: u32::from(self.ubx_payload_len) + 2,
+                    // An oversized length on an undefined class is not a frame
+                    // we failed to buffer, it is noise that happened to open
+                    // with `B5 62` — there is no real payload to step over, so
+                    // skipping on its say-so would discard live data. Resync
+                    // immediately instead.
+                    self.state = if ubx::class::is_known(self.ubx_class) {
+                        // Plausibly a real message we simply cannot hold. Skip
+                        // the announced payload and its checksum rather than
+                        // resyncing blind, since payload bytes equal to `$` or
+                        // SYNC1 would start a phantom frame and swallow the
+                        // next genuine one. Capped — see `MAX_SKIP_BYTES`.
+                        // + 2 for the trailing ck_a / ck_b (`ubx::CHECKSUM_SIZE`).
+                        let declared = u32::from(self.ubx_payload_len) + 2;
+                        State::Skipping {
+                            remaining: declared.min(MAX_SKIP_BYTES),
+                        }
+                    } else {
+                        State::Idle
                     };
                     return FeedResult::Error(DecodeError::FrameTooLarge);
                 }
@@ -594,6 +642,118 @@ mod tests {
             }
         }
         out
+    }
+
+    /// Build the six header bytes of a UBX frame with the given payload length.
+    fn ubx_header(class_id: u8, msg_id: u8, payload_len: u16) -> [u8; 6] {
+        [
+            ubx::SYNC1,
+            ubx::SYNC2,
+            class_id,
+            msg_id,
+            (payload_len & 0xFF) as u8,
+            (payload_len >> 8) as u8,
+        ]
+    }
+
+    /// Feed a header and assert the oversized length is reported at the header.
+    fn feed_oversized_header(dec: &mut Decoder, header: &[u8; 6]) {
+        for &b in &header[..5] {
+            assert_eq!(dec.feed(b), FeedResult::Pending);
+        }
+        assert_eq!(
+            dec.feed(header[5]),
+            FeedResult::Error(DecodeError::FrameTooLarge)
+        );
+    }
+
+    /// Noise that opens `B5 62` and declares a huge payload must not be obeyed.
+    ///
+    /// Nothing real follows it, so stepping over the announced length would
+    /// discard live data on the word of two bytes of noise.
+    #[test]
+    fn oversized_ubx_with_unknown_class_resyncs_immediately() {
+        let mut dec = Decoder::new();
+        // 0x42 is not a defined UBX class.
+        assert!(!ubx::class::is_known(0x42));
+        feed_oversized_header(&mut dec, &ubx_header(0x42, 0x07, 0xFFFF));
+
+        // The very next bytes are real data and must be decoded, not skipped.
+        let frames = collect_frames(&mut dec, GGA);
+        assert_eq!(
+            frames,
+            vec![GGA_RAW.to_vec()],
+            "an implausible class must not consume the following sentence"
+        );
+    }
+
+    /// Bytes a 9600-baud link carries in the caller's 3 s stale-fix window.
+    ///
+    /// Deliberately an absolute number rather than one derived from
+    /// [`MAX_SKIP_BYTES`], so that raising the cap past what the slow link can
+    /// absorb fails here instead of silently rescaling the test.
+    const RECOVERY_BUDGET: usize = 2048;
+
+    #[test]
+    fn skip_cap_fits_the_slow_link() {
+        assert!(
+            (MAX_SKIP_BYTES as usize) <= RECOVERY_BUDGET,
+            "a resync must complete well inside the 3 s stale-fix window, \
+             which is only ~2880 bytes at 9600 baud"
+        );
+    }
+
+    /// A plausible class with an absurd length is skipped, but only so far.
+    ///
+    /// Obeying the full 65,537 bytes would take the receiver off the air for
+    /// 5.7 s at 115200 and 68 s at 9600, against a 3 s stale-fix threshold.
+    #[test]
+    fn oversized_ubx_skip_is_capped() {
+        let mut dec = Decoder::new();
+        // 0xFFFF announces 65,537 bytes to discard, counting the checksum.
+        feed_oversized_header(&mut dec, &ubx_header(ubx::class::NAV, ubx::nav::PVT, 0xFFFF));
+
+        // Far fewer bytes than the header claimed, but more than the cap: an
+        // uncapped decoder is still discarding here and eats the sentence.
+        let filler = vec![0xAAu8; RECOVERY_BUDGET];
+        assert!(collect_frames(&mut dec, &filler).is_empty());
+
+        let frames = collect_frames(&mut dec, GGA);
+        assert_eq!(
+            frames,
+            vec![GGA_RAW.to_vec()],
+            "decoder must be live again well before the declared length runs out"
+        );
+    }
+
+    /// An over-long NMEA sentence on a link that never sends `\n` must not park
+    /// the decoder forever.
+    #[test]
+    fn skip_to_newline_is_capped() {
+        let mut dec = Decoder::new();
+
+        // Open a sentence and overrun the buffer, which enters SkipToNewline.
+        assert_eq!(dec.feed(b'$'), FeedResult::Pending);
+        let body = vec![b'A'; MAX_FRAME_SIZE];
+        let mut saw_too_large = false;
+        for &b in &body {
+            if dec.feed(b) == FeedResult::Error(DecodeError::FrameTooLarge) {
+                saw_too_large = true;
+            }
+        }
+        assert!(saw_too_large, "overrunning the buffer should report once");
+
+        // Binary that contains no newline at all — an uncapped decoder waits
+        // here indefinitely.
+        let filler = vec![0xAAu8; RECOVERY_BUDGET];
+        assert!(collect_frames(&mut dec, &filler).is_empty());
+
+        let frames = collect_frames(&mut dec, GGA);
+        assert_eq!(
+            frames,
+            vec![GGA_RAW.to_vec()],
+            "decoder must recover without ever seeing a newline"
+        );
     }
 
     /// A UBX frame too large to buffer must be skipped wholesale, not rescanned.
