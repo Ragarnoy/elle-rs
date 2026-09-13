@@ -278,9 +278,87 @@ pub struct GnssResp {
     pub fix_quality: u8,
     /// Number of satellites used for fix
     pub num_satellites: u8,
-    /// Horizontal dilution of precision
+    /// Horizontal dilution of precision.
+    ///
+    /// Only meaningful on the NMEA GGA fallback path — NAV-PVT supplies
+    /// `h_acc_m` instead, an error estimate rather than a geometry figure.
     pub hdop: f32,
+    /// Velocity north in m/s (NAV-PVT only)
+    pub vel_n_ms: f32,
+    /// Velocity east in m/s (NAV-PVT only)
+    pub vel_e_ms: f32,
+    /// Velocity down in m/s (NAV-PVT only)
+    pub vel_d_ms: f32,
+    /// Ground speed in m/s (NAV-PVT only)
+    pub ground_speed_ms: f32,
+    /// Course over ground in degrees (NAV-PVT only)
+    pub heading_motion_deg: f32,
+    /// Horizontal accuracy estimate in meters (NAV-PVT only)
+    pub h_acc_m: f32,
+    /// Vertical accuracy estimate in meters (NAV-PVT only)
+    pub v_acc_m: f32,
+    /// Speed accuracy estimate in m/s (NAV-PVT only)
+    pub s_acc_ms: f32,
+    /// True while NAV-PVT is arriving; false when the GGA fallback is driving
+    pub pvt_active: bool,
+    /// Link speed the receiver settled on, in baud
+    pub link_baud: u32,
+    /// Configured solution interval, in milliseconds.
+    ///
+    /// Reports what the module actually accepted, not what was requested — if
+    /// the rate key was rejected this is the module's own default.
+    pub nav_rate_ms: u16,
+    /// Bitmask of configuration keys the module acknowledged, one bit per entry
+    /// of [`GNSS_CFG_KEY_NAMES`].
+    ///
+    /// A clear bit means the key is not in force, which is not the same as
+    /// rejected: if [`GNSS_CFG_ABANDONED`] is set, configuration was given up
+    /// on partway through and the remaining groups were never attempted.
+    pub cfg_mask: u16,
+    /// Satellites in view, summed across constellations (NMEA GSV).
+    ///
+    /// Unlike `num_satellites`, which counts satellites *used in the fix* and
+    /// so reads zero throughout acquisition, this shows what the receiver can
+    /// actually see. Zero unless the firmware was built with `gnss-gsv` and
+    /// the fast link was achieved.
+    pub sats_in_view: u8,
 }
+
+/// Number of GNSS configuration key groups, and so of meaningful bits in
+/// [`GnssResp::cfg_mask`].
+///
+/// Firmware has its own `CFG_GROUP_COUNT`; the two are checked against each
+/// other at compile time where the handler bridges them.
+pub const GNSS_CFG_KEY_COUNT: usize = GNSS_CFG_KEY_NAMES.len();
+
+/// Every configuration group applied — the all-clear value of
+/// [`GnssResp::cfg_mask`], ignoring [`GNSS_CFG_ABANDONED`].
+pub const GNSS_CFG_MASK_ALL: u16 = (1 << GNSS_CFG_KEY_COUNT) - 1;
+
+/// Set in [`GnssResp::cfg_mask`] when the firmware stopped configuring partway
+/// through because the module went silent, rather than running every group.
+///
+/// Groups after that point were never sent, so their clear bits say nothing
+/// about whether the receiver would have accepted them.
+pub const GNSS_CFG_ABANDONED: u16 = 1 << 15;
+
+// The abandoned marker must stay clear of the per-group bits.
+const _: () = assert!(GNSS_CFG_KEY_COUNT < 15);
+
+/// Names of the configuration keys applied at GNSS boot, in the order their
+/// bits appear in [`GnssResp::cfg_mask`].
+pub const GNSS_CFG_KEY_NAMES: [&str; 10] = [
+    "DYNMODEL+FIXMODE",
+    "RATE-MEAS",
+    "RATE-NAV",
+    "MSGOUT-NAV-PVT",
+    "MSGOUT-GGA",
+    "MSGOUT-GLL",
+    "MSGOUT-GSA",
+    "MSGOUT-GSV",
+    "MSGOUT-VTG",
+    "MSGOUT-RMC",
+];
 
 // ============================================================================
 // Wire Types - Topics (streaming data)

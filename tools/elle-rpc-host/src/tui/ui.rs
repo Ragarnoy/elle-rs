@@ -228,7 +228,7 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(14), // attitude data + mag + heading + baro + gnss + rc age
+            Constraint::Length(16), // attitude data + mag + heading + baro + gnss + rc age
             Constraint::Length(5),  // controller output + engine + EDT + heading hold
             Constraint::Min(8),     // artificial horizon
         ])
@@ -355,12 +355,15 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         },
     );
 
-    let (gnss_pos_line, gnss_fix_line, gnss_alt_line) = state.gnss.map_or_else(
+    let (gnss_pos_line, gnss_fix_line, gnss_alt_line, gnss_vel_line, gnss_src_line) =
+        state.gnss.map_or_else(
         || {
             (
                 muted_line("  GPS: ---"),
                 muted_line("  Fix: ---"),
                 muted_line("  Alt: ---"),
+                muted_line("  Spd: ---"),
+                muted_line("  Src: ---"),
             )
         },
         |g| {
@@ -395,11 +398,29 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                             CRIT
                         }),
                     ),
-                    Span::styled(" | HDOP: ", Style::default().fg(LABEL)),
+                    // Satellites in view, when the firmware reports it: `Sats`
+                    // alone counts only those used in the fix, which stays at
+                    // zero for the whole of acquisition.
                     Span::styled(
-                        format!("{:.1}", g.hdop),
-                        Style::default().fg(scale(f64::from(g.hdop), 2.0, 5.0)),
+                        if g.sats_in_view > 0 {
+                            format!("/{}", g.sats_in_view)
+                        } else {
+                            String::new()
+                        },
+                        Style::default().fg(MUTED),
                     ),
+                    Span::styled(" | HDOP: ", Style::default().fg(LABEL)),
+                    // NAV-PVT carries no DOP, so on the primary path `hdop`
+                    // keeps its "unavailable" seed. Printing that as 99.9 in red
+                    // reads as a failing receiver for an entire healthy flight.
+                    if g.pvt_active {
+                        Span::styled("---", Style::default().fg(MUTED))
+                    } else {
+                        Span::styled(
+                            format!("{:.1}", g.hdop),
+                            Style::default().fg(scale(f64::from(g.hdop), 2.0, 5.0)),
+                        )
+                    },
                 ]),
                 kv(
                     "  Alt: ",
@@ -410,6 +431,76 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                         Color::White
                     },
                 ),
+                Line::from(vec![
+                    Span::styled("  Spd: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        format!("{:.1} m/s", g.ground_speed_ms),
+                        Style::default().fg(if g.fix_quality == 0 {
+                            MUTED
+                        } else {
+                            Color::White
+                        }),
+                    ),
+                    Span::styled(" | Trk: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        format!("{:.0}°", g.heading_motion_deg),
+                        Style::default().fg(if g.fix_quality == 0 {
+                            MUTED
+                        } else {
+                            Color::White
+                        }),
+                    ),
+                    Span::styled(" | hAcc: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        // hAcc is 0 until the first NAV-PVT; show that as
+                        // unknown rather than as a perfect fix.
+                        if g.h_acc_m > 0.0 {
+                            format!("{:.1}m", g.h_acc_m)
+                        } else {
+                            "---".to_string()
+                        },
+                        Style::default().fg(if g.h_acc_m > 0.0 {
+                            scale(f64::from(g.h_acc_m), 3.0, 10.0)
+                        } else {
+                            MUTED
+                        }),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Src: ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        if g.pvt_active { "NAV-PVT" } else { "NMEA" },
+                        Style::default().fg(if g.pvt_active { OK } else { WARN }),
+                    ),
+                    Span::styled(" | ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        if g.link_baud == 0 {
+                            "---".to_string()
+                        } else {
+                            format!("{} baud", g.link_baud)
+                        },
+                        // 9600 means the baud switch did not take.
+                        Style::default().fg(if g.link_baud >= 115_200 { OK } else { WARN }),
+                    ),
+                    Span::styled(" | ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        if g.nav_rate_ms == 0 {
+                            "---".to_string()
+                        } else {
+                            format!("{:.0} Hz", 1000.0 / f64::from(g.nav_rate_ms))
+                        },
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::styled(" | ", Style::default().fg(LABEL)),
+                    Span::styled(
+                        gnss_cfg_text(g.cfg_mask),
+                        Style::default().fg(if g.cfg_mask == elle_rpc_icd::GNSS_CFG_MASK_ALL {
+                            OK
+                        } else {
+                            WARN
+                        }),
+                    ),
+                ]),
             )
         },
     );
@@ -424,6 +515,8 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
         gnss_pos_line,
         gnss_fix_line,
         gnss_alt_line,
+        gnss_vel_line,
+        gnss_src_line,
         perf_line,
         imu_line,
         rc_age_line,
@@ -680,12 +773,57 @@ fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
     }
 }
 
+/// Summarise the GNSS configuration mask, naming the first key that is not in
+/// force.
+///
+/// The module NAKs per key, so a partial mask says exactly which setting did
+/// not take — far more use than "config failed". A mask carrying
+/// `GNSS_CFG_ABANDONED` is reported differently: the firmware stopped sending
+/// after the module went quiet, so the clear bits are keys never tried, and
+/// calling them rejected would send the reader after the wrong fault.
+fn gnss_cfg_text(mask: u16) -> String {
+    use elle_rpc_icd::{GNSS_CFG_ABANDONED, GNSS_CFG_KEY_NAMES, GNSS_CFG_MASK_ALL};
+
+    let abandoned = mask & GNSS_CFG_ABANDONED != 0;
+    let applied = mask & GNSS_CFG_MASK_ALL;
+
+    if !abandoned && applied == GNSS_CFG_MASK_ALL {
+        return "cfg ok".to_string();
+    }
+    let missing: Vec<&str> = GNSS_CFG_KEY_NAMES
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| applied & (1 << i) == 0)
+        .map(|(_, name)| *name)
+        .collect();
+    if abandoned {
+        return match missing.first() {
+            // Configuration stopped at the first key we never heard back on.
+            Some(first) => format!("cfg abandoned at {first} (module silent)"),
+            None => "cfg abandoned (module silent)".to_string(),
+        };
+    }
+    match missing.len() {
+        0 => "cfg ok".to_string(),
+        1 => format!("cfg: {} failed", missing[0]),
+        n => format!("cfg: {} failed +{}", missing[0], n - 1),
+    }
+}
+
 const fn log_code_text(code: u16) -> &'static str {
     match code {
         // GNSS (1–9)
-        1 => "GNSS: first GGA received",
+        1 => "GNSS: first fix",
         2 => "GNSS: periodic update",
         3 => "GNSS: UART error",
+        4 => "GNSS: config rejected (NAK)",
+        5 => "GNSS: NAV-PVT acquired",
+        6 => "GNSS: PVT stale, NMEA fallback",
+        7 => "GNSS: 115200 baud, 5Hz",
+        8 => "GNSS: baud switch failed, 9600",
+        140 => "GNSS: config key unanswered",
+        141 => "GNSS: config only partly applied",
+        9 => "GNSS: NO DATA from module",
         // Safety (10–19)
         10 => "Motors ARMED",
         11 => "Motors DISARMED",

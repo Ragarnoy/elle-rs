@@ -122,11 +122,18 @@ const fn is_leap(y: u32) -> bool {
 /// Session file counter — seeded from existing files on SD card after mount.
 static FILE_COUNTER: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
 
-/// Format a log filename as LOG_NNNN.ULG using the session counter.
+/// Format a log filename as LOG_NNNN.ulg using the session counter.
+///
+/// The extension is lowercase to match the ULog convention, which case-sensitive
+/// host tooling cares about. This only reaches the card because `embedded-fatfs`
+/// is built with the `lfn` feature: FAT 8.3 short names are uppercase by
+/// definition (`copy_short_name_part` uppercases unconditionally and the crate
+/// never sets the NT lowercase flags), so without a long-name entry this string
+/// would be stored as `LOG_NNNN.ULG` regardless of what we write here.
 fn next_log_name() -> heapless::String<16> {
     let n = FILE_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let mut s = heapless::String::new();
-    let _ = core::fmt::Write::write_fmt(&mut s, format_args!("LOG_{:04}.ULG", n));
+    let _ = core::fmt::Write::write_fmt(&mut s, format_args!("LOG_{:04}.ulg", n));
     s
 }
 
@@ -209,7 +216,12 @@ pub async fn sd_writer_task(
         }
     };
 
-    // Scan existing LOG_NNNN.ULG files to seed the counter past them
+    // Scan existing LOG_NNNN.ulg files to seed the counter past them.
+    //
+    // Matched case-insensitively: this reads the 8.3 *short* name, which FAT
+    // stores uppercase even for files we create as lowercase, and cards written
+    // by older firmware hold literal `LOG_NNNN.ULG`. Missing them would reset
+    // the counter to 0 and overwrite existing logs.
     {
         let root = fs.root_dir();
         let mut max_num: i32 = -1;
@@ -218,8 +230,8 @@ pub async fn sd_writer_task(
             let raw_name = entry.short_file_name_as_bytes();
             // Match "LOG_NNNN.ULG" (12 bytes with dot separator)
             if raw_name.len() >= 12
-                && &raw_name[..4] == b"LOG_"
-                && &raw_name[8..12] == b".ULG"
+                && raw_name[..4].eq_ignore_ascii_case(b"LOG_")
+                && raw_name[8..12].eq_ignore_ascii_case(b".ULG")
                 && let Ok(s) = core::str::from_utf8(&raw_name[4..8])
                 && let Ok(n) = s.parse::<i32>()
                 && n > max_num
@@ -230,7 +242,7 @@ pub async fn sd_writer_task(
         let start = (max_num + 1).max(0) as u16;
         FILE_COUNTER.store(start, core::sync::atomic::Ordering::Relaxed);
         if start > 0 {
-            info!("SD: found existing logs, next file: LOG_{:04}.ULG", start);
+            info!("SD: found existing logs, next file: LOG_{:04}.ulg", start);
         }
     }
 

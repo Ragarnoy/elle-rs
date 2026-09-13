@@ -10,6 +10,12 @@ pub enum Error<E> {
     FrameTooLarge,
     /// A blocking read timed out (no data available).
     Timeout,
+    /// A GPIO operation on the RESET_N pin failed.
+    ///
+    /// The underlying pin error is not carried: `OutputPin::Error` is a separate
+    /// type parameter from the UART error, and pin failures here are not
+    /// actionable beyond "the reset did not happen".
+    Pin,
 }
 
 impl<E> From<E> for Error<E> {

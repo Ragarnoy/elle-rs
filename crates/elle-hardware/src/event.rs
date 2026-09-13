@@ -35,6 +35,16 @@ pub fn send(level: u8, code: u16) {
 pub const EVT_GNSS_FIRST_FIX: u16 = 1;
 pub const EVT_GNSS_PERIODIC: u16 = 2;
 pub const EVT_GNSS_UART_ERROR: u16 = 3;
+pub const EVT_GNSS_CFG_NAK: u16 = 4;
+pub const EVT_GNSS_PVT_ACQUIRED: u16 = 5;
+pub const EVT_GNSS_NMEA_FALLBACK: u16 = 6;
+pub const EVT_GNSS_BAUD_SWITCHED: u16 = 7;
+pub const EVT_GNSS_BAUD_FALLBACK: u16 = 8;
+pub const EVT_GNSS_NO_DATA: u16 = 9;
+
+// GNSS, continued (140–149) — the 1–9 block is full
+pub const EVT_GNSS_CFG_TIMEOUT: u16 = 140;
+pub const EVT_GNSS_CFG_PARTIAL: u16 = 141;
 
 // Safety (10–19)
 pub const EVT_MOTORS_ARMED: u16 = 10;

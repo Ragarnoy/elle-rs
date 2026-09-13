@@ -420,11 +420,20 @@ fn handle_get_mag_cal(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagCa
     }
 }
 
+// `cfg_mask` is produced by the firmware against its own group list and read by
+// the host against the ICD's name list. Nothing else ties the two together, so
+// adding a group on one side would silently shift every key label on the other.
+#[cfg(feature = "gnss")]
+const _: () = assert!(
+    elle_hardware::gnss::CFG_GROUP_COUNT == elle_rpc_icd::GNSS_CFG_KEY_COUNT,
+    "GNSS config group count is out of step with GNSS_CFG_KEY_NAMES"
+);
+
 fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp {
     #[cfg(feature = "gnss")]
     {
-        if let Some(gnss) = crate::gnss_signal::GNSS_SIGNAL.try_take() {
-            crate::gnss_signal::GNSS_SIGNAL.signal(gnss);
+        if let Some(gnss) = elle_hardware::gnss::GNSS_SIGNAL.try_take() {
+            elle_hardware::gnss::GNSS_SIGNAL.signal(gnss);
             return GnssResp {
                 latitude: gnss.latitude,
                 longitude: gnss.longitude,
@@ -432,6 +441,19 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
                 fix_quality: gnss.fix_quality,
                 num_satellites: gnss.num_satellites,
                 hdop: gnss.hdop,
+                vel_n_ms: gnss.vel_n_ms,
+                vel_e_ms: gnss.vel_e_ms,
+                vel_d_ms: gnss.vel_d_ms,
+                ground_speed_ms: gnss.ground_speed_ms,
+                heading_motion_deg: gnss.heading_motion_deg,
+                h_acc_m: gnss.h_acc_m,
+                v_acc_m: gnss.v_acc_m,
+                s_acc_ms: gnss.s_acc_ms,
+                pvt_active: gnss.pvt_active,
+                link_baud: gnss.link_baud,
+                nav_rate_ms: gnss.nav_rate_ms,
+                cfg_mask: gnss.cfg_mask,
+                sats_in_view: gnss.sats_in_view,
             };
         }
     }
@@ -442,6 +464,19 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
         fix_quality: 0,
         num_satellites: 0,
         hdop: 99.9,
+        vel_n_ms: 0.0,
+        vel_e_ms: 0.0,
+        vel_d_ms: 0.0,
+        ground_speed_ms: 0.0,
+        heading_motion_deg: 0.0,
+        h_acc_m: 0.0,
+        v_acc_m: 0.0,
+        s_acc_ms: 0.0,
+        pvt_active: false,
+        link_baud: 0,
+        nav_rate_ms: 0,
+        cfg_mask: 0,
+        sats_in_view: 0,
     }
 }
 

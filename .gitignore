@@ -3,3 +3,4 @@
 /logs
 crates/elle-eagle/logs/
 *.ulg
+.DS_Store

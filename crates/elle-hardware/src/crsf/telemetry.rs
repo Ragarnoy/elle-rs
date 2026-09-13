@@ -73,6 +73,8 @@ pub struct TelemetryGpsData {
     pub longitude: f32,
     pub altitude_m: f32,
     pub num_satellites: u8,
+    /// Ground speed in m/s, from UBX-NAV-PVT.
+    pub ground_speed_ms: f32,
 }
 
 /// Dedicated GNSS signal for telemetry (populated by the GNSS task in elle-eagle).
@@ -145,7 +147,8 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
 ///   lat:i32 (deg × 1e7) + lon:i32 (deg × 1e7) + groundspeed:u16 (km/h × 10)
 ///   + heading:u16 (centideg, deg × 100) + altitude:u16 (m + 1000) + satellites:u8
 ///
-/// `heading_rad`: magnetic heading in radians (-π..π) from magnetometer.
+/// `heading_rad`: magnetic heading in radians (-π..π) from the magnetometer —
+/// deliberately not GNSS course over ground, which is meaningless at rest.
 /// GNSS fields populated when `gnss` feature is enabled and data is available.
 fn build_gps_frame(
     buf: &mut [u8; 19],
@@ -153,20 +156,20 @@ fn build_gps_frame(
     #[cfg(feature = "gnss")] gps: Option<&TelemetryGpsData>,
 ) {
     #[cfg(feature = "gnss")]
-    let (lat_i, lon_i, alt, sats) = if let Some(gps) = gps {
+    let (lat_i, lon_i, alt, sats, speed) = if let Some(gps) = gps {
         (
             (gps.latitude as f64 * 1e7) as i32,
             (gps.longitude as f64 * 1e7) as i32,
             (gps.altitude_m + 1000.0).max(0.0) as u16,
             gps.num_satellites,
+            // The frame carries km/h × 10; NAV-PVT reports m/s.
+            (gps.ground_speed_ms * (3.6 * 10.0)).clamp(0.0, f32::from(u16::MAX)) as u16,
         )
     } else {
-        (0i32, 0i32, 1000u16, 0u8)
+        (0i32, 0i32, 1000u16, 0u8, 0u16)
     };
     #[cfg(not(feature = "gnss"))]
-    let (lat_i, lon_i, alt, sats) = (0i32, 0i32, 1000u16, 0u8);
-
-    let speed: u16 = 0;
+    let (lat_i, lon_i, alt, sats, speed) = (0i32, 0i32, 1000u16, 0u8, 0u16);
     // Convert radians (-π..π) to signed centidegrees (-18000..18000).
     // EdgeTX reads this field as i16 and divides by 100 to get degrees.
     let cdeg = (heading_rad * (18000.0 / core::f32::consts::PI)) as i16;

@@ -6,6 +6,7 @@
 
 #![no_std]
 
+pub mod asynch;
 pub mod decoder;
 pub mod error;
 pub mod types;
@@ -21,7 +22,12 @@ use error::Error;
 use types::Frame;
 
 /// Duration in milliseconds to hold RESET_N low.
+///
+/// The datasheet requires at least 1 ms; 2 ms gives margin.
 const RESET_PULSE_MS: u32 = 2;
+
+/// Duration in milliseconds to wait after releasing RESET_N before reading.
+const RESET_SETTLE_MS: u32 = 500;
 
 /// Driver for the u-blox SAM-M10Q GNSS module over UART.
 ///
@@ -67,15 +73,19 @@ impl<U: Read + Write> SamM10q<U> {
     pub fn poll(&mut self) -> Result<Option<Frame<'_>>, Error<U::Error>> {
         let mut byte = [0u8; 1];
         match self.uart.read(&mut byte) {
-            Ok(0) => return Err(Error::Timeout),
+            // A zero-length read means the buffer is empty, not that anything
+            // failed — the caller should simply poll again.
+            Ok(0) => return Ok(None),
             Ok(_) => {}
             Err(e) => return Err(Error::Uart(e)),
         }
 
         match self.decoder.feed(byte[0]) {
             FeedResult::Pending => Ok(None),
-            FeedResult::FrameReady => Ok(Some(self.decoder.take_frame())),
-            FeedResult::Error(decoder::DecodeError::UbxChecksum) => Err(Error::Checksum),
+            FeedResult::FrameReady => Ok(self.decoder.take_frame()),
+            FeedResult::Error(
+                decoder::DecodeError::UbxChecksum | decoder::DecodeError::NmeaChecksum,
+            ) => Err(Error::Checksum),
             FeedResult::Error(decoder::DecodeError::FrameTooLarge) => Err(Error::FrameTooLarge),
             FeedResult::Error(decoder::DecodeError::InvalidSync) => {
                 // Invalid sync is non-fatal — just means garbage, treat as no frame
@@ -100,14 +110,20 @@ impl<U: Read + Write> SamM10q<U> {
 
             match self.decoder.feed(byte[0]) {
                 FeedResult::Pending => continue,
-                FeedResult::FrameReady => return Ok(self.decoder.take_frame()),
-                FeedResult::Error(decoder::DecodeError::UbxChecksum) => continue,
+                FeedResult::FrameReady => break,
+                FeedResult::Error(
+                    decoder::DecodeError::UbxChecksum | decoder::DecodeError::NmeaChecksum,
+                ) => continue,
                 FeedResult::Error(decoder::DecodeError::FrameTooLarge) => {
                     return Err(Error::FrameTooLarge);
                 }
                 FeedResult::Error(decoder::DecodeError::InvalidSync) => continue,
             }
         }
+
+        // `FrameReady` guarantees the decoder holds a frame, so the `None` arm
+        // is unreachable — it is mapped to an error rather than a panic.
+        self.decoder.take_frame().ok_or(Error::Timeout)
     }
 
     /// Send a UBX command to the module.
@@ -136,17 +152,24 @@ impl<U: Read + Write> SamM10q<U> {
 
     /// Perform a hardware reset via the RESET_N pin.
     ///
-    /// Pulls RESET_N low for 2 ms then releases it. Also resets the internal
-    /// decoder state.
+    /// Holds RESET_N low for `RESET_PULSE_MS` (the datasheet requires at least
+    /// 1 ms), releases it, then waits `RESET_SETTLE_MS` for the module to boot
+    /// before returning — reading immediately after release yields garbage.
+    /// Also resets the internal decoder state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Pin`] if driving RESET_N fails.
     pub fn reset<P: OutputPin, D: DelayNs>(
         &mut self,
         pin: &mut P,
         delay: &mut D,
     ) -> Result<(), Error<U::Error>> {
-        // RESET_N is active low
-        let _ = pin.set_low();
+        // RESET_N is active low.
+        pin.set_low().map_err(|_| Error::Pin)?;
         delay.delay_ms(RESET_PULSE_MS);
-        let _ = pin.set_high();
+        pin.set_high().map_err(|_| Error::Pin)?;
+        delay.delay_ms(RESET_SETTLE_MS);
         self.decoder.reset();
         Ok(())
     }
@@ -231,7 +254,7 @@ mod tests {
 
     #[test]
     fn poll_nmea_frame() {
-        let data = b"$GPGGA,test*00\r\n";
+        let data = b"$GPGGA,test*6C\r\n";
         let uart = MockUart::new(data);
         let mut gnss = SamM10q::new(uart);
 
@@ -273,14 +296,16 @@ mod tests {
         }
     }
 
+    /// An empty UART is "nothing yet", not an error — `poll()` is meant to be
+    /// called in a loop against a non-blocking port.
     #[test]
-    fn poll_returns_timeout_on_empty() {
+    fn poll_returns_none_on_empty() {
         let uart = MockUart::new(&[]);
         let mut gnss = SamM10q::new(uart);
 
         match gnss.poll() {
-            Err(Error::Timeout) => {}
-            other => panic!("expected Timeout, got {:?}", other),
+            Ok(None) => {}
+            other => panic!("expected Ok(None), got {:?}", other),
         }
     }
 
@@ -349,7 +374,7 @@ mod tests {
     #[test]
     fn read_frame_skips_garbage() {
         let mut data = vec![0xFF, 0x00, 0x42]; // garbage
-        data.extend_from_slice(b"$GPRMC,test*00\r\n");
+        data.extend_from_slice(b"$GPRMC,test*71\r\n");
         let uart = MockUart::new(&data);
         let mut gnss = SamM10q::new(uart);
 
@@ -371,7 +396,7 @@ mod tests {
         match gnss.read_frame() {
             Ok(Frame::Nmea(f)) => {
                 assert!(f.raw.starts_with(b"$GPGGA"));
-                let parsed = f.parsed.expect("GGA should parse");
+                let parsed = f.parse().expect("GGA should parse");
                 match parsed {
                     nmea::ParseResult::GGA(gga) => {
                         let lat = gga.latitude.expect("should have latitude");
@@ -407,7 +432,7 @@ mod tests {
         match gnss.read_frame() {
             Ok(Frame::Nmea(f)) => {
                 assert!(f.raw.starts_with(b"$GPGGA"));
-                let parsed = f.parsed.expect("GGA should parse");
+                let parsed = f.parse().expect("GGA should parse");
                 match parsed {
                     nmea::ParseResult::GGA(gga) => {
                         assert!(gga.latitude.is_none());

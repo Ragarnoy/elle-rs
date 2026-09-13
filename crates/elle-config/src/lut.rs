@@ -19,7 +19,11 @@ const fn compute_reduction(amount: i32, max_range: i32, max_percent: i32) -> i32
     } else {
         max_percent
     };
-    if raw < max_percent { raw } else { max_percent }
+    if raw < max_percent {
+        raw
+    } else {
+        max_percent
+    }
 }
 
 /// RC value range (0-2047, so we need 2048 entries)
@@ -330,32 +334,40 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 }
 
 /// Measured eRPM→DShot mapping for dart (500-sample per step, rpm_range sweep).
-/// RPM × 7 (14-pole assumed). Covers DShot 48–1748; RPM plateaus 1748–1798 and
-/// declines above that (prop stall), so the table stops at the last rising point.
+/// RPM × 7 (14-pole). Covers DShot 48–1998; RPM is strictly rising through full
+/// throttle, so the table (and `GOVERNOR_DSHOT_MAX`) go to the last measured point.
+///
+/// STALE: swept on the 2-blade prop that broke on 13 Sep 2026. The 3-blade now
+/// fitted makes ~20% less eRPM for the same DShot, so this over-commands
+/// feedforward across the range. Re-run `rpm_range` on the 3-blade and replace
+/// the table. See the `MAX_RPM` note in `lib.rs`.
 #[cfg(feature = "platform-dart")]
-const GOVERNOR_FF_TABLE: [(u32, u16); 18] = [
-    (2_534, 48),    //    362 RPM
-    (9_569, 148),   //  1,367 RPM
-    (17_997, 248),  //  2,571 RPM
-    (25_816, 348),  //  3,688 RPM
-    (33_096, 448),  //  4,728 RPM
-    (39_690, 548),  //  5,670 RPM
-    (46_270, 648),  //  6,610 RPM
-    (53_039, 748),  //  7,577 RPM
-    (57_988, 848),  //  8,284 RPM
-    (63_126, 948),  //  9,018 RPM
-    (68_810, 1048), //  9,830 RPM
-    (73_325, 1148), // 10,475 RPM
-    (77_287, 1248), // 11,041 RPM
-    (80_808, 1348), // 11,544 RPM
-    (84_462, 1448), // 12,066 RPM
-    (87_955, 1548), // 12,565 RPM
-    (91_084, 1648), // 13,012 RPM
-    (93_968, 1748), // 13,424 RPM — last rising point; governor caps here
+const GOVERNOR_FF_TABLE: [(u32, u16); 21] = [
+    (2_667, 48),     //    381 RPM
+    (11_585, 148),   //  1,655 RPM
+    (22_162, 248),   //  3,166 RPM
+    (30_919, 348),   //  4,417 RPM
+    (39_284, 448),   //  5,612 RPM
+    (46_375, 548),   //  6,625 RPM
+    (54_292, 648),   //  7,756 RPM
+    (61_194, 748),   //  8,742 RPM
+    (68_810, 848),   //  9,830 RPM
+    (77_238, 948),   // 11,034 RPM
+    (84_042, 1048),  // 12,006 RPM
+    (90_734, 1148),  // 12,962 RPM
+    (97_482, 1248),  // 13,926 RPM
+    (104_034, 1348), // 14,862 RPM
+    (110_292, 1448), // 15,756 RPM
+    (116_578, 1548), // 16,654 RPM
+    (122_318, 1648), // 17,474 RPM
+    (127_813, 1748), // 18,259 RPM
+    (133_686, 1848), // 19,098 RPM
+    (139_167, 1948), // 19,881 RPM
+    (142_135, 1998), // 20,305 RPM — last measured point (MAX_ERPM)
 ];
 
 /// Governor feedforward for dart: piecewise linear interpolation over measured LUT.
-/// Returns DShot 0–1748 (capped below the RPM plateau to avoid the prop stall region).
+/// Returns DShot 0–1998.
 #[cfg(feature = "platform-dart")]
 #[must_use]
 pub fn governor_feedforward(target_erpm: u32) -> u16 {
@@ -369,7 +381,7 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 
     let last = GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1];
     if target_erpm >= last.0 {
-        return last.1; // 1748 — never enter prop stall region
+        return last.1;
     }
 
     for i in 1..GOVERNOR_FF_TABLE.len() {
