@@ -1,9 +1,23 @@
 # Dart attitude PID
 
 Engineering note from ULogs `LOG_0020`–`LOG_0035` (13 Sep 2026).
-Kp values below are measured at rest (armed, throttle 0, I-term reset):
-`corr ≈ 5 · Kp · error_rad`. Ki/Kd are the compiled defaults that rode along
-with that Kp.
+All times are **seconds from the start of the log**, not the boot-clock
+timestamps stored in the file (those run ~4 s ahead; on absolute time the
+0026 window lands in a throttle-0 segment and every number below changes).
+
+Kp and Kd below are measured at rest (armed, throttle 0, so I ≡ 0) by least
+squares on `corr = 5·(Kp·e − Kd·ω)`: Kp to ±0.002, Kd to ±0.005, with the two
+columns near-orthogonal (|corr(Kp,Kd)| < 0.1). Ki is the compiled default that
+rode along. None of the pre-0032 builds are in git — the at-rest fit is the
+only record of what flew.
+
+**Prop:** the 2-blade broke mid-session and a 3-blade went on before `LOG_0019`.
+Every log used here (0020–0035) is on the 3-blade, so the comparisons below are
+on one airframe. Do **not** fold in `LOG_0014`–`LOG_0018`: at the same pack
+voltage those reach 87 k eRPM at DShot 1000–1200 and 141–146 k at full stick,
+against 72–79 k and ~103 k for everything from 0020 on — a ~30% different plant
+at the top end. `GOVERNOR_FF_TABLE` as committed describes the *broken* prop
+(see the governor note in `elle-config`).
 
 Flash PID is currently ignored (`IGNORE_PID_FLASH`). Do not `clearpid` — that
 path erases the whole 64 KB profile sector (mag cal lives there) and has
@@ -23,7 +37,7 @@ of those two holds (derivation in [Fit to the logs](#fit-to-the-logs)).
 |---|---|---|---|---|---|---|
 | Pitch Kp | 1.00 | 0.50 | 0.50 | 0.25 | 0.35 | **0.45** |
 | Pitch Ki | 0.10 | ~0.05 | ~0.05 | 0.025 | 0.020 | **0.020** |
-| Pitch Kd | 0.25 | ~0.125 | ~0.125 | 0.0625 | 0.12 | **0.16** |
+| Pitch Kd | 0.25 | ~0.10 | ~0.11 | 0.0625 | 0.12 | **0.16** |
 | Roll Kp | 0.50 | 0.40 | 0.125 | 0.125 | 0.20 | **0.25** |
 | Roll Ki | 0.03 | ~0.024 | 0.0075 | 0.0075 | 0.012 | **0.012** |
 | Roll Kd | 0.12 | ~0.10 | 0.03 | 0.03 | 0.06 | **0.07** |
@@ -35,7 +49,7 @@ stick through the throw.
 
 Pitch 0.50 is the 0026 P that held (and then punched). We are not going
 back to it: I is 40% of 0026’s (0.020 vs 0.05) and D is above 0026’s
-(0.16 vs 0.125). Roll 0.40 is the 0020 blow-up — 0.25 is halfway from
+(0.16 vs ~0.11). Roll 0.40 is the 0020 blow-up — 0.25 is halfway from
 today to that wall.
 
 ---
@@ -69,10 +83,23 @@ İ = e ,   I ∈ [−0.5, +0.5] ,   I ← 0 if disarmed or throttle < 0.05
 e = (filtered setpoint) − AHRS
 ```
 
-Replaying that on the hops with the compiled gains matches the logged
-correction to RMSE **0.000–0.022** (0032 pitch/roll, 0026 hold, 0035-a).
-So Ki/Kd that rode with the measured Kp are the right ones, and the
-algebra below is the same loop that flew.
+Replaying that forward on the hold windows, with the gains above, gives
+per-window RMSE against the logged correction:
+
+| Window | pitch | roll |
+|---|---|---|
+| 0026 hold 58–65 s | **0.244** | 0.055 |
+| 0032 hold 76–80 s | **0.024** | 0.065 |
+| 0035-j 621–628 s | 0.092 | 0.059 |
+| 0035-a 75–84 s | 0.086 | 0.090 |
+
+Only 0032 is a tight reproduction. The 0026 residual is *not* a wrong-gain
+guess — refitting Kp/Ki/Kd freely on that window still leaves 0.159, so it is
+real unmodelled scatter (attitude/command skew while the airframe is moving
+fast). **The tick-by-tick loop is verified on 0032 only.** The invert below
+uses window *means* of `u_d` and `e`, and those do reproduce on all four
+windows — but 0026, which drives the whole pitch recommendation, rests on the
+mean, not on a matched trace.
 
 A 2nd-order plant `θ̈ = aθ̇ + bθ + c u + …` fitted on the same windows
 has **R² ≈ 0** (gyro/AHRS acceleration is noise). A 1st-order
@@ -141,18 +168,18 @@ u_net = 5·Kp·e + 5·Ki·0.5 − 5·Kd·ω
 
 | Gains | P | I | D | **u_net** |
 |---|---|---|---|---|
-| 0026 (punched) | 0.436 | 0.125 | 0.164 | **0.398** |
+| 0026 (punched) | 0.436 | 0.125 | 0.144 | **0.417** |
 | 0032–35 (soft) | 0.218 | 0.062 | 0.082 | 0.199 |
 | 0.35 / 0.020 / 0.12 | 0.305 | 0.050 | 0.157 | 0.198 |
 | **0.45 / 0.020 / 0.16** | 0.393 | 0.050 | 0.209 | **0.233** |
 | 0.50 / 0.020 / 0.16 | 0.436 | 0.050 | 0.209 | 0.277 |
 
-0.45 / 0.16 has 58% of 0026’s punch drive and more D than 0026 at the
-same rate (0.209 vs 0.164). Kd 0.12 was only “0026’s D”, and 0026’s D
-did not stop the leap.
+0.45 / 0.16 has 56% of 0026’s punch drive and 45% more D than 0026 at the
+same rate (0.209 vs 0.144). Kd 0.12 is barely above 0026’s measured ~0.11,
+and 0026’s D did not stop the leap.
 
 **Roll Kp 0.25** is the invert of `u_d = −0.24` to ~10° residual
-(from 20°). 0.20 → 12°, 0.30 → 8°, 0.40 → 5° and that is the 0020
+(from 20°). 0.20 → 12°, 0.30 → 8°, 0.40 → 6° and that is the 0020
 oscillation. Kd 0.07 is ~2× today, under 0020’s ~0.10.
 
 ### Mix budget at the fitted gains
@@ -208,9 +235,12 @@ the new gains shows one axis starving the other.
 
 ## Pitch, with roll in the picture
 
-The 0.25 cut **did** fly. The 0026 integrator punch is gone (I-residual p90
-≈ 0.06 vs 0.14 on 0026). Two pitch problems remain, and they are not the
-same event.
+The 0.25 cut **did** fly. The I *term* halved with Ki — its p90 contribution
+to `u` is 0.062 against 0026’s 0.125. But the integrator itself is pinned at
+the ±0.5 clamp just as often: |I| p90 = 0.500 on 0026, 0032, 0033 **and**
+0035. Nothing about the winding changed, only the gain on it — and Ki 0.020
+will saturate the same way, for a constant 0.050. Two pitch problems remain,
+and they are not the same event.
 
 ### 1. Steady sag — real, and not caused by roll
 
@@ -240,9 +270,9 @@ pitch would spend the extra throw on a wing that is still walking out.
 Pitch rises of ≥15° in 0.40 s, Stabilized, throttle up:
 
 - **0026 t = 64.9 s (the original punch):** +1° → +16°, **bank +2.3°**, mix
-  busy 0.64. Wings level, surfaces not on the stops. I-residual on that hop
-  peaked at 0.47. This is the integrator winding while the nose sat low, then
-  unloading.
+  busy 0.64. Wings level, surfaces not on the stops. I was hard against the
+  +0.5 clamp, worth 0.125 of elevator. This is the integrator winding while
+  the nose sat low, then unloading.
 - **0032 t = 79.9 s:** −5° → +11°, **bank +21°**, mix busy 0.50. Both axes
   late; mix still has room. Then full stick and it comes apart.
 - **0033 / 0035:** most leaps are full-stick (setpoint 25°) porpoise, often
@@ -274,8 +304,9 @@ On 0032, roll stick was **centered** (wants 0°) from 70–80 s. Bank walked
 P = `5 · 0.125 · 0.35 ≈ 0.22`. That is the late wing.
 
 0035’s clean hop held **8° of uncommanded bank** the whole time (corr ≈
-−0.11), then roll blew to ±50° when pitch leaped. Seven other 0035 windows
-sat at 12–33° of uncommanded bank for 1–3 s with corr still around −0.2.
+−0.11), then went fully inverted (|roll| reaches 180°) when pitch leaped.
+Six other 0035 windows sat at 12–38° of uncommanded bank for 1.4–3.2 s with
+corr still around −0.2.
 
 0020’s roll Kp **0.40** is the other wall (max corr 9). Next is **0.25**
 (2× today, still under that wall), with D 0.07 and I barely moved
@@ -301,7 +332,11 @@ busy goes 0.50 → ~0.93. Still under the clamp. The next hop has room.
 
 ## What this is not
 
-- **Not a phugoid.** The leap is 0.3–0.4 s, not several seconds.
+- **Not established either way: phugoid.** The “0.3–0.4 s” figure was the
+  detector window (≥15° rise in 0.40 s), not the event. Onset to peak is
+  **2.7 s** on both named leaps (0026 t=64.5: +2° → +26°; 0032 t=79.5:
+  −5° → +30°). That is not evidence of a phugoid, but it does not exclude
+  one — it is a single divergence, not a sustained oscillation.
 - **Not flash PID.** Every hop of the day logged empty or skipped flash.
   0.50 then 0.25 are compiled defaults.
 - **Not “cut P again.”** 0.25 already leaves 5–12° of level-wing sag with
