@@ -443,10 +443,15 @@ impl<'a> FlightController<'a> {
                 self.filtered_pitch_setpoint_rad = pitch_setpoint_rad;
                 self.filtered_roll_setpoint_rad = roll_setpoint_rad;
             } else {
-                self.filtered_pitch_setpoint_rad +=
-                    SETPOINT_FILTER_ALPHA * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad);
-                self.filtered_roll_setpoint_rad +=
-                    SETPOINT_FILTER_ALPHA * (roll_setpoint_rad - self.filtered_roll_setpoint_rad);
+                // EMA smoothing, with each step capped so the target never moves
+                // faster than MAX_SETPOINT_RATE_DEG_S.
+                let max_step = MAX_SETPOINT_RATE_DEG_S.to_radians() * CONTROL_LOOP_DT;
+                self.filtered_pitch_setpoint_rad += (SETPOINT_FILTER_ALPHA
+                    * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad))
+                    .clamp(-max_step, max_step);
+                self.filtered_roll_setpoint_rad += (SETPOINT_FILTER_ALPHA
+                    * (roll_setpoint_rad - self.filtered_roll_setpoint_rad))
+                    .clamp(-max_step, max_step);
             }
         }
 

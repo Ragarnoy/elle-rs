@@ -267,7 +267,9 @@ pub const GYRO_BIAS_TIMEOUT_SAMPLES: u32 = 10_000;
 
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
-pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)
+/// Max rate the smoothed attitude setpoint may move (°/s). Caps the EMA's
+/// initial jump on a stick step (~500°/s at alpha 0.15, 83 Hz): full bank in 0.5 s.
+pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;
 
 // Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
@@ -385,6 +387,7 @@ const _: () = assert!(
     HEADING_HOLD_MAX_ROLL_DEG > 0.0 && HEADING_HOLD_MAX_ROLL_DEG <= STABILIZED_MAX_ROLL_DEG
 );
 const _: () = assert!(HEADING_HOLD_MAX_ROLL_RATE_DEG_S > 0.0);
+const _: () = assert!(MAX_SETPOINT_RATE_DEG_S > 0.0);
 
 // Motor poles must be even (eRPM = RPM × poles/2)
 const _: () = assert!(MOTOR_POLES.is_multiple_of(2));
