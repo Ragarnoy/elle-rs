@@ -35,6 +35,8 @@ panic-probe = { workspace = true }
 
 [features]
 default = ["defmt-logging", "gnss"]
+# RC/CRSF pilot commands in RPC mode (requires rpc-control; TUI keeps monitoring).
+rpc-rc = ["elle-app/rpc-rc"]
 performance-monitoring = ["elle-system/performance-monitoring", "elle-app/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
 rpc-control = ["elle-system/rpc-control", "elle-app/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless", "elle-hardware/gnss-gsv"]

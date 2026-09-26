@@ -14,6 +14,11 @@ pub mod engines;
 pub mod logging;
 pub mod support;
 
+#[cfg(not(feature = "rpc-control"))]
+pub mod flight;
+#[cfg(feature = "rpc-control")]
+pub mod rpc;
+
 #[cfg(feature = "rpc-control")]
 pub mod flight_state;
 #[cfg(feature = "rpc-control")]
