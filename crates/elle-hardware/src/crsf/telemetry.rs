@@ -6,7 +6,8 @@
 use crate::imu::{AttitudeData, BARO, MAG};
 use crc::{CRC_8_DVB_S2, Crc};
 use defmt::warn;
-use embassy_rp::uart::{Async, UartTx};
+use embassy_rp::mode::Async;
+use embassy_rp::uart::UartTx;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker};

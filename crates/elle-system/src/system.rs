@@ -111,7 +111,7 @@ pub struct FlightController<'a> {
     // Controller output snapshot for observability
     last_output: ControllerOutputSnapshot,
     // Supervisor components
-    watchdog: Option<Watchdog>,
+    watchdog: Option<Watchdog<'static>>,
     core1_health: CoreHealth,
     last_watchdog_kick: Instant,
     supervisor_enabled: bool,
@@ -185,7 +185,7 @@ impl<'a> FlightController<'a> {
     }
 
     /// Initialize supervisor components (watchdog and health monitoring)
-    pub fn initialize_supervisor(&mut self, mut watchdog: Watchdog) {
+    pub fn initialize_supervisor(&mut self, mut watchdog: Watchdog<'static>) {
         // Configure watchdog for critical flight safety timeout
         watchdog.start(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
         self.watchdog = Some(watchdog);

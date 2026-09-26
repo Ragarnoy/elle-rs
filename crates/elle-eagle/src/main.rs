@@ -62,12 +62,13 @@ use embassy_executor::Spawner;
 use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
 use embassy_rp::executor::Executor;
-use embassy_rp::flash::{Async, Flash};
+use embassy_rp::flash::Flash;
 use embassy_rp::i2c::{Config, I2c};
+use embassy_rp::mode::Async;
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{
-    DMA_CH2, FLASH, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_5, PIN_8, PIN_9, PIN_10, PIO0, PIO1,
-    PIO2, SPI0, UART0, UART1,
+    DMA_CH2, I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_5, PIN_8, PIN_9, PIN_10, PIO0, PIO1, PIO2, SPI0,
+    UART0, UART1,
 };
 use embassy_rp::pio::{InterruptHandler as PioIrqHandler, Pio};
 use embassy_rp::uart::BufferedInterruptHandler as BufferedUartIrqHandler;
@@ -279,7 +280,6 @@ pub mod rc_signal {
     pub static RC_SIGNAL: Signal<CriticalSectionRawMutex, [u16; 16]> = Signal::new();
 }
 
-
 #[cfg(feature = "rpc-control")]
 mod rpc_handlers;
 
@@ -307,7 +307,7 @@ async fn main(spawner: Spawner) {
 
     info!("Core0: Starting flash manager");
     // Create flash manager on Core 0 before spawning Core 1
-    let flash = embassy_rp::flash::Flash::<_, Async, { FLASH_SIZE }>::new(p.FLASH, p.DMA_CH1, Irqs);
+    let flash = embassy_rp::flash::Flash::<Async, { FLASH_SIZE }>::new(p.FLASH, p.DMA_CH1, Irqs);
     // Small delay to let debug probe settle
     Timer::after_millis(10).await;
     spawner.spawn(flash_manager_task(flash).unwrap());
@@ -316,7 +316,7 @@ async fn main(spawner: Spawner) {
     info!("Core0: Starting SD card writer");
     {
         let mut sd_spi_config = embassy_rp::spi::Config::default();
-        sd_spi_config.frequency = 400_000; // 400kHz for SD card init
+        sd_spi_config.frequency = embassy_rp::time::Hertz::khz(400); // 400kHz for SD card init
         let sd_spi = embassy_rp::spi::Spi::new(
             p.SPI1,
             p.PIN_26,
@@ -326,7 +326,8 @@ async fn main(spawner: Spawner) {
             p.DMA_CH6,
             Irqs,
             sd_spi_config,
-        );
+        )
+        .unwrap();
         let sd_cs = embassy_rp::gpio::Output::new(p.PIN_25, embassy_rp::gpio::Level::High);
         let sd_detect = embassy_rp::gpio::Input::new(p.PIN_23, embassy_rp::gpio::Pull::Up);
         spawner.spawn(
@@ -356,16 +357,29 @@ async fn main(spawner: Spawner) {
 
     // Setup DShot300 engines on PIO1 (left, PIN_11) and PIO2 (right, PIN_15)
     info!("Core0: Setting up DShot300 engines");
+    // One engine per PIO block. The program is only borrowed while the driver is
+    // built; the block's `Common` and unused state machines drop here, as they did
+    // inside the pre-0.5 constructor.
+    let Pio {
+        mut common, sm0, ..
+    } = Pio::new(p.PIO1, Irqs);
+    let prog = embassy_dshot::rp::BidirDshotProgram::new(&mut common);
     let engine_left = embassy_dshot::rp::BidirDshotPio::new(
-        p.PIO1,
-        Irqs,
+        sm0,
+        &mut common,
         p.PIN_14,
+        &prog,
         embassy_dshot::rp::DshotSpeed::DShot300,
     );
+    let Pio {
+        mut common, sm0, ..
+    } = Pio::new(p.PIO2, Irqs);
+    let prog = embassy_dshot::rp::BidirDshotProgram::new(&mut common);
     let engine_right = embassy_dshot::rp::BidirDshotPio::new(
-        p.PIO2,
-        Irqs,
+        sm0,
+        &mut common,
         p.PIN_11,
+        &prog,
         embassy_dshot::rp::DshotSpeed::DShot300,
     );
     spawner.spawn(dshot_task(engine_left, engine_right).unwrap());
@@ -408,7 +422,7 @@ async fn main(spawner: Spawner) {
 
         // Split UART1: RX for CRSF receiver, TX for telemetry
         let uart = embassy_rp::uart::Uart::new(
-            p.UART1, p.PIN_20, p.PIN_21, Irqs, p.DMA_CH4, p.DMA_CH3, config,
+            p.UART1, p.PIN_20, p.PIN_21, p.DMA_CH4, p.DMA_CH3, Irqs, config,
         );
         let (tx, rx) = uart.split();
         let crsf = CrsfReceiver::new(rx);
@@ -1949,11 +1963,11 @@ async fn imu_task(
 
     // I2C bus — always wrapped in RefCell (both cfg paths use shared I2C)
     let mut i2c_config = Config::default();
-    i2c_config.frequency = IMU_I2C_FREQ;
+    i2c_config.frequency = embassy_rp::time::Hertz(IMU_I2C_FREQ);
     let i2c_bus = I2c::new_blocking(i2c, scl, sda, i2c_config);
 
     use core::cell::RefCell;
-    static I2C_BUS: StaticCell<RefCell<I2c<'static, I2C0, embassy_rp::i2c::Blocking>>> =
+    static I2C_BUS: StaticCell<RefCell<I2c<'static, embassy_rp::mode::Blocking>>> =
         StaticCell::new();
     let i2c_ref = I2C_BUS.init(RefCell::new(i2c_bus));
 
@@ -1965,12 +1979,13 @@ async fn imu_task(
         use embedded_hal_bus::spi::ExclusiveDevice;
 
         let mut spi_config = rp_spi::Config::default();
-        spi_config.frequency = elle_config::IMU_SPI_FREQ;
+        spi_config.frequency = embassy_rp::time::Hertz(elle_config::IMU_SPI_FREQ);
         // SPI Mode 0 (CPOL=0, CPHA=0) — ICM-42686 default
         spi_config.polarity = rp_spi::Polarity::IdleLow;
         spi_config.phase = rp_spi::Phase::CaptureOnFirstTransition;
 
-        let spi_bus = rp_spi::Spi::new_blocking(spi, spi_sck, spi_mosi, spi_miso, spi_config);
+        let spi_bus =
+            rp_spi::Spi::new_blocking(spi, spi_sck, spi_mosi, spi_miso, spi_config).unwrap();
         let cs = Output::new(spi_cs, Level::High);
         let spi_dev = ExclusiveDevice::new(spi_bus, cs, embassy_time::Delay).unwrap();
         let int1 = Input::new(int1_pin, Pull::None);
@@ -2003,7 +2018,7 @@ async fn imu_task(
 }
 
 #[embassy_executor::task]
-async fn flash_manager_task(flash: Flash<'static, FLASH, Async, { FLASH_SIZE }>) {
+async fn flash_manager_task(flash: Flash<'static, Async, { FLASH_SIZE }>) {
     info!("Core0: Flash manager task starting");
     let mut manager = SequentialFlashManager::new(flash);
     manager.run().await;

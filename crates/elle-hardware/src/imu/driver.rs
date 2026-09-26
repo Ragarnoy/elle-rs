@@ -5,17 +5,16 @@ use core::cell::RefCell;
 use elle_error::ImuError;
 use embassy_rp::gpio::{Input, Output};
 use embassy_rp::i2c;
-use embassy_rp::peripherals::{I2C0, SPI0};
+use embassy_rp::mode::Blocking;
 use embassy_rp::spi;
 use embassy_sync::channel::{Sender, TrySendError};
 use embassy_time::{Duration, Timer};
 use embedded_hal_bus::i2c::RefCellDevice as I2cRefCellDevice;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
-type I2cBus<'a> = i2c::I2c<'a, I2C0, i2c::Blocking>;
+type I2cBus<'a> = i2c::I2c<'a, Blocking>;
 type SharedI2c<'a> = I2cRefCellDevice<'a, I2cBus<'a>>;
-type SpiDev<'a> =
-    ExclusiveDevice<spi::Spi<'a, SPI0, spi::Blocking>, Output<'a>, embassy_time::Delay>;
+type SpiDev<'a> = ExclusiveDevice<spi::Spi<'a, Blocking>, Output<'a>, embassy_time::Delay>;
 
 pub struct Imu<'a> {
     icm: Option<icm426xx::ICM42686<SpiDev<'a>, icm426xx::Ready>>,

@@ -2,9 +2,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::NVIC;
 use defmt::*;
 use elle_config::profile::{FlashRequest, FlashResponse, ULOG_CHUNK_SIZE, ULOG_WRITE_CHUNK_SIZE};
-use embassy_rp::flash::{Async, Flash};
+use embassy_rp::flash::Flash;
 use embassy_rp::interrupt;
-use embassy_rp::peripherals::FLASH;
+use embassy_rp::mode::Async;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
@@ -62,7 +62,7 @@ pub static FLASH_RESPONSE_SIGNAL: Signal<CriticalSectionRawMutex, FlashResponse>
 pub static ULOG_BYTES_USED: AtomicU32 = AtomicU32::new(0);
 pub static ULOG_ITEMS_STORED: AtomicU32 = AtomicU32::new(0);
 
-type FlashDevice<'a> = Flash<'a, FLASH, Async, { elle_config::profile::FLASH_SIZE }>;
+type FlashDevice<'a> = Flash<'a, Async, { elle_config::profile::FLASH_SIZE }>;
 
 /// Number of erase pages in the PID/mag-cal profile map region (64KB / 4KB = 16)
 const PROFILE_PAGE_COUNT: usize = ((PROFILE_FLASH_END - PROFILE_FLASH_START) as usize) / ERASE_SIZE;

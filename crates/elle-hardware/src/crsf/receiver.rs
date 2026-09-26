@@ -1,7 +1,8 @@
 use crsf::{Packet, Parser, ParserConfig};
 use defmt::{debug, warn};
 use elle_control::commands::{PilotCommands, RawCommands};
-use embassy_rp::uart::{Async, Config, DataBits, Parity, StopBits, UartRx};
+use embassy_rp::mode::Async;
+use embassy_rp::uart::{Config, DataBits, Parity, StopBits, UartRx};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};

@@ -1034,7 +1034,7 @@ dependencies = [
  "elle-system",
  "embassy-dshot",
  "embassy-executor",
- "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d)",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
  "embassy-rp",
  "embassy-sync",
  "embassy-time",
@@ -1063,7 +1063,7 @@ dependencies = [
  "elle-system",
  "embassy-dshot",
  "embassy-executor",
- "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d)",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
  "embassy-rp",
  "embassy-sync",
  "embassy-time",
@@ -1103,7 +1103,7 @@ dependencies = [
  "embassy-dshot",
  "embassy-embedded-hal",
  "embassy-executor",
- "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d)",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
  "embassy-rp",
  "embassy-sync",
  "embassy-time",
@@ -1178,7 +1178,7 @@ dependencies = [
  "elle-hardware",
  "elle-rpc-icd",
  "embassy-executor",
- "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d)",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
  "embassy-rp",
  "embassy-sync",
  "embassy-time",
@@ -1201,10 +1201,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "embassy-crypto"
+version = "0.1.0"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
+dependencies = [
+ "defmt 1.1.1",
+ "unitrait",
+]
+
+[[package]]
 name = "embassy-dshot"
-version = "0.3.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f79f5490c807a8e4003c60d78b4142475769e0346690cb15a187739e835e8283"
+checksum = "db35eb03596ce447c005349d5b8e6cf1d4226da2b6fa34621436c6c7f1c0bd48"
 dependencies = [
  "defmt 1.1.1",
  "dshot-frame",
@@ -1216,10 +1225,9 @@ dependencies = [
 [[package]]
 name = "embassy-embedded-hal"
 version = "0.6.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
- "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d)",
- "embassy-hal-internal",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
  "embassy-sync",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
@@ -1232,7 +1240,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor"
 version = "0.10.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "cordyceps",
  "critical-section",
@@ -1240,12 +1248,13 @@ dependencies = [
  "document-features",
  "embassy-executor-macros",
  "embassy-executor-timer-queue",
+ "unitrait",
 ]
 
 [[package]]
 name = "embassy-executor-macros"
 version = "0.8.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -1255,8 +1264,11 @@ dependencies = [
 
 [[package]]
 name = "embassy-executor-timer-queue"
-version = "0.1.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+version = "0.1.1"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
+dependencies = [
+ "unitrait",
+]
 
 [[package]]
 name = "embassy-futures"
@@ -1267,12 +1279,12 @@ checksum = "dc2d050bdc5c21e0862a89256ed8029ae6c290a93aecefc73084b3002cdebb01"
 [[package]]
 name = "embassy-futures"
 version = "0.1.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 
 [[package]]
 name = "embassy-hal-internal"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -1283,7 +1295,7 @@ dependencies = [
 [[package]]
 name = "embassy-rp"
 version = "0.10.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "cfg-if",
  "chrono",
@@ -1292,10 +1304,11 @@ dependencies = [
  "critical-section",
  "defmt 1.1.1",
  "document-features",
+ "embassy-crypto",
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-executor-macros",
- "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d)",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
  "embassy-hal-internal",
  "embassy-sync",
  "embassy-time",
@@ -1305,13 +1318,11 @@ dependencies = [
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
- "embedded-hal-nb",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "embedded-storage",
  "embedded-storage-async",
  "fixed",
- "nb 1.1.0",
  "pio",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -1325,7 +1336,7 @@ dependencies = [
 [[package]]
 name = "embassy-sync"
 version = "0.8.0"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -1338,7 +1349,7 @@ dependencies = [
 [[package]]
 name = "embassy-time"
 version = "0.5.1"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -1354,7 +1365,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-driver"
 version = "0.2.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "document-features",
 ]
@@ -1362,7 +1373,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-queue-utils"
 version = "0.3.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "embassy-executor-timer-queue",
  "heapless 0.9.3",
@@ -1371,7 +1382,7 @@ dependencies = [
 [[package]]
 name = "embassy-usb-driver"
 version = "0.2.2"
-source = "git+https://github.com/embassy-rs/embassy.git?rev=e5921a9d#e5921a9d3a4a138f724ea40662599ff0fc42e6c7"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=340bf1de#340bf1def35cb91405007d6434846ea23b30355d"
 dependencies = [
  "defmt 1.1.1",
  "embedded-io-async 0.6.1",
@@ -1522,7 +1533,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1575,6 +1586,7 @@ checksum = "9af2cbf772fa6d1c11358f92ef554cb6b386201210bcf0e91fb7fba8a907fb40"
 dependencies = [
  "az",
  "bytemuck",
+ "defmt 1.1.1",
  "half",
  "typenum",
 ]
@@ -2051,7 +2063,7 @@ source = "git+https://github.com/ProfFan/icm426xx.git?rev=7e22a5a#7e22a5a84d330c
 dependencies = [
  "bilge",
  "bytemuck",
- "defmt 1.1.1",
+ "defmt 0.3.100",
  "embedded-hal 1.0.0",
  "paste",
 ]
@@ -2239,7 +2251,6 @@ dependencies = [
  "itertools 0.14.0",
  "lalrpop-util",
  "petgraph",
- "pico-args",
  "regex",
  "regex-syntax",
  "sha3",
@@ -2926,12 +2937,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pico-args"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
-
-[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2959,9 +2964,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pio"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0ba4153cee9585abc451271aa437d9e8defdea8b468d48ba6b8f098cbe03d7f"
+checksum = "ce87cc2ae64a1a4762187711318d0a8cb02156a65c9995d6dec8e80e49e291c9"
 dependencies = [
  "pio-core",
  "pio-proc",
@@ -2969,9 +2974,9 @@ dependencies = [
 
 [[package]]
 name = "pio-core"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61d90fddc3d67f21bbf93683bc461b05d6a29c708caf3ffb79947d7ff7095406"
+checksum = "e6aef8a374e3bdcd09ec42c66a1dd8791aea2d9f04940e3c8705cba3929a4a23"
 dependencies = [
  "arrayvec",
  "num_enum",
@@ -2980,9 +2985,9 @@ dependencies = [
 
 [[package]]
 name = "pio-parser"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "825266c1eaddf54f636d06eefa4bf3c99d774c14ec46a4a6c6e5128a0f10d205"
+checksum = "16fca7f9edb551c6c96381ab4b0942aadcbd39b04c9b55ac0001cf148732d8e8"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
@@ -2991,15 +2996,14 @@ dependencies = [
 
 [[package]]
 name = "pio-proc"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed4a76571f5fe51af43cc80ac870fe0c79cc0cdd686b9002a6c4c84bfdd0176b"
+checksum = "339ee023278020b3459822d0efdc53221479c27235e222871a07da2aeb23df07"
 dependencies = [
  "codespan-reporting",
  "lalrpop-util",
  "pio-core",
  "pio-parser",
- "proc-macro-error2",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3163,7 +3167,6 @@ dependencies = [
  "proc-macro-error-attr2",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -3441,7 +3444,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4300,6 +4303,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "unitrait"
+version = "2.0.0"
+source = "git+https://github.com/embassy-rs/unitrait?rev=bb96601b3d293fa27d1ca2891f6ea148e534e433#bb96601b3d293fa27d1ca2891f6ea148e534e433"
+dependencies = [
+ "unitrait-macros",
+]
+
+[[package]]
+name = "unitrait-macros"
+version = "2.0.0"
+source = "git+https://github.com/embassy-rs/unitrait?rev=bb96601b3d293fa27d1ca2891f6ea148e534e433#bb96601b3d293fa27d1ca2891f6ea148e534e433"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "unty"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4569,7 +4590,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

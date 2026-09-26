@@ -12,8 +12,9 @@
 use defmt::*;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_rp::gpio::{Input, Output};
-use embassy_rp::peripherals::SPI1;
-use embassy_rp::spi::{Async, Config, Spi};
+use embassy_rp::mode::Async;
+use embassy_rp::spi::{Config, Spi};
+use embassy_rp::time::Hertz;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
@@ -45,8 +46,7 @@ pub static SD_CMD_SIGNAL: Signal<CriticalSectionRawMutex, SdCommand> = Signal::n
 /// Check this before starting ULog recording to avoid writing into a dead channel.
 pub static SD_READY: AtomicBool = AtomicBool::new(false);
 
-static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, Spi<'static, SPI1, Async>>> =
-    StaticCell::new();
+static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, Spi<'static, Async>>> = StaticCell::new();
 
 /// AON-backed time provider for FAT32 file timestamps.
 /// Stores boot epoch; derives wall-clock from Embassy monotonic clock.
@@ -148,7 +148,7 @@ fn drain_channel() {
 /// PID profiles and mag calibration; this task handles all ULog data via SD card.
 #[embassy_executor::task]
 pub async fn sd_writer_task(
-    mut spi: Spi<'static, SPI1, Async>,
+    mut spi: Spi<'static, Async>,
     mut cs: Output<'static>,
     mut card_detect: Input<'static>,
     epoch_ms: u64,
@@ -180,7 +180,7 @@ pub async fn sd_writer_task(
     // SD identification phase requires <=400kHz — Config::default() is 1MHz,
     // which some cards reject with init timeouts.
     let mut init_config = Config::default();
-    init_config.frequency = 400_000;
+    init_config.frequency = Hertz::khz(400);
     let spi_bus = SPI_BUS.init(Mutex::new(spi));
     let spid = SpiDeviceWithConfig::new(spi_bus, cs, init_config);
     let mut sd = SdSpi::<_, _, aligned::A1>::new(spid, embassy_time::Delay);
@@ -198,7 +198,7 @@ pub async fn sd_writer_task(
 
     // Increase SPI clock to 25MHz after successful init
     let mut fast_config = Config::default();
-    fast_config.frequency = 25_000_000;
+    fast_config.frequency = Hertz::mhz(25);
     sd.spi().set_config(fast_config);
     info!("SD: card initialized at 25MHz");
 

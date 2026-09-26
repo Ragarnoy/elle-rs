@@ -262,7 +262,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 | ahrs 0.8 | yes | - | Madgwick AHRS sensor fusion (no_std) |
 | nalgebra 0.34 | yes | - | Linear algebra (no_std + libm) |
 | bmp390 (vendored, drivers/bmp390) | yes (sync) | - | BMP390 barometer driver, patched over crates.io 0.4 |
-| embassy-dshot 0.3 | yes | - | DShot ESC driver over PIO (own crate, published to crates.io) |
+| embassy-dshot 0.5 | yes | - | DShot ESC driver over PIO (own crate, published to crates.io). 0.5 shares one `BidirDshotProgram` per PIO block and makes every send fallible |
 | embedded-hal-bus 0.3 | yes | - | I2C/SPI bus sharing (RefCellDevice, ExclusiveDevice) |
 | cobs 0.5 | yes | yes | Frame encoding |
 | ratatui 0.30 | - | yes | TUI dashboard |
