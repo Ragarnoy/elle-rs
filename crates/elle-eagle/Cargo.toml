@@ -40,6 +40,8 @@ performance-monitoring = ["elle-system/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
 rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless", "elle-hardware/gnss-gsv"]
 gnss = ["sam-m10q", "elle-hardware/gnss"]
+# Bench vibration capture: every 1 kHz gyro sample to ULog (see elle-hardware).
+gyro-raw-log = ["elle-hardware/gyro-raw-log"]
 
 [[bin]]
 name = "eagle"

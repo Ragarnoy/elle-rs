@@ -8,6 +8,7 @@ use elle_error::ULogError;
 use embassy_time::Instant;
 use heapless::Vec;
 
+use crate::flash::manager::ULOG_WRITE_CHANNEL;
 use crate::flash::{request_write_ulog, request_write_ulog_blocking};
 
 /// ULog logger state
@@ -31,10 +32,14 @@ pub struct ULogLogger {
     autotune_msg_id: Option<u16>,
     controller_msg_id: Option<u16>,
     pid_gains_msg_id: Option<u16>,
+    gyro_raw_msg_id: Option<u16>,
     /// Gains version last written to this file; `None` right after `initialize`.
     logged_gains_version: Option<u32>,
     /// Log start time
     start_time: Option<Instant>,
+    /// When data first had to be dropped, until a flush gets through again.
+    /// The next flush starts with a ULog dropout ('O') record covering it.
+    dropout_start: Option<Instant>,
 }
 
 impl ULogLogger {
@@ -56,8 +61,10 @@ impl ULogLogger {
             autotune_msg_id: None,
             controller_msg_id: None,
             pid_gains_msg_id: None,
+            gyro_raw_msg_id: None,
             logged_gains_version: None,
             start_time: None,
+            dropout_start: None,
         }
     }
 
@@ -74,14 +81,15 @@ impl ULogLogger {
         self.buffer.clear();
         self.initialized = false;
         self.logged_gains_version = None;
+        self.dropout_start = None;
 
         info!("Initializing ULog logger");
 
         // Import ULog types
         use elle_ulog::{
             AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
-            EngineMessage, GnssMessage, LogEventMessage, MagnetometerMessage, PidGainsMessage,
-            StatusMessage,
+            EngineMessage, GnssMessage, GyroRawMessage, LogEventMessage, MagnetometerMessage,
+            PidGainsMessage, StatusMessage,
         };
 
         let start_time = Instant::now();
@@ -158,6 +166,11 @@ impl ULogLogger {
                 .add_subscription(PidGainsMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
+        self.gyro_raw_msg_id = Some(
+            self.writer
+                .add_subscription(GyroRawMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
 
         info!(
             "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}, autotune={}",
@@ -193,6 +206,18 @@ impl ULogLogger {
     /// Write a message from the writer buffer into the internal buffer,
     /// flushing to flash if the buffer is getting full.
     fn buffer_writer_output(&mut self) -> Result<(), ULogError> {
+        // After a dropped flush the buffer restarts empty; lead it with the
+        // dropout record so readers see the gap instead of guessing.
+        if self.buffer.is_empty()
+            && let Some(start) = self.dropout_start
+        {
+            let ms = start.elapsed().as_millis().min(u64::from(u16::MAX)) as u16;
+            let header =
+                elle_ulog::format::MessageHeader::new(2, elle_ulog::MessageType::Dropout as u8);
+            let _ = self.buffer.extend_from_slice(&header.to_bytes());
+            let _ = self.buffer.extend_from_slice(&ms.to_le_bytes());
+        }
+
         self.buffer
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ULogError::BufferFull)?;
@@ -251,6 +276,18 @@ impl ULogLogger {
             .write_controller(self.controller_msg_id.unwrap(), &msg)
             .map_err(|_| ULogError::BufferFull)?;
 
+        self.buffer_writer_output()
+    }
+
+    /// Log one raw gyro sample (`gyro-raw-log` builds). Keeps its own timestamp.
+    pub fn log_gyro_raw(&mut self, msg: &elle_ulog::GyroRawMessage) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+        self.writer.clear_buffer();
+        self.writer
+            .write_gyro_raw(self.gyro_raw_msg_id.unwrap(), msg)
+            .map_err(|_| ULogError::BufferFull)?;
         self.buffer_writer_output()
     }
 
@@ -530,16 +567,30 @@ impl ULogLogger {
             return Ok(());
         }
 
-        let mut all_ok = true;
-        for chunk in self.buffer.chunks(ULOG_WRITE_CHUNK_SIZE) {
-            if !request_write_ulog(chunk) {
-                all_ok = false;
-                break; // Channel full — remaining data will be lost
+        // All or nothing. The buffer holds whole messages but the chunks cut
+        // across them: sending only some chunks would leave a partial message
+        // in the file, and the next flush would splice onto it (seen as garbage
+        // records after a stall). Drop the whole buffer instead, and mark it.
+        let needed = self.buffer.len().div_ceil(ULOG_WRITE_CHUNK_SIZE);
+        let mut all_ok = ULOG_WRITE_CHANNEL.free_capacity() >= needed;
+        if all_ok {
+            for chunk in self.buffer.chunks(ULOG_WRITE_CHUNK_SIZE) {
+                if !request_write_ulog(chunk) {
+                    // Only this task produces, so capacity can't shrink under us.
+                    all_ok = false;
+                    break;
+                }
             }
         }
 
-        if !all_ok {
-            error!("ULog flush: channel full, data dropped");
+        if all_ok {
+            self.dropout_start = None;
+        } else {
+            self.dropout_start.get_or_insert_with(Instant::now);
+            error!(
+                "ULog flush: channel full, {} bytes dropped",
+                self.buffer.len()
+            );
         }
 
         // Clear buffer regardless to avoid re-sending stale data

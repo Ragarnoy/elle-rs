@@ -401,6 +401,72 @@ const _: () = assert!(
     "PidGainsMessage::SIZE does not match its field widths"
 );
 
+/// Raw gyro sample - every 1 kHz sample, unfiltered and bias-corrected, in the
+/// airframe frame (rad/s, sensor axes: x = roll axis before the roll sign flip).
+/// Only written by builds with the `gyro-raw-log` feature, for sizing the rate
+/// filter from a real vibration spectrum.
+///
+/// Format: "gyro_raw:uint64_t timestamp;float gyro_x;float gyro_y;float gyro_z"
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GyroRawMessage {
+    /// Timestamp in microseconds (Core1 time of processing; samples drained in
+    /// one wake-up share nearly the same stamp)
+    pub timestamp: u64,
+    /// Gyro X (rad/s)
+    pub gyro_x: f32,
+    /// Gyro Y (rad/s)
+    pub gyro_y: f32,
+    /// Gyro Z (rad/s)
+    pub gyro_z: f32,
+}
+
+impl GyroRawMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str =
+        "gyro_raw:uint64_t timestamp;float gyro_x;float gyro_y;float gyro_z";
+
+    /// Message name
+    pub const NAME: &'static str = "gyro_raw";
+
+    /// Pre-serialized format definition message (header + payload)
+    pub const FORMAT_MSG: &'static [u8] =
+        b"\x42\x00Fgyro_raw:uint64_t timestamp;float gyro_x;float gyro_y;float gyro_z";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 20;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.gyro_x.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.gyro_y.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.gyro_z.to_le_bytes());
+        buf
+    }
+}
+
+// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
+const _: () = assert!(
+    GyroRawMessage::FORMAT_MSG.len() == GyroRawMessage::FORMAT.len() + 3,
+    "GyroRawMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
+);
+const _: () = assert!(
+    GyroRawMessage::FORMAT_MSG[0] as usize | ((GyroRawMessage::FORMAT_MSG[1] as usize) << 8)
+        == GyroRawMessage::FORMAT.len(),
+    "GyroRawMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
+);
+const _: () = assert!(
+    GyroRawMessage::FORMAT_MSG[2] == b'F',
+    "GyroRawMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
+);
+const _: () = assert!(
+    GyroRawMessage::SIZE == 8 + 4 + 4 + 4,
+    "GyroRawMessage::SIZE does not match its field widths"
+);
+
 /// System status message - logs performance and health metrics
 ///
 /// Format: "system_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load;uint16_t rc_age_ms"

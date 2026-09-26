@@ -241,6 +241,17 @@ fn log_flight_data(
         },
     );
 
+    // Bench vibration capture: every 1 kHz gyro sample queued by Core1.
+    #[cfg(feature = "gyro-raw-log")]
+    while let Ok(s) = elle_hardware::imu::GYRO_RAW_CHANNEL.try_receive() {
+        let _ = logger.log_gyro_raw(&elle_ulog::GyroRawMessage {
+            timestamp: s.timestamp.as_micros(),
+            gyro_x: s.gyro[0],
+            gyro_y: s.gyro[1],
+            gyro_z: s.gyro[2],
+        });
+    }
+
     // Log engine data at control-loop rate
     {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());

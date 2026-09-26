@@ -60,14 +60,17 @@ fn level_cal_step(
 
 /// Fuse one raw FIFO sample: remove the gyro bias, feed any running level
 /// calibration, rotate into the airframe frame, and step the AHRS (9-DOF when
-/// `mag` is given, else 6-DOF).
+/// `mag` is given, else 6-DOF). The published rates go through `rate_filter`,
+/// which must see every sample; the AHRS integrates the unfiltered gyro.
 /// `None` when the AHRS rejects the sample (normalisation failure).
+#[allow(clippy::too_many_arguments)]
 fn fuse_sample(
     ahrs: &mut ahrs::Madgwick<f32>,
     level_cal: &mut Option<LevelCalAccum>,
     mount: &mut nalgebra::UnitQuaternion<f32>,
     mag: Option<&nalgebra::Vector3<f32>>,
     gyro_bias: &nalgebra::Vector3<f32>,
+    rate_filter: &mut elle_control::filter::GyroFilter,
     sample: &icm426xx::Sample,
 ) -> Option<AttitudeData> {
     let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
@@ -81,6 +84,13 @@ fn fuse_sample(
     // then sees a level-mounted IMU.
     let gyro = *mount * raw_gyro;
     let accel = *mount * raw_accel;
+    let rates = rate_filter.apply(&gyro);
+
+    #[cfg(feature = "gyro-raw-log")]
+    let _ = super::GYRO_RAW_CHANNEL.try_send(super::GyroRawSample {
+        timestamp: Instant::now(),
+        gyro: [gyro.x, gyro.y, gyro.z],
+    });
 
     let q = match mag {
         Some(mag) => ahrs.update(&gyro, &accel, mag),
@@ -97,9 +107,9 @@ fn fuse_sample(
         pitch,
         roll: -roll,
         yaw,
-        pitch_rate: gyro.y,
-        roll_rate: -gyro.x,
-        yaw_rate: gyro.z,
+        pitch_rate: rates.y,
+        roll_rate: -rates.x,
+        yaw_rate: rates.z,
         timestamp: Instant::now(),
     })
 }
@@ -133,6 +143,8 @@ pub struct Imu<'a> {
     gyro_bias: nalgebra::Vector3<f32>,
     /// Boot-time gyro bias estimate, while it is still collecting.
     bias_est: Option<elle_control::gyro_bias::GyroBiasEstimator>,
+    /// Low-pass on the rates handed to the PID (`GYRO_RATE_LPF_HZ` at the IMU rate).
+    rate_filter: elle_control::filter::GyroFilter,
     mag_cal_active: bool,
     mag_cal_min: [f32; 3],
     mag_cal_max: [f32; 3],
@@ -172,6 +184,10 @@ impl<'a> Imu<'a> {
             level_cal: None,
             gyro_bias: nalgebra::Vector3::zeros(),
             bias_est: Some(elle_control::gyro_bias::GyroBiasEstimator::new()),
+            rate_filter: elle_control::filter::GyroFilter::new(
+                elle_config::GYRO_RATE_LPF_HZ,
+                elle_config::IMU_UPDATE_FREQUENCY_HZ as f32,
+            ),
             mag_cal_active: false,
             mag_cal_min: [f32::MAX; 3],
             mag_cal_max: [f32::MIN; 3],
@@ -398,6 +414,7 @@ impl<'a> Imu<'a> {
                             &mut self.mount,
                             self.has_mag.then_some(&self.last_mag),
                             &self.gyro_bias,
+                            &mut self.rate_filter,
                             &sample,
                         );
                         if fused.is_some() {

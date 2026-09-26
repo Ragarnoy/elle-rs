@@ -19,7 +19,7 @@ pub mod writer;
 pub use format::{FLAG_BITS_MSG, ULOG_MAGIC, ULogHeader};
 pub use messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
-    EngineMessage, GnssMessage, LogEventMessage, LogLevel, MagnetometerMessage, MessageDefinition,
-    MessageType, PidGainsMessage, StatusMessage,
+    EngineMessage, GnssMessage, GyroRawMessage, LogEventMessage, LogLevel, MagnetometerMessage,
+    MessageDefinition, MessageType, PidGainsMessage, StatusMessage,
 };
 pub use writer::{ULogWriter, WriteError};
