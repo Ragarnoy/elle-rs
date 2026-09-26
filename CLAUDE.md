@@ -42,6 +42,7 @@ Key feature flags for elle-eagle:
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
 - `gnss` — SAM-M10Q GNSS receiver support (in `default`, both eagle and dart; works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames). **RPC builds use `--no-default-features`, so `gnss` must be listed explicitly or there is no GNSS task at all.** Enables `elle-hardware/gnss`, which carries the shared `gnss` module.
+- `gyro-raw-log` — bench vibration capture: every 1 kHz gyro sample (unfiltered, bias-corrected, airframe frame) to ULog as `gyro_raw`, to size `GYRO_RATE_LPF_HZ` from a real spectrum. ~25 kB/s more on the SD card; not for flight builds.
 - CRSF telemetry TX is always compiled in (no feature gate) — attitude, flight mode, GPS, baro altitude, battery voltage/current to radio via PIN_20/UART1 TX
 
 ULog flash recording is always compiled in (no feature gate). Recording is idle until explicitly started.
@@ -351,7 +352,10 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
   - *Setpoint rate limit.* Each EMA step of the attitude setpoint is capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). Autotune override stays unfiltered.
   - *Mixer-aware anti-windup.* `mix_elevons` reports `MixSaturation`; the PID holds an axis's integral when its error would push further into a blocked direction (previous tick's flags), and always lets it unwind.
   - *Controller logging.* New `controller` and `pid_gains` ULog messages (see Logging Systems).
-  - Not yet bench-verified.
+  - Bench-verified on the eagle (LOG_0032/0033): dt 12.0 ms p50, attitude age < 1.7 ms, anti-windup never grew into a blocked direction, setpoint ramp ~90°/s.
+- **Gyro rate filter + eagle gains** (from LOG_0033):
+  - EDFs running put 20–30 °/s of roll-rate noise on the gyro (0.1 °/s stopped), aliased into the 83 Hz loop through the D term: 100–200 µs elevon jitter with centred sticks. A 2nd-order Butterworth low-pass (`elle_control::filter`, `GYRO_RATE_LPF_HZ` = 30) now runs on Core1 at 1 kHz on the rates published for the PID; the AHRS integrates the unfiltered gyro. The ICM's own AAF is 488 Hz at 1 kHz ODR. Resize the cutoff from a `gyro-raw-log` capture.
+  - Eagle default gains moved to the dart's flown values (pitch 0.45/0.020/0.16, roll 0.25/0.012/0.07); the old 1.0/0.1/0.25 pitch D sustained a 5–8 Hz elevon/airframe oscillation on the bench with engines off.
 
 ### Known TODOs in Firmware
 None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).

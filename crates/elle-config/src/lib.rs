@@ -151,12 +151,17 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
 
+// Eagle: the dart's flown gains (below) as a starting point. The previous
+// 1.0/0.1/0.25 pitch and 0.5/0.03/0.12 roll were the original shared defaults;
+// on the bench their pitch D sustained a 5-8 Hz elevon/airframe oscillation
+// (LOG_0033). Autotune in the air sets the real values. A saved flash profile
+// still overrides these (IGNORE_PID_FLASH is false on the eagle).
 #[cfg(not(feature = "platform-dart"))]
-pub const ROLL_KP: f32 = 0.5;
+pub const ROLL_KP: f32 = 0.25;
 #[cfg(not(feature = "platform-dart"))]
-pub const ROLL_KI: f32 = 0.03;
+pub const ROLL_KI: f32 = 0.012;
 #[cfg(not(feature = "platform-dart"))]
-pub const ROLL_KD: f32 = 0.12;
+pub const ROLL_KD: f32 = 0.07;
 
 #[cfg(feature = "platform-dart")]
 pub const ROLL_KP: f32 = 0.25;
@@ -166,11 +171,11 @@ pub const ROLL_KI: f32 = 0.012;
 pub const ROLL_KD: f32 = 0.07;
 
 #[cfg(not(feature = "platform-dart"))]
-pub const PITCH_KP: f32 = 1.0;
+pub const PITCH_KP: f32 = 0.45;
 #[cfg(not(feature = "platform-dart"))]
-pub const PITCH_KI: f32 = 0.1;
+pub const PITCH_KI: f32 = 0.020;
 #[cfg(not(feature = "platform-dart"))]
-pub const PITCH_KD: f32 = 0.25;
+pub const PITCH_KD: f32 = 0.16;
 
 // Dart: inverted from LOG_0026 / 0032 / 0035 holds (docs/DART_PID.md).
 // 0.25/0.125 flew but sagged; 0.50/0.40 punched / blew roll. I stays low.
