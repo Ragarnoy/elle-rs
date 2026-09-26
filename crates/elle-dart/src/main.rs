@@ -383,7 +383,9 @@ async fn main(spawner: Spawner) {
     pwm.set_safe_positions();
 
     let Pio {
-        common, sm2: led_sm, ..
+        common,
+        sm2: led_sm,
+        ..
     } = Pio::new(p.PIO0, Irqs);
 
     spawner.spawn(led_task(common, led_sm, p.DMA_CH2, Irqs, p.PIN_10).unwrap());
