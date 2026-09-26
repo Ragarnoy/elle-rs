@@ -58,6 +58,50 @@ fn level_cal_step(
     *acc = None;
 }
 
+/// Fuse one raw FIFO sample: feed any running level calibration, rotate into the
+/// airframe frame, and step the AHRS (9-DOF when `mag` is given, else 6-DOF).
+/// `None` when the AHRS rejects the sample (normalisation failure).
+fn fuse_sample(
+    ahrs: &mut ahrs::Madgwick<f32>,
+    level_cal: &mut Option<LevelCalAccum>,
+    mount: &mut nalgebra::UnitQuaternion<f32>,
+    mag: Option<&nalgebra::Vector3<f32>>,
+    sample: &icm426xx::Sample,
+) -> Option<AttitudeData> {
+    let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
+    let (gx, gy, gz) = sample.gyro.unwrap_or((0.0, 0.0, 0.0));
+
+    let raw_gyro = nalgebra::Vector3::new(gx, gy, gz);
+    let raw_accel = nalgebra::Vector3::new(ax, ay, az);
+    level_cal_step(level_cal, mount, &raw_accel, &raw_gyro);
+
+    // Into the airframe frame; everything downstream (AHRS, rates)
+    // then sees a level-mounted IMU.
+    let gyro = *mount * raw_gyro;
+    let accel = *mount * raw_accel;
+
+    let q = match mag {
+        Some(mag) => ahrs.update(&gyro, &accel, mag),
+        None => ahrs.update_imu(&gyro, &accel),
+    }
+    .ok()?;
+
+    let (roll, pitch, yaw) = q.euler_angles();
+
+    // Board flat → pitch≈0, roll≈0; nose up → pitch>0; right wing down → roll>0.
+    // Roll sign is inverted relative to the ICM-42686's raw frame on this PCB
+    // orientation — field-confirmed rolling the wrong way with identity mapping.
+    Some(AttitudeData {
+        pitch,
+        roll: -roll,
+        yaw,
+        pitch_rate: gyro.y,
+        roll_rate: -gyro.x,
+        yaw_rate: gyro.z,
+        timestamp: Instant::now(),
+    })
+}
+
 type I2cBus<'a> = i2c::I2c<'a, Blocking>;
 type SharedI2c<'a> = I2cRefCellDevice<'a, I2cBus<'a>>;
 type SpiDev<'a> = ExclusiveDevice<spi::Spi<'a, Blocking>, Output<'a>, embassy_time::Delay>;
@@ -291,9 +335,9 @@ impl<'a> Imu<'a> {
     }
 
     /// Run continuous IMU reading with AHRS sensor fusion at 1 kHz.
-    /// Polls INT1 pin (DATA_RDY, active-high, latched) — no async GPIO IRQ needed on Core1.
+    /// Waits on INT1 (DATA_RDY, active-high, latched) via async GPIO, then drains the FIFO.
     pub async fn run(&mut self) -> ! {
-        info!("Core1: Starting ICM-42686 + AHRS fusion loop (INT1 poll)");
+        info!("Core1: Starting ICM-42686 + AHRS fusion loop (INT1 DATA_RDY)");
 
         let icm = self.icm.as_mut().expect("ICM not initialized");
 
@@ -306,6 +350,7 @@ impl<'a> Imu<'a> {
         let mut mag_counter: u32 = 0;
         let mut baro_counter: u32 = 0;
         let mut tap_counter: u32 = 0;
+        let mut last_catchup_event: Option<Instant> = None;
 
         loop {
             // Wait for DATA_RDY: INT1 goes high when new sample is ready
@@ -313,100 +358,94 @@ impl<'a> Imu<'a> {
             // Uses true async GPIO (embassy-rp multicore executor enables cross-core IRQ wakeup).
             self.int1.wait_for_high().await;
 
-            // 1. Read ICM-42686 FIFO sample (guaranteed to have data after INT1 high)
-            match icm.read_sample() {
-                Ok(Some((sample, _more))) => {
-                    consecutive_errors = 0;
-
-                    let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
-                    let (gx, gy, gz) = sample.gyro.unwrap_or((0.0, 0.0, 0.0));
-
-                    let raw_gyro = nalgebra::Vector3::new(gx, gy, gz);
-                    let raw_accel = nalgebra::Vector3::new(ax, ay, az);
-                    level_cal_step(&mut self.level_cal, &mut self.mount, &raw_accel, &raw_gyro);
-
-                    // Into the airframe frame; everything downstream (AHRS, rates)
-                    // then sees a level-mounted IMU.
-                    let gyro = self.mount * raw_gyro;
-                    let accel = self.mount * raw_accel;
-                    let (gx, gy, gz) = (gyro.x, gyro.y, gyro.z);
-
-                    // 2. Update AHRS (9-DOF with mag, or 6-DOF if no mag yet)
-                    let q_result = if self.has_mag {
-                        self.ahrs.update(&gyro, &accel, &self.last_mag)
-                    } else {
-                        self.ahrs.update_imu(&gyro, &accel)
-                    };
-
-                    let q = match q_result {
-                        Ok(q) => q,
-                        Err(_) => {
-                            // AHRS normalization error — skip this sample
-                            continue;
+            // 1. Drain the ICM-42686 FIFO. Every queued sample goes through the
+            // AHRS in order (it integrates at a fixed 1 kHz step, so none may be
+            // skipped); only the newest attitude is published. Reading one sample
+            // per DATA_RDY would leave any backlog from a slow iteration (mag/baro
+            // I2C) queued for good, and the published attitude that much older
+            // than its timestamp.
+            let mut drained: u32 = 0;
+            let mut latest: Option<AttitudeData> = None;
+            while drained < elle_config::IMU_MAX_DRAIN {
+                match icm.read_sample() {
+                    Ok(Some((sample, more))) => {
+                        consecutive_errors = 0;
+                        drained += 1;
+                        let fused = fuse_sample(
+                            &mut self.ahrs,
+                            &mut self.level_cal,
+                            &mut self.mount,
+                            self.has_mag.then_some(&self.last_mag),
+                            &sample,
+                        );
+                        if fused.is_some() {
+                            latest = fused;
                         }
-                    };
-
-                    // 3. Extract Euler angles from quaternion
-                    let (roll, pitch, yaw) = q.euler_angles();
-
-                    // Board flat → pitch≈0, roll≈0; nose up → pitch>0; right wing down → roll>0.
-                    // Roll sign is inverted relative to the ICM-42686's raw frame on this PCB
-                    // orientation — field-confirmed rolling the wrong way with identity mapping.
-                    let attitude = AttitudeData {
-                        pitch,
-                        roll: -roll,
-                        yaw,
-                        pitch_rate: gy,
-                        roll_rate: -gx,
-                        yaw_rate: gz,
-                        timestamp: Instant::now(),
-                    };
-
-                    ATTITUDE.publish(attitude);
-                    crate::crsf::TELEMETRY_ATTITUDE.signal(attitude);
-
-                    CORE1_HEARTBEAT.signal(());
-                    self.last_attitude = attitude;
-
-                    {
-                        let mut status = IMU_STATUS.write().await;
-                        status.last_update = Instant::now();
-                        status.error_count = 0;
+                        if !more {
+                            break;
+                        }
                     }
-                }
-                Ok(None) => {
-                    // Shouldn't happen with INT1 DATA_RDY — but yield just in case
-                }
-                Err(icm426xx::Error::FifoOverflow) => {
-                    // FIFO overflowed — flush and restart
-                    let _ = icm.reset_fifo();
-                    crate::elle_event!(
-                        warn,
-                        crate::event::EVT_IMU_FIFO_OVERFLOW,
-                        "ICM-42686: FIFO overflow, flushed"
-                    );
-                }
-                Err(e) => {
-                    consecutive_errors += 1;
-                    if consecutive_errors % 100 == 1 {
+                    Ok(None) => break,
+                    Err(icm426xx::Error::FifoOverflow) => {
+                        // FIFO overflowed — flush and restart
+                        let _ = icm.reset_fifo();
                         crate::elle_event!(
                             warn,
-                            crate::event::EVT_IMU_READ_ERRORS,
-                            "ICM-42686: read error ({}): {:?}",
-                            consecutive_errors,
-                            Debug2Format(&e)
+                            crate::event::EVT_IMU_FIFO_OVERFLOW,
+                            "ICM-42686: FIFO overflow, flushed"
                         );
+                        break;
                     }
-                    if consecutive_errors >= self.error_threshold {
-                        let mut failed = self.last_attitude;
-                        failed.timestamp = Instant::from_ticks(0);
-                        ATTITUDE.publish(failed);
-                        crate::crsf::TELEMETRY_ATTITUDE.signal(failed);
-                        Timer::after(Duration::from_secs(1)).await;
-                        consecutive_errors = 0;
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors % 100 == 1 {
+                            crate::elle_event!(
+                                warn,
+                                crate::event::EVT_IMU_READ_ERRORS,
+                                "ICM-42686: read error ({}): {:?}",
+                                consecutive_errors,
+                                Debug2Format(&e)
+                            );
+                        }
+                        if consecutive_errors >= self.error_threshold {
+                            let mut failed = self.last_attitude;
+                            failed.timestamp = Instant::from_ticks(0);
+                            ATTITUDE.publish(failed);
+                            crate::crsf::TELEMETRY_ATTITUDE.signal(failed);
+                            Timer::after(Duration::from_secs(1)).await;
+                            consecutive_errors = 0;
+                        }
+                        break;
                     }
                 }
             }
+
+            if let Some(attitude) = latest {
+                ATTITUDE.publish(attitude);
+                crate::crsf::TELEMETRY_ATTITUDE.signal(attitude);
+
+                CORE1_HEARTBEAT.signal(());
+                self.last_attitude = attitude;
+
+                let mut status = IMU_STATUS.write().await;
+                status.last_update = Instant::now();
+                status.error_count = 0;
+            }
+
+            if drained > 1 {
+                let now = Instant::now();
+                if last_catchup_event.is_none_or(|t| now - t >= Duration::from_secs(1)) {
+                    last_catchup_event = Some(now);
+                    crate::elle_event!(
+                        info,
+                        crate::event::EVT_IMU_CATCHUP,
+                        "ICM-42686: caught up {} queued samples",
+                        drained
+                    );
+                }
+            }
+            // Housekeeping below runs on sensor time: advance by samples consumed.
+            let ticks = drained.max(1);
 
             // Check for loaded mag cal offsets from Core0
             if let Some((ox, oy, oz)) = MAG_CALIBRATION_SIGNAL.try_take() {
@@ -434,7 +473,7 @@ impl<'a> Imu<'a> {
             // Poll APEX tap detection every TAP_POLL_INTERVAL samples (~50ms).
             // INT_STATUS3.tap_det_int clears on read, so no separate clear needed.
             const TAP_POLL_INTERVAL: u32 = 50;
-            tap_counter += 1;
+            tap_counter += ticks;
             if tap_counter >= TAP_POLL_INTERVAL {
                 tap_counter = 0;
                 let mut bank0 = icm.ll().bank::<0>();
@@ -464,7 +503,7 @@ impl<'a> Imu<'a> {
             }
 
             // 4. Read MMC5616WA at ~10 Hz
-            mag_counter += 1;
+            mag_counter += ticks;
             if self.mag_ok && mag_counter >= elle_config::MAG_READ_INTERVAL_TICKS {
                 mag_counter = 0;
                 match self.mag.read_magnetic() {
@@ -548,7 +587,7 @@ impl<'a> Imu<'a> {
             }
 
             // 5. Read BMP390 at ~20 Hz
-            baro_counter += 1;
+            baro_counter += ticks;
             if baro_counter >= elle_config::BARO_READ_INTERVAL_TICKS {
                 baro_counter = 0;
                 if let Some(baro) = &mut self.baro {

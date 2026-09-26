@@ -114,6 +114,10 @@ pub const AHRS_BETA: f32 = 0.033;
 pub const MAG_READ_INTERVAL_TICKS: u32 = 100;
 /// Barometer read interval in IMU ticks (50 = 20Hz at 1kHz IMU rate)
 pub const BARO_READ_INTERVAL_TICKS: u32 = 50;
+/// Most IMU FIFO samples fused per DATA_RDY wake-up (~250 µs each). Bounds how
+/// long a catch-up can hold off Core1 housekeeping; a larger backlog drains
+/// over the following wake-ups.
+pub const IMU_MAX_DRAIN: u32 = 32;
 
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout

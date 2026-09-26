@@ -850,6 +850,7 @@ const fn log_code_text(code: u16) -> &'static str {
         42 => "IMU: read errors",
         43 => "Magnetometer: init failed",
         44 => "Barometer: init failed",
+        45 => "IMU: caught up queued samples",
         // CRSF receiver (50–59)
         50 => "CRSF RX: first frame received",
         51 => "CRSF RX: UART error",
