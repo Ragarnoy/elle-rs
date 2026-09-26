@@ -269,8 +269,8 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                     "{}us avg / {}us max",
                     p.control_loop_avg_us, p.control_loop_max_us
                 ),
-                // 77Hz control loop => 13ms budget per iteration.
-                scale(f64::from(p.control_loop_max_us), 10_000.0, 13_000.0),
+                // 12 ms control loop period (elle-config CONTROL_LOOP_PERIOD_MS).
+                scale(f64::from(p.control_loop_max_us), 9_000.0, 12_000.0),
             )
         },
     );

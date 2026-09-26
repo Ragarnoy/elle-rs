@@ -696,7 +696,7 @@ impl LogEventMessage {
     }
 }
 
-/// Autotune status message — logged at 77Hz during active autotune only
+/// Autotune status message — logged at the control-loop rate during active autotune only
 ///
 /// Format: "autotune_status:uint64_t timestamp;uint8_t phase;uint8_t axis;uint8_t relay_positive;float setpoint_deg;float measurement_deg;uint8_t cycles_done;float amplitude_deg"
 #[repr(C)]
