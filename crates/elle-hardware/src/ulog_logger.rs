@@ -31,6 +31,7 @@ pub struct ULogLogger {
     autotune_msg_id: Option<u16>,
     controller_msg_id: Option<u16>,
     pid_gains_msg_id: Option<u16>,
+    gyro_raw_msg_id: Option<u16>,
     /// Gains version last written to this file; `None` right after `initialize`.
     logged_gains_version: Option<u32>,
     /// Log start time
@@ -56,6 +57,7 @@ impl ULogLogger {
             autotune_msg_id: None,
             controller_msg_id: None,
             pid_gains_msg_id: None,
+            gyro_raw_msg_id: None,
             logged_gains_version: None,
             start_time: None,
         }
@@ -80,8 +82,8 @@ impl ULogLogger {
         // Import ULog types
         use elle_ulog::{
             AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
-            EngineMessage, GnssMessage, LogEventMessage, MagnetometerMessage, PidGainsMessage,
-            StatusMessage,
+            EngineMessage, GnssMessage, GyroRawMessage, LogEventMessage, MagnetometerMessage,
+            PidGainsMessage, StatusMessage,
         };
 
         let start_time = Instant::now();
@@ -156,6 +158,11 @@ impl ULogLogger {
         self.pid_gains_msg_id = Some(
             self.writer
                 .add_subscription(PidGainsMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
+        self.gyro_raw_msg_id = Some(
+            self.writer
+                .add_subscription(GyroRawMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
 
@@ -251,6 +258,18 @@ impl ULogLogger {
             .write_controller(self.controller_msg_id.unwrap(), &msg)
             .map_err(|_| ULogError::BufferFull)?;
 
+        self.buffer_writer_output()
+    }
+
+    /// Log one raw gyro sample (`gyro-raw-log` builds). Keeps its own timestamp.
+    pub fn log_gyro_raw(&mut self, msg: &elle_ulog::GyroRawMessage) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+        self.writer.clear_buffer();
+        self.writer
+            .write_gyro_raw(self.gyro_raw_msg_id.unwrap(), msg)
+            .map_err(|_| ULogError::BufferFull)?;
         self.buffer_writer_output()
     }
 

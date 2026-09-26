@@ -113,6 +113,13 @@ pub const IMU_SPI_FREQ: u32 = 8_000_000; // 8 MHz SPI clock (ICM-42686-P rated t
 pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
 /// Madgwick AHRS filter gain (higher = faster convergence, more noise)
 pub const AHRS_BETA: f32 = 0.033;
+/// Corner of the 2nd-order Butterworth low-pass on the gyro rates handed to the
+/// attitude PID, run at the 1 kHz IMU rate. Engine vibration (eagle EDFs:
+/// 20-30 deg/s of roll-rate noise at 7-9k rpm) otherwise aliases into the
+/// 83 Hz loop and moves the elevons. 30 Hz keeps the 5-8 Hz control band
+/// within ~4 % and costs ~7 ms of group delay. Size it from a `gyro-raw-log`
+/// capture.
+pub const GYRO_RATE_LPF_HZ: f32 = 30.0;
 /// Magnetometer read interval in IMU ticks (100 = 10Hz at 1kHz IMU rate)
 pub const MAG_READ_INTERVAL_TICKS: u32 = 100;
 /// Barometer read interval in IMU ticks (50 = 20Hz at 1kHz IMU rate)
