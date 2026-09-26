@@ -50,7 +50,7 @@ crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = fa
 smart-leds = "0.4.0"
 
 # External dependencies - System libraries
-cortex-m-rt = "0.7.5"
+cortex-m-rt = "0.7.7"
 defmt = "1.0.1"
 defmt-rtt = "1.1"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
