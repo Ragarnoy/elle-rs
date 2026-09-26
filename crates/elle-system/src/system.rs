@@ -4,7 +4,7 @@ use elle_config::*;
 use elle_control::SavedGains;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
 use elle_control::mixing::{
-    elevons::{ControlInputs, mix_elevons, mix_elevons_direct_lut},
+    elevons::{ControlInputs, MixSaturation, mix_elevons, mix_elevons_direct_lut},
     yaw::throttle_with_differential_lut,
 };
 use elle_control::{
@@ -106,6 +106,8 @@ pub struct FlightController<'a> {
     // Smoothed setpoints for attitude hold (in radians for consistency)
     filtered_pitch_setpoint_rad: f32,
     filtered_roll_setpoint_rad: f32,
+    /// Previous tick's mixer saturation, for the PID's anti-windup.
+    last_saturation: MixSaturation,
     // Control mode tracking
     current_control_mode: ControlMode,
     // Controller output snapshot for observability
@@ -153,6 +155,7 @@ impl<'a> FlightController<'a> {
             last_attitude: None,
             filtered_pitch_setpoint_rad: 0.0,
             filtered_roll_setpoint_rad: 0.0,
+            last_saturation: MixSaturation::default(),
             current_control_mode: ControlMode::Manual,
             last_output: ControllerOutputSnapshot::default(),
             watchdog: None,
@@ -309,6 +312,7 @@ impl<'a> FlightController<'a> {
             // place that still knows the previous mode.
             if self.current_control_mode == ControlMode::Manual {
                 self.attitude_controller.reset();
+                self.last_saturation = MixSaturation::default();
             }
             self.current_control_mode = current_mode;
         }
@@ -346,6 +350,7 @@ impl<'a> FlightController<'a> {
         self.attitude_controller.enabled = false;
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
+        self.last_saturation = elevon_outputs.saturation;
         self.pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
@@ -477,6 +482,7 @@ impl<'a> FlightController<'a> {
             AttitudeMode::Manual => {
                 if self.attitude_controller.is_active() {
                     self.attitude_controller.reset();
+                    self.last_saturation = MixSaturation::default();
                 }
                 if self.heading_hold_active {
                     self.disengage_heading_hold();
@@ -507,6 +513,7 @@ impl<'a> FlightController<'a> {
                             att.roll,
                             Some((-att.roll_rate, -att.pitch_rate, att.yaw_rate)),
                             low_throttle,
+                            self.last_saturation,
                         );
                         pitch_correction = pc;
                         roll_correction = rc;
@@ -526,6 +533,7 @@ impl<'a> FlightController<'a> {
 
         // Apply final outputs
         let elevon_outputs = mix_elevons(&final_inputs);
+        self.last_saturation = elevon_outputs.saturation;
         self.pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
@@ -592,6 +600,7 @@ impl<'a> FlightController<'a> {
             (_, RcLinkState::Lost) => {
                 self.arming.signal_loss();
                 self.attitude_controller.reset();
+                self.last_saturation = MixSaturation::default();
                 self.apply_failsafe();
                 elle_hardware::elle_event!(
                     error,

@@ -4,6 +4,7 @@
 //! a directly-supplied gyro rate (already sign-corrected by the caller to
 //! represent d(error)/dt) rather than a finite difference of the noisy AHRS
 //! angle.
+use crate::mixing::elevons::MixSaturation;
 use elle_config::CONTROL_LOOP_DT;
 
 /// Single-axis angle PID: P on angle error, I on error (clamped), D on supplied rate.
@@ -16,11 +17,25 @@ struct AxisPid {
 }
 
 impl AxisPid {
-    fn compute(&mut self, error: f32, rate: f32, i_limit: f32, reset_integral: bool) -> f32 {
+    /// `block_pos`/`block_neg`: the mixer saturated in that output direction last
+    /// tick, so the integral holds rather than grow further that way. It can
+    /// always unwind. (Positive error drives positive output: gains are >= 0.)
+    fn compute(
+        &mut self,
+        error: f32,
+        rate: f32,
+        i_limit: f32,
+        reset_integral: bool,
+        block_pos: bool,
+        block_neg: bool,
+    ) -> f32 {
         // Negative i_limit would invert the clamp bounds below; treat as zero.
         let i_limit = if i_limit > 0.0 { i_limit } else { 0.0 };
+        let blocked = (error > 0.0 && block_pos) || (error < 0.0 && block_neg);
         self.integral = if reset_integral {
             0.0
+        } else if blocked {
+            self.integral
         } else {
             let sum = self.integral + error * CONTROL_LOOP_DT;
             if sum > i_limit {
@@ -134,6 +149,9 @@ impl AttitudeController {
     ///
     /// `gyro_rates` is `(roll_rate, pitch_rate, yaw_rate)`, already sign-corrected
     /// by the caller so that each component equals d(error)/dt for that axis.
+    /// `saturation` is the previous tick's mix: integration stops in any
+    /// direction the elevons could not follow.
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         desired_pitch: f32,
@@ -142,6 +160,7 @@ impl AttitudeController {
         current_roll: f32,
         gyro_rates: Option<(f32, f32, f32)>,
         low_throttle: bool,
+        saturation: MixSaturation,
     ) -> (f32, f32) {
         if !self.enabled {
             return (0.0, 0.0);
@@ -163,13 +182,23 @@ impl AttitudeController {
         };
 
         let pitch_output = self.config.scale
-            * self
-                .pitch_pid
-                .compute(pitch_error, pitch_rate, self.config.i_limit, low_throttle);
+            * self.pitch_pid.compute(
+                pitch_error,
+                pitch_rate,
+                self.config.i_limit,
+                low_throttle,
+                saturation.pitch_up,
+                saturation.pitch_down,
+            );
         let roll_output = self.config.scale
-            * self
-                .roll_pid
-                .compute(roll_error, roll_rate, self.config.i_limit, low_throttle);
+            * self.roll_pid.compute(
+                roll_error,
+                roll_rate,
+                self.config.i_limit,
+                low_throttle,
+                saturation.roll_right,
+                saturation.roll_left,
+            );
 
         (pitch_output, roll_output)
     }

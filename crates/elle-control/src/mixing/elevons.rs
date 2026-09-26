@@ -32,7 +32,40 @@ pub struct ControlInputs {
 pub struct ElevonOutputs {
     pub left_us: u32,
     pub right_us: u32,
+    /// Which command directions hit a limit in this mix.
+    pub saturation: MixSaturation,
 }
+
+/// Directions in which a larger pitch/roll command would have no further effect,
+/// because an axis input or an elevon was clipped. The attitude PID stops
+/// integrating in a blocked direction (anti-windup after mixing: pitch and roll
+/// share both surfaces, so one axis can saturate the other's authority).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Format)]
+pub struct MixSaturation {
+    /// More nose-up (positive pitch) is blocked.
+    pub pitch_up: bool,
+    /// More nose-down (negative pitch) is blocked.
+    pub pitch_down: bool,
+    /// More right roll (positive roll) is blocked.
+    pub roll_right: bool,
+    /// More left roll (negative roll) is blocked.
+    pub roll_left: bool,
+}
+
+impl MixSaturation {
+    /// Pack as bits: pitch_up, pitch_down, roll_right, roll_left (LSB first).
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        self.pitch_up as u8
+            | (self.pitch_down as u8) << 1
+            | (self.roll_right as u8) << 2
+            | (self.roll_left as u8) << 3
+    }
+}
+
+// The saturation directions below assume positive pitch raises both elevons and
+// positive roll raises the right one and lowers the left.
+const _: () = assert!(ELEVON_PITCH_GAIN > 0.0 && ELEVON_ROLL_GAIN > 0.0);
 
 /// Mixes pitch, roll and yaw inputs into elevon control surface positions
 #[must_use]
@@ -43,19 +76,27 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
     let yaw = inputs.yaw.clamp(-1.0, 1.0);
 
     // Elevon mixing: each elevon responds to both pitch and roll
-    let left_elevon_normalized = ((pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN)
-        + (yaw * YAW_TO_ELEVON_GAIN))
-        .clamp(-1.0, 1.0);
+    let left_raw =
+        (pitch * ELEVON_PITCH_GAIN) - (roll * ELEVON_ROLL_GAIN) + (yaw * YAW_TO_ELEVON_GAIN);
+    let right_raw =
+        (pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN) - (yaw * YAW_TO_ELEVON_GAIN);
 
-    let right_elevon_normalized = ((pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN)
-        - (yaw * YAW_TO_ELEVON_GAIN))
-        .clamp(-1.0, 1.0);
+    let saturation = MixSaturation {
+        pitch_up: inputs.pitch >= 1.0 || left_raw >= 1.0 || right_raw >= 1.0,
+        pitch_down: inputs.pitch <= -1.0 || left_raw <= -1.0 || right_raw <= -1.0,
+        roll_right: inputs.roll >= 1.0 || left_raw <= -1.0 || right_raw >= 1.0,
+        roll_left: inputs.roll <= -1.0 || left_raw >= 1.0 || right_raw <= -1.0,
+    };
 
     // Convert to servo pulse widths using LUT
-    let left_us = normalized_to_servo_us(left_elevon_normalized);
-    let right_us = normalized_to_servo_us(right_elevon_normalized);
+    let left_us = normalized_to_servo_us(left_raw.clamp(-1.0, 1.0));
+    let right_us = normalized_to_servo_us(right_raw.clamp(-1.0, 1.0));
 
-    ElevonOutputs { left_us, right_us }
+    ElevonOutputs {
+        left_us,
+        right_us,
+        saturation,
+    }
 }
 
 /// Ultra-fast elevon mixing using direct RC values
@@ -79,6 +120,7 @@ pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
     ElevonOutputs {
         left_us: rc_to_pulse_lut(left_rc),
         right_us: rc_to_pulse_lut(right_rc),
+        saturation: MixSaturation::default(),
     }
 }
 
@@ -89,5 +131,6 @@ pub fn direct_elevon_control(channels: &[u16]) -> ElevonOutputs {
     ElevonOutputs {
         left_us: rc_to_pulse_lut(channels[ELEVON_LEFT_CH]),
         right_us: rc_to_pulse_lut(channels[ELEVON_RIGHT_CH]),
+        saturation: MixSaturation::default(),
     }
 }
