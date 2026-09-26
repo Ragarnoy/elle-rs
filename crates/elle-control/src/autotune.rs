@@ -6,18 +6,18 @@
 //!
 //! **no_std, no heap.** Uses fixed-size arrays and tick counts.
 
-use elle_config::CONTROL_LOOP_DT;
+use elle_config::{CONTROL_LOOP_DT, CONTROL_LOOP_FREQUENCY_HZ};
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Settling phase duration in ticks (2s at 77Hz)
-const SETTLE_TICKS: u32 = 154;
-/// Total timeout in ticks (60s at 77Hz)
-const TOTAL_TIMEOUT_TICKS: u32 = 4620;
-/// No-oscillation timeout in ticks (10s at 77Hz)
-const NO_OSC_TIMEOUT_TICKS: u32 = 770;
+/// Settling phase duration in ticks (2 s)
+const SETTLE_TICKS: u32 = 2 * CONTROL_LOOP_FREQUENCY_HZ;
+/// Total timeout in ticks (60 s)
+const TOTAL_TIMEOUT_TICKS: u32 = 60 * CONTROL_LOOP_FREQUENCY_HZ;
+/// No-oscillation timeout in ticks (10 s)
+const NO_OSC_TIMEOUT_TICKS: u32 = 10 * CONTROL_LOOP_FREQUENCY_HZ;
 /// Maximum safe amplitude in degrees
 const MAX_AMPLITUDE_DEG: f32 = 20.0;
 /// Number of initial cycles to discard (transient)

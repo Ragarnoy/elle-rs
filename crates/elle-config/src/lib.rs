@@ -48,16 +48,19 @@ pub const RC_TIMEOUT_MS: u64 = 300;
 pub const RC_CENTER: u16 = 1024; // CRSF center 992 scaled to 0–2047
 
 // Control loop timing parameters
-pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = 77; // Actual measured rate (~13ms)
-pub const CONTROL_LOOP_PERIOD_MS: u64 = 1000 / CONTROL_LOOP_FREQUENCY_HZ as u64; // 13ms
-pub const CONTROL_LOOP_DT: f32 = 0.013; // 13ms actual timing for PID stability
+/// Control loop period: the single source of truth for loop timing. The rate
+/// and the PID/autotune dt are derived from it so they cannot disagree (they
+/// once did: a "77 Hz" rate gave a 12 ms ticker while dt stayed 0.013).
+pub const CONTROL_LOOP_PERIOD_MS: u64 = 12;
+pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = (1000 / CONTROL_LOOP_PERIOD_MS) as u32; // 83
+pub const CONTROL_LOOP_DT: f32 = CONTROL_LOOP_PERIOD_MS as f32 / 1000.0;
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
 pub const RC_MAX_LATENCY_MS: u64 = 100; // Max acceptable RC packet age
 
 // ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ)
-pub const ULOG_STATUS_DIVISOR: u32 = 10; // 77/10 ≈ 7.7 Hz
-pub const ULOG_MAG_DIVISOR: u32 = 8; // 77/8 ≈ 9.6 Hz
-pub const ULOG_BARO_DIVISOR: u32 = 19; // 77/19 ≈ 4 Hz
+pub const ULOG_STATUS_DIVISOR: u32 = 10; // 83/10 ≈ 8.3 Hz
+pub const ULOG_MAG_DIVISOR: u32 = 8; // 83/8 ≈ 10 Hz
+pub const ULOG_BARO_DIVISOR: u32 = 19; // 83/19 ≈ 4.4 Hz
 pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const STALE_EVENT_DRAIN_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 
@@ -114,6 +117,10 @@ pub const AHRS_BETA: f32 = 0.033;
 pub const MAG_READ_INTERVAL_TICKS: u32 = 100;
 /// Barometer read interval in IMU ticks (50 = 20Hz at 1kHz IMU rate)
 pub const BARO_READ_INTERVAL_TICKS: u32 = 50;
+/// Most IMU FIFO samples fused per DATA_RDY wake-up (~250 µs each). Bounds how
+/// long a catch-up can hold off Core1 housekeeping; a larger backlog drains
+/// over the following wake-ups.
+pub const IMU_MAX_DRAIN: u32 = 32;
 
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
@@ -211,13 +218,13 @@ pub const STABILIZED_MAX_ROLL_DEG: f32 = 45.0; // Full stick = ±45° roll
 pub const AUTOTUNE_CH: usize = 6; // CH7 - 3-pos: off/pitch/roll
 pub const AUTOTUNE_OFF_THRESHOLD: u16 = 500; // Below = off
 pub const AUTOTUNE_PITCH_THRESHOLD: u16 = 1300; // Below = pitch, above = roll
-pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz
+pub const AUTOTUNE_DEBOUNCE_TICKS: u32 = CONTROL_LOOP_FREQUENCY_HZ / 2; // 0.5 s
 
 // Heading-hold RC switch (2-position on CH5) — modifier active only while
 // AttitudeMode::Stabilized is selected; captures current heading on engage.
 pub const HEADING_HOLD_CH: usize = 4; // CH5 - 2-pos: off/on
 pub const HEADING_HOLD_THRESHOLD: u16 = 1024; // Above this = engaged
-pub const HEADING_HOLD_DEBOUNCE_TICKS: u32 = 38; // 0.5s at 77Hz, matches AUTOTUNE_DEBOUNCE_TICKS
+pub const HEADING_HOLD_DEBOUNCE_TICKS: u32 = AUTOTUNE_DEBOUNCE_TICKS; // 0.5 s
 
 // Heading-hold outer loop: P/PI on heading error (deg) -> roll setpoint (deg)
 pub const HEADING_HOLD_KP: f32 = 1.2;
@@ -365,15 +372,6 @@ const _: () = assert!(
     HEADING_HOLD_MAX_ROLL_DEG > 0.0 && HEADING_HOLD_MAX_ROLL_DEG <= STABILIZED_MAX_ROLL_DEG
 );
 const _: () = assert!(HEADING_HOLD_MAX_ROLL_RATE_DEG_S > 0.0);
-
-// CONTROL_LOOP_DT must be consistent with CONTROL_LOOP_FREQUENCY_HZ (±1ms tolerance).
-// These are defined independently — if one changes and the other doesn't, PID integrator
-// and autotuner timing silently break.
-const _: () = {
-    let expected_ms = 1000 / CONTROL_LOOP_FREQUENCY_HZ; // integer ms
-    let dt_ms = (CONTROL_LOOP_DT * 1000.0) as u32;
-    assert!(dt_ms >= expected_ms - 1 && dt_ms <= expected_ms + 1);
-};
 
 // Motor poles must be even (eRPM = RPM × poles/2)
 const _: () = assert!(MOTOR_POLES.is_multiple_of(2));

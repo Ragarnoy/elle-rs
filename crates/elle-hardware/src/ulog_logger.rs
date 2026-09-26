@@ -426,7 +426,7 @@ impl ULogLogger {
         self.buffer_writer_output()
     }
 
-    /// Log autotune status (called at 77Hz during active autotune only)
+    /// Log autotune status (called at the control-loop rate during active autotune only)
     #[allow(clippy::too_many_arguments)]
     pub fn log_autotune(
         &mut self,

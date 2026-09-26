@@ -862,7 +862,7 @@ impl PerformanceMonitor {
             );
         }
 
-        // ULog logging (77Hz, Core 0)
+        // ULog logging (control-loop rate, Core 0)
         if self.ulog_logging.samples > 0 {
             let ulog_cpu = self
                 .ulog_logging

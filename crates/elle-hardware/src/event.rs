@@ -75,6 +75,8 @@ pub const EVT_IMU_FIFO_OVERFLOW: u16 = 41;
 pub const EVT_IMU_READ_ERRORS: u16 = 42;
 pub const EVT_MAG_INIT_FAILED: u16 = 43;
 pub const EVT_BARO_INIT_FAILED: u16 = 44;
+/// Core1 fell behind and drained several queued IMU samples in one wake-up.
+pub const EVT_IMU_CATCHUP: u16 = 45;
 
 // CRSF receiver (50–59)
 pub const EVT_CRSF_RX_FIRST_FRAME: u16 = 50;

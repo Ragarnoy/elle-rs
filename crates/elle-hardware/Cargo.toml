@@ -27,6 +27,8 @@ uom = { workspace = true }
 smart-leds = { workspace = true }
 sequential-storage = { workspace = true }
 embedded-storage-async = "0.4"
+# embassy-rp's PWM divider type
+fixed = "1.31"
 
 crc = { workspace = true }
 

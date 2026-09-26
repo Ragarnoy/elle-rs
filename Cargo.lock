@@ -1113,6 +1113,7 @@ dependencies = [
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
  "embedded-storage-async",
+ "fixed",
  "heapless 0.9.3",
  "icm426xx",
  "libm",

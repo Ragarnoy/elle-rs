@@ -182,8 +182,8 @@ async fn erase_pid_from_flash() {
 /// Log flight data to ULog flash storage
 ///
 /// Logs attitude, commands, and periodic status updates at appropriate rates:
-/// - Attitude: 77Hz (every call)
-/// - Commands: 77Hz (every call)
+/// - Attitude: control-loop rate (every call)
+/// - Commands: control-loop rate (every call)
 /// - Status: 7.7Hz (every 10th call)
 fn log_flight_data(
     logger: &mut ULogLogger,
@@ -198,7 +198,7 @@ fn log_flight_data(
     // Measure ULog logging performance
     let ulog_timer = TimingMeasurement::start();
 
-    // Log attitude data at 77Hz
+    // Log attitude data at control-loop rate
     if let Some(att) = attitude {
         let _ = logger.log_attitude(
             att.pitch,
@@ -210,7 +210,7 @@ fn log_flight_data(
         );
     }
 
-    // Log commands at 77Hz
+    // Log commands at control-loop rate
     // Convert to normalized for consistent logging
     let last_out = fc.last_output();
     let log_cmd = |logger: &mut ULogLogger, norm: &elle_control::commands::NormalizedCommands| {
@@ -233,7 +233,7 @@ fn log_flight_data(
         PilotCommands::Raw(raw) => log_cmd(logger, &raw.to_normalized()),
     }
 
-    // Log engine data at 77Hz
+    // Log engine data at control-loop rate
     {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
         let _ = logger.log_engine(&eng);
@@ -373,23 +373,20 @@ async fn main(spawner: Spawner) {
         );
     }
 
-    // Setup PIO0: elevon PWM (SM0, SM1) + WS2812B LED (SM2)
+    // Elevons on hardware PWM slice 6; WS2812B LED on PIO0 SM2
     info!("Core0: Setting up flight control hardware + LED on PIO0");
-    static PWM_PINS: StaticCell<PwmPins<'static>> = StaticCell::new();
-    let pwm_pins = PWM_PINS.init(PwmPins {
+    let mut pwm = PwmOutputs::new(PwmPins {
+        slice: p.PWM_SLICE6,
         elevon_left: p.PIN_13,
         elevon_right: p.PIN_12,
     });
+    pwm.set_safe_positions();
 
     let Pio {
-        mut common,
-        sm0,
-        sm1,
+        common,
         sm2: led_sm,
         ..
     } = Pio::new(p.PIO0, Irqs);
-    let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, pwm_pins);
-    pwm.set_safe_positions();
 
     spawner.spawn(led_task(common, led_sm, p.DMA_CH2, Irqs, p.PIN_10).unwrap());
 
@@ -681,7 +678,7 @@ async fn main(spawner: Spawner) {
         // Autotune display for CRSF telemetry (DONE/ERR shown for ~3s then reverts to Off)
         let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
         let mut autotune_display_timer: u32 = 0;
-        const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
+        const AUTOTUNE_DISPLAY_DURATION: u32 = CONTROL_LOOP_FREQUENCY_HZ * 3; // ~3 s
 
         // Heading-hold state (CH5, 2-pos switch, modifier active only while Stabilized)
         let mut heading_hold_switch_debounced: bool = false;
@@ -691,7 +688,7 @@ async fn main(spawner: Spawner) {
         // Mag calibration collection in progress (double-tap gesture)
         let mut mag_cal_collecting: bool = false;
 
-        // Create ticker for precise 13ms periods (77Hz)
+        // Create ticker for the control loop period (CONTROL_LOOP_PERIOD_MS)
         let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
 
         // Track last commands for consistent update rate
@@ -730,7 +727,7 @@ async fn main(spawner: Spawner) {
                 last_commands = Some(commands);
             }
 
-            // Always update flight controller at 13ms intervals for consistent PID timing
+            // Always update flight controller every tick for consistent PID timing
             // Use last known commands if no new packet arrived this iteration
             // Kill switch: CH8 high = disarm, block fc.update() to prevent re-arm
             let kill_active = last_commands.as_ref().is_some_and(|cmd| {
@@ -1107,7 +1104,7 @@ async fn main(spawner: Spawner) {
                         }
                     }
 
-                    // Log autotune status to ULog (77Hz during active autotune)
+                    // Log autotune status to ULog (control-loop rate during active autotune)
                     if ulog_recording {
                         let _ = ulog_logger.log_autotune(
                             autotuner.phase_u8(),
@@ -1257,7 +1254,7 @@ async fn main(spawner: Spawner) {
         let mut was_killed = false;
         let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
         let mut autotune_display_timer: u32 = 0;
-        const AUTOTUNE_DISPLAY_DURATION: u32 = 77 * 3; // ~3 seconds at 77Hz
+        const AUTOTUNE_DISPLAY_DURATION: u32 = CONTROL_LOOP_FREQUENCY_HZ * 3; // ~3 s
 
         loop {
             ticker.next().await;
@@ -1742,7 +1739,7 @@ async fn main(spawner: Spawner) {
                     }
                 }
 
-                // Log autotune status to ULog (77Hz during active autotune)
+                // Log autotune status to ULog (control-loop rate during active autotune)
                 if ULOG_ENABLED.load(Ordering::Acquire) {
                     let _ = ulog_logger.log_autotune(
                         autotuner.phase_u8(),

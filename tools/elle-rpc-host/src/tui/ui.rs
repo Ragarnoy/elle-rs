@@ -269,8 +269,8 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                     "{}us avg / {}us max",
                     p.control_loop_avg_us, p.control_loop_max_us
                 ),
-                // 77Hz control loop => 13ms budget per iteration.
-                scale(f64::from(p.control_loop_max_us), 10_000.0, 13_000.0),
+                // 12 ms control loop period (elle-config CONTROL_LOOP_PERIOD_MS).
+                scale(f64::from(p.control_loop_max_us), 9_000.0, 12_000.0),
             )
         },
     );
@@ -850,6 +850,7 @@ const fn log_code_text(code: u16) -> &'static str {
         42 => "IMU: read errors",
         43 => "Magnetometer: init failed",
         44 => "Barometer: init failed",
+        45 => "IMU: caught up queued samples",
         // CRSF receiver (50–59)
         50 => "CRSF RX: first frame received",
         51 => "CRSF RX: UART error",

@@ -72,13 +72,13 @@ cargo build -p elle-rpc-host --target x86_64-unknown-linux-gnu
 | PIN_1 | SPI0 CS | ICM-42686 IMU |
 | PIN_2 | SPI0 SCLK | ICM-42686 IMU |
 | PIN_3 | SPI0 MOSI | ICM-42686 IMU |
-| PIN_5 | IMU INT1 | DATA_RDY (polled) |
+| PIN_5 | IMU INT1 | DATA_RDY (async GPIO) |
 | PIN_8 | I2C0 SDA | MMC5616WA mag + BMP390 baro |
 | PIN_9 | I2C0 SCL | MMC5616WA mag + BMP390 baro |
 | PIN_10 | WS2812B LED | PIO0 SM2 + DMA_CH2 |
 | PIN_11 | DShot right engine | PIO2 |
-| PIN_12 | Elevon right PWM | PIO0 SM1 |
-| PIN_13 | Elevon left PWM | PIO0 SM0 |
+| PIN_12 | Elevon right PWM | PWM slice 6 A |
+| PIN_13 | Elevon left PWM | PWM slice 6 B |
 | PIN_14 | DShot left engine | PIO1 |
 | PIN_20 | UART1 TX | CRSF telemetry (DMA_CH4) |
 | PIN_21 | UART1 RX | CRSF receiver (DMA_CH3) |
@@ -209,7 +209,7 @@ Three independent logging systems coexist, each serving a different purpose:
 |--------|-----------|------|-------------|----------|
 | **defmt** | RTT channel 0 | Event-driven | Only if host captures | Developer at debug probe |
 | **RPC LogTopic** | RTT channel 1 (postcard-RPC) | Event-driven (`elle_event!` sites throughout firmware) | No — streaming | Host TUI dashboard |
-| **ULog** | SD card (FAT32 over SPI1) | 77Hz attitude+commands+engine, 7.7Hz status | Yes — survives power loss | Post-flight analysis |
+| **ULog** | SD card (FAT32 over SPI1) | 83Hz attitude+commands+engine, 8.3Hz status | Yes — survives power loss | Post-flight analysis |
 
 - defmt macros (`info!`, `warn!`, etc.) are always compiled in; the transport (`defmt-rtt`) is gated on `defmt-logging` (default on). Without the transport, macros become no-ops.
 - RPC LogTopic carries `(level: u8, code: u16)` — numeric event codes mapped to strings on the host side in `tui/ui.rs::log_code_text()`. ULog-related codes: 30=recording started, 31=init failed, 33=recording stopped, 34=flash erased.
@@ -217,7 +217,7 @@ Three independent logging systems coexist, each serving a different purpose:
 
 ### Control Loop Architecture
 
-The firmware main loop runs at 77Hz (13ms ticker). Engine output is decoupled: the control loop publishes throttle values via `DSHOT_THROTTLE` Signal, and a dedicated `dshot_task` resends them at ~1kHz. The DShot task also handles ESC arming on startup (2s MotorStop burst), eliminating any init gap.
+The firmware main loop runs at 83Hz (12ms ticker; `CONTROL_LOOP_PERIOD_MS` is the source of truth and `CONTROL_LOOP_FREQUENCY_HZ`/`CONTROL_LOOP_DT` derive from it). Engine output is decoupled: the control loop publishes throttle values via `DSHOT_THROTTLE` Signal, and a dedicated `dshot_task` resends them at ~1kHz. The DShot task also handles ESC arming on startup (2s MotorStop burst), eliminating any init gap.
 
 **DShot task** (`crates/elle-hardware/src/dshot.rs`):
 - Spawned on Core0 before supervisor init, takes ownership of PIO1+PIO2 engine peripherals
@@ -297,7 +297,7 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - Host TUI displays barometer data (pressure, temperature, altitude) at 1 Hz poll rate
 - **ICM-42686-P IMU integrated via SPI0** — replaced BNO055 (I2C) with ICM-42686 (SPI) + Madgwick AHRS sensor fusion. Renamed `BnoImu` → `Imu`. Removed `bno055`/`mint` deps, added `icm426xx`/`ahrs`/`nalgebra`.
 - **AHRS sensor fusion**: `ahrs` crate (Madgwick filter) fuses ICM accel+gyro at 1 kHz with MMC5616WA mag at 10 Hz for 9-DOF attitude estimation. Falls back to 6-DOF (no mag) until first mag reading.
-- **SPI0 pin assignments**: MISO=PIN_0, CS=PIN_1, SCLK=PIN_2, MOSI=PIN_3, INT1=PIN_5 (DATA_RDY — polled via `is_low()`)
+- **SPI0 pin assignments**: MISO=PIN_0, CS=PIN_1, SCLK=PIN_2, MOSI=PIN_3, INT1=PIN_5 (DATA_RDY — awaited via `wait_for_high()`)
 - **Blocking SPI on Core1**: Uses blocking SPI (polled, no DMA) since DMA interrupt handlers are registered on Core0's NVIC. 24-byte FIFO read at 1 MHz SPI takes ~200µs.
 - **I2C bus always RefCell-wrapped**: Both real and stub paths now use `RefCell<I2c>` for I2C0, since mag+baro share the bus.
 
@@ -310,10 +310,10 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 - **Named constants**: `RAD_TO_CDEG` replacing 6 magic `5729.578` literals, `ULOG_FLASH_END_EXCL` replacing 5 hardcoded `0x1000000` values
 - **ULog always compiled in**: Removed `ulog-logging` feature gate. ULog support is always available; recording starts only when explicitly triggered (RC switch or TUI command).
 - **Code quality pass**: clippy pedantic/nursery fixes, f64→f32 atan2, named constants for magic numbers (AHRS_BETA, sensor rate ticks), `ULogState` enum replacing magic constants, event drain throttling, setpoint filter skip in Manual mode
-- **Dedicated 1kHz DShot send task**: Decoupled ESC frame sending from 77Hz control loop into `dshot_task` running at ~1kHz via `DSHOT_THROTTLE` Signal. Task owns PIO1+PIO2 engines, handles arming, and continuously resends latest throttle values. `DshotEngines` made private (concrete PIO1/PIO2 types, no longer generic).
-- **EDT RPM telemetry**: DShot task uses `throttle_with_telemetry()` for bidirectional eRPM reading. `ENGINE_CACHE` (Mutex<Cell<>>) carries `EngineReading` (eRPM, throttle, validity per engine). Auto-fallback to `throttle_async()` after 100 consecutive telemetry failures per engine. ULog `engine_data` message at 77Hz. `GetEngineEndpoint` RPC + TUI 5Hz polling + `direct engine` command.
+- **Dedicated 1kHz DShot send task**: Decoupled ESC frame sending from the control loop into `dshot_task` running at ~1kHz via `DSHOT_THROTTLE` Signal. Task owns PIO1+PIO2 engines, handles arming, and continuously resends latest throttle values. `DshotEngines` made private (concrete PIO1/PIO2 types, no longer generic).
+- **EDT RPM telemetry**: DShot task uses `throttle_with_telemetry()` for bidirectional eRPM reading. `ENGINE_CACHE` (Mutex<Cell<>>) carries `EngineReading` (eRPM, throttle, validity per engine). Auto-fallback to `throttle_async()` after 100 consecutive telemetry failures per engine. ULog `engine_data` message at the control-loop rate. `GetEngineEndpoint` RPC + TUI 5Hz polling + `direct engine` command.
 - **Failsafe state machine**: `RcLinkState` enum (Ok/Warning/Lost) replaces simple threshold check. `RC_WARNING_MS=200` → `RC_TIMEOUT_MS=300` two-stage detection. Events (codes 13-15) fire on transitions only, not every iteration. `signal_restored()` clears failsafe on recovery. `rc_age_ms` in `StatusResp`, `FlightState`, ULog `system_status`. LED warning pattern (FastBlink/orange) at Warning, RapidFlash/orange at Lost.
-- **Interrupt-driven IMU reads**: INT1 (PIN_5) configured for DATA_RDY (`ui_drdy_int1_en=1`). `Imu::run()` polls `int1.is_low()` + `yield_now()` instead of FIFO polling with 500µs sleep. Eliminates wasted SPI reads, gives deterministic attitude latency. Async GPIO not used (Core1 lacks IRQ infrastructure). INT2 (GPIO4) free for crash detection SMD interrupt.
+- **Interrupt-driven IMU reads**: INT1 (PIN_5) configured for DATA_RDY (`ui_drdy_int1_en=1`). `Imu::run()` awaits `int1.wait_for_high()` (async GPIO; the embassy-rp multicore executor wakes Core1 across cores), then drains the FIFO: every queued sample is fused in order and only the newest attitude is published, capped at `IMU_MAX_DRAIN` per wake-up. Reading one sample per DATA_RDY used to leave any backlog from a slow iteration (mag/baro I2C) queued for good, ratcheting attitude latency up until a FIFO-overflow flush. A multi-sample drain fires event 45 (rate-limited to 1/s). INT2 (GPIO4) free for crash detection SMD interrupt.
 - **Code review cleanup**: Replaced `Result<(), ()>` in `ULogLogger` with proper `ULogError` enum (4 variants: NotInitialized, InitFailed, BufferFull, FlushFailed). Extracted `buffer_writer_output()` helper deduplicating extend+flush across 8 log methods. Removed unused `failsafe: bool` parameter from `ArmingState::update()`. Removed misleading `const` from 9 methods across `arming.rs` and `system.rs` (`const fn` with `&mut self` compiles but is semantically wrong). Extracted 9 named constants from magic numbers in main loop divisors (`ULOG_STATUS_DIVISOR`, `ULOG_MAG_DIVISOR`, `ULOG_BARO_DIVISOR`, `ULOG_GNSS_DIVISOR`, `STALE_EVENT_DRAIN_DIVISOR`, `LED_UPDATE_INTERVAL`, `PERF_LOG_INTERVAL`, `GNSS_ERROR_LOG_INITIAL`, `GNSS_ERROR_LOG_INTERVAL`). Reviewed and dismissed 4 theoretical overflow risks (eRPM u32 multiplication fits, governor feedforward clamped by upstream DShot range, deadband discontinuity is 0.25% step, attitude rate i16 overflow only at 327°/s crash tumble in telemetry-only path).
 - **RPM governor windup fix**: `RpmGovernor::update()` (`elle-control/src/governor.rs`) was clamping its PI correction/anti-windup against `DSHOT_THROTTLE_MAX` (1999) instead of each platform's measured stall/saturation boundary — at full throttle (target eRPM sitting right at the peak), any normal RPM dip wound the integrator past that boundary, pushing DShot into a region where more throttle means *less* RPM (at the time, eagle's right engine saturated above DShot 1473; current ceilings: eagle 1498 from the 2026-09-26 sweep, dart 1998 — see the prop entry below), causing runaway progressive RPM sag. Added platform-specific `GOVERNOR_DSHOT_MAX` const (`elle-config/src/lib.rs`) matching each platform's last `GOVERNOR_FF_TABLE` entry and used it for all governor clamps.
 - **Governor MotorStop latch fix**: dropping throttle 40%→10% in the TUI left the engine commanded off permanently (`cmd:0`, `0 RPM`, against a live 1336 RPM target); 20%→10% was fine. Three pieces closed a loop: `dshot.rs` sent `MotorStop` whenever the *governor output* was 0 (a governor 0 is DShot frame 48 = minimum spin, **not** a stop) and then fabricated `erpm = 0, valid = true` for `ENGINE_CACHE`; the governor's spike filter rejected that fabricated 0 (jump > `GOVERNOR_ERPM_MAX_JUMP`) and kept the stale pre-chop `last_measured` forever, since no telemetry is read while MotorStop goes out; the frozen huge negative error clamped output back to 0. Trigger threshold is `KP × |Δ eRPM| > ff(target)` — ~2,070 RPM of drop at that operating point, which is why the small step escaped. Fixes: `MotorStop` and the fabricated zero reading are both now gated on `target_erpm == 0` rather than on the governor output, and `MAX_CONSECUTIVE_SPIKE_REJECTS` (20 ticks) bounds the spike filter so a stale `last_measured` can never latch it shut. Regression tests in `crates/elle-control/tests/governor_step_response.rs` (host: `cargo test -p elle-control --target x86_64-unknown-linux-gnu --features platform-dart`); `elle-control` gained a `platform-dart` passthrough feature for them. Affected flight mode too, not just the TUI — an RC throttle chop of the same size cut the engine with no recovery short of throttle-to-zero-and-back.
@@ -338,6 +338,12 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
   length prefix that nothing checked before), `GnssResp`, the TUI panel and
   `direct gnss`. CRSF GPS groundspeed was hardcoded to 0 and is now real.
   **Not yet bench-tested** — the baud/rate switch needs hardware verification.
+
+- **Stabilization latency fixes** (from an external stabilization review):
+  - *Elevons on hardware PWM.* `PioPwm` queued commands in a 4-deep PIO TX FIFO drained once per 20 ms frame; written every tick it stayed full, dropped each new write, and servos ran ~70–80 ms behind the controller. `PwmOutputs` (`elle-hardware/src/pwm.rs`) now drives PWM slice 6 (PIN_12 = A right, PIN_13 = B left) at a 1 MHz count, whose compare latches at wrap: always the latest command, ≤ 1 frame old.
+  - *IMU FIFO drained per DATA_RDY* (see the interrupt-driven IMU entry): backlog from slow iterations no longer persists.
+  - *Loop timing.* `1000 / 77` gave a 12 ms ticker while `CONTROL_LOOP_DT` stayed 0.013, so PID integral, heading hold and autotune Tu were 8% off. Everything now derives from `CONTROL_LOOP_PERIOD_MS = 12` (83 Hz); autotune timeouts and debounce ticks derive from the rate.
+  - Gains fitted or autotuned before these fixes were compensating for the delays: re-run autotune before trusting them. Not yet bench-verified (scope PIN_12/13, watch event 45).
 
 ### Known TODOs in Firmware
 None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).

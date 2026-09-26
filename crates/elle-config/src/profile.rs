@@ -9,7 +9,7 @@ pub const ULOG_CHUNK_SIZE: usize = 4096;
 pub const ULOG_WRITE_CHUNK_SIZE: usize = 512;
 
 /// ULog logger internal buffer size. Larger buffer = fewer flushes = fewer channel
-/// messages = more data batched per flash write. At ~133 bytes/iteration (77Hz),
+/// messages = more data batched per flash write. At ~133 bytes/iteration (83 Hz),
 /// a 2KB buffer flushes roughly every 11 iterations (~7 flushes/sec).
 pub const ULOG_LOGGER_BUFFER_SIZE: usize = 2048;
 
