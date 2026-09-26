@@ -234,6 +234,173 @@ impl CommandsMessage {
     }
 }
 
+/// Controller cycle message - what the attitude PID actually saw and did each tick:
+/// timing, the setpoint it used, its P/I/D terms, mixer saturation and the pulses
+/// the PWM really output. Complements `commands`, which logs pilot input.
+///
+/// Format: "controller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us"
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ControllerMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Measured time since the previous controller update, in microseconds
+    pub dt_us: u32,
+    /// Age of the attitude sample the PID used, in microseconds (`u32::MAX`: none)
+    pub att_age_us: u32,
+    /// Pitch setpoint the PID used (after smoothing and rate limit), degrees
+    pub pitch_sp_deg: f32,
+    /// Roll setpoint the PID used (after smoothing and rate limit), degrees
+    pub roll_sp_deg: f32,
+    /// Pitch P contribution (scaled; P + I + D = pitch correction)
+    pub pitch_p: f32,
+    /// Pitch I contribution (scaled)
+    pub pitch_i: f32,
+    /// Pitch D (gyro damping) contribution (scaled)
+    pub pitch_d: f32,
+    /// Roll P contribution (scaled; P + I + D = roll correction)
+    pub roll_p: f32,
+    /// Roll I contribution (scaled)
+    pub roll_i: f32,
+    /// Roll D (gyro damping) contribution (scaled)
+    pub roll_d: f32,
+    /// Mixer saturation bits: pitch_up, pitch_down, roll_right, roll_left (LSB first)
+    pub saturation: u8,
+    /// Left elevon pulse actually output (after trim), microseconds
+    pub elevon_left_pulse_us: u16,
+    /// Right elevon pulse actually output (after trim and inversion), microseconds
+    pub elevon_right_pulse_us: u16,
+}
+
+impl ControllerMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str = "controller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us";
+
+    /// Message name
+    pub const NAME: &'static str = "controller";
+
+    /// Pre-serialized format definition message (header + payload)
+    pub const FORMAT_MSG: &'static [u8] = b"\x06\x01Fcontroller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 53;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.dt_us.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.att_age_us.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.pitch_sp_deg.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.roll_sp_deg.to_le_bytes());
+        buf[24..28].copy_from_slice(&self.pitch_p.to_le_bytes());
+        buf[28..32].copy_from_slice(&self.pitch_i.to_le_bytes());
+        buf[32..36].copy_from_slice(&self.pitch_d.to_le_bytes());
+        buf[36..40].copy_from_slice(&self.roll_p.to_le_bytes());
+        buf[40..44].copy_from_slice(&self.roll_i.to_le_bytes());
+        buf[44..48].copy_from_slice(&self.roll_d.to_le_bytes());
+        buf[48] = self.saturation;
+        buf[49..51].copy_from_slice(&self.elevon_left_pulse_us.to_le_bytes());
+        buf[51..53].copy_from_slice(&self.elevon_right_pulse_us.to_le_bytes());
+        buf
+    }
+}
+
+// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
+const _: () = assert!(
+    ControllerMessage::FORMAT_MSG.len() == ControllerMessage::FORMAT.len() + 3,
+    "ControllerMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
+);
+const _: () = assert!(
+    ControllerMessage::FORMAT_MSG[0] as usize | ((ControllerMessage::FORMAT_MSG[1] as usize) << 8)
+        == ControllerMessage::FORMAT.len(),
+    "ControllerMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
+);
+const _: () = assert!(
+    ControllerMessage::FORMAT_MSG[2] == b'F',
+    "ControllerMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
+);
+const _: () = assert!(
+    ControllerMessage::SIZE == 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 2 + 2,
+    "ControllerMessage::SIZE does not match its field widths"
+);
+
+/// Active PID gains - logged at recording start and whenever the gains change.
+///
+/// Format: "pid_gains:uint64_t timestamp;float kp_pitch;float ki_pitch;float kd_pitch;float kp_roll;float ki_roll;float kd_roll;float i_limit;float scale"
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PidGainsMessage {
+    /// Timestamp in microseconds
+    pub timestamp: u64,
+    /// Pitch proportional gain
+    pub kp_pitch: f32,
+    /// Pitch integral gain
+    pub ki_pitch: f32,
+    /// Pitch derivative (rate) gain
+    pub kd_pitch: f32,
+    /// Roll proportional gain
+    pub kp_roll: f32,
+    /// Roll integral gain
+    pub ki_roll: f32,
+    /// Roll derivative (rate) gain
+    pub kd_roll: f32,
+    /// Integral clamp (rad·s)
+    pub i_limit: f32,
+    /// Output scale applied to P + I + D
+    pub scale: f32,
+}
+
+impl PidGainsMessage {
+    /// Format definition string for ULog
+    pub const FORMAT: &'static str = "pid_gains:uint64_t timestamp;float kp_pitch;float ki_pitch;float kd_pitch;float kp_roll;float ki_roll;float kd_roll;float i_limit;float scale";
+
+    /// Message name
+    pub const NAME: &'static str = "pid_gains";
+
+    /// Pre-serialized format definition message (header + payload)
+    pub const FORMAT_MSG: &'static [u8] = b"\x8d\x00Fpid_gains:uint64_t timestamp;float kp_pitch;float ki_pitch;float kd_pitch;float kp_roll;float ki_roll;float kd_roll;float i_limit;float scale";
+
+    /// Size of the message in bytes
+    pub const SIZE: usize = 40;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.kp_pitch.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.ki_pitch.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.kd_pitch.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.kp_roll.to_le_bytes());
+        buf[24..28].copy_from_slice(&self.ki_roll.to_le_bytes());
+        buf[28..32].copy_from_slice(&self.kd_roll.to_le_bytes());
+        buf[32..36].copy_from_slice(&self.i_limit.to_le_bytes());
+        buf[36..40].copy_from_slice(&self.scale.to_le_bytes());
+        buf
+    }
+}
+
+// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
+const _: () = assert!(
+    PidGainsMessage::FORMAT_MSG.len() == PidGainsMessage::FORMAT.len() + 3,
+    "PidGainsMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
+);
+const _: () = assert!(
+    PidGainsMessage::FORMAT_MSG[0] as usize | ((PidGainsMessage::FORMAT_MSG[1] as usize) << 8)
+        == PidGainsMessage::FORMAT.len(),
+    "PidGainsMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
+);
+const _: () = assert!(
+    PidGainsMessage::FORMAT_MSG[2] == b'F',
+    "PidGainsMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
+);
+const _: () = assert!(
+    PidGainsMessage::SIZE == 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4,
+    "PidGainsMessage::SIZE does not match its field widths"
+);
+
 /// System status message - logs performance and health metrics
 ///
 /// Format: "system_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load;uint16_t rc_age_ms"

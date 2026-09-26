@@ -38,8 +38,14 @@ fn roll_saturates_through_the_right_elevon() {
     // right = 0.6 + 0.6 = 1.2 > 1; left = 0.
     let s = sat(0.6, 0.6);
     assert!(s.pitch_up, "more pitch would push the right elevon further");
-    assert!(s.roll_right, "more right roll would push the right elevon further");
-    assert!(!s.pitch_down && !s.roll_left, "unwinding directions stay open");
+    assert!(
+        s.roll_right,
+        "more right roll would push the right elevon further"
+    );
+    assert!(
+        !s.pitch_down && !s.roll_left,
+        "unwinding directions stay open"
+    );
 }
 
 #[test]
@@ -69,7 +75,7 @@ fn integrator() -> AttitudeController {
 }
 
 fn step(c: &mut AttitudeController, pitch_err: f32, s: MixSaturation) -> f32 {
-    c.update(pitch_err, 0.0, 0.0, 0.0, None, false, s).0
+    c.update(pitch_err, 0.0, 0.0, 0.0, None, false, s).0.total()
 }
 
 #[test]
@@ -100,7 +106,36 @@ fn blocking_one_axis_leaves_the_other_integrating() {
     };
     let (p1, r1) = c.update(1.0, 1.0, 0.0, 0.0, None, false, s);
     let (p2, r2) = c.update(1.0, 1.0, 0.0, 0.0, None, false, s);
+    let (p1, r1, p2, r2) = (p1.total(), r1.total(), p2.total(), r2.total());
     assert_eq!(p1, 0.0);
     assert_eq!(p2, 0.0);
     assert!(r2 > r1 && r1 > 0.0);
+}
+
+#[test]
+fn terms_are_scaled_and_sum_to_the_output() {
+    let mut c = AttitudeController::with_config(PidConfig {
+        kp_pitch: 2.0,
+        ki_pitch: 1.0,
+        kd_pitch: 0.5,
+        kp_roll: 0.0,
+        ki_roll: 0.0,
+        kd_roll: 0.0,
+        i_limit: 10.0,
+        scale: 5.0,
+    });
+    c.enabled = true;
+    let (pitch, _) = c.update(
+        0.1,
+        0.0,
+        0.0,
+        0.0,
+        Some((0.0, 0.2, 0.0)),
+        false,
+        MixSaturation::default(),
+    );
+    assert!((pitch.p - 5.0 * 2.0 * 0.1).abs() < 1e-6);
+    assert!((pitch.d - 5.0 * 0.5 * 0.2).abs() < 1e-6);
+    assert!(pitch.i > 0.0);
+    assert!((pitch.total() - (pitch.p + pitch.i + pitch.d)).abs() < 1e-6);
 }

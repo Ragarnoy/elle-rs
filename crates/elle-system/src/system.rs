@@ -10,7 +10,7 @@ use elle_control::mixing::{
 use elle_control::{
     arming::ArmingState,
     heading::HeadingController,
-    pid::{AttitudeController, PidConfig},
+    pid::{AttitudeController, AxisTerms, PidConfig},
 };
 use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
 use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT, is_attitude_valid};
@@ -95,6 +95,21 @@ pub struct ControllerOutputSnapshot {
     pub heading_hold_active: bool,
     pub heading_target_deg: f32,
     pub heading_error_deg: f32,
+    /// Measured time since the previous `update`, in µs (0 on the first).
+    pub dt_us: u32,
+    /// Age of the attitude sample the PID used, in µs; `u32::MAX` when none.
+    pub att_age_us: u32,
+    /// Setpoints the PID actually used (after smoothing and rate limit).
+    pub pitch_sp_used_deg: f32,
+    pub roll_sp_used_deg: f32,
+    /// Scaled P/I/D contributions; each axis's terms sum to its correction.
+    pub pitch_terms: AxisTerms,
+    pub roll_terms: AxisTerms,
+    /// Mixer saturation from this tick.
+    pub saturation: MixSaturation,
+    /// Pulses the PWM actually output (after trim and right-servo inversion).
+    pub elevon_left_pulse_us: u32,
+    pub elevon_right_pulse_us: u32,
 }
 
 pub struct FlightController<'a> {
@@ -108,6 +123,10 @@ pub struct FlightController<'a> {
     filtered_roll_setpoint_rad: f32,
     /// Previous tick's mixer saturation, for the PID's anti-windup.
     last_saturation: MixSaturation,
+    /// When `update` last ran, for the measured dt.
+    last_update_at: Option<Instant>,
+    /// Bumped on every gain change, so the logger can record new gains.
+    gains_version: u32,
     // Control mode tracking
     current_control_mode: ControlMode,
     // Controller output snapshot for observability
@@ -156,6 +175,8 @@ impl<'a> FlightController<'a> {
             filtered_pitch_setpoint_rad: 0.0,
             filtered_roll_setpoint_rad: 0.0,
             last_saturation: MixSaturation::default(),
+            last_update_at: None,
+            gains_version: 0,
             current_control_mode: ControlMode::Manual,
             last_output: ControllerOutputSnapshot::default(),
             watchdog: None,
@@ -296,6 +317,12 @@ impl<'a> FlightController<'a> {
     pub fn update(&mut self, commands: &PilotCommands, attitude: Option<&AttitudeData>) {
         self.last_packet_time = commands.timestamp();
 
+        let now = Instant::now();
+        let dt_us = self
+            .last_update_at
+            .map_or(0, |t| now.saturating_duration_since(t).as_micros() as u32);
+        self.last_update_at = Some(now);
+
         let mode = commands.attitude_mode();
 
         // Track mode changes
@@ -322,6 +349,7 @@ impl<'a> FlightController<'a> {
         // surfaces from stale sticks and let a stale low throttle re-arm.
         if self.arming.failsafe_active {
             self.hold_failsafe();
+            self.last_output.dt_us = dt_us;
             return;
         }
 
@@ -341,6 +369,7 @@ impl<'a> FlightController<'a> {
                 self.update_normalized(norm, attitude);
             }
         }
+        self.last_output.dt_us = dt_us;
     }
 
     #[allow(clippy::inline_always)]
@@ -351,7 +380,8 @@ impl<'a> FlightController<'a> {
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
         self.last_saturation = elevon_outputs.saturation;
-        self.pwm
+        let (left_pulse, right_pulse) = self
+            .pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
         let (left_thrust, right_thrust) = if self.arming.armed {
@@ -372,6 +402,12 @@ impl<'a> FlightController<'a> {
             elevon_right_us: elevon_outputs.right_us,
             engine_left_dshot: left_thrust,
             engine_right_dshot: right_thrust,
+            att_age_us: u32::MAX,
+            pitch_terms: AxisTerms::default(),
+            roll_terms: AxisTerms::default(),
+            saturation: elevon_outputs.saturation,
+            elevon_left_pulse_us: left_pulse,
+            elevon_right_pulse_us: right_pulse,
             ..self.last_output
         };
     }
@@ -476,6 +512,9 @@ impl<'a> FlightController<'a> {
         // Track PID corrections for output snapshot
         let mut pitch_correction = 0.0f32;
         let mut roll_correction = 0.0f32;
+        let mut pitch_terms = AxisTerms::default();
+        let mut roll_terms = AxisTerms::default();
+        let mut att_age_us = u32::MAX;
 
         // Apply control mode logic
         let final_inputs = match norm.attitude_mode {
@@ -506,7 +545,12 @@ impl<'a> FlightController<'a> {
                         // from to_normalized(), so applying it again here would double-invert
                         // and produce the wrong correction direction.
                         // D-term rates are negated because rate = d(error)/dt = -d(measurement)/dt.
-                        let (pc, rc) = self.attitude_controller.update(
+                        att_age_us = Instant::now()
+                            .saturating_duration_since(att.timestamp)
+                            .as_micros()
+                            .min(u64::from(u32::MAX - 1))
+                            as u32;
+                        let (pt, rt) = self.attitude_controller.update(
                             self.filtered_pitch_setpoint_rad,
                             self.filtered_roll_setpoint_rad,
                             att.pitch,
@@ -515,8 +559,10 @@ impl<'a> FlightController<'a> {
                             low_throttle,
                             self.last_saturation,
                         );
-                        pitch_correction = pc;
-                        roll_correction = rc;
+                        pitch_terms = pt;
+                        roll_terms = rt;
+                        pitch_correction = pt.total();
+                        roll_correction = rt.total();
 
                         // 100% PID output for pitch/roll, throttle/yaw remain manual
                         ControlInputs {
@@ -534,7 +580,8 @@ impl<'a> FlightController<'a> {
         // Apply final outputs
         let elevon_outputs = mix_elevons(&final_inputs);
         self.last_saturation = elevon_outputs.saturation;
-        self.pwm
+        let (left_pulse, right_pulse) = self
+            .pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
         // Linear DShot mapping for normalized commands — the RC throttle curve
@@ -563,6 +610,15 @@ impl<'a> FlightController<'a> {
             heading_hold_active: self.heading_hold_active,
             heading_target_deg,
             heading_error_deg,
+            dt_us: self.last_output.dt_us,
+            att_age_us,
+            pitch_sp_used_deg: self.filtered_pitch_setpoint_rad.to_degrees(),
+            roll_sp_used_deg: self.filtered_roll_setpoint_rad.to_degrees(),
+            pitch_terms,
+            roll_terms,
+            saturation: elevon_outputs.saturation,
+            elevon_left_pulse_us: left_pulse,
+            elevon_right_pulse_us: right_pulse,
         };
     }
 
@@ -630,6 +686,12 @@ impl<'a> FlightController<'a> {
             elevon_right_us: ELEVON_RIGHT_CENTER_US,
             engine_left_dshot: 0,
             engine_right_dshot: 0,
+            att_age_us: u32::MAX,
+            pitch_terms: AxisTerms::default(),
+            roll_terms: AxisTerms::default(),
+            saturation: MixSaturation::default(),
+            elevon_left_pulse_us: ELEVON_LEFT_CENTER_US,
+            elevon_right_pulse_us: ELEVON_RIGHT_CENTER_US,
             ..self.last_output
         };
     }
@@ -689,6 +751,19 @@ impl<'a> FlightController<'a> {
     /// Update PID gains at runtime (resets integral state).
     pub fn set_pid_gains(&mut self, config: PidConfig) {
         self.attitude_controller.update_config(config);
+        self.gains_version = self.gains_version.wrapping_add(1);
+    }
+
+    /// Active PID gains.
+    #[must_use]
+    pub const fn pid_config(&self) -> &PidConfig {
+        &self.attitude_controller.config
+    }
+
+    /// Changes on every gain update; compare to detect new gains.
+    #[must_use]
+    pub const fn gains_version(&self) -> u32 {
+        self.gains_version
     }
 
     /// Apply PID gains from a `SavedGains` snapshot (used by autotuner).

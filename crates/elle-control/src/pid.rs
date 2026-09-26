@@ -7,6 +7,30 @@
 use crate::mixing::elevons::MixSaturation;
 use elle_config::CONTROL_LOOP_DT;
 
+/// One axis's output, split into its (already scaled) P, I and D contributions.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct AxisTerms {
+    pub p: f32,
+    pub i: f32,
+    pub d: f32,
+}
+
+impl AxisTerms {
+    /// The axis command: P + I + D.
+    #[must_use]
+    pub fn total(self) -> f32 {
+        self.p + self.i + self.d
+    }
+
+    fn scaled(self, scale: f32) -> Self {
+        Self {
+            p: self.p * scale,
+            i: self.i * scale,
+            d: self.d * scale,
+        }
+    }
+}
+
 /// Single-axis angle PID: P on angle error, I on error (clamped), D on supplied rate.
 #[derive(Clone, Copy, Default)]
 struct AxisPid {
@@ -28,7 +52,7 @@ impl AxisPid {
         reset_integral: bool,
         block_pos: bool,
         block_neg: bool,
-    ) -> f32 {
+    ) -> AxisTerms {
         // Negative i_limit would invert the clamp bounds below; treat as zero.
         let i_limit = if i_limit > 0.0 { i_limit } else { 0.0 };
         let blocked = (error > 0.0 && block_pos) || (error < 0.0 && block_neg);
@@ -46,7 +70,11 @@ impl AxisPid {
                 sum
             }
         };
-        self.kp * error + self.ki * self.integral + self.kd * rate
+        AxisTerms {
+            p: self.kp * error,
+            i: self.ki * self.integral,
+            d: self.kd * rate,
+        }
     }
 
     fn reset(&mut self) {
@@ -161,9 +189,9 @@ impl AttitudeController {
         gyro_rates: Option<(f32, f32, f32)>,
         low_throttle: bool,
         saturation: MixSaturation,
-    ) -> (f32, f32) {
+    ) -> (AxisTerms, AxisTerms) {
         if !self.enabled {
-            return (0.0, 0.0);
+            return (AxisTerms::default(), AxisTerms::default());
         }
 
         self.initialized = true;
@@ -181,24 +209,28 @@ impl AttitudeController {
             0.0
         };
 
-        let pitch_output = self.config.scale
-            * self.pitch_pid.compute(
+        let pitch_output = self
+            .pitch_pid
+            .compute(
                 pitch_error,
                 pitch_rate,
                 self.config.i_limit,
                 low_throttle,
                 saturation.pitch_up,
                 saturation.pitch_down,
-            );
-        let roll_output = self.config.scale
-            * self.roll_pid.compute(
+            )
+            .scaled(self.config.scale);
+        let roll_output = self
+            .roll_pid
+            .compute(
                 roll_error,
                 roll_rate,
                 self.config.i_limit,
                 low_throttle,
                 saturation.roll_right,
                 saturation.roll_left,
-            );
+            )
+            .scaled(self.config.scale);
 
         (pitch_output, roll_output)
     }

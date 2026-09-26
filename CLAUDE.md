@@ -209,11 +209,12 @@ Three independent logging systems coexist, each serving a different purpose:
 |--------|-----------|------|-------------|----------|
 | **defmt** | RTT channel 0 | Event-driven | Only if host captures | Developer at debug probe |
 | **RPC LogTopic** | RTT channel 1 (postcard-RPC) | Event-driven (`elle_event!` sites throughout firmware) | No — streaming | Host TUI dashboard |
-| **ULog** | SD card (FAT32 over SPI1) | 83Hz attitude+commands+engine, 8.3Hz status | Yes — survives power loss | Post-flight analysis |
+| **ULog** | SD card (FAT32 over SPI1) | 83Hz attitude+commands+controller+engine, 8.3Hz status, PID gains on change | Yes — survives power loss | Post-flight analysis |
 
 - defmt macros (`info!`, `warn!`, etc.) are always compiled in; the transport (`defmt-rtt`) is gated on `defmt-logging` (default on). Without the transport, macros become no-ops.
 - RPC LogTopic carries `(level: u8, code: u16)` — numeric event codes mapped to strings on the host side in `tui/ui.rs::log_code_text()`. ULog-related codes: 30=recording started, 31=init failed, 33=recording stopped, 34=flash erased.
-- ULog records full-fidelity flight data (attitude, commands, engine, status, baro, mag) via `elle-hardware::ULogLogger` → `ULOG_WRITE_CHANNEL` → `sd_writer_task` (FAT32 on SD card). Always compiled in (no feature gate). In flight mode recording auto-starts when the SD card is ready (`SD_READY`) and runs until power-off; in RPC mode it is started/stopped via `ulog start`/`ulog stop` TUI commands. The flash ULog region (0x210000–0xFFFFFF) is a legacy store — extraction/erase RPC still targets it, but new recordings go to SD.
+- ULog records full-fidelity flight data (attitude, commands, controller, pid_gains, engine, status, baro, mag) via `elle-hardware::ULogLogger` → `ULOG_WRITE_CHANNEL` → `sd_writer_task` (FAT32 on SD card). Always compiled in (no feature gate). In flight mode recording auto-starts when the SD card is ready (`SD_READY`) and runs until power-off; in RPC mode it is started/stopped via `ulog start`/`ulog stop` TUI commands. The flash ULog region (0x210000–0xFFFFFF) is a legacy store — extraction/erase RPC still targets it, but new recordings go to SD.
+- `commands` logs pilot input and the *pre-filter* setpoint; `controller` logs what the attitude PID actually used and did each tick: measured `dt_us`, attitude sample age `att_age_us`, the filtered + rate-limited setpoint, scaled P/I/D terms per axis (they sum to the correction), mixer `saturation` bits (pitch_up, pitch_down, roll_right, roll_left, LSB first) and the elevon pulses actually output after trim/inversion. `pid_gains` is written once per file and whenever `FlightController::gains_version()` changes.
 
 ### Control Loop Architecture
 
@@ -344,6 +345,13 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
   - *IMU FIFO drained per DATA_RDY* (see the interrupt-driven IMU entry): backlog from slow iterations no longer persists.
   - *Loop timing.* `1000 / 77` gave a 12 ms ticker while `CONTROL_LOOP_DT` stayed 0.013, so PID integral, heading hold and autotune Tu were 8% off. Everything now derives from `CONTROL_LOOP_PERIOD_MS = 12` (83 Hz); autotune timeouts and debounce ticks derive from the rate.
   - Gains fitted or autotuned before these fixes were compensating for the delays: re-run autotune before trusting them. Not yet bench-verified (scope PIN_12/13, watch event 45).
+
+- **Stabilization follow-ups** (same review, second round):
+  - *Gyro bias at boot.* `elle_control::gyro_bias::GyroBiasEstimator` averages the first still second (restarts when any axis spreads > `GYRO_BIAS_MAX_SPREAD_RAD_S`; gives up after 10 s or on |bias| > `GYRO_BIAS_MAX_RAD_S`). Core1 subtracts it from every sample before level cal, mount and AHRS. `IMU_STATUS.calibrated` now means "bias measured" (LED green / TUI "Cal"); on failure the IMU flies with zero bias, stays uncalibrated. Events 46 (measured) / 47 (failed). Keep the aircraft still for ~1 s after power-up.
+  - *Setpoint rate limit.* Each EMA step of the attitude setpoint is capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). Autotune override stays unfiltered.
+  - *Mixer-aware anti-windup.* `mix_elevons` reports `MixSaturation`; the PID holds an axis's integral when its error would push further into a blocked direction (previous tick's flags), and always lets it unwind.
+  - *Controller logging.* New `controller` and `pid_gains` ULog messages (see Logging Systems).
+  - Not yet bench-verified.
 
 ### Known TODOs in Firmware
 None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).
