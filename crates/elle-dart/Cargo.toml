@@ -9,6 +9,7 @@ elle-hardware = { workspace = true, features = ["single-engine"] }
 elle-ulog = { workspace = true }
 elle-control = { workspace = true }
 elle-system = { workspace = true }
+elle-app = { workspace = true }
 elle-rpc-icd = { workspace = true, optional = true }
 sam-m10q = { workspace = true, optional = true }
 
@@ -34,12 +35,12 @@ panic-probe = { workspace = true }
 
 [features]
 default = ["defmt-logging", "gnss"]
-performance-monitoring = ["elle-system/performance-monitoring"]
+performance-monitoring = ["elle-system/performance-monitoring", "elle-app/performance-monitoring"]
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
-rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless", "elle-hardware/gnss-gsv"]
-gnss = ["sam-m10q", "elle-hardware/gnss"]
+rpc-control = ["elle-system/rpc-control", "elle-app/rpc-control", "elle-rpc-icd", "postcard-rpc", "postcard", "heapless", "elle-hardware/gnss-gsv"]
+gnss = ["sam-m10q", "elle-hardware/gnss", "elle-app/gnss"]
 # Bench vibration capture: every 1 kHz gyro sample to ULog (see elle-hardware).
-gyro-raw-log = ["elle-hardware/gyro-raw-log"]
+gyro-raw-log = ["elle-hardware/gyro-raw-log", "elle-app/gyro-raw-log"]
 
 [[bin]]
 name = "dart"

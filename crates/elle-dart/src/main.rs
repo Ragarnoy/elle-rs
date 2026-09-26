@@ -28,9 +28,8 @@ use elle_control::autotune::{AutotuneAction, AutotuneAxis, Autotuner, SavedGains
 #[cfg(not(feature = "rpc-control"))]
 use elle_control::commands::PilotCommands;
 use elle_hardware::imu::{
-    ATTITUDE, AttitudeData, IMU_STATUS, Imu, LED_COMMAND_CHANNEL, is_attitude_valid,
+    ATTITUDE, IMU_STATUS, Imu, LED_COMMAND_CHANNEL,
 };
-use elle_hardware::imu::{BARO, MAG};
 use elle_hardware::led::{LedPattern, StatusLed, colors};
 use elle_hardware::{
     dshot::{DSHOT_THROTTLE, dshot_single_task},
@@ -46,15 +45,11 @@ use elle_hardware::crsf::{CrsfReceiver, RC_COMMANDS, crsf_receiver_task, crsf_ua
 use elle_rpc_icd::ControlMode;
 #[cfg(feature = "rpc-control")]
 use elle_system::rpc::init_rtt_rpc;
-#[cfg(feature = "rpc-control")]
-pub mod flight_state;
-#[cfg(feature = "rpc-control")]
-mod rpc_app;
 
 use elle_system::{
     FlightController, SUP_FC_READY, SUP_IMU_READY, SUP_LED_READY, SUP_START_FC, SUP_START_IMU,
     TimingMeasurement, log_performance_summary, supervisor_task, update_control_loop_timing,
-    update_led_timing, update_ulog_timing,
+    update_led_timing,
 };
 use embassy_executor::Spawner;
 use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
@@ -79,259 +74,14 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
 use embassy_time::{Duration, Instant, Ticker, Timer};
 use panic_probe as _;
-use static_cell::StaticCell;
 
-/// Helper to validate attitude data and return only if fresh
-#[inline]
-fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
-    attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
-}
-
-/// Gate for the double-tap mag-cal gesture: only start calibration when
-/// throttle is commanded low and the gyro is quiet, so motor vibration or
-/// handling can't trigger a spurious calibration.
-fn tap_cal_allowed(
-    commands: Option<&elle_control::commands::PilotCommands>,
-    attitude: Option<&AttitudeData>,
-) -> bool {
-    use elle_control::commands::PilotCommands;
-    let throttle_low = commands.is_some_and(|cmd| match cmd {
-        PilotCommands::Raw(raw) => {
-            raw.channels[elle_config::THROTTLE_CH] < elle_config::TAP_CAL_THROTTLE_MAX_RAW
-        }
-        PilotCommands::Normalized(n) => n.throttle < elle_config::TAP_CAL_THROTTLE_MAX_NORM,
-    });
-    let gyro_quiet = attitude.is_some_and(|a| {
-        a.pitch_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
-            && a.roll_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
-            && a.yaw_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
-    });
-    throttle_low && gyro_quiet
-}
-
-/// Whether a calibration gesture means *level* cal rather than mag cal: the CH7
-/// autotune switch is out of its off position. Safe to reuse because autotune only
-/// starts while armed, and only on an off → on transition.
-fn tap_selects_level_cal(commands: Option<&elle_control::commands::PilotCommands>) -> bool {
-    commands.is_some_and(|cmd| match cmd {
-        elle_control::commands::PilotCommands::Raw(raw) => {
-            raw.channels[elle_config::AUTOTUNE_CH] >= elle_config::AUTOTUNE_OFF_THRESHOLD
-        }
-        elle_control::commands::PilotCommands::Normalized(_) => false,
-    })
-}
-
-/// Save PID gains to flash with timeout. Returns true on success.
-async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
-    if elle_config::IGNORE_PID_FLASH {
-        warn!("PID flash ignored — skip save ({})", context);
-        return false;
-    }
-
-    use elle_config::profile::{FlashRequest, FlashResponse};
-    use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
-
-    FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
-    let save_timeout = Timer::after(Duration::from_secs(5));
-    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), save_timeout).await {
-        embassy_futures::select::Either::First(FlashResponse::PidProfileSaved) => {
-            elle_hardware::elle_event!(
-                info,
-                elle_hardware::event::EVT_PID_SAVED,
-                "PID gains saved to flash ({})",
-                context
-            );
-            true
-        }
-        _ => {
-            elle_hardware::elle_event!(
-                warn,
-                elle_hardware::event::EVT_PID_SAVE_FAILED,
-                "PID gains flash save failed ({})",
-                context
-            );
-            false
-        }
-    }
-}
-
-/// Erase the PID profile map entry. No-op while `IGNORE_PID_FLASH` is set —
-/// the erase is a 64KB sector wipe (shared with mag cal) and has crashed the MCU.
+use elle_app::logging::log_flight_data;
 #[cfg(feature = "rpc-control")]
-async fn erase_pid_from_flash() {
-    use elle_config::profile::{FlashRequest, FlashResponse};
-    use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
-
-    if elle_config::IGNORE_PID_FLASH {
-        info!("PID flash ignored — skip erase");
-        return;
-    }
-
-    FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
-    let timeout = Timer::after(Duration::from_secs(5));
-    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
-        embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
-            info!("PID profile erased from flash");
-        }
-        _ => {
-            warn!("PID profile erase failed or timed out");
-        }
-    }
-}
-
-/// Log flight data to ULog flash storage
-///
-/// Logs attitude, commands, and periodic status updates at appropriate rates:
-/// - Attitude: control-loop rate (every call)
-/// - Commands: control-loop rate (every call)
-/// - Controller cycle: control-loop rate; PID gains on change
-/// - Status: ~8Hz (every 10th call)
-fn log_flight_data(
-    logger: &mut ULogLogger,
-    attitude: Option<&AttitudeData>,
-    commands: &elle_control::commands::PilotCommands,
-    loop_counter: u32,
-    loop_timer_us: u32,
-    fc: &FlightController<'_>,
-) {
-    use elle_control::commands::PilotCommands;
-
-    // Measure ULog logging performance
-    let ulog_timer = TimingMeasurement::start();
-
-    // Log attitude data at control-loop rate
-    if let Some(att) = attitude {
-        let _ = logger.log_attitude(
-            att.pitch,
-            att.roll,
-            att.yaw,
-            att.pitch_rate,
-            att.roll_rate,
-            att.yaw_rate,
-        );
-    }
-
-    // Log commands at control-loop rate
-    // Convert to normalized for consistent logging
-    let last_out = fc.last_output();
-    let log_cmd = |logger: &mut ULogLogger, norm: &elle_control::commands::NormalizedCommands| {
-        let _ = logger.log_commands(
-            norm.throttle,
-            norm.pitch,
-            norm.roll,
-            norm.yaw,
-            norm.attitude_mode as u8,
-            last_out.pitch_setpoint_deg,
-            last_out.roll_setpoint_deg,
-            last_out.pitch_correction,
-            last_out.roll_correction,
-            last_out.elevon_left_us,
-            last_out.elevon_right_us,
-        );
-    };
-    match commands {
-        PilotCommands::Normalized(norm) => log_cmd(logger, norm),
-        PilotCommands::Raw(raw) => log_cmd(logger, &raw.to_normalized()),
-    }
-
-    // Log what the controller actually did this tick, and the gains it used
-    // (the gains only when they changed, or once per file).
-    let _ = logger.log_controller(elle_ulog::ControllerMessage {
-        timestamp: 0,
-        dt_us: last_out.dt_us,
-        att_age_us: last_out.att_age_us,
-        pitch_sp_deg: last_out.pitch_sp_used_deg,
-        roll_sp_deg: last_out.roll_sp_used_deg,
-        pitch_p: last_out.pitch_terms.p,
-        pitch_i: last_out.pitch_terms.i,
-        pitch_d: last_out.pitch_terms.d,
-        roll_p: last_out.roll_terms.p,
-        roll_i: last_out.roll_terms.i,
-        roll_d: last_out.roll_terms.d,
-        saturation: last_out.saturation.bits(),
-        elevon_left_pulse_us: last_out.elevon_left_pulse_us as u16,
-        elevon_right_pulse_us: last_out.elevon_right_pulse_us as u16,
-    });
-    let gains = fc.pid_config();
-    let _ = logger.log_pid_gains(
-        fc.gains_version(),
-        elle_ulog::PidGainsMessage {
-            timestamp: 0,
-            kp_pitch: gains.kp_pitch,
-            ki_pitch: gains.ki_pitch,
-            kd_pitch: gains.kd_pitch,
-            kp_roll: gains.kp_roll,
-            ki_roll: gains.ki_roll,
-            kd_roll: gains.kd_roll,
-            i_limit: gains.i_limit,
-            scale: gains.scale,
-        },
-    );
-
-    // Bench vibration capture: every 1 kHz gyro sample queued by Core1.
-    #[cfg(feature = "gyro-raw-log")]
-    while let Ok(s) = elle_hardware::imu::GYRO_RAW_CHANNEL.try_receive() {
-        let _ = logger.log_gyro_raw(&elle_ulog::GyroRawMessage {
-            timestamp: s.timestamp.as_micros(),
-            gyro_x: s.gyro[0],
-            gyro_y: s.gyro[1],
-            gyro_z: s.gyro[2],
-        });
-    }
-
-    // Log engine data at control-loop rate
-    {
-        let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
-        let _ = logger.log_engine(&eng);
-    }
-
-    // Log status at reduced rate (~8Hz)
-    if loop_counter.is_multiple_of(ULOG_STATUS_DIVISOR) {
-        let imu_status = IMU_STATUS.try_read();
-        let _ = logger.log_status(
-            loop_timer_us,
-            imu_status.as_ref().map(|s| s.error_count).unwrap_or(0),
-            imu_status.as_ref().map(|s| s.calibrated).unwrap_or(false),
-            fc.is_armed(),
-            0.0, // CPU load - could calculate from timing data
-            fc.rc_signal_age_ms(),
-        );
-    }
-
-    // Log barometer at ~2Hz
-    if loop_counter.is_multiple_of(ULOG_BARO_DIVISOR) {
-        let baro = BARO.read_cached();
-        let _ = logger.log_barometer(
-            baro.pressure_hpa,
-            baro.temperature_c,
-            baro.altitude_m,
-            baro.vario_ms,
-        );
-    }
-
-    // Log magnetometer at ~10Hz
-    if loop_counter.is_multiple_of(ULOG_MAG_DIVISOR) {
-        let mag = MAG.read_cached();
-        let _ = logger.log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32);
-    }
-
-    // Log GNSS at ~1Hz — feature-gated
-    #[cfg(feature = "gnss")]
-    if loop_counter.is_multiple_of(elle_config::ULOG_GNSS_DIVISOR)
-        && let Some(gnss) = elle_hardware::gnss::GNSS_SIGNAL.try_take()
-    {
-        elle_hardware::gnss::GNSS_SIGNAL.signal(gnss); // put back for other readers
-        let _ = logger.log_gnss(&gnss);
-    }
-
-    // Drain event channel into ULog
-    while let Ok((level, code)) = elle_hardware::event::ULOG_EVENT_CHANNEL.try_receive() {
-        let _ = logger.log_event(level, code);
-    }
-
-    // Update performance monitoring
-    update_ulog_timing(ulog_timer.elapsed_us());
-}
+use elle_app::support::erase_pid_from_flash;
+use elle_app::support::{save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal, validate_attitude};
+#[cfg(feature = "rpc-control")]
+use elle_app::{flight_state, rc_signal, rpc_app, rpc_handlers};
+use static_cell::StaticCell;
 
 bind_interrupts!(
     struct Irqs {
@@ -355,17 +105,7 @@ static mut CORE1_STACK: Stack<16384> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 static AON_TIMER: StaticCell<AonTimer<'static>> = StaticCell::new();
 
-// RC channel signal for RPC handler
-#[cfg(feature = "rpc-control")]
-pub mod rc_signal {
-    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-    use embassy_sync::signal::Signal;
 
-    pub static RC_SIGNAL: Signal<CriticalSectionRawMutex, [u16; 16]> = Signal::new();
-}
-
-#[cfg(feature = "rpc-control")]
-mod rpc_handlers;
 
 #[embassy_executor::main(executor = "Executor", entry = "cortex_m_rt::entry")]
 async fn main(spawner: Spawner) {
@@ -1366,37 +1106,18 @@ async fn main(spawner: Spawner) {
                         fc.disarm();
                         fc.apply_failsafe();
                     }
-                    RpcCommand::SetPidGains {
-                        pitch_kp,
-                        pitch_ki,
-                        pitch_kd,
-                        roll_kp,
-                        roll_ki,
-                        roll_kd,
-                        scale,
-                        i_limit,
-                    } => {
-                        let config = elle_control::PidConfig {
-                            kp_pitch: pitch_kp,
-                            ki_pitch: pitch_ki,
-                            kd_pitch: pitch_kd,
-                            kp_roll: roll_kp,
-                            ki_roll: roll_ki,
-                            kd_roll: roll_kd,
-                            scale,
-                            i_limit,
-                        };
+                    RpcCommand::SetPidGains { config } => {
                         fc.set_pid_gains(config);
                         info!(
                             "RPC: PID gains updated P({}/{}/{}) R({}/{}/{}) s={} il={}",
-                            (pitch_kp * 1000.0) as i32,
-                            (pitch_ki * 1000.0) as i32,
-                            (pitch_kd * 1000.0) as i32,
-                            (roll_kp * 1000.0) as i32,
-                            (roll_ki * 1000.0) as i32,
-                            (roll_kd * 1000.0) as i32,
-                            (scale * 10000.0) as i32,
-                            (i_limit * 10.0) as i32,
+                            (config.kp_pitch * 1000.0) as i32,
+                            (config.ki_pitch * 1000.0) as i32,
+                            (config.kd_pitch * 1000.0) as i32,
+                            (config.kp_roll * 1000.0) as i32,
+                            (config.ki_roll * 1000.0) as i32,
+                            (config.kd_roll * 1000.0) as i32,
+                            (config.scale * 10000.0) as i32,
+                            (config.i_limit * 10.0) as i32,
                         );
                     }
                     RpcCommand::StartULog => {

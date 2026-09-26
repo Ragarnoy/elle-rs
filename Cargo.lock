@@ -1002,6 +1002,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
+name = "elle-app"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "defmt 1.1.1",
+ "elle-config",
+ "elle-control",
+ "elle-hardware",
+ "elle-rpc-icd",
+ "elle-system",
+ "elle-ulog",
+ "embassy-executor",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "heapless 0.9.3",
+ "postcard-rpc",
+]
+
+[[package]]
 name = "elle-config"
 version = "0.1.0"
 dependencies = [
@@ -1028,6 +1049,7 @@ dependencies = [
  "cortex-m-rt",
  "defmt 1.1.1",
  "defmt-rtt",
+ "elle-app",
  "elle-config",
  "elle-control",
  "elle-hardware",
@@ -1058,6 +1080,7 @@ dependencies = [
  "cortex-m-rt",
  "defmt 1.1.1",
  "defmt-rtt",
+ "elle-app",
  "elle-config",
  "elle-control",
  "elle-hardware",

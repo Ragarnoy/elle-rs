@@ -1,0 +1,110 @@
+//! Small helpers shared by the control loops: attitude freshness, the
+//! calibration tap gesture, and PID profile persistence.
+
+#[cfg(feature = "rpc-control")]
+use defmt::info;
+use defmt::warn;
+use elle_config::IMU_MAX_AGE_MS;
+use elle_hardware::imu::{AttitudeData, is_attitude_valid};
+use embassy_time::{Duration, Timer};
+
+/// Helper to validate attitude data and return only if fresh
+#[inline]
+#[must_use]
+pub fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
+    attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
+}
+
+/// Gate for the double-tap mag-cal gesture: only start calibration when
+/// throttle is commanded low and the gyro is quiet, so motor vibration or
+/// handling can't trigger a spurious calibration.
+#[must_use]
+pub fn tap_cal_allowed(
+    commands: Option<&elle_control::commands::PilotCommands>,
+    attitude: Option<&AttitudeData>,
+) -> bool {
+    use elle_control::commands::PilotCommands;
+    let throttle_low = commands.is_some_and(|cmd| match cmd {
+        PilotCommands::Raw(raw) => {
+            raw.channels[elle_config::THROTTLE_CH] < elle_config::TAP_CAL_THROTTLE_MAX_RAW
+        }
+        PilotCommands::Normalized(n) => n.throttle < elle_config::TAP_CAL_THROTTLE_MAX_NORM,
+    });
+    let gyro_quiet = attitude.is_some_and(|a| {
+        a.pitch_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
+            && a.roll_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
+            && a.yaw_rate.abs() < elle_config::TAP_CAL_MAX_GYRO_RAD_S
+    });
+    throttle_low && gyro_quiet
+}
+
+/// Whether a calibration gesture means *level* cal rather than mag cal: the CH7
+/// autotune switch is out of its off position. Safe to reuse because autotune only
+/// starts while armed, and only on an off → on transition.
+#[must_use]
+pub fn tap_selects_level_cal(commands: Option<&elle_control::commands::PilotCommands>) -> bool {
+    commands.is_some_and(|cmd| match cmd {
+        elle_control::commands::PilotCommands::Raw(raw) => {
+            raw.channels[elle_config::AUTOTUNE_CH] >= elle_config::AUTOTUNE_OFF_THRESHOLD
+        }
+        elle_control::commands::PilotCommands::Normalized(_) => false,
+    })
+}
+
+/// Save PID gains to flash with timeout. Returns true on success.
+pub async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
+    if elle_config::IGNORE_PID_FLASH {
+        warn!("PID flash ignored — skip save ({})", context);
+        return false;
+    }
+
+    use elle_config::profile::{FlashRequest, FlashResponse};
+    use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+
+    FLASH_REQUEST_SIGNAL.signal(FlashRequest::SavePidProfile { data });
+    let save_timeout = Timer::after(Duration::from_secs(5));
+    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), save_timeout).await {
+        embassy_futures::select::Either::First(FlashResponse::PidProfileSaved) => {
+            elle_hardware::elle_event!(
+                info,
+                elle_hardware::event::EVT_PID_SAVED,
+                "PID gains saved to flash ({})",
+                context
+            );
+            true
+        }
+        _ => {
+            elle_hardware::elle_event!(
+                warn,
+                elle_hardware::event::EVT_PID_SAVE_FAILED,
+                "PID gains flash save failed ({})",
+                context
+            );
+            false
+        }
+    }
+}
+
+/// Erase the PID profile map entry. No-op while `IGNORE_PID_FLASH` is set —
+/// the erase is a 64KB sector wipe (shared with mag cal) and has crashed the MCU.
+#[cfg(feature = "rpc-control")]
+pub async fn erase_pid_from_flash() {
+    use elle_config::profile::{FlashRequest, FlashResponse};
+    use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
+
+    if elle_config::IGNORE_PID_FLASH {
+        info!("PID flash ignored — skip erase");
+        return;
+    }
+
+    FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
+    let timeout = Timer::after(Duration::from_secs(5));
+    match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
+        embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
+            info!("PID profile erased from flash");
+        }
+        _ => {
+            warn!("PID profile erase failed or timed out");
+        }
+    }
+}
