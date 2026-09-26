@@ -30,11 +30,13 @@ use embassy_time::{Duration, Instant, Ticker, Timer};
 
 /// Run the RPC-mode control loop forever. `epoch_ms` is the wall-clock time at
 /// boot (ms since the UNIX epoch), used to stamp new ULog files.
-pub async fn run_rpc(
-    mut fc: FlightController<'static>,
-    mut ulog_logger: ULogLogger,
-    epoch_ms: u64,
-) -> ! {
+///
+/// The controller is borrowed, not moved: a value moved into an async fn keeps
+/// its storage in every enclosing future too. The ULog logger (~6 KB of buffers)
+/// is created here for the same reason. It starts uninitialised: recording
+/// starts on `ulog start`.
+pub async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -> ! {
+    let mut ulog_logger = ULogLogger::new();
     let mut loop_counter = 0u32;
 
     use core::sync::atomic::Ordering;
@@ -429,7 +431,7 @@ pub async fn run_rpc(
                 fc.note_rc_packet(commands.timestamp());
                 last_commands = Some(commands);
             }
-            last_commands.clone()
+            last_commands
         };
 
         #[cfg(not(feature = "rpc-rc"))]
@@ -520,7 +522,7 @@ pub async fn run_rpc(
 
         // Send engine commands via DShot (governor converts eRPM target to DShot)
         if !kill_active {
-            publish_engine_output(&fc);
+            publish_engine_output(fc);
         }
 
         // Detect arm/disarm transitions → beep
@@ -747,7 +749,7 @@ pub async fn run_rpc(
                 ulog_commands,
                 loop_counter,
                 loop_start.elapsed().as_micros() as u32,
-                &fc,
+                fc,
             );
         } else if loop_counter.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR) {
             // Drain stale events when not recording

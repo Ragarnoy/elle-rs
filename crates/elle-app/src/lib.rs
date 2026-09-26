@@ -6,13 +6,16 @@
 //! `elle-hardware` (`single-engine`); each binary keeps only pins, engine setup,
 //! interrupt bindings and `main()`.
 #![no_std]
+#![allow(clippy::too_many_arguments)] // embassy task macros generate wrapper fns
 
 #[cfg(all(feature = "rpc-rc", not(feature = "rpc-control")))]
 compile_error!("rpc-rc requires rpc-control (RC command source only applies in RPC mode)");
 
+pub mod boot;
 pub mod engines;
 pub mod logging;
 pub mod support;
+pub mod tasks;
 
 #[cfg(not(feature = "rpc-control"))]
 pub mod flight;

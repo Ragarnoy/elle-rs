@@ -22,6 +22,8 @@ embassy-rp = { workspace = true }
 embassy-futures = { workspace = true }
 
 bytemuck = { workspace = true }
+embedded-hal-bus = { workspace = true }
+static_cell = { workspace = true }
 postcard-rpc = { workspace = true, optional = true }
 heapless = { workspace = true, optional = true }
 
