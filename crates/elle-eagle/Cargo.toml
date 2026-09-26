@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 elle-config = { workspace = true }
 elle-hardware = { workspace = true }
+elle-ulog = { workspace = true }
 elle-control = { workspace = true }
 elle-system = { workspace = true }
 elle-rpc-icd = { workspace = true, optional = true }

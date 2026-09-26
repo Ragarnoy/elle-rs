@@ -157,7 +157,8 @@ async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
 /// Logs attitude, commands, and periodic status updates at appropriate rates:
 /// - Attitude: control-loop rate (every call)
 /// - Commands: control-loop rate (every call)
-/// - Status: 7.7Hz (every 10th call)
+/// - Controller cycle: control-loop rate; PID gains on change
+/// - Status: ~8Hz (every 10th call)
 fn log_flight_data(
     logger: &mut ULogLogger,
     attitude: Option<&AttitudeData>,
@@ -206,13 +207,47 @@ fn log_flight_data(
         PilotCommands::Raw(raw) => log_cmd(logger, &raw.to_normalized()),
     }
 
+    // Log what the controller actually did this tick, and the gains it used
+    // (the gains only when they changed, or once per file).
+    let _ = logger.log_controller(elle_ulog::ControllerMessage {
+        timestamp: 0,
+        dt_us: last_out.dt_us,
+        att_age_us: last_out.att_age_us,
+        pitch_sp_deg: last_out.pitch_sp_used_deg,
+        roll_sp_deg: last_out.roll_sp_used_deg,
+        pitch_p: last_out.pitch_terms.p,
+        pitch_i: last_out.pitch_terms.i,
+        pitch_d: last_out.pitch_terms.d,
+        roll_p: last_out.roll_terms.p,
+        roll_i: last_out.roll_terms.i,
+        roll_d: last_out.roll_terms.d,
+        saturation: last_out.saturation.bits(),
+        elevon_left_pulse_us: last_out.elevon_left_pulse_us as u16,
+        elevon_right_pulse_us: last_out.elevon_right_pulse_us as u16,
+    });
+    let gains = fc.pid_config();
+    let _ = logger.log_pid_gains(
+        fc.gains_version(),
+        elle_ulog::PidGainsMessage {
+            timestamp: 0,
+            kp_pitch: gains.kp_pitch,
+            ki_pitch: gains.ki_pitch,
+            kd_pitch: gains.kd_pitch,
+            kp_roll: gains.kp_roll,
+            ki_roll: gains.ki_roll,
+            kd_roll: gains.kd_roll,
+            i_limit: gains.i_limit,
+            scale: gains.scale,
+        },
+    );
+
     // Log engine data at control-loop rate
     {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
         let _ = logger.log_engine(&eng);
     }
 
-    // Log status at reduced rate (~7.7Hz)
+    // Log status at reduced rate (~8Hz)
     if loop_counter.is_multiple_of(ULOG_STATUS_DIVISOR) {
         let imu_status = IMU_STATUS.try_read();
         let _ = logger.log_status(

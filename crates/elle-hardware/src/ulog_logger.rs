@@ -29,6 +29,10 @@ pub struct ULogLogger {
     engine_msg_id: Option<u16>,
     log_event_msg_id: Option<u16>,
     autotune_msg_id: Option<u16>,
+    controller_msg_id: Option<u16>,
+    pid_gains_msg_id: Option<u16>,
+    /// Gains version last written to this file; `None` right after `initialize`.
+    logged_gains_version: Option<u32>,
     /// Log start time
     start_time: Option<Instant>,
 }
@@ -50,6 +54,9 @@ impl ULogLogger {
             engine_msg_id: None,
             log_event_msg_id: None,
             autotune_msg_id: None,
+            controller_msg_id: None,
+            pid_gains_msg_id: None,
+            logged_gains_version: None,
             start_time: None,
         }
     }
@@ -66,13 +73,15 @@ impl ULogLogger {
         self.writer.reset();
         self.buffer.clear();
         self.initialized = false;
+        self.logged_gains_version = None;
 
         info!("Initializing ULog logger");
 
         // Import ULog types
         use elle_ulog::{
-            AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, EngineMessage,
-            GnssMessage, LogEventMessage, MagnetometerMessage, StatusMessage,
+            AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
+            EngineMessage, GnssMessage, LogEventMessage, MagnetometerMessage, PidGainsMessage,
+            StatusMessage,
         };
 
         let start_time = Instant::now();
@@ -137,6 +146,16 @@ impl ULogLogger {
         self.autotune_msg_id = Some(
             self.writer
                 .add_subscription(AutotuneMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
+        self.controller_msg_id = Some(
+            self.writer
+                .add_subscription(ControllerMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
+        self.pid_gains_msg_id = Some(
+            self.writer
+                .add_subscription(PidGainsMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
 
@@ -215,6 +234,49 @@ impl ULogLogger {
             .map_err(|_| ULogError::BufferFull)?;
 
         self.buffer_writer_output()
+    }
+
+    /// Log one controller cycle (timestamp is filled in here).
+    pub fn log_controller(
+        &mut self,
+        mut msg: elle_ulog::ControllerMessage,
+    ) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+        msg.timestamp = Instant::now().as_micros();
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_controller(self.controller_msg_id.unwrap(), &msg)
+            .map_err(|_| ULogError::BufferFull)?;
+
+        self.buffer_writer_output()
+    }
+
+    /// Log the active PID gains if `version` differs from what this file last
+    /// recorded (always once per file). Timestamp is filled in here.
+    pub fn log_pid_gains(
+        &mut self,
+        version: u32,
+        mut msg: elle_ulog::PidGainsMessage,
+    ) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+        if self.logged_gains_version == Some(version) {
+            return Ok(());
+        }
+        msg.timestamp = Instant::now().as_micros();
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_pid_gains(self.pid_gains_msg_id.unwrap(), &msg)
+            .map_err(|_| ULogError::BufferFull)?;
+
+        self.buffer_writer_output()?;
+        self.logged_gains_version = Some(version);
+        Ok(())
     }
 
     /// Log commands data

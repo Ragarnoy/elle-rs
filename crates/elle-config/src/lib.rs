@@ -252,9 +252,24 @@ pub const LEVEL_CAL_MAX_GYRO_RAD_S: f32 = 0.1;
 /// attitude, not that the board is mounted crooked; the run fails as "tilted".
 pub const LEVEL_CAL_MAX_TILT_DEG: f32 = 15.0;
 
+// Gyro bias estimation at boot. Samples are at the 1 kHz IMU rate.
+/// Samples averaged into the bias once the board has been still for all of them (1 s).
+pub const GYRO_BIAS_SAMPLES: u32 = 1000;
+/// Peak-to-peak spread on any axis above which the window restarts as "moving".
+/// ~2°/s: several times the ICM-42686 noise at 1 kHz, far below handling.
+pub const GYRO_BIAS_MAX_SPREAD_RAD_S: f32 = 0.035;
+/// A still-window mean above this on any axis is not a plausible zero-rate
+/// offset (the part is specified well under 1°/s); reject it (~5.7°/s).
+pub const GYRO_BIAS_MAX_RAD_S: f32 = 0.1;
+/// Give up after this many samples without a still window (10 s) and fly with
+/// zero bias, flagged as uncalibrated.
+pub const GYRO_BIAS_TIMEOUT_SAMPLES: u32 = 10_000;
+
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
-pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)
+/// Max rate the smoothed attitude setpoint may move (°/s). Caps the EMA's
+/// initial jump on a stick step (~500°/s at alpha 0.15, 83 Hz): full bank in 0.5 s.
+pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;
 
 // Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
@@ -372,6 +387,7 @@ const _: () = assert!(
     HEADING_HOLD_MAX_ROLL_DEG > 0.0 && HEADING_HOLD_MAX_ROLL_DEG <= STABILIZED_MAX_ROLL_DEG
 );
 const _: () = assert!(HEADING_HOLD_MAX_ROLL_RATE_DEG_S > 0.0);
+const _: () = assert!(MAX_SETPOINT_RATE_DEG_S > 0.0);
 
 // Motor poles must be even (eRPM = RPM × poles/2)
 const _: () = assert!(MOTOR_POLES.is_multiple_of(2));

@@ -4,8 +4,9 @@
 
 use crate::format::{FLAG_BITS_MSG, InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader};
 use crate::messages::{
-    AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, EngineMessage,
-    GnssMessage, LogEventMessage, MagnetometerMessage, MessageType, StatusMessage,
+    AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
+    EngineMessage, GnssMessage, LogEventMessage, MagnetometerMessage, MessageType, PidGainsMessage,
+    StatusMessage,
 };
 use embassy_time::Instant;
 use heapless::Vec;
@@ -113,6 +114,12 @@ impl ULogWriter {
         self.buffer
             .extend_from_slice(AutotuneMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(ControllerMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(PidGainsMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
 
         // Write info messages (type 'I')
         self.write_info("char[] sys_name", sys_name)?;
@@ -198,6 +205,24 @@ impl ULogWriter {
 
     /// Write an engine data message
     pub fn write_engine(&mut self, msg_id: u16, data: &EngineMessage) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a controller cycle data message
+    pub fn write_controller(
+        &mut self,
+        msg_id: u16,
+        data: &ControllerMessage,
+    ) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a PID gains data message
+    pub fn write_pid_gains(
+        &mut self,
+        msg_id: u16,
+        data: &PidGainsMessage,
+    ) -> Result<(), WriteError> {
         self.write_data_payload(msg_id, &data.to_bytes())
     }
 

@@ -851,6 +851,8 @@ const fn log_code_text(code: u16) -> &'static str {
         43 => "Magnetometer: init failed",
         44 => "Barometer: init failed",
         45 => "IMU: caught up queued samples",
+        46 => "IMU: gyro bias measured",
+        47 => "IMU: gyro bias failed (keep still at boot)",
         // CRSF receiver (50–59)
         50 => "CRSF RX: first frame received",
         51 => "CRSF RX: UART error",

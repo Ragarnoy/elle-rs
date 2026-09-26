@@ -66,8 +66,9 @@ impl<'a> PwmOutputs<'a> {
         self.write(left_us, right_us);
     }
 
-    /// Set elevons with trim applied (recommended method)
-    pub fn set_elevons_with_trim(&mut self, mut left_us: u32, mut right_us: u32) {
+    /// Set elevons with trim applied (recommended method). Returns the pulses
+    /// actually output, after trim and the right servo's inversion.
+    pub fn set_elevons_with_trim(&mut self, mut left_us: u32, mut right_us: u32) -> (u32, u32) {
         // Store original values for debug output
         let orig_left = left_us;
         let orig_right = right_us;
@@ -93,6 +94,7 @@ impl<'a> PwmOutputs<'a> {
                 right_us
             );
         }
+        (left_us, right_us)
     }
 }
 
