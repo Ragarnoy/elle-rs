@@ -68,7 +68,8 @@ type FlashDevice<'a> = Flash<'a, Async, { elle_config::profile::FLASH_SIZE }>;
 const PROFILE_PAGE_COUNT: usize = ((PROFILE_FLASH_END - PROFILE_FLASH_START) as usize) / ERASE_SIZE;
 /// Number of erase pages in the ULog queue region (~14MB / 4KB = 3584)
 const ULOG_PAGE_COUNT: usize = ULOG_FLASH_SIZE / ERASE_SIZE;
-/// Key slots in the map cache — keys in use: 1 (PID profile), 2 (mag cal), plus headroom
+/// Key slots in the map cache — keys in use: 1 (PID profile), 2 (mag cal), 3 (level
+/// cal), plus one spare
 const MAP_KEY_SLOTS: usize = 4;
 
 /// Persistent cache for the profile map region: full page states/pointers plus key
@@ -181,6 +182,16 @@ impl<'a> SequentialFlashManager<'a> {
 
                 FlashRequest::LoadMagCal => {
                     let response = self.load_mag_cal_internal().await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::SaveLevelCal { data } => {
+                    let response = self.save_level_cal_internal(&data).await;
+                    FLASH_RESPONSE_SIGNAL.signal(response);
+                }
+
+                FlashRequest::LoadLevelCal => {
+                    let response = self.load_level_cal_internal().await;
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
             }
@@ -386,6 +397,31 @@ impl<'a> SequentialFlashManager<'a> {
             None => {
                 info!("Flash: No mag cal stored");
                 FlashResponse::MagCalEmpty
+            }
+        }
+    }
+
+    /// Save the level-cal mount quaternion to flash map storage (key=3, 16 bytes)
+    async fn save_level_cal_internal(&mut self, data: &[u8; 16]) -> FlashResponse {
+        if self.save_to_map(3, data.as_slice()).await {
+            info!("Flash: Level cal saved");
+            FlashResponse::LevelCalSaved
+        } else {
+            warn!("Flash: Level cal save failed");
+            FlashResponse::LevelCalSaveFailed
+        }
+    }
+
+    /// Load the level-cal mount quaternion from flash map storage (key=3, 16 bytes)
+    async fn load_level_cal_internal(&mut self) -> FlashResponse {
+        match self.load_from_map::<16>(3).await {
+            Some(data) => {
+                info!("Flash: Level cal loaded");
+                FlashResponse::LevelCalLoaded { data }
+            }
+            None => {
+                info!("Flash: No level cal stored");
+                FlashResponse::LevelCalEmpty
             }
         }
     }

@@ -186,6 +186,17 @@ pub struct MagCalResp {
     pub samples: u16,
 }
 
+/// Level calibration (IMU mounting offset) status response.
+/// Angles use the attitude telemetry's sign convention: what the uncorrected
+/// attitude reads with the airframe level ("pitch -2.1" = board 2.1° nose-down).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
+pub struct LevelCalResp {
+    pub roll_deg: f32,
+    pub pitch_deg: f32,
+    pub calibrated: bool,
+    pub collecting: bool,
+}
+
 /// `ULog` read chunk response
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct ULogReadResp {
@@ -411,6 +422,9 @@ endpoints! {
     | StartMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/start"    |
     | ClearMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/clear"    |
     | GetMagCalEndpoint       | ()                | MagCalResp        | "elle/cal/mag/get"      |
+    | StartLevelCalEndpoint   | ()                | AckResp           | "elle/cal/level/start"  |
+    | ClearLevelCalEndpoint   | ()                | AckResp           | "elle/cal/level/clear"  |
+    | GetLevelCalEndpoint     | ()                | LevelCalResp      | "elle/cal/level/get"    |
     | SetHeadingHoldEndpoint  | SetHeadingHoldReq | AckResp           | "elle/ctrl/heading_hold" |
 }
 

@@ -232,6 +232,19 @@ pub const TAP_CAL_MAX_GYRO_RAD_S: f32 = 0.5; // ~30°/s — gyro must be quiet
 pub const TAP_CAL_THROTTLE_MAX_RAW: u16 = 200; // Raw CRSF throttle must be below this
 pub const TAP_CAL_THROTTLE_MAX_NORM: f32 = 0.05; // Normalized throttle must be below this
 
+// Level calibration (IMU mounting offset). Samples are at the 1 kHz IMU rate.
+/// Samples discarded before averaging, so the tap that triggered a field
+/// calibration has died out before collection starts.
+pub const LEVEL_CAL_SETTLE_SAMPLES: u32 = 500;
+/// Samples averaged into the gravity vector (2 s).
+pub const LEVEL_CAL_SAMPLES: u32 = 2000;
+/// Any gyro magnitude above this during collection fails the run as "moving".
+/// ~6°/s: well above sensor noise on a still airframe, well below handling.
+pub const LEVEL_CAL_MAX_GYRO_RAD_S: f32 = 0.1;
+/// A mounting offset larger than this means the aircraft was not at its reference
+/// attitude, not that the board is mounted crooked; the run fails as "tilted".
+pub const LEVEL_CAL_MAX_TILT_DEG: f32 = 15.0;
+
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)

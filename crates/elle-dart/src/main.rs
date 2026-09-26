@@ -109,6 +109,18 @@ fn tap_cal_allowed(
     throttle_low && gyro_quiet
 }
 
+/// Whether a calibration gesture means *level* cal rather than mag cal: the CH7
+/// autotune switch is out of its off position. Safe to reuse because autotune only
+/// starts while armed, and only on an off → on transition.
+fn tap_selects_level_cal(commands: Option<&elle_control::commands::PilotCommands>) -> bool {
+    commands.is_some_and(|cmd| match cmd {
+        elle_control::commands::PilotCommands::Raw(raw) => {
+            raw.channels[elle_config::AUTOTUNE_CH] >= elle_config::AUTOTUNE_OFF_THRESHOLD
+        }
+        elle_control::commands::PilotCommands::Normalized(_) => false,
+    })
+}
+
 /// Save PID gains to flash with timeout. Returns true on success.
 async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
     if elle_config::IGNORE_PID_FLASH {
@@ -629,6 +641,9 @@ async fn main(spawner: Spawner) {
         }
     }
 
+    // Boot-time level cal (IMU mounting offset) load from flash
+    elle_hardware::imu::level_cal::load_from_flash().await;
+
     info!("Core0: Starting main control loop");
 
     // Test timing precision (only when performance monitoring is enabled)
@@ -757,8 +772,17 @@ async fn main(spawner: Spawner) {
             // can't start a calibration. Drain the signal every iteration so a
             // tap detected outside kill mode can't stay latched and fire later.
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
-            if tapped && !fc.is_armed() && kill_active && !mag_cal_collecting {
-                if tap_cal_allowed(last_commands.as_ref(), attitude.as_ref()) {
+            if tapped
+                && !fc.is_armed()
+                && kill_active
+                && !mag_cal_collecting
+                && !elle_hardware::imu::level_cal::is_collecting()
+            {
+                if !tap_cal_allowed(last_commands.as_ref(), attitude.as_ref()) {
+                    info!("Double-tap ignored: throttle not low or gyro not quiet");
+                } else if tap_selects_level_cal(last_commands.as_ref()) {
+                    elle_hardware::imu::level_cal::start();
+                } else {
                     elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
                     mag_cal_collecting = true;
                     elle_hardware::elle_event!(
@@ -766,10 +790,11 @@ async fn main(spawner: Spawner) {
                         elle_hardware::event::EVT_MAG_CAL_STARTED,
                         "Double-tap: mag calibration started"
                     );
-                } else {
-                    info!("Double-tap ignored: throttle not low or gyro not quiet");
                 }
             }
+
+            // Poll level calibration result from IMU task (tap-triggered collection)
+            elle_hardware::imu::level_cal::poll_result().await;
 
             // Poll mag calibration result from IMU task (tap-triggered collection)
             if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
@@ -1170,6 +1195,8 @@ async fn main(spawner: Spawner) {
                     LedPattern::RapidFlash(colors::ORANGE)
                 } else if mag_cal_collecting {
                     LedPattern::FastBlink(colors::YELLOW)
+                } else if elle_hardware::imu::level_cal::is_collecting() {
+                    LedPattern::FastBlink(colors::CYAN)
                 } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {
@@ -1524,6 +1551,20 @@ async fn main(spawner: Spawner) {
                             "Mag calibration cleared"
                         );
                     }
+                    RpcCommand::StartLevelCal => {
+                        if fc.is_armed() {
+                            elle_hardware::elle_event!(
+                                warn,
+                                elle_hardware::event::EVT_LEVEL_CAL_FAILED_MOVING,
+                                "Level calibration refused: armed"
+                            );
+                        } else if !elle_hardware::imu::level_cal::is_collecting() {
+                            elle_hardware::imu::level_cal::start();
+                        }
+                    }
+                    RpcCommand::ClearLevelCal => {
+                        elle_hardware::imu::level_cal::clear().await;
+                    }
                     RpcCommand::SetHeadingHold {
                         enabled,
                         target_cdeg,
@@ -1590,16 +1631,22 @@ async fn main(spawner: Spawner) {
                 DSHOT_THROTTLE.signal((0, 0));
             }
 
-            // Double-tap mag-cal gesture (RPC mode) — only while the kill switch
+            // Double-tap calibration gesture (RPC mode) — only while the kill switch
             // is active (inert in pure RPC builds where kill_active is always
-            // false — use `mag cal start` there instead).
+            // false — use `mag cal start` / `level cal start` there instead).
+            // CH7 out of its off position selects level cal, as in flight mode.
             let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
             if tapped
                 && !fc.is_armed()
                 && kill_active
                 && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != 1
+                && !elle_hardware::imu::level_cal::is_collecting()
             {
-                if tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
+                if !tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
+                    info!("Double-tap ignored: throttle not low or gyro not quiet");
+                } else if tap_selects_level_cal(commands.as_ref()) {
+                    elle_hardware::imu::level_cal::start();
+                } else {
                     elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
                     rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
                     elle_hardware::elle_event!(
@@ -1607,8 +1654,6 @@ async fn main(spawner: Spawner) {
                         elle_hardware::event::EVT_MAG_CAL_STARTED,
                         "Double-tap: mag calibration started"
                     );
-                } else {
-                    info!("Double-tap ignored: throttle not low or gyro not quiet");
                 }
             }
 
@@ -1716,6 +1761,9 @@ async fn main(spawner: Spawner) {
             if let Some(data) = rpc_save_pending.take() {
                 save_pid_to_flash(data, "autotune").await;
             }
+
+            // Poll level calibration result from IMU task
+            elle_hardware::imu::level_cal::poll_result().await;
 
             // Poll mag calibration result from IMU task
             if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
@@ -1877,6 +1925,8 @@ async fn main(spawner: Spawner) {
                 let imu_status = IMU_STATUS.read().await;
                 let led_pattern = if fc.is_failsafe() {
                     LedPattern::RapidFlash(colors::ORANGE)
+                } else if elle_hardware::imu::level_cal::is_collecting() {
+                    LedPattern::FastBlink(colors::CYAN)
                 } else if fc.is_armed() && fc.rc_link_state() == elle_system::RcLinkState::Warning {
                     LedPattern::FastBlink(colors::ORANGE)
                 } else if fc.is_armed() {

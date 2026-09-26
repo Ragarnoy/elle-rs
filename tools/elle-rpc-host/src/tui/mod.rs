@@ -2,7 +2,7 @@
 //!
 //! Streams live telemetry and logs from the flight controller with interactive commands.
 
-mod commands;
+pub(crate) mod commands;
 mod horizon;
 mod state;
 mod ui;

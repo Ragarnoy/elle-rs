@@ -24,6 +24,8 @@ pub enum FlashRequest {
     ErasePidProfile,
     SaveMagCal { data: [u8; 12] },
     LoadMagCal,
+    SaveLevelCal { data: [u8; 16] },
+    LoadLevelCal,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -51,4 +53,10 @@ pub enum FlashResponse {
         data: [u8; 12],
     },
     MagCalEmpty,
+    LevelCalSaved,
+    LevelCalSaveFailed,
+    LevelCalLoaded {
+        data: [u8; 16],
+    },
+    LevelCalEmpty,
 }

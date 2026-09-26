@@ -112,12 +112,12 @@ The firmware uses postcard-rpc's `define_dispatch!` macro for type-safe dispatch
 No extra postcard-rpc features needed — the macro works with elle's own WireTx/WireRx.
 
 - **ICD**: `crates/elle-rpc-icd/src/lib.rs` — Uses `endpoints!`/`topics!` macros generating `ENDPOINT_LIST`, `TOPICS_IN_LIST`, `TOPICS_OUT_LIST`
-- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 31 blocking handler functions
+- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 34 blocking handler functions
 - **Server task**: `crates/elle-eagle/src/main.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
 
 ### RPC Protocol
 
-31 endpoints + 1 outgoing topic defined in the ICD:
+34 endpoints + 1 outgoing topic defined in the ICD:
 
 **Endpoints** (request/response):
 - Control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold
@@ -126,6 +126,7 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 - ULog: StartULog, StopULog, ReadULogChunk, EraseULog, GetULogInfo
 - Autotune: StartAutotune, AbortAutotune
 - Mag calibration: StartMagCal, ClearMagCal, GetMagCal
+- Level calibration: StartLevelCal, ClearLevelCal, GetLevelCal
 - System: Ping, GetVersion, GetTime
 
 **Topics** (device -> host, streaming):
@@ -387,6 +388,25 @@ Compensates PCB hard-iron offsets on the MMC5616WA magnetometer by tracking min/
 **Event codes:** 110–116 (started, complete, failed, saved, cleared, loaded, load empty)
 
 Offsets auto-load on boot and survive power cycles.
+
+### Level Calibration (IMU mounting offset)
+
+Attitude comes from the flight controller's own IMU, so without this 0° means the *circuit board* is level, not the airframe — Stabilized and AltitudeHold hold whatever tilt the board is mounted at. Level calibration measures that tilt once and corrects for it.
+
+**How it works:** with the aircraft still at its reference attitude, Core1 skips 500 samples (so a triggering tap dies out), then averages 2000 raw accelerometer samples (2 s at 1 kHz). The rotation taking that gravity vector onto +Z is the "mount" quaternion (`elle_control::level_cal::compute_mount`). It is applied to the accel, gyro and (offset-corrected) mag vectors **before** the AHRS, so attitude *and* rates come out in the airframe frame at every attitude. Rejected if the gyro magnitude ever exceeds `LEVEL_CAL_MAX_GYRO_RAD_S` (moving) or the tilt exceeds `LEVEL_CAL_MAX_TILT_DEG` = 15° (not at the reference attitude; an upside-down board is caught here too). On failure the previous mount stays.
+
+**Reported angles** use the attitude telemetry's sign convention: what the *uncorrected* attitude reads with the airframe level. "pitch −2.1°" = board sits 2.1° nose-down.
+
+**Storage:** flash MapStorage key=3, 16 bytes (quaternion w, i, j, k). "Clear" stores the identity; on load, identity, non-finite, non-unit or >15° values all mean "uncorrected". Auto-loads on boot.
+
+**Triggers:**
+- TUI: `level cal start` · `level cal clear` · `level cal` (status). Refused while armed.
+- Direct CLI: `direct level-cal start|clear|status`
+- Field gesture (flight mode, and eagle `rpc-rc`): the mag-cal double-tap with the **CH7 autotune switch out of off** (pitch or roll position) starts level cal instead of mag cal. Kill switch on, throttle low, gyro quiet, as for mag cal. Safe: autotune only starts while armed and only on an off→on transition. LED fast-blinks cyan while collecting.
+
+**Code:** math in `crates/elle-control/src/level_cal.rs` (host tests in `crates/elle-control/tests/level_cal.rs`); Core1 collection and the mount rotation in `elle-hardware/src/imu/driver.rs` (`level_cal_step`); Core0 plumbing — signals (`LEVEL_CALIBRATION_SIGNAL`, `LEVEL_CAL_START_SIGNAL`, `LEVEL_CAL_RESULT_SIGNAL`), `STATUS` for the RPC handler, and the flash round-trips — in `elle-hardware/src/imu/level_cal.rs`, called identically from both airframes and both modes (`load_from_flash`, `start`, `clear`, `poll_result`).
+
+**Event codes:** 150–158 (started, complete, failed-moving/refused-while-armed, failed-tilted, saved, save failed, cleared, loaded, load empty). 140–149 belong to GNSS.
 
 ### Next Steps
 See `TODO.md` for prioritized task list (waypoint navigation, pitot tube).

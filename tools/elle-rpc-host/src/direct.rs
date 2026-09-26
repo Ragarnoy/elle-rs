@@ -57,6 +57,11 @@ pub enum DirectCommand {
         #[command(subcommand)]
         action: MagCalAction,
     },
+    /// Level calibration (IMU mounting offset)
+    LevelCal {
+        #[command(subcommand)]
+        action: LevelCalAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -66,6 +71,16 @@ pub enum MagCalAction {
     /// Clear calibration (zero offsets)
     Clear,
     /// Get calibration status and offsets
+    Status,
+}
+
+#[derive(Subcommand)]
+pub enum LevelCalAction {
+    /// Start calibration (hold the aircraft still at its reference attitude, ~3s)
+    Start,
+    /// Clear calibration (attitude uncorrected)
+    Clear,
+    /// Get calibration status and board offset
     Status,
 }
 
@@ -297,6 +312,33 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                     "Mag cal: {} | Offsets: X={:.0} Y={:.0} Z={:.0}",
                     status, cal.offset_x, cal.offset_y, cal.offset_z
                 );
+            }
+        },
+        DirectCommand::LevelCal { action } => match action {
+            LevelCalAction::Start => {
+                let ack =
+                    timeout(CMD_TIMEOUT, client.send_resp::<StartLevelCalEndpoint>(&())).await??;
+                if ack.success {
+                    println!(
+                        "Level cal started — hold the aircraft still at its reference attitude (~3s)"
+                    );
+                } else {
+                    println!("Failed: {}", ack.error_code);
+                }
+            }
+            LevelCalAction::Clear => {
+                let ack =
+                    timeout(CMD_TIMEOUT, client.send_resp::<ClearLevelCalEndpoint>(&())).await??;
+                if ack.success {
+                    println!("Level cal cleared (attitude uncorrected)");
+                } else {
+                    println!("Failed: {}", ack.error_code);
+                }
+            }
+            LevelCalAction::Status => {
+                let cal =
+                    timeout(CMD_TIMEOUT, client.send_resp::<GetLevelCalEndpoint>(&())).await??;
+                println!("{}", crate::tui::commands::format_level_cal(&cal));
             }
         },
         DirectCommand::Engine => {

@@ -68,6 +68,11 @@ const COMMANDS: &[CmdDef] = &[
         subs: &[],
     },
     CmdDef {
+        name: "level",
+        aliases: &[],
+        subs: &["cal", "cal start", "cal clear"],
+    },
+    CmdDef {
         name: "mag",
         aliases: &[],
         subs: &["cal", "cal start", "cal clear"],
@@ -348,6 +353,21 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
                 }
             } else {
                 CommandResult::Err("Usage: mag cal [start|clear]".into())
+            }
+        }
+        Some("level") => {
+            if parts.len() >= 2 && parts[1].to_lowercase() == "cal" {
+                if parts.len() >= 3 {
+                    match parts[2].to_lowercase().as_str() {
+                        "start" => cmd_level_cal_start(client).await,
+                        "clear" => cmd_level_cal_clear(client).await,
+                        _ => CommandResult::Err("Usage: level cal [start|clear]".into()),
+                    }
+                } else {
+                    cmd_level_cal_status(client).await
+                }
+            } else {
+                CommandResult::Err("Usage: level cal [start|clear]".into())
             }
         }
         Some("help") => {
@@ -736,4 +756,44 @@ async fn cmd_mag_cal_status(client: &HostClient<WireError>) -> CommandResult {
         Ok(Err(e)) => CommandResult::Err(format!("Mag cal status failed: {e}")),
         Err(_) => CommandResult::Err("Mag cal status timeout".into()),
     }
+}
+
+async fn cmd_level_cal_start(client: &HostClient<WireError>) -> CommandResult {
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<StartLevelCalEndpoint>(&())).await,
+        "Level cal start",
+        "Level cal started — hold the aircraft still at its reference attitude (~3s)".into(),
+    )
+}
+
+async fn cmd_level_cal_clear(client: &HostClient<WireError>) -> CommandResult {
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<ClearLevelCalEndpoint>(&())).await,
+        "Level cal clear",
+        "Level cal cleared (attitude uncorrected)".into(),
+    )
+}
+
+async fn cmd_level_cal_status(client: &HostClient<WireError>) -> CommandResult {
+    match timeout(CMD_TIMEOUT, client.send_resp::<GetLevelCalEndpoint>(&())).await {
+        Ok(Ok(cal)) => CommandResult::Ok(format_level_cal(&cal)),
+        Ok(Err(e)) => CommandResult::Err(format!("Level cal status failed: {e}")),
+        Err(_) => CommandResult::Err("Level cal status timeout".into()),
+    }
+}
+
+/// One-line level cal status, shared with `direct level-cal status`.
+pub fn format_level_cal(cal: &LevelCalResp) -> String {
+    let status = if cal.collecting {
+        "COLLECTING"
+    } else if cal.calibrated {
+        "CALIBRATED"
+    } else {
+        "UNCALIBRATED"
+    };
+    // Sign convention: what the uncorrected attitude reads with the airframe level.
+    format!(
+        "Level cal: {status} | Board offset: roll {:+.2}° pitch {:+.2}°",
+        cal.roll_deg, cal.pitch_deg
+    )
 }
