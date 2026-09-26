@@ -54,15 +54,18 @@ impl ULogLogger {
         }
     }
 
-    /// Initialize the ULog logger (write header and definitions)
+    /// Start a fresh log: write header, definitions and subscriptions.
+    ///
+    /// Call once per log *file*. Every SD `Start` opens a new file, and a ULog
+    /// file without its own header is unreadable, so this always starts over —
+    /// it is not a one-time init.
     ///
     /// `epoch_ms` is the wall-clock time in ms since UNIX epoch, used for
     /// the `sys_start_time_utc_ms` info message in the ULog header.
     pub async fn initialize(&mut self, epoch_ms: u64) -> Result<(), ULogError> {
-        if self.initialized {
-            info!("ULog logger already initialized");
-            return Ok(());
-        }
+        self.writer.reset();
+        self.buffer.clear();
+        self.initialized = false;
 
         info!("Initializing ULog logger");
 

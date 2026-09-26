@@ -249,23 +249,28 @@ pub async fn sd_writer_task(
     SD_READY.store(true, Ordering::Release);
     info!("SD: FAT32 mounted, waiting for commands");
 
-    // Main loop: wait for start/stop, write ULog data to files
+    // Main loop: wait for start/stop, write ULog data to files.
+    // `start_pending`: a Start arrived while recording — rotate straight to a new
+    // file instead of waiting for another Start.
+    let mut start_pending = false;
     loop {
         // Wait for Start command, discarding any stale ULog data
-        loop {
+        while !start_pending {
             match embassy_futures::select::select(
                 SD_CMD_SIGNAL.wait(),
                 ULOG_WRITE_CHANNEL.receive(),
             )
             .await
             {
-                embassy_futures::select::Either::First(SdCommand::Start) => break,
+                embassy_futures::select::Either::First(SdCommand::Start) => start_pending = true,
                 embassy_futures::select::Either::First(SdCommand::Stop) => {}
                 embassy_futures::select::Either::Second(_discard) => {
                     drain_channel();
                 }
             }
         }
+
+        start_pending = false;
 
         // Open a new log file
         let filename = next_log_name();
@@ -289,7 +294,30 @@ pub async fn sd_writer_task(
 
         // Recording loop
         'recording: loop {
-            let req = ULOG_WRITE_CHANNEL.receive().await;
+            // Commands are awaited alongside data, not checked only after a chunk
+            // arrives: with nothing to write, a Stop would otherwise sit unread
+            // until the next Start overwrote it in the single-slot signal, and
+            // that session's header would land in this (old) file.
+            // The signal is polled first, so a pending command wins over data.
+            let req = match embassy_futures::select::select(
+                SD_CMD_SIGNAL.wait(),
+                ULOG_WRITE_CHANNEL.receive(),
+            )
+            .await
+            {
+                embassy_futures::select::Either::First(cmd) => {
+                    let _ = file.flush().await;
+                    info!(
+                        "SD: {} bytes to {}, closing",
+                        bytes_written,
+                        filename.as_str()
+                    );
+                    // Start while recording = begin a new file right away.
+                    start_pending = matches!(cmd, SdCommand::Start);
+                    break 'recording;
+                }
+                embassy_futures::select::Either::Second(req) => req,
+            };
 
             // Write received chunk
             let len = req.len;
@@ -300,9 +328,12 @@ pub async fn sd_writer_task(
             }
             bytes_written += len as u32;
 
-            // Batch-drain additional pending messages
+            // Batch-drain additional pending messages — but not past a pending
+            // command: data queued after a Start belongs to the next file.
             if !write_failed {
-                while let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() {
+                while !SD_CMD_SIGNAL.signaled()
+                    && let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive()
+                {
                     let elen = extra.len;
                     if let Err(e) = file.write_all(&extra.data[..elen]).await {
                         warn!("SD: write error: {}", defmt::Debug2Format(&e));
@@ -327,17 +358,6 @@ pub async fn sd_writer_task(
                     warn!("SD: flush error: {}", defmt::Debug2Format(&e));
                 }
                 last_flush = Instant::now();
-            }
-
-            // Check for stop command (non-blocking)
-            if let Some(SdCommand::Stop) = SD_CMD_SIGNAL.try_take() {
-                let _ = file.flush().await;
-                info!(
-                    "SD: stopped, {} bytes to {}",
-                    bytes_written,
-                    filename.as_str()
-                );
-                break 'recording;
             }
         }
     }

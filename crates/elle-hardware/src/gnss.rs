@@ -503,6 +503,9 @@ async fn run(uart: &mut BufferedUart<'_>, fast: bool, nav_rate_ms: u16, cfg_mask
     // rather than leaving the host with nothing to read.
     GNSS_SIGNAL.signal(data);
     let mut last_pvt: Option<Instant> = None;
+    // Last time *either* source updated the fix. `last_pvt` alone decides which
+    // source steers; this decides whether the fix has gone stale.
+    let mut last_fix_update: Option<Instant> = None;
     let mut in_view = SatsInView::default();
     let mut announced_pvt = false;
     let mut announced_fallback = false;
@@ -612,6 +615,11 @@ async fn run(uart: &mut BufferedUart<'_>, fast: bool, nav_rate_ms: u16, cfg_mask
             },
         };
 
+        if updated {
+            last_fix_update = Some(now);
+        }
+        let fix_fresh = last_fix_update.is_some_and(|t| now.duration_since(t) < PVT_STALE);
+
         if !updated {
             // The link is alive — GSV or some other sentence is still arriving
             // — but nothing has driven the fix for `PVT_STALE`. That happens
@@ -619,7 +627,12 @@ async fn run(uart: &mut BufferedUart<'_>, fast: bool, nav_rate_ms: u16, cfg_mask
             // is exactly the state `apply_config` is allowed to leave us in.
             // The silence timeout never fires here, so without this the last
             // good sample would stand indefinitely.
-            if data.fix_quality > 0 && !pvt_fresh && !fix_lost {
+            //
+            // Keyed on the last update from *either* source, not on PVT: during
+            // GGA fallback PVT is stale by definition, so checking it here wiped
+            // every GGA fix on the very next non-GGA sentence (GSA/GSV/RMC follow
+            // GGA within milliseconds on the default NMEA set).
+            if data.fix_quality > 0 && !fix_fresh && !fix_lost {
                 fix_lost = true;
                 mark_fix_lost(&mut data);
                 publish(&data);

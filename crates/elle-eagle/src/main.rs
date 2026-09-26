@@ -1089,11 +1089,16 @@ async fn main(spawner: Spawner) {
                         .load(core::sync::atomic::Ordering::Acquire)
                 {
                     if !ulog_logger.is_initialized() {
-                        let wall_ms =
-                            compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
-                        let _ = ulog_logger.initialize(wall_ms).await;
+                        // Start before the header is written: the SD writer
+                        // discards anything that arrives while it is idle.
                         elle_hardware::sd_writer::SD_CMD_SIGNAL
                             .signal(elle_hardware::sd_writer::SdCommand::Start);
+                        let wall_ms =
+                            compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
+                        if ulog_logger.initialize(wall_ms).await.is_err() {
+                            elle_hardware::sd_writer::SD_CMD_SIGNAL
+                                .signal(elle_hardware::sd_writer::SdCommand::Stop);
+                        }
                     }
                     if ulog_logger.is_initialized() {
                         ulog_recording = true;
@@ -1313,15 +1318,24 @@ async fn main(spawner: Spawner) {
                         );
                     }
                     RpcCommand::StartULog => {
-                        let mut ok = ulog_logger.is_initialized();
-                        if !ok && elle_hardware::sd_writer::SD_READY.load(Ordering::Acquire) {
+                        // Every Start opens a new SD file, and each file needs its
+                        // own header — so always re-initialize, never reuse the
+                        // previous session's logger state. Start goes first: the
+                        // SD writer discards anything that arrives while it is idle.
+                        let mut ok = false;
+                        if elle_hardware::sd_writer::SD_READY.load(Ordering::Acquire) {
+                            ULOG_ENABLED.store(false, Ordering::Release);
+                            elle_hardware::sd_writer::SD_CMD_SIGNAL
+                                .signal(elle_hardware::sd_writer::SdCommand::Start);
                             let wall_ms =
                                 compile_time::unix!() * 1000 + Instant::now().as_micros() / 1000;
                             ok = ulog_logger.initialize(wall_ms).await.is_ok();
+                            if !ok {
+                                elle_hardware::sd_writer::SD_CMD_SIGNAL
+                                    .signal(elle_hardware::sd_writer::SdCommand::Stop);
+                            }
                         }
                         if ok {
-                            elle_hardware::sd_writer::SD_CMD_SIGNAL
-                                .signal(elle_hardware::sd_writer::SdCommand::Start);
                             ULOG_ENABLED.store(true, Ordering::Release);
                             elle_hardware::elle_event!(
                                 info,

@@ -8,8 +8,12 @@ pub struct ArmingState {
 }
 
 impl ArmingState {
+    /// Throttle-low auto-arm. Never while failsafe is active: the caller may be
+    /// replaying the last frame received before the link dropped, and a stale
+    /// low throttle must not arm the engines behind the pilot's back. After
+    /// `signal_restored()` the pilot's (live) low throttle arms as usual.
     pub fn update(&mut self, throttle_raw: u16) {
-        if !self.armed {
+        if !self.armed && !self.failsafe_active {
             let throttle_us =
                 rc_to_pulse_us(throttle_raw, ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US);
             if throttle_us < ENGINE_ARM_THRESHOLD {
