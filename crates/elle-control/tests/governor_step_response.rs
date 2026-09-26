@@ -19,40 +19,43 @@
 
 use elle_control::governor::RpmGovernor;
 
-/// Full-stick target, matching `MAX_ERPM` for the dart. The plant model below
-/// is still the 2-blade `GOVERNOR_FF_TABLE`, so here the target is reachable
-/// with margin — these tests exercise governor dynamics, not prop performance.
-const MAX_ERPM: u32 = 105_000;
+/// Full-stick target, matching `MAX_ERPM` for the dart. The plant model below is
+/// the 3-blade rpm_range sweep (2026-09-26) that `GOVERNOR_FF_TABLE` was built
+/// from, with its measured full-throttle point, so full stick is reachable with a
+/// small margin (107,520 vs 107,100).
+const MAX_ERPM: u32 = 107_100;
 const POLE_PAIRS: u32 = 7;
 /// Motor + prop spin-up/down time constant, seconds.
 const TAU: f32 = 0.15;
 const DT: f32 = 0.001;
 
-/// Steady-state eRPM the dart reaches at a given DShot value — the inverse of the
-/// measured `GOVERNOR_FF_TABLE`, used here as a plant model.
+/// Steady-state eRPM the dart reaches at a given DShot value, from the 3-blade
+/// rpm_range sweep, used here as a plant model. Same points as `GOVERNOR_FF_TABLE`,
+/// except the last row keeps the measured value (15,360 RPM × 7) instead of the
+/// table's `MAX_ERPM` pin.
 fn erpm_steady_state(dshot: u16) -> f32 {
     const T: [(f32, f32); 21] = [
-        (2667., 48.),
-        (11585., 148.),
-        (22162., 248.),
-        (30919., 348.),
-        (39284., 448.),
-        (46375., 548.),
-        (54292., 648.),
-        (61194., 748.),
-        (68810., 848.),
-        (77238., 948.),
-        (84042., 1048.),
-        (90734., 1148.),
-        (97482., 1248.),
-        (104034., 1348.),
-        (110292., 1448.),
-        (116578., 1548.),
-        (122318., 1648.),
-        (127813., 1748.),
-        (133686., 1848.),
-        (139167., 1948.),
-        (142135., 1998.),
+        (2814., 48.),
+        (10437., 148.),
+        (18984., 248.),
+        (26264., 348.),
+        (33614., 448.),
+        (40831., 548.),
+        (47796., 648.),
+        (54502., 748.),
+        (59920., 848.),
+        (66311., 948.),
+        (72205., 1048.),
+        (77182., 1148.),
+        (81704., 1248.),
+        (86037., 1348.),
+        (90195., 1448.),
+        (94066., 1548.),
+        (97615., 1648.),
+        (101010., 1748.),
+        (103901., 1848.),
+        (106379., 1948.),
+        (107520., 1998.),
     ];
     let d = f32::from(dshot);
     if d <= T[0].1 {

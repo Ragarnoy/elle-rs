@@ -19,11 +19,7 @@ const fn compute_reduction(amount: i32, max_range: i32, max_percent: i32) -> i32
     } else {
         max_percent
     };
-    if raw < max_percent {
-        raw
-    } else {
-        max_percent
-    }
+    if raw < max_percent { raw } else { max_percent }
 }
 
 /// RC value range (0-2047, so we need 2048 entries)
@@ -277,24 +273,32 @@ pub fn apply_differential_thrust_lut(base_thrust: u16, yaw_rc: u16) -> (u16, u16
 // Governor feedforward LUT — eRPM → DShot estimate
 // ============================================================================
 
-/// Measured eRPM→DShot mapping (averaged from both engines under EDF load, 4S).
-/// Pairs are (eRPM, DShot), sorted by eRPM.
-/// Data from rpm_range sweep test with 200-sample settle + 500-sample measurement per step.
+/// Measured eRPM→DShot mapping, averaged over both engines under EDF load, 4S at
+/// 16.25 V under load. `rpm_range` EDT sweep on 26 Sep 2026: 200 settle + 500
+/// measured samples per step, IQR-filtered, RPM × 7 (14-pole). Pairs are (eRPM,
+/// DShot), sorted by eRPM.
+///
+/// Ceiling at DShot 1498, the left engine's peak (21,389 RPM; it falls above).
+/// The right engine flattens out from ~1400 at ~20,340 RPM, so full stick is
+/// capped at what it can reach: the last row is pinned to `MAX_ERPM`, and the
+/// averaged 1448 row (145,050, beyond the right engine's reach) is left out.
 #[cfg(not(feature = "platform-dart"))]
-const GOVERNOR_FF_TABLE: [(u32, u16); 11] = [
-    (6_184, 48),     // avg(915,852) RPM × 7
-    (19_177, 148),   // avg(2764,2715) RPM × 7
-    (37_044, 298),   // avg(5314,5270) RPM × 7
-    (53_991, 448),   // avg(7746,7680) RPM × 7
-    (70_508, 598),   // avg(10101,10044) RPM × 7
-    (87_777, 748),   // avg(12584,12495) RPM × 7
-    (103_100, 898),  // avg(14794,14663) RPM × 7
-    (116_284, 1048), // avg(16662,16562) RPM × 7
-    (127_932, 1198), // avg(18338,18214) RPM × 7
-    (140_284, 1348), // avg(20121,19960) RPM × 7
-    (149_800, 1473), // right engine saturation (MAX_ERPM)
-                     // Above this the right engine is voltage-limited; left can go slightly higher
-                     // but governor caps at MAX_ERPM to keep thrust symmetric.
+const GOVERNOR_FF_TABLE: [(u32, u16); 15] = [
+    (6_321, 48),     // avg(910,896) RPM × 7
+    (19_145, 148),   // avg(2754,2716) RPM × 7
+    (31_062, 248),   // avg(4464,4411) RPM × 7
+    (42_927, 348),   // avg(6160,6105) RPM × 7
+    (53_725, 448),   // avg(7714,7636) RPM × 7
+    (64_554, 548),   // avg(9252,9192) RPM × 7
+    (75_803, 648),   // avg(10879,10779) RPM × 7
+    (87_381, 748),   // avg(12539,12427) RPM × 7
+    (97_695, 848),   // avg(14021,13892) RPM × 7
+    (107_096, 948),  // avg(15367,15232) RPM × 7
+    (114_961, 1048), // avg(16489,16357) RPM × 7
+    (122_920, 1148), // avg(17657,17463) RPM × 7
+    (131_134, 1248), // avg(18849,18618) RPM × 7
+    (138_964, 1348), // avg(19941,19763) RPM × 7
+    (142_100, 1498), // ceiling, pinned to MAX_ERPM; measured L 21,389 / R 20,337 RPM
 ];
 
 /// Governor feedforward: estimate DShot output for a target eRPM using measured LUT.
@@ -333,37 +337,34 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
     last.1
 }
 
-/// Measured eRPM→DShot mapping for dart (500-sample per step, rpm_range sweep).
-/// RPM × 7 (14-pole). Covers DShot 48–1998; RPM is strictly rising through full
-/// throttle, so the table (and `GOVERNOR_DSHOT_MAX`) go to the last measured point.
-///
-/// STALE: swept on the 2-blade prop that broke on 13 Sep 2026. The 3-blade now
-/// fitted makes ~20% less eRPM for the same DShot, so this over-commands
-/// feedforward across the range. Re-run `rpm_range` on the 3-blade and replace
-/// the table. See the `MAX_RPM` note in `lib.rs`.
+/// Measured eRPM→DShot mapping for dart, 3-blade prop (reversed spin), 3S pack at
+/// 11.5 V under load. `rpm_range` EDT sweep on 26 Sep 2026: 200 settle + 500 measured
+/// samples per step, IQR-filtered, RPM × 7 (14-pole). RPM rises all the way to full
+/// throttle (no stall region), so the table and `GOVERNOR_DSHOT_MAX` go to DShot
+/// 1998. The last row is pinned to `MAX_ERPM`.
 #[cfg(feature = "platform-dart")]
 const GOVERNOR_FF_TABLE: [(u32, u16); 21] = [
-    (2_667, 48),     //    381 RPM
-    (11_585, 148),   //  1,655 RPM
-    (22_162, 248),   //  3,166 RPM
-    (30_919, 348),   //  4,417 RPM
-    (39_284, 448),   //  5,612 RPM
-    (46_375, 548),   //  6,625 RPM
-    (54_292, 648),   //  7,756 RPM
-    (61_194, 748),   //  8,742 RPM
-    (68_810, 848),   //  9,830 RPM
-    (77_238, 948),   // 11,034 RPM
-    (84_042, 1048),  // 12,006 RPM
-    (90_734, 1148),  // 12,962 RPM
-    (97_482, 1248),  // 13,926 RPM
-    (104_034, 1348), // 14,862 RPM
-    (110_292, 1448), // 15,756 RPM
-    (116_578, 1548), // 16,654 RPM
-    (122_318, 1648), // 17,474 RPM
-    (127_813, 1748), // 18,259 RPM
-    (133_686, 1848), // 19,098 RPM
-    (139_167, 1948), // 19,881 RPM
-    (142_135, 1998), // 20,305 RPM — last measured point (MAX_ERPM)
+    (2_814, 48),     //    402 RPM
+    (10_437, 148),   //  1,491 RPM
+    (18_984, 248),   //  2,712 RPM
+    (26_264, 348),   //  3,752 RPM
+    (33_614, 448),   //  4,802 RPM
+    (40_831, 548),   //  5,833 RPM
+    (47_796, 648),   //  6,828 RPM
+    (54_502, 748),   //  7,786 RPM
+    (59_920, 848),   //  8,560 RPM
+    (66_311, 948),   //  9,473 RPM
+    (72_205, 1048),  // 10,315 RPM
+    (77_182, 1148),  // 11,026 RPM
+    (81_704, 1248),  // 11,672 RPM
+    (86_037, 1348),  // 12,291 RPM
+    (90_195, 1448),  // 12,885 RPM
+    (94_066, 1548),  // 13,438 RPM
+    (97_615, 1648),  // 13,945 RPM
+    (101_010, 1748), // 14,430 RPM
+    (103_901, 1848), // 14,843 RPM
+    (106_379, 1948), // 15,197 RPM
+    (107_100, 1998), // 15,360 RPM measured; pinned to MAX_ERPM
 ];
 
 /// Governor feedforward for dart: piecewise linear interpolation over measured LUT.
