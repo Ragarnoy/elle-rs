@@ -46,6 +46,15 @@ const SPIN_DIRECTION_CMD: embassy_dshot::Command = if elle_config::ENGINE_SPIN_R
     embassy_dshot::Command::SpinDirectionNormal
 };
 
+/// Log a failed arm-time send. These run once at boot, so a warning per failure is
+/// cheap and the only sign that the ESC may be left unarmed or misconfigured.
+/// Per-tick sends in the 1kHz loop are deliberately not logged.
+fn warn_on_err(what: &str, result: Result<(), embassy_dshot::DshotError>) {
+    if let Err(e) = result {
+        defmt::warn!("DShot: {} failed: {}", what, e);
+    }
+}
+
 /// Per-engine telemetry snapshot.
 #[derive(Clone, Copy, Default, defmt::Format)]
 pub struct EngineUnitReading {
@@ -181,32 +190,36 @@ fn update_engine_unit(
 
 /// Wrapper around two bidirectional DShot ESCs (left and right engines).
 struct DshotEngines<'a> {
-    left: BidirDshotPio<'a, PIO1>,
-    right: BidirDshotPio<'a, PIO2>,
+    left: BidirDshotPio<'a, PIO1, 0>,
+    right: BidirDshotPio<'a, PIO2, 0>,
 }
 
 impl<'a> DshotEngines<'a> {
-    fn new(left: BidirDshotPio<'a, PIO1>, right: BidirDshotPio<'a, PIO2>) -> Self {
+    fn new(left: BidirDshotPio<'a, PIO1, 0>, right: BidirDshotPio<'a, PIO2, 0>) -> Self {
         Self { left, right }
     }
 
     /// Arm both ESCs and enable extended telemetry.
     async fn arm(&mut self, duration: Duration) {
-        embassy_futures::join::join(
+        let (l, r) = embassy_futures::join::join(
             self.left.arm_async(duration),
             self.right.arm_async(duration),
         )
         .await;
+        warn_on_err("arm (left)", l);
+        warn_on_err("arm (right)", r);
 
         // Assert spin direction before enabling telemetry — the ESC is stopped here
         // (arm_async just spent its whole duration sending MotorStop), which is what
         // settings commands require.
         for _ in 0..SPIN_DIRECTION_REPEAT {
-            embassy_futures::join::join(
+            let (l, r) = embassy_futures::join::join(
                 self.left.send_command_async(SPIN_DIRECTION_CMD),
                 self.right.send_command_async(SPIN_DIRECTION_CMD),
             )
             .await;
+            warn_on_err("spin direction (left)", l);
+            warn_on_err("spin direction (right)", r);
             Timer::after(Duration::from_micros(300)).await;
         }
         defmt::info!(
@@ -216,13 +229,15 @@ impl<'a> DshotEngines<'a> {
 
         // Enable extended telemetry (must send command 6 times per DShot protocol)
         for _ in 0..EDT_ENABLE_REPEAT {
-            embassy_futures::join::join(
+            let (l, r) = embassy_futures::join::join(
                 self.left
                     .send_command_async(embassy_dshot::Command::ExtendedTelemetryEnable),
                 self.right
                     .send_command_async(embassy_dshot::Command::ExtendedTelemetryEnable),
             )
             .await;
+            warn_on_err("EDT enable (left)", l);
+            warn_on_err("EDT enable (right)", r);
             Timer::after(Duration::from_micros(300)).await;
         }
         defmt::info!("DShot: extended telemetry enabled");
@@ -249,7 +264,7 @@ impl<'a> DshotEngines<'a> {
     ) -> (Option<ExtendedTelemetry>, Option<ExtendedTelemetry>) {
         match (left_stop, right_stop) {
             (true, true) => {
-                embassy_futures::join::join(
+                let _ = embassy_futures::join::join(
                     self.left
                         .send_command_async(embassy_dshot::Command::MotorStop),
                     self.right
@@ -276,7 +291,8 @@ impl<'a> DshotEngines<'a> {
         stop: bool,
     ) -> Option<ExtendedTelemetry> {
         if stop {
-            self.left
+            let _ = self
+                .left
                 .send_command_async(embassy_dshot::Command::MotorStop)
                 .await;
             return None;
@@ -304,7 +320,8 @@ impl<'a> DshotEngines<'a> {
         stop: bool,
     ) -> Option<ExtendedTelemetry> {
         if stop {
-            self.right
+            let _ = self
+                .right
                 .send_command_async(embassy_dshot::Command::MotorStop)
                 .await;
             return None;
@@ -329,16 +346,19 @@ impl<'a> DshotEngines<'a> {
 /// Only the left/primary eRPM value from `DSHOT_THROTTLE` is used; right stays zero.
 #[cfg(feature = "single-engine")]
 #[embassy_executor::task]
-pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
+pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1, 0>) {
     defmt::info!("DShot single-engine task: arming ESC (2s)");
     let mut engine = engine;
-    engine.arm_async(Duration::from_secs(2)).await;
+    warn_on_err("arm", engine.arm_async(Duration::from_secs(2)).await);
 
     // Assert spin direction before enabling telemetry — the ESC is stopped here
     // (arm_async just spent its whole duration sending MotorStop), which is what
     // settings commands require.
     for _ in 0..SPIN_DIRECTION_REPEAT {
-        engine.send_command_async(SPIN_DIRECTION_CMD).await;
+        warn_on_err(
+            "spin direction",
+            engine.send_command_async(SPIN_DIRECTION_CMD).await,
+        );
         Timer::after(Duration::from_micros(300)).await;
     }
     defmt::info!(
@@ -348,9 +368,12 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
 
     // Enable extended telemetry (must send command 6 times per DShot protocol)
     for _ in 0..EDT_ENABLE_REPEAT {
-        engine
-            .send_command_async(embassy_dshot::Command::ExtendedTelemetryEnable)
-            .await;
+        warn_on_err(
+            "EDT enable",
+            engine
+                .send_command_async(embassy_dshot::Command::ExtendedTelemetryEnable)
+                .await,
+        );
         Timer::after(Duration::from_micros(300)).await;
     }
     defmt::info!("DShot single-engine task: armed, entering 1kHz loop");
@@ -367,19 +390,19 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
             match pattern {
                 BeepPattern::ArmBeep => {
                     for _ in 0..10 {
-                        engine.send_command_async(Command::Beep1).await;
+                        let _ = engine.send_command_async(Command::Beep1).await;
                         Timer::after(Duration::from_millis(1)).await;
                     }
                     Timer::after(Duration::from_millis(200)).await;
                 }
                 BeepPattern::DisarmBeep => {
                     for _ in 0..10 {
-                        engine.send_command_async(Command::Beep2).await;
+                        let _ = engine.send_command_async(Command::Beep2).await;
                         Timer::after(Duration::from_millis(1)).await;
                     }
                     Timer::after(Duration::from_millis(100)).await;
                     for _ in 0..10 {
-                        engine.send_command_async(Command::Beep2).await;
+                        let _ = engine.send_command_async(Command::Beep2).await;
                         Timer::after(Duration::from_millis(1)).await;
                     }
                     Timer::after(Duration::from_millis(200)).await;
@@ -401,7 +424,7 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
         // protocol's minimum spin value, not a stop — cutting the ESC there loses
         // telemetry and leaves the loop with no way back up.
         let edt = if target_erpm == 0 {
-            engine
+            let _ = engine
                 .send_command_async(embassy_dshot::Command::MotorStop)
                 .await;
             None
@@ -430,8 +453,8 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1>) {
 /// Arms ESCs on startup, then resends latest `DSHOT_THROTTLE` values at ~1kHz.
 #[embassy_executor::task]
 pub async fn dshot_task(
-    engine_left: BidirDshotPio<'static, PIO1>,
-    engine_right: BidirDshotPio<'static, PIO2>,
+    engine_left: BidirDshotPio<'static, PIO1, 0>,
+    engine_right: BidirDshotPio<'static, PIO2, 0>,
 ) {
     defmt::info!("DShot task: arming ESCs (2s)");
     let mut engines = DshotEngines::new(engine_left, engine_right);
@@ -452,8 +475,8 @@ pub async fn dshot_task(
                 BeepPattern::ArmBeep => {
                     // Single beep: Beep1 repeated 10x (DShot spec)
                     for _ in 0..10 {
-                        engines.left.send_command_async(Command::Beep1).await;
-                        engines.right.send_command_async(Command::Beep1).await;
+                        let _ = engines.left.send_command_async(Command::Beep1).await;
+                        let _ = engines.right.send_command_async(Command::Beep1).await;
                         Timer::after(Duration::from_millis(1)).await;
                     }
                     Timer::after(Duration::from_millis(200)).await;
@@ -461,14 +484,14 @@ pub async fn dshot_task(
                 BeepPattern::DisarmBeep => {
                     // Two short beeps
                     for _ in 0..10 {
-                        engines.left.send_command_async(Command::Beep2).await;
-                        engines.right.send_command_async(Command::Beep2).await;
+                        let _ = engines.left.send_command_async(Command::Beep2).await;
+                        let _ = engines.right.send_command_async(Command::Beep2).await;
                         Timer::after(Duration::from_millis(1)).await;
                     }
                     Timer::after(Duration::from_millis(100)).await;
                     for _ in 0..10 {
-                        engines.left.send_command_async(Command::Beep2).await;
-                        engines.right.send_command_async(Command::Beep2).await;
+                        let _ = engines.left.send_command_async(Command::Beep2).await;
+                        let _ = engines.right.send_command_async(Command::Beep2).await;
                         Timer::after(Duration::from_millis(1)).await;
                     }
                     Timer::after(Duration::from_millis(200)).await;

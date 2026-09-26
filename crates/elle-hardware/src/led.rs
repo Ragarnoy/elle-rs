@@ -62,7 +62,7 @@ where
         + 'static,
     ) -> Self {
         let program = PioWs2812Program::new(common);
-        let ws2812 = PioWs2812::new(common, sm, dma, irq, pin, &program);
+        let ws2812 = PioWs2812::new(common, sm, pin, dma, irq, &program);
 
         Self {
             ws2812,

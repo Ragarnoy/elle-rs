@@ -15,6 +15,8 @@ use rtt_target::{ChannelMode, DownChannel, UpChannel, rtt_init, set_defmt_channe
 use serde::Serialize;
 use static_cell::StaticCell;
 
+use crate::frame_buf::FrameBuf;
+
 // Buffer sizes
 const TX_BUF_SIZE: usize = 1024;
 const RX_BUF_SIZE: usize = 1024;
@@ -109,16 +111,14 @@ impl WireTx for RttTx {
 /// RTT RX transport for postcard-RPC
 pub struct RttRx {
     channel: DownChannel,
-    buf: [u8; RX_BUF_SIZE],
-    used: usize,
+    frames: FrameBuf<RX_BUF_SIZE>,
 }
 
 impl RttRx {
     fn new(channel: DownChannel) -> Self {
         Self {
             channel,
-            buf: [0u8; RX_BUF_SIZE],
-            used: 0,
+            frames: FrameBuf::new(),
         }
     }
 }
@@ -128,58 +128,31 @@ impl WireRx for RttRx {
 
     async fn receive<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a mut [u8], Self::Error> {
         loop {
-            // Read available bytes into our internal buffer
-            let remaining = RX_BUF_SIZE - self.used;
-            if remaining > 0 {
-                let count = self.channel.read(&mut self.buf[self.used..]);
-                if count > 0 {
-                    // Look for frame delimiter in newly read bytes
-                    for i in 0..count {
-                        let idx = self.used + i;
-                        if self.buf[idx] == 0x00 {
-                            // Found delimiter - copy frame to output buffer and decode
-                            let frame_len = idx.min(buf.len());
-                            buf[..frame_len].copy_from_slice(&self.buf[..frame_len]);
-
-                            // COBS decode in-place in the output buffer
-                            match cobs::decode_in_place(&mut buf[..frame_len]) {
-                                Ok(decoded_len) => {
-                                    // Move remaining data to start of internal buffer
-                                    let remaining_start = idx + 1;
-                                    let remaining_len = self.used + count - remaining_start;
-                                    if remaining_len > 0 {
-                                        self.buf.copy_within(
-                                            remaining_start..remaining_start + remaining_len,
-                                            0,
-                                        );
-                                    }
-                                    self.used = remaining_len;
-
-                                    return Ok(&mut buf[..decoded_len]);
-                                }
-                                Err(_) => {
-                                    // Decode failed - skip this frame
-                                    let remaining_start = idx + 1;
-                                    let remaining_len = self.used + count - remaining_start;
-                                    if remaining_len > 0 {
-                                        self.buf.copy_within(
-                                            remaining_start..remaining_start + remaining_len,
-                                            0,
-                                        );
-                                    }
-                                    self.used = remaining_len;
-                                }
-                            }
-                        }
-                    }
-                    self.used += count;
+            // Serve every frame already buffered before reading more: one RTT
+            // read can hold several requests, and the ones after the first must
+            // not wait for (and get merged with) the next arrival.
+            while let Some(frame) = self.frames.pop_frame(buf) {
+                // Oversized, empty or corrupt frames are dropped; keep going.
+                if let Ok(len) = frame
+                    && len > 0
+                    && let Ok(decoded_len) = cobs::decode_in_place(&mut buf[..len])
+                {
+                    return Ok(&mut buf[..decoded_len]);
                 }
-            } else {
-                // Buffer full without finding delimiter - reset
-                self.used = 0;
             }
 
-            // Yield to other tasks
+            // Full with no delimiter: out of sync or an over-long frame. Resync.
+            if self.frames.is_stuck() {
+                self.frames.clear();
+            }
+
+            let count = self.channel.read(self.frames.spare());
+            if count > 0 {
+                self.frames.commit(count);
+                continue;
+            }
+
+            // Nothing new — yield to other tasks
             embassy_time::Timer::after(embassy_time::Duration::from_micros(100)).await;
         }
     }

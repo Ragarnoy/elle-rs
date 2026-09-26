@@ -169,7 +169,7 @@ const SILENCE_TIMEOUT: Duration = Duration::from_millis(3_000);
 /// After the first few, report continued silence only every Nth period.
 const GNSS_SILENCE_LOG_INTERVAL: u32 = 20;
 
-type Gnss<'a> = SamM10q<&'a mut BufferedUartRx, &'a mut BufferedUartTx>;
+type Gnss<'a> = SamM10q<BufferedUartRx<'a>, BufferedUartTx<'a>>;
 
 /// Number of configuration groups applied at boot.
 pub const CFG_GROUP_COUNT: usize = 10;
@@ -332,7 +332,7 @@ async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16, gsv: bool) -> u16 {
 ///
 /// `embedded_io_async::Write::flush` returns once the software ring buffer is
 /// empty; `busy()` is what covers the hardware FIFO and shift register.
-async fn drain_tx(uart: &mut BufferedUart) {
+async fn drain_tx(uart: &mut BufferedUart<'_>) {
     let deadline = Instant::now() + TX_DRAIN_TIMEOUT;
     while uart.busy() && Instant::now() < deadline {
         Timer::after(Duration::from_millis(1)).await;
@@ -350,7 +350,7 @@ async fn link_alive(gnss: &mut Gnss<'_>) -> bool {
 }
 
 #[embassy_executor::task]
-pub async fn gnss_task(mut uart: BufferedUart) {
+pub async fn gnss_task(mut uart: BufferedUart<'static>) {
     // Cold start, so acquisition does not depend on stale almanac state.
     {
         let (tx, rx) = uart.split_ref();
@@ -486,7 +486,7 @@ fn mark_fix_lost(data: &mut GnssData) {
 /// re-announced periodically. The boot events themselves fire about a second
 /// after power-up and `LogTopic` keeps no backlog, so a host that attaches
 /// later would otherwise never learn which mode the receiver is in.
-async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u16) {
+async fn run(uart: &mut BufferedUart<'_>, fast: bool, nav_rate_ms: u16, cfg_mask: u16) {
     let (tx, rx) = uart.split_ref();
     let mut gnss = SamM10q::new(rx, tx);
 
@@ -503,6 +503,9 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
     // rather than leaving the host with nothing to read.
     GNSS_SIGNAL.signal(data);
     let mut last_pvt: Option<Instant> = None;
+    // Last time *either* source updated the fix. `last_pvt` alone decides which
+    // source steers; this decides whether the fix has gone stale.
+    let mut last_fix_update: Option<Instant> = None;
     let mut in_view = SatsInView::default();
     let mut announced_pvt = false;
     let mut announced_fallback = false;
@@ -612,6 +615,11 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
             },
         };
 
+        if updated {
+            last_fix_update = Some(now);
+        }
+        let fix_fresh = last_fix_update.is_some_and(|t| now.duration_since(t) < PVT_STALE);
+
         if !updated {
             // The link is alive — GSV or some other sentence is still arriving
             // — but nothing has driven the fix for `PVT_STALE`. That happens
@@ -619,7 +627,12 @@ async fn run(uart: &mut BufferedUart, fast: bool, nav_rate_ms: u16, cfg_mask: u1
             // is exactly the state `apply_config` is allowed to leave us in.
             // The silence timeout never fires here, so without this the last
             // good sample would stand indefinitely.
-            if data.fix_quality > 0 && !pvt_fresh && !fix_lost {
+            //
+            // Keyed on the last update from *either* source, not on PVT: during
+            // GGA fallback PVT is stale by definition, so checking it here wiped
+            // every GGA fix on the very next non-GGA sentence (GSA/GSV/RMC follow
+            // GGA within milliseconds on the default NMEA set).
+            if data.fix_quality > 0 && !fix_fresh && !fix_lost {
                 fix_lost = true;
                 mark_fix_lost(&mut data);
                 publish(&data);

@@ -13,7 +13,7 @@ use elle_control::{
     pid::{AttitudeController, PidConfig},
 };
 use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
-use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT};
+use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT, is_attitude_valid};
 use elle_hardware::pwm::PwmOutputs;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -111,7 +111,7 @@ pub struct FlightController<'a> {
     // Controller output snapshot for observability
     last_output: ControllerOutputSnapshot,
     // Supervisor components
-    watchdog: Option<Watchdog>,
+    watchdog: Option<Watchdog<'static>>,
     core1_health: CoreHealth,
     last_watchdog_kick: Instant,
     supervisor_enabled: bool,
@@ -185,7 +185,7 @@ impl<'a> FlightController<'a> {
     }
 
     /// Initialize supervisor components (watchdog and health monitoring)
-    pub fn initialize_supervisor(&mut self, mut watchdog: Watchdog) {
+    pub fn initialize_supervisor(&mut self, mut watchdog: Watchdog<'static>) {
         // Configure watchdog for critical flight safety timeout
         watchdog.start(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
         self.watchdog = Some(watchdog);
@@ -303,7 +303,22 @@ impl<'a> FlightController<'a> {
                 "Control mode changed: {:?} -> {:?}",
                 self.current_control_mode, current_mode
             );
+            // Leaving Manual: the PID never ran there (the RC fast path skips it),
+            // so its integrators still hold whatever they had when Manual was
+            // entered. Clear them here, on the real transition — this is the only
+            // place that still knows the previous mode.
+            if self.current_control_mode == ControlMode::Manual {
+                self.attitude_controller.reset();
+            }
             self.current_control_mode = current_mode;
+        }
+
+        // Link lost: hold the failsafe outputs on *every* tick. The caller keeps
+        // passing the last RC frame it received, so processing it would drive the
+        // surfaces from stale sticks and let a stale low throttle re-arm.
+        if self.arming.failsafe_active {
+            self.hold_failsafe();
+            return;
         }
 
         // Dispatch on command variant and mode
@@ -363,10 +378,24 @@ impl<'a> FlightController<'a> {
             self.arming.update(throttle_rc_equiv);
         }
 
-        // Enable attitude controller based on mode
+        // Enable attitude controller based on mode. Recomputed every tick, so it
+        // must keep the supervisor's verdict too: `check_core1_health` clears
+        // `enabled` when Core 1 (IMU) stops, and this line would otherwise turn it
+        // straight back on. `is_healthy` stays true while the supervisor is off.
         self.attitude_controller.enabled = (norm.attitude_mode == AttitudeMode::Stabilized
             || norm.attitude_mode == AttitudeMode::AltitudeHold)
-            && self.arming.armed;
+            && self.arming.armed
+            && self.core1_health.is_healthy;
+
+        // The cached sample covers ticks where no new attitude arrived, but only
+        // within the same freshness limit the caller applies. Without the age
+        // check a dead IMU would leave the PID flying on a frozen attitude (the
+        // IMU's own failure marker is rejected upstream, and this fallback would
+        // quietly bring back the last good sample instead).
+        let cached = self.last_attitude;
+        let fresh_cached = cached
+            .as_ref()
+            .filter(|a| is_attitude_valid(a, Duration::from_millis(IMU_MAX_AGE_MS)));
 
         // Compute setpoint from mode, with autotune override taking precedence
         let mut heading_target_deg = 0.0f32;
@@ -379,10 +408,7 @@ impl<'a> FlightController<'a> {
                     // Stick IS the setpoint: center=level, full deflection=max angle
                     let stick_roll_deg = norm.roll * STABILIZED_MAX_ROLL_DEG;
                     let roll_sp_deg = if self.heading_hold_active {
-                        match (
-                            self.locked_heading_rad,
-                            attitude.or(self.last_attitude.as_ref()),
-                        ) {
+                        match (self.locked_heading_rad, attitude.or(fresh_cached)) {
                             (Some(target_rad), Some(att)) => {
                                 heading_target_deg = target_rad.to_degrees();
                                 heading_error_deg = self
@@ -454,13 +480,12 @@ impl<'a> FlightController<'a> {
             }
 
             AttitudeMode::Stabilized | AttitudeMode::AltitudeHold => {
-                // Reset PID on entry from Manual to prevent integral carryover
-                if self.current_control_mode == ControlMode::Manual {
-                    self.attitude_controller.reset();
-                }
+                // (PID reset on leaving Manual happens in `update()`, which is the
+                // only place that still knows the previous mode.)
 
-                // Try to get attitude data (current or cached)
-                match attitude.or(self.last_attitude.as_ref()) {
+                // Try to get attitude data (current, or a cached sample that is
+                // still fresh)
+                match attitude.or(fresh_cached) {
                     Some(att) => {
                         // Compute attitude corrections
                         // Reset integrator when disarmed or throttle near zero
@@ -577,6 +602,22 @@ impl<'a> FlightController<'a> {
 
     pub fn apply_failsafe(&mut self) {
         self.pwm.set_safe_positions();
+    }
+
+    /// Failsafe outputs for one tick: surfaces centred, engines off, PID off, and
+    /// the snapshot says so (the main loop sends `engine_output()` to the ESCs).
+    fn hold_failsafe(&mut self) {
+        self.attitude_controller.enabled = false;
+        self.pwm.set_safe_positions();
+        self.last_output = ControllerOutputSnapshot {
+            pitch_correction: 0.0,
+            roll_correction: 0.0,
+            elevon_left_us: ELEVON_LEFT_CENTER_US,
+            elevon_right_us: ELEVON_RIGHT_CENTER_US,
+            engine_left_dshot: 0,
+            engine_right_dshot: 0,
+            ..self.last_output
+        };
     }
 
     #[must_use]

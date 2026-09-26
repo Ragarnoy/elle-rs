@@ -3,6 +3,8 @@
 pub mod system;
 
 #[cfg(feature = "rpc-control")]
+mod frame_buf;
+#[cfg(feature = "rpc-control")]
 pub mod rpc;
 
 // Re-export main types

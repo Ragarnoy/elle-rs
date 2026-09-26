@@ -238,39 +238,35 @@ pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (d
 
 // Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
-// Left engine saturates at ~21,865 RPM (DShot ~1498), right at ~21,430 RPM (DShot ~1473)
-// MAX_RPM capped at slower engine (right) to avoid asymmetric thrust
+// rpm_range sweep 26 Sep 2026, 4S at 16.25 V under load: left engine peaks at
+// 21,389 RPM (DShot 1498) and falls above; right flattens out at ~20,340 RPM
+// from DShot ~1400. MAX_RPM is capped at the slower engine (right) to avoid
+// asymmetric thrust. The engines are ~5% apart at the top (the previous
+// sweep had them ~2% apart), so the right side lost more top-end.
 #[cfg(not(feature = "platform-dart"))]
 pub const MOTOR_POLES: u8 = 14;
 #[cfg(not(feature = "platform-dart"))]
-pub const MAX_RPM: u32 = 21_400; // Measured: right engine saturation under EDF load (4S)
+pub const MAX_RPM: u32 = 20_300; // right engine plateau, rpm_range sweep 2026-09-26
 #[cfg(not(feature = "platform-dart"))]
-pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 149,800
+pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 142,100
 
 // Motor specs (dart). MOTOR_POLES = 14 (confirmed by the rpm_range sweep).
-//
-// CEILING IS FROM FLIGHT LOGS, NOT A SWEEP. The 2-blade prop broke mid-session
-// on 13 Sep 2026 and a 3-blade went on; `GOVERNOR_FF_TABLE` below still
-// describes the broken 2-blade (it was swept just before the break and matches
-// LOG_0015/LOG_0018 to ~1%). On the 3-blade, steady-state samples from
-// LOG_0020–0035 at the same pack voltage top out near 103–107 k eRPM
-// (~15,000 RPM) and the table over-promises by 9% at DShot 750 rising to 23%
-// at 1850. MAX_ERPM is capped here so full stick asks for something the prop
-// can actually reach — otherwise the top ~30% of stick is open-loop against an
-// impossible target. Feedforward stays short by ~20% until someone re-runs
-// rpm_range on the 3-blade and replaces the table; the PI makes up the rest,
-// and `GOVERNOR_DSHOT_MAX` is still safe because the 3-blade curve is
-// strictly rising through DShot 1998 (no stall region to wind into).
+// 3-blade prop, reversed spin. MAX_RPM is the full-throttle point of the
+// 26 Sep 2026 rpm_range sweep (15,360 RPM at DShot 1998, 3S at 11.5 V under
+// load), rounded down. It matches the ~103–107 k eRPM ceiling seen in flight
+// logs LOG_0020–0035. The curve is still rising at full throttle, so there is
+// no stall region above it.
 #[cfg(feature = "platform-dart")]
 pub const MOTOR_POLES: u8 = 14;
 #[cfg(feature = "platform-dart")]
-pub const MAX_RPM: u32 = 15_000; // 3-blade ceiling, LOG_0020–0035 steady state
+pub const MAX_RPM: u32 = 15_300; // 3-blade, rpm_range sweep 2026-09-26
 #[cfg(feature = "platform-dart")]
-pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 105,000
+pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 107,100
 
-/// ESC spin direction. The dart's replacement prop is handed opposite to the original,
-/// so the ESC is commanded reversed on every boot — session-only, never `SettingsSave`:
-/// no EEPROM wear, and still correct after an ESC swap or factory reset.
+/// ESC spin direction. The dart's prop needs the ESC reversed (sweep-confirmed on the
+/// 3-blade: normal direction peaks at DShot ~1773 and then falls). Commanded on every
+/// boot, session-only, never `SettingsSave`: no EEPROM wear, and still correct after
+/// an ESC swap or factory reset.
 #[cfg(feature = "platform-dart")]
 pub const ENGINE_SPIN_REVERSED: bool = true;
 #[cfg(not(feature = "platform-dart"))]
@@ -303,10 +299,10 @@ pub const GOVERNOR_ERPM_MAX_JUMP: u32 = 20_000;
 /// output past the point the feedforward table itself refuses to cross, or the
 /// integrator can wind up past it under normal RPM sag (battery/thermal/prop wash),
 /// driving DShot further into a region where RPM falls as throttle rises — a runaway
-/// positive-feedback loop (eagle right engine saturates/goes asymmetric above DShot 1473;
-/// dart currently rises through DShot 1998, the last measured point).
+/// positive-feedback loop (eagle left engine peaks at DShot 1498 and falls above;
+/// the dart's 3-blade rises through DShot 1998, the last measured point).
 #[cfg(not(feature = "platform-dart"))]
-pub const GOVERNOR_DSHOT_MAX: u16 = 1_473;
+pub const GOVERNOR_DSHOT_MAX: u16 = 1_498;
 #[cfg(feature = "platform-dart")]
 pub const GOVERNOR_DSHOT_MAX: u16 = 1_998;
 
