@@ -252,6 +252,19 @@ pub const LEVEL_CAL_MAX_GYRO_RAD_S: f32 = 0.1;
 /// attitude, not that the board is mounted crooked; the run fails as "tilted".
 pub const LEVEL_CAL_MAX_TILT_DEG: f32 = 15.0;
 
+// Gyro bias estimation at boot. Samples are at the 1 kHz IMU rate.
+/// Samples averaged into the bias once the board has been still for all of them (1 s).
+pub const GYRO_BIAS_SAMPLES: u32 = 1000;
+/// Peak-to-peak spread on any axis above which the window restarts as "moving".
+/// ~2°/s: several times the ICM-42686 noise at 1 kHz, far below handling.
+pub const GYRO_BIAS_MAX_SPREAD_RAD_S: f32 = 0.035;
+/// A still-window mean above this on any axis is not a plausible zero-rate
+/// offset (the part is specified well under 1°/s); reject it (~5.7°/s).
+pub const GYRO_BIAS_MAX_RAD_S: f32 = 0.1;
+/// Give up after this many samples without a still window (10 s) and fly with
+/// zero bias, flagged as uncalibrated.
+pub const GYRO_BIAS_TIMEOUT_SAMPLES: u32 = 10_000;
+
 // Setpoint smoothing parameters
 pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 30.0; // Max rate of setpoint change (degrees/second)

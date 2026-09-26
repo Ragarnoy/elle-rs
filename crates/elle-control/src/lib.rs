@@ -4,6 +4,7 @@ pub mod arming;
 pub mod autotune;
 pub mod commands;
 pub mod governor;
+pub mod gyro_bias;
 pub mod heading;
 pub mod level_cal;
 pub mod mixing;

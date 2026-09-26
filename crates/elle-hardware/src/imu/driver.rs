@@ -58,20 +58,22 @@ fn level_cal_step(
     *acc = None;
 }
 
-/// Fuse one raw FIFO sample: feed any running level calibration, rotate into the
-/// airframe frame, and step the AHRS (9-DOF when `mag` is given, else 6-DOF).
+/// Fuse one raw FIFO sample: remove the gyro bias, feed any running level
+/// calibration, rotate into the airframe frame, and step the AHRS (9-DOF when
+/// `mag` is given, else 6-DOF).
 /// `None` when the AHRS rejects the sample (normalisation failure).
 fn fuse_sample(
     ahrs: &mut ahrs::Madgwick<f32>,
     level_cal: &mut Option<LevelCalAccum>,
     mount: &mut nalgebra::UnitQuaternion<f32>,
     mag: Option<&nalgebra::Vector3<f32>>,
+    gyro_bias: &nalgebra::Vector3<f32>,
     sample: &icm426xx::Sample,
 ) -> Option<AttitudeData> {
     let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
     let (gx, gy, gz) = sample.gyro.unwrap_or((0.0, 0.0, 0.0));
 
-    let raw_gyro = nalgebra::Vector3::new(gx, gy, gz);
+    let raw_gyro = nalgebra::Vector3::new(gx, gy, gz) - gyro_bias;
     let raw_accel = nalgebra::Vector3::new(ax, ay, az);
     level_cal_step(level_cal, mount, &raw_accel, &raw_gyro);
 
@@ -126,6 +128,11 @@ pub struct Imu<'a> {
     mount: nalgebra::UnitQuaternion<f32>,
     /// In-progress level calibration, if one is collecting.
     level_cal: Option<LevelCalAccum>,
+    /// Gyro zero-rate offset (sensor frame), subtracted before everything else.
+    /// Zero until the boot-time estimate completes.
+    gyro_bias: nalgebra::Vector3<f32>,
+    /// Boot-time gyro bias estimate, while it is still collecting.
+    bias_est: Option<elle_control::gyro_bias::GyroBiasEstimator>,
     mag_cal_active: bool,
     mag_cal_min: [f32; 3],
     mag_cal_max: [f32; 3],
@@ -163,6 +170,8 @@ impl<'a> Imu<'a> {
             mag_offset: nalgebra::Vector3::zeros(),
             mount: nalgebra::UnitQuaternion::identity(),
             level_cal: None,
+            gyro_bias: nalgebra::Vector3::zeros(),
+            bias_est: Some(elle_control::gyro_bias::GyroBiasEstimator::new()),
             mag_cal_active: false,
             mag_cal_min: [f32::MAX; 3],
             mag_cal_max: [f32::MIN; 3],
@@ -234,12 +243,12 @@ impl<'a> Imu<'a> {
             info!("ICM-42686: APEX tap detection enabled (chip default sensitivity, DMP active)");
         }
 
-        // Mark IMU as initialized — ICM-42686 is factory-calibrated
+        // Mark IMU as initialized. `calibrated` stays false until the gyro bias
+        // has been measured at the start of `run()`.
         // Do this before I2C sensors so a hanging mag/baro doesn't block Core0
         {
             let mut status = IMU_STATUS.write().await;
             status.initialized = true;
-            status.calibrated = true;
             status.last_update = Instant::now();
         }
 
@@ -328,9 +337,10 @@ impl<'a> Imu<'a> {
         self.mag_ok = false;
     }
 
-    /// ICM-42686 has no user calibration (factory-calibrated MEMS)
+    /// Nothing to wait for here: the gyro bias is measured on the first still
+    /// second of `run()`, without holding up the boot barrier.
     pub async fn wait_for_calibration(&mut self, _timeout_secs: u64) -> ElleResult<()> {
-        info!("ICM-42686: no calibration needed (factory-calibrated MEMS)");
+        info!("ICM-42686: gyro bias will be measured once running (keep still)");
         Ok(())
     }
 
@@ -366,16 +376,28 @@ impl<'a> Imu<'a> {
             // than its timestamp.
             let mut drained: u32 = 0;
             let mut latest: Option<AttitudeData> = None;
+            let mut bias_result = None;
             while drained < elle_config::IMU_MAX_DRAIN {
                 match icm.read_sample() {
                     Ok(Some((sample, more))) => {
                         consecutive_errors = 0;
                         drained += 1;
+                        if let Some(est) = self.bias_est.as_mut()
+                            && let Some((gx, gy, gz)) = sample.gyro
+                            && let Some(result) = est.push(nalgebra::Vector3::new(gx, gy, gz))
+                        {
+                            self.bias_est = None;
+                            bias_result = Some(result);
+                            if let Ok(bias) = result {
+                                self.gyro_bias = bias;
+                            }
+                        }
                         let fused = fuse_sample(
                             &mut self.ahrs,
                             &mut self.level_cal,
                             &mut self.mount,
                             self.has_mag.then_some(&self.last_mag),
+                            &self.gyro_bias,
                             &sample,
                         );
                         if fused.is_some() {
@@ -430,6 +452,29 @@ impl<'a> Imu<'a> {
                 let mut status = IMU_STATUS.write().await;
                 status.last_update = Instant::now();
                 status.error_count = 0;
+            }
+
+            match bias_result {
+                Some(Ok(b)) => {
+                    IMU_STATUS.write().await.calibrated = true;
+                    crate::elle_event!(
+                        info,
+                        crate::event::EVT_GYRO_BIAS_DONE,
+                        "ICM-42686: gyro bias ({}, {}, {}) mrad/s",
+                        (b.x * 1000.0) as i32,
+                        (b.y * 1000.0) as i32,
+                        (b.z * 1000.0) as i32
+                    );
+                }
+                Some(Err(e)) => {
+                    crate::elle_event!(
+                        warn,
+                        crate::event::EVT_GYRO_BIAS_FAILED,
+                        "ICM-42686: gyro bias not measured ({}), flying uncorrected",
+                        e
+                    );
+                }
+                None => {}
             }
 
             if drained > 1 {

@@ -77,6 +77,10 @@ pub const EVT_MAG_INIT_FAILED: u16 = 43;
 pub const EVT_BARO_INIT_FAILED: u16 = 44;
 /// Core1 fell behind and drained several queued IMU samples in one wake-up.
 pub const EVT_IMU_CATCHUP: u16 = 45;
+/// Boot-time gyro bias measured; the IMU now reports calibrated.
+pub const EVT_GYRO_BIAS_DONE: u16 = 46;
+/// No still window (or an implausible offset) at boot; flying with zero bias.
+pub const EVT_GYRO_BIAS_FAILED: u16 = 47;
 
 // CRSF receiver (50–59)
 pub const EVT_CRSF_RX_FIRST_FRAME: u16 = 50;
