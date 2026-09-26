@@ -77,8 +77,8 @@ cargo build -p elle-rpc-host --target x86_64-unknown-linux-gnu
 | PIN_9 | I2C0 SCL | MMC5616WA mag + BMP390 baro |
 | PIN_10 | WS2812B LED | PIO0 SM2 + DMA_CH2 |
 | PIN_11 | DShot right engine | PIO2 |
-| PIN_12 | Elevon right PWM | PIO0 SM1 |
-| PIN_13 | Elevon left PWM | PIO0 SM0 |
+| PIN_12 | Elevon right PWM | PWM slice 6 A |
+| PIN_13 | Elevon left PWM | PWM slice 6 B |
 | PIN_14 | DShot left engine | PIO1 |
 | PIN_20 | UART1 TX | CRSF telemetry (DMA_CH4) |
 | PIN_21 | UART1 RX | CRSF receiver (DMA_CH3) |

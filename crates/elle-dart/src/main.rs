@@ -373,23 +373,18 @@ async fn main(spawner: Spawner) {
         );
     }
 
-    // Setup PIO0: elevon PWM (SM0, SM1) + WS2812B LED (SM2)
+    // Elevons on hardware PWM slice 6; WS2812B LED on PIO0 SM2
     info!("Core0: Setting up flight control hardware + LED on PIO0");
-    static PWM_PINS: StaticCell<PwmPins<'static>> = StaticCell::new();
-    let pwm_pins = PWM_PINS.init(PwmPins {
+    let mut pwm = PwmOutputs::new(PwmPins {
+        slice: p.PWM_SLICE6,
         elevon_left: p.PIN_13,
         elevon_right: p.PIN_12,
     });
+    pwm.set_safe_positions();
 
     let Pio {
-        mut common,
-        sm0,
-        sm1,
-        sm2: led_sm,
-        ..
+        common, sm2: led_sm, ..
     } = Pio::new(p.PIO0, Irqs);
-    let mut pwm = PwmOutputs::new(&mut common, sm0, sm1, pwm_pins);
-    pwm.set_safe_positions();
 
     spawner.spawn(led_task(common, led_sm, p.DMA_CH2, Irqs, p.PIN_10).unwrap());
 
