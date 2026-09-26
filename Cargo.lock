@@ -1017,6 +1017,7 @@ dependencies = [
  "defmt 1.1.1",
  "elle-config",
  "embassy-time",
+ "nalgebra 0.34.2",
 ]
 
 [[package]]

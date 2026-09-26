@@ -5,6 +5,7 @@ pub mod autotune;
 pub mod commands;
 pub mod governor;
 pub mod heading;
+pub mod level_cal;
 pub mod mixing;
 pub mod pid;
 pub mod throttle;

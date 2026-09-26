@@ -884,6 +884,16 @@ const fn log_code_text(code: u16) -> &'static str {
         116 => "Mag cal: no saved cal",
         // Tap detection (120–129)
         120 => "Double-tap: armed",
+        // Level calibration (150–159)
+        150 => "Level cal: started",
+        151 => "Level cal: complete",
+        152 => "Level cal: failed (moved, or refused while armed)",
+        153 => "Level cal: failed (tilt beyond limit)",
+        154 => "Level cal: saved to flash",
+        155 => "Level cal: flash save failed",
+        156 => "Level cal: cleared",
+        157 => "Level cal: loaded from flash",
+        158 => "Level cal: no saved cal",
         _ => "unknown",
     }
 }

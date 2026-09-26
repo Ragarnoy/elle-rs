@@ -123,6 +123,17 @@ pub const EVT_HEADING_HOLD_ENGAGED: u16 = 130;
 pub const EVT_HEADING_HOLD_DISENGAGED: u16 = 131;
 pub const EVT_HEADING_HOLD_TARGET_SET: u16 = 132;
 
+// Level calibration (150–159) — IMU mounting offset
+pub const EVT_LEVEL_CAL_STARTED: u16 = 150;
+pub const EVT_LEVEL_CAL_COMPLETE: u16 = 151;
+pub const EVT_LEVEL_CAL_FAILED_MOVING: u16 = 152;
+pub const EVT_LEVEL_CAL_FAILED_TILTED: u16 = 153;
+pub const EVT_LEVEL_CAL_SAVED: u16 = 154;
+pub const EVT_LEVEL_CAL_SAVE_FAILED: u16 = 155;
+pub const EVT_LEVEL_CAL_CLEARED: u16 = 156;
+pub const EVT_LEVEL_CAL_LOADED: u16 = 157;
+pub const EVT_LEVEL_CAL_LOAD_EMPTY: u16 = 158;
+
 // ---------------------------------------------------------------------------
 // Macro
 // ---------------------------------------------------------------------------

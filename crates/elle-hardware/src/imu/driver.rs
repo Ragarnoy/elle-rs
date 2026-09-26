@@ -12,6 +12,52 @@ use embassy_time::{Duration, Timer};
 use embedded_hal_bus::i2c::RefCellDevice as I2cRefCellDevice;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
+/// Running sums for a level calibration (raw sensor frame).
+struct LevelCalAccum {
+    /// Samples seen so far, settle period included.
+    seen: u32,
+    accel_sum: nalgebra::Vector3<f32>,
+    max_gyro: f32,
+}
+
+/// Feed one raw sample to an in-progress level calibration. After the settle
+/// period and `LEVEL_CAL_SAMPLES` averaged samples it finishes: on success the new
+/// mount is applied immediately, on failure the old one stays; either way the
+/// result goes to Core0 to report and persist.
+fn level_cal_step(
+    acc: &mut Option<LevelCalAccum>,
+    mount: &mut nalgebra::UnitQuaternion<f32>,
+    raw_accel: &nalgebra::Vector3<f32>,
+    raw_gyro: &nalgebra::Vector3<f32>,
+) {
+    use elle_config::{LEVEL_CAL_MAX_GYRO_RAD_S, LEVEL_CAL_SAMPLES, LEVEL_CAL_SETTLE_SAMPLES};
+
+    let Some(a) = acc.as_mut() else {
+        return;
+    };
+    a.seen += 1;
+    if a.seen <= LEVEL_CAL_SETTLE_SAMPLES {
+        return;
+    }
+    a.accel_sum += raw_accel;
+    a.max_gyro = a.max_gyro.max(raw_gyro.norm());
+    if a.seen < LEVEL_CAL_SETTLE_SAMPLES + LEVEL_CAL_SAMPLES {
+        return;
+    }
+
+    let mean = a.accel_sum / LEVEL_CAL_SAMPLES as f32;
+    let result = elle_control::level_cal::compute_mount(mean, a.max_gyro, LEVEL_CAL_MAX_GYRO_RAD_S);
+    match result {
+        Ok(m) => {
+            *mount = m;
+            info!("Core1: Level cal complete");
+        }
+        Err(e) => warn!("Core1: Level cal failed: {} (max gyro {})", e, a.max_gyro),
+    }
+    level_cal::LEVEL_CAL_RESULT_SIGNAL.signal(result);
+    *acc = None;
+}
+
 type I2cBus<'a> = i2c::I2c<'a, Blocking>;
 type SharedI2c<'a> = I2cRefCellDevice<'a, I2cBus<'a>>;
 type SpiDev<'a> = ExclusiveDevice<spi::Spi<'a, Blocking>, Output<'a>, embassy_time::Delay>;
@@ -31,6 +77,11 @@ pub struct Imu<'a> {
     mag_ok: bool,
     error_threshold: u32,
     mag_offset: nalgebra::Vector3<f32>,
+    /// Level calibration: rotation from the IMU frame to the airframe frame,
+    /// applied to every sensor vector before the AHRS. Identity = uncorrected.
+    mount: nalgebra::UnitQuaternion<f32>,
+    /// In-progress level calibration, if one is collecting.
+    level_cal: Option<LevelCalAccum>,
     mag_cal_active: bool,
     mag_cal_min: [f32; 3],
     mag_cal_max: [f32; 3],
@@ -66,6 +117,8 @@ impl<'a> Imu<'a> {
             mag_ok: false,
             error_threshold: 10,
             mag_offset: nalgebra::Vector3::zeros(),
+            mount: nalgebra::UnitQuaternion::identity(),
+            level_cal: None,
             mag_cal_active: false,
             mag_cal_min: [f32::MAX; 3],
             mag_cal_max: [f32::MIN; 3],
@@ -268,8 +321,15 @@ impl<'a> Imu<'a> {
                     let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
                     let (gx, gy, gz) = sample.gyro.unwrap_or((0.0, 0.0, 0.0));
 
-                    let gyro = nalgebra::Vector3::new(gx, gy, gz);
-                    let accel = nalgebra::Vector3::new(ax, ay, az);
+                    let raw_gyro = nalgebra::Vector3::new(gx, gy, gz);
+                    let raw_accel = nalgebra::Vector3::new(ax, ay, az);
+                    level_cal_step(&mut self.level_cal, &mut self.mount, &raw_accel, &raw_gyro);
+
+                    // Into the airframe frame; everything downstream (AHRS, rates)
+                    // then sees a level-mounted IMU.
+                    let gyro = self.mount * raw_gyro;
+                    let accel = self.mount * raw_accel;
+                    let (gx, gy, gz) = (gyro.x, gyro.y, gyro.z);
 
                     // 2. Update AHRS (9-DOF with mag, or 6-DOF if no mag yet)
                     let q_result = if self.has_mag {
@@ -355,6 +415,20 @@ impl<'a> Imu<'a> {
                     "Core1: Mag cal offsets applied: ({}, {}, {})",
                     ox as i32, oy as i32, oz as i32
                 );
+            }
+
+            // Level calibration: loaded/cleared mount from Core0, or a start request
+            if let Some(mount) = level_cal::LEVEL_CALIBRATION_SIGNAL.try_take() {
+                self.mount = mount;
+                info!("Core1: Level cal mount applied");
+            }
+            if level_cal::LEVEL_CAL_START_SIGNAL.try_take().is_some() {
+                self.level_cal = Some(LevelCalAccum {
+                    seen: 0,
+                    accel_sum: nalgebra::Vector3::zeros(),
+                    max_gyro: 0.0,
+                });
+                info!("Core1: Level calibration collecting");
             }
 
             // Poll APEX tap detection every TAP_POLL_INTERVAL samples (~50ms).
@@ -447,11 +521,13 @@ impl<'a> Imu<'a> {
                         }
 
                         // Apply offsets before feeding AHRS
-                        self.last_mag = nalgebra::Vector3::new(
-                            raw[0] - self.mag_offset[0],
-                            raw[1] - self.mag_offset[1],
-                            raw[2] - self.mag_offset[2],
-                        );
+                        // (hard-iron offsets are sensor-frame), then into the airframe frame.
+                        self.last_mag = self.mount
+                            * nalgebra::Vector3::new(
+                                raw[0] - self.mag_offset[0],
+                                raw[1] - self.mag_offset[1],
+                                raw[2] - self.mag_offset[2],
+                            );
                         self.has_mag = true;
                     }
                     Err(e) => {

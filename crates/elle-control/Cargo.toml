@@ -9,6 +9,7 @@ elle-config = { workspace = true }
 embassy-time = { workspace = true }
 defmt = { workspace = true }
 bytemuck = { workspace = true }
+nalgebra = { workspace = true }
 
 [features]
 # Passthrough so host tests can select the dart tables:

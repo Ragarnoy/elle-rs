@@ -43,6 +43,8 @@ pub enum RpcCommand {
     ClearPidProfile,
     StartMagCal,
     ClearMagCal,
+    StartLevelCal,
+    ClearLevelCal,
     SetHeadingHold {
         enabled: bool,
         target_cdeg: i16,

@@ -406,6 +406,24 @@ fn handle_clear_mag_cal(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckR
     send_cmd(ctx, RpcCommand::ClearMagCal)
 }
 
+fn handle_start_level_cal(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    send_cmd(ctx, RpcCommand::StartLevelCal)
+}
+
+fn handle_clear_level_cal(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
+    send_cmd(ctx, RpcCommand::ClearLevelCal)
+}
+
+fn handle_get_level_cal(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> LevelCalResp {
+    let s = elle_hardware::imu::level_cal::status();
+    LevelCalResp {
+        roll_deg: s.roll_deg,
+        pitch_deg: s.pitch_deg,
+        calibrated: s.calibrated,
+        collecting: s.collecting,
+    }
+}
+
 fn handle_get_mag_cal(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagCalResp {
     let (ox, oy, oz) = MAG_CAL_OFFSET.lock(|c| c.get());
     let status = MAG_CAL_STATUS.load(Ordering::Relaxed);
@@ -530,6 +548,9 @@ postcard_rpc::define_dispatch! {
         | StartMagCalEndpoint       | blocking  | handle_start_mag_cal        |
         | ClearMagCalEndpoint       | blocking  | handle_clear_mag_cal        |
         | GetMagCalEndpoint         | blocking  | handle_get_mag_cal          |
+        | StartLevelCalEndpoint     | blocking  | handle_start_level_cal      |
+        | ClearLevelCalEndpoint     | blocking  | handle_clear_level_cal      |
+        | GetLevelCalEndpoint       | blocking  | handle_get_level_cal        |
         | SetHeadingHoldEndpoint    | blocking  | handle_set_heading_hold     |
     };
     topics_in: {
