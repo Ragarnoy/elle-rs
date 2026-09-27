@@ -175,7 +175,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 6. Rates published for the PID pass through a 2nd-order Butterworth low-pass (`GYRO_RATE_LPF_HZ` = 30); the AHRS integrates unfiltered gyro.
 
 Any I2C error on mag or baro takes **both** off the bus (`i2c_bus_failed`, event 48).
-Mag ~10 Hz, baro ~2 Hz.
+Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` at 1 kHz).
 
 ### DShot and RPM governor (`elle-hardware/src/dshot.rs`, `elle-control/src/governor.rs`)
 
@@ -203,7 +203,7 @@ Mag ~10 Hz, baro ~2 Hz.
 **`SignalCache<T>`** (`elle-hardware/src/signal_cache.rs`) — `Signal` + `Mutex<Cell<T>>`: `publish()`, `read_cached()`, `try_take()`.
 
 - `ATTITUDE` (`elle-hardware/src/imu.rs`) — AHRS attitude + filtered rates at 1 kHz; the control loop `try_take()`s it.
-- `MAG`, `BARO` (same file) — raw mag counts (~10 Hz), pressure/temp/altitude (~2 Hz); read by CRSF telemetry, RPC and ULog.
+- `MAG`, `BARO` (same file) — raw mag counts (~10 Hz), pressure/temp/altitude (~20 Hz); read by CRSF telemetry, RPC and ULog.
 - `GNSS_SIGNAL` (`elle-hardware/src/gnss.rs`) — `GnssData` for ULog, RPC and CRSF.
 - `FLIGHT_STATE`, `CONTROLLER_OUTPUT` (`elle-app/src/flight_state.rs`) — published by the RPC loop for the status and controller-output handlers.
 - `DSHOT_THROTTLE` / `ENGINE_CACHE` / `BEEP_SIGNAL` (`elle-hardware/src/dshot.rs`) — eRPM targets in, per-engine telemetry out.
