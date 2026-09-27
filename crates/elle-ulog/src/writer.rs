@@ -12,7 +12,7 @@ use embassy_time::Instant;
 use heapless::Vec;
 
 /// Maximum buffer size for ULog data (4KB)
-pub const BUFFER_SIZE: usize = 4096;
+pub(crate) const BUFFER_SIZE: usize = 4096;
 
 /// Write errors
 #[derive(Debug, Clone, Copy, defmt::Format)]
@@ -21,8 +21,6 @@ pub enum WriteError {
     BufferFull,
     /// Invalid message
     InvalidMessage,
-    /// Flash write failed
-    FlashError,
 }
 
 /// ULog writer with buffering
@@ -300,18 +298,6 @@ impl ULogWriter {
     #[must_use]
     pub fn buffer(&self) -> &[u8] {
         &self.buffer
-    }
-
-    /// Get the buffer size
-    #[must_use]
-    pub fn buffer_len(&self) -> usize {
-        self.buffer.len()
-    }
-
-    /// Check if buffer needs flushing (>75% full)
-    #[must_use]
-    pub fn needs_flush(&self) -> bool {
-        self.buffer.len() > (BUFFER_SIZE * 3 / 4)
     }
 
     /// Clear the buffer after successful flush
