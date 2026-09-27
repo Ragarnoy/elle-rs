@@ -100,8 +100,8 @@ In `crates/elle-config/src/lib.rs`, in this platform's cfg block, set `MAX_RPM`
 and `GOVERNOR_DSHOT_MAX` to the parsed values (`MAX_ERPM` is derived from
 `MAX_RPM`; just check its trailing `// = ...` comment). Rewrite the motor-spec
 comment above `MAX_RPM` and the `GOVERNOR_DSHOT_MAX` doc comment to match the
-new data. Both carry history, such as the dart's "CEILING IS FROM FLIGHT LOGS, NOT
-A SWEEP", that becomes false once a sweep replaces it.
+new data. Any history they carry (prop, date, pack voltage, why the ceiling sits
+where it does) must describe the sweep you just ran.
 
 Dart only: `crates/elle-control/tests/governor_step_response.rs` hardcodes
 `MAX_ERPM` "matching `MAX_ERPM` for the dart". Update it too.
@@ -112,7 +112,11 @@ Dart only: `crates/elle-control/tests/governor_step_response.rs` hardcodes
 (cd crates/elle-dart  && cargo build --release)   # compile-time assert: GOVERNOR_DSHOT_MAX == last table row
 (cd crates/elle-eagle && cargo build --release)
 cargo test -p elle-control --target x86_64-unknown-linux-gnu --features platform-dart
+cargo test -p elle-control --target x86_64-unknown-linux-gnu
 ```
+
+CI runs the same `elle-control` tests for both platforms, so a stale test plant fails
+the PR.
 
 If a governor test fails, work out whether the test's plant model assumed the old
 curve before touching the test. Don't loosen a test just to make it pass.
@@ -123,5 +127,5 @@ The board is still running `rpm_range`. Reflash the platform's firmware (see
 CLAUDE.md for build commands; with `cargo run --release` from the crate
 directory). Then bench-check the governor at a few stick positions before flying.
 
-Update the prop/governor notes in `CLAUDE.md` and the dart prop memory if the
-calibration changes what they say. Don't commit unless the user asks.
+Update the ceilings in `CLAUDE.md` ("DShot and RPM governor") and the dart prop memory
+if the calibration changes what they say. Don't commit unless the user asks.
