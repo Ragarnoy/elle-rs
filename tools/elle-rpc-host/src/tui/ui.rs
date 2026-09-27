@@ -357,153 +357,153 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
 
     let (gnss_pos_line, gnss_fix_line, gnss_alt_line, gnss_vel_line, gnss_src_line) =
         state.gnss.map_or_else(
-        || {
-            (
-                muted_line("  GPS: ---"),
-                muted_line("  Fix: ---"),
-                muted_line("  Alt: ---"),
-                muted_line("  Spd: ---"),
-                muted_line("  Src: ---"),
-            )
-        },
-        |g| {
-            let (fix_str, fix_color) = match g.fix_quality {
-                0 => ("No fix", CRIT),
-                1 => ("GPS", OK),
-                2 => ("DGPS", OK),
-                _ => ("Other", WARN),
-            };
-            (
-                kv(
-                    "  GPS: ",
-                    format!("{:.6}, {:.6}", g.latitude, g.longitude),
-                    if g.fix_quality == 0 {
-                        MUTED
-                    } else {
-                        Color::White
-                    },
-                ),
-                Line::from(vec![
-                    Span::styled("  Fix: ", Style::default().fg(LABEL)),
-                    Span::styled(fix_str, Style::default().fg(fix_color)),
-                    Span::styled(" | Sats: ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        g.num_satellites.to_string(),
-                        // A 3D fix needs 4; 6+ is comfortable.
-                        Style::default().fg(if g.num_satellites >= 6 {
-                            OK
-                        } else if g.num_satellites >= 4 {
-                            WARN
+            || {
+                (
+                    muted_line("  GPS: ---"),
+                    muted_line("  Fix: ---"),
+                    muted_line("  Alt: ---"),
+                    muted_line("  Spd: ---"),
+                    muted_line("  Src: ---"),
+                )
+            },
+            |g| {
+                let (fix_str, fix_color) = match g.fix_quality {
+                    0 => ("No fix", CRIT),
+                    1 => ("GPS", OK),
+                    2 => ("DGPS", OK),
+                    _ => ("Other", WARN),
+                };
+                (
+                    kv(
+                        "  GPS: ",
+                        format!("{:.6}, {:.6}", g.latitude, g.longitude),
+                        if g.fix_quality == 0 {
+                            MUTED
                         } else {
-                            CRIT
-                        }),
-                    ),
-                    // Satellites in view, when the firmware reports it: `Sats`
-                    // alone counts only those used in the fix, which stays at
-                    // zero for the whole of acquisition.
-                    Span::styled(
-                        if g.sats_in_view > 0 {
-                            format!("/{}", g.sats_in_view)
-                        } else {
-                            String::new()
+                            Color::White
                         },
-                        Style::default().fg(MUTED),
                     ),
-                    Span::styled(" | HDOP: ", Style::default().fg(LABEL)),
-                    // NAV-PVT carries no DOP, so on the primary path `hdop`
-                    // keeps its "unavailable" seed. Printing that as 99.9 in red
-                    // reads as a failing receiver for an entire healthy flight.
-                    if g.pvt_active {
-                        Span::styled("---", Style::default().fg(MUTED))
-                    } else {
+                    Line::from(vec![
+                        Span::styled("  Fix: ", Style::default().fg(LABEL)),
+                        Span::styled(fix_str, Style::default().fg(fix_color)),
+                        Span::styled(" | Sats: ", Style::default().fg(LABEL)),
                         Span::styled(
-                            format!("{:.1}", g.hdop),
-                            Style::default().fg(scale(f64::from(g.hdop), 2.0, 5.0)),
-                        )
-                    },
-                ]),
-                kv(
-                    "  Alt: ",
-                    format!("{:.1}m MSL", g.altitude_m),
-                    if g.fix_quality == 0 {
-                        MUTED
-                    } else {
-                        Color::White
-                    },
-                ),
-                Line::from(vec![
-                    Span::styled("  Spd: ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        format!("{:.1} m/s", g.ground_speed_ms),
-                        Style::default().fg(if g.fix_quality == 0 {
+                            g.num_satellites.to_string(),
+                            // A 3D fix needs 4; 6+ is comfortable.
+                            Style::default().fg(if g.num_satellites >= 6 {
+                                OK
+                            } else if g.num_satellites >= 4 {
+                                WARN
+                            } else {
+                                CRIT
+                            }),
+                        ),
+                        // Satellites in view, when the firmware reports it: `Sats`
+                        // alone counts only those used in the fix, which stays at
+                        // zero for the whole of acquisition.
+                        Span::styled(
+                            if g.sats_in_view > 0 {
+                                format!("/{}", g.sats_in_view)
+                            } else {
+                                String::new()
+                            },
+                            Style::default().fg(MUTED),
+                        ),
+                        Span::styled(" | HDOP: ", Style::default().fg(LABEL)),
+                        // NAV-PVT carries no DOP, so on the primary path `hdop`
+                        // keeps its "unavailable" seed. Printing that as 99.9 in red
+                        // reads as a failing receiver for an entire healthy flight.
+                        if g.pvt_active {
+                            Span::styled("---", Style::default().fg(MUTED))
+                        } else {
+                            Span::styled(
+                                format!("{:.1}", g.hdop),
+                                Style::default().fg(scale(f64::from(g.hdop), 2.0, 5.0)),
+                            )
+                        },
+                    ]),
+                    kv(
+                        "  Alt: ",
+                        format!("{:.1}m MSL", g.altitude_m),
+                        if g.fix_quality == 0 {
                             MUTED
                         } else {
                             Color::White
-                        }),
-                    ),
-                    Span::styled(" | Trk: ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        format!("{:.0}°", g.heading_motion_deg),
-                        Style::default().fg(if g.fix_quality == 0 {
-                            MUTED
-                        } else {
-                            Color::White
-                        }),
-                    ),
-                    Span::styled(" | hAcc: ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        // hAcc is 0 until the first NAV-PVT; show that as
-                        // unknown rather than as a perfect fix.
-                        if g.h_acc_m > 0.0 {
-                            format!("{:.1}m", g.h_acc_m)
-                        } else {
-                            "---".to_string()
                         },
-                        Style::default().fg(if g.h_acc_m > 0.0 {
-                            scale(f64::from(g.h_acc_m), 3.0, 10.0)
-                        } else {
-                            MUTED
-                        }),
                     ),
-                ]),
-                Line::from(vec![
-                    Span::styled("  Src: ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        if g.pvt_active { "NAV-PVT" } else { "NMEA" },
-                        Style::default().fg(if g.pvt_active { OK } else { WARN }),
-                    ),
-                    Span::styled(" | ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        if g.link_baud == 0 {
-                            "---".to_string()
-                        } else {
-                            format!("{} baud", g.link_baud)
-                        },
-                        // 9600 means the baud switch did not take.
-                        Style::default().fg(if g.link_baud >= 115_200 { OK } else { WARN }),
-                    ),
-                    Span::styled(" | ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        if g.nav_rate_ms == 0 {
-                            "---".to_string()
-                        } else {
-                            format!("{:.0} Hz", 1000.0 / f64::from(g.nav_rate_ms))
-                        },
-                        Style::default().fg(Color::White),
-                    ),
-                    Span::styled(" | ", Style::default().fg(LABEL)),
-                    Span::styled(
-                        gnss_cfg_text(g.cfg_mask),
-                        Style::default().fg(if g.cfg_mask == elle_rpc_icd::GNSS_CFG_MASK_ALL {
-                            OK
-                        } else {
-                            WARN
-                        }),
-                    ),
-                ]),
-            )
-        },
-    );
+                    Line::from(vec![
+                        Span::styled("  Spd: ", Style::default().fg(LABEL)),
+                        Span::styled(
+                            format!("{:.1} m/s", g.ground_speed_ms),
+                            Style::default().fg(if g.fix_quality == 0 {
+                                MUTED
+                            } else {
+                                Color::White
+                            }),
+                        ),
+                        Span::styled(" | Trk: ", Style::default().fg(LABEL)),
+                        Span::styled(
+                            format!("{:.0}°", g.heading_motion_deg),
+                            Style::default().fg(if g.fix_quality == 0 {
+                                MUTED
+                            } else {
+                                Color::White
+                            }),
+                        ),
+                        Span::styled(" | hAcc: ", Style::default().fg(LABEL)),
+                        Span::styled(
+                            // hAcc is 0 until the first NAV-PVT; show that as
+                            // unknown rather than as a perfect fix.
+                            if g.h_acc_m > 0.0 {
+                                format!("{:.1}m", g.h_acc_m)
+                            } else {
+                                "---".to_string()
+                            },
+                            Style::default().fg(if g.h_acc_m > 0.0 {
+                                scale(f64::from(g.h_acc_m), 3.0, 10.0)
+                            } else {
+                                MUTED
+                            }),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  Src: ", Style::default().fg(LABEL)),
+                        Span::styled(
+                            if g.pvt_active { "NAV-PVT" } else { "NMEA" },
+                            Style::default().fg(if g.pvt_active { OK } else { WARN }),
+                        ),
+                        Span::styled(" | ", Style::default().fg(LABEL)),
+                        Span::styled(
+                            if g.link_baud == 0 {
+                                "---".to_string()
+                            } else {
+                                format!("{} baud", g.link_baud)
+                            },
+                            // 9600 means the baud switch did not take.
+                            Style::default().fg(if g.link_baud >= 115_200 { OK } else { WARN }),
+                        ),
+                        Span::styled(" | ", Style::default().fg(LABEL)),
+                        Span::styled(
+                            if g.nav_rate_ms == 0 {
+                                "---".to_string()
+                            } else {
+                                format!("{:.0} Hz", 1000.0 / f64::from(g.nav_rate_ms))
+                            },
+                            Style::default().fg(Color::White),
+                        ),
+                        Span::styled(" | ", Style::default().fg(LABEL)),
+                        Span::styled(
+                            gnss_cfg_text(g.cfg_mask),
+                            Style::default().fg(if g.cfg_mask == elle_rpc_icd::GNSS_CFG_MASK_ALL {
+                                OK
+                            } else {
+                                WARN
+                            }),
+                        ),
+                    ]),
+                )
+            },
+        );
 
     let mut attitude_text = attitude_lines;
     attitude_text.extend([
