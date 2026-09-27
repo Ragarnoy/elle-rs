@@ -1,190 +1,65 @@
 # elle-ulog
 
-ULog flash logging implementation for the ELLE-RS flight controller.
+`no_std`, allocation-free encoder for the [PX4 ULog](https://docs.px4.io/main/en/dev_log/ulog_file_format.html)
+format, used by the Elle flight controller for flight recording. Output opens in
+PlotJuggler, pyulog (`ulog_info`, `ulog2csv`) and PX4 Flight Review.
 
-## Overview
-
-This crate implements the PX4 ULog file format for embedded flash storage on the RP2350. ULog is a self-describing binary format with little-endian byte ordering, widely used in the drone/flight controller community.
-
-## Features
-
-- **Self-describing format**: Contains message format definitions
-- **Little-endian**: Compatible with PX4 tooling
-- **Flash-optimized**: Buffered writes to minimize flash wear
-- **Type-safe**: Rust message definitions with compile-time checks
-- **Embedded-friendly**: No_std, no heap allocations
-
-## ULog Format Structure
+This crate only **encodes**. Buffering, timing and storage live in `elle-hardware`:
 
 ```
-[Header (16 bytes)]
-  - Magic: "ULog" + version marker [0x01, 0x12, 0x35]
-  - Version: 1
-  - Timestamp: uint64_t microseconds
-
-[Definitions Section]
-  - Flag Bits ('B'): Feature flags
-  - Format Definitions ('F'): Message schemas
-  - Info Messages ('I'): System metadata
-  - Subscriptions ('A'): Message instances
-
-[Data Section]
-  - Data Messages ('D'): Logged telemetry
-  - String Messages ('L'): Debug logs
+elle-app control loop ──log_*()──► elle_hardware::ULogLogger ──512 B chunks──► ULOG_WRITE_CHANNEL
+      (83 Hz)                        (2 kB buffer, flush at 75 %)                    │
+                                                                                     ▼
+                                                                   sd_writer_task → LOG_NNNN.ulg
+                                                                   (FAT32 on the SD card, SPI1)
 ```
 
-## Message Types
+The on-board flash ULog region (0x210000–0xFFFFFF) is a legacy store: RPC extract/erase
+still target it, but new recordings go to the SD card.
 
-### AttitudeMessage
-Logs IMU orientation and angular rates:
-- `timestamp`: uint64_t (microseconds)
-- `pitch`, `roll`, `yaw`: float (radians)
-- `pitch_rate`, `roll_rate`, `yaw_rate`: float (rad/s)
-- Size: 32 bytes
+## Messages
 
-### CommandsMessage
-Logs pilot commands and setpoints:
-- `timestamp`: uint64_t (microseconds)
-- `throttle`, `pitch`, `roll`, `yaw`: float [-1.0, 1.0]
-- `attitude_mode`: uint8_t (0=Rate, 1=Angle)
-- `pitch_setpoint_deg`, `roll_setpoint_deg`: float (degrees)
-- Size: 37 bytes
+| Name | Size (B) | Rate | Content |
+|------|---------:|------|---------|
+| `attitude_data` | 32 | 83 Hz | pitch/roll/yaw (rad), rates (rad/s, filtered as the PID sees them) |
+| `commands` | 49 | 83 Hz | pilot inputs, mode, **pre-filter** setpoints, PID corrections, elevon µs |
+| `controller` | 53 | 83 Hz | loop `dt_us`, attitude age, filtered setpoints, scaled P/I/D per axis, `saturation` bits (pitch_up, pitch_down, roll_right, roll_left, LSB first), final elevon pulses |
+| `engine_data` | 46 | 83 Hz | per engine: eRPM, DShot throttle, target eRPM, EDT temperature/voltage/current |
+| `system_status` | 24 | 8.3 Hz | loop time, IMU errors, calibrated, armed, CPU load, RC age |
+| `magnetometer_data` | 20 | ~10 Hz | raw counts |
+| `barometer_data` | 24 | ~4.4 Hz | pressure, temperature, altitude, vario |
+| `gnss_data` | 58 | ~1 Hz | fix, position, velocity NED, ground speed, course, accuracies, sats |
+| `pid_gains` | 40 | per file + on change | Kp/Ki/Kd per axis, I limit, scale |
+| `log_event` | 11 | on event | level + event code (see [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#event-codes)) |
+| `autotune_status` | 24 | while tuning | phase, axis, relay state, setpoint, measurement, cycles, amplitude |
+| `gyro_raw` | 20 | 1 kHz | unfiltered gyro, `gyro-raw-log` builds only |
 
-### StatusMessage
-Logs system health and performance:
-- `timestamp`: uint64_t (microseconds)
-- `loop_time_us`: uint32_t (control loop time)
-- `imu_errors`: uint32_t (error count)
-- `calibrated`, `armed`: uint8_t (boolean flags)
-- `cpu_load`: float (percentage 0-100)
-- Size: 22 bytes
+Sizes are the payload after the 3-byte message header. Rates are set in `elle-app`
+(`ULOG_*_DIVISOR` in `elle-config`).
 
-## Usage
+Each message struct carries its ULog format string as `FORMAT`; the `'F'` definition
+record `FORMAT_MSG` is derived from it at compile time by `format::format_msg`, which
+checks the length prefix, so a field change can't leave a stale header behind. Add a
+field by editing the struct, its `FORMAT`, `SIZE` and `to_bytes()` together.
 
-### Enabling ULog Logging
+## API
 
-Add to your `Cargo.toml`:
+- `ULogWriter` (this crate): `initialize(start)`, `write_definitions(...)`,
+  `add_subscription(name) -> msg_id`, one `write_*` per message into an internal buffer,
+  then `buffer()` / `clear_buffer()`. Synchronous and `no_std`.
+- `elle_hardware::ULogLogger` (the one the firmware uses): `initialize(epoch_ms).await`
+  writes the header, definitions, info and subscriptions; `log_*()` and `flush()` are
+  synchronous and never block the control loop. If the channel is full the flush is
+  dropped and the next one starts with a ULog dropout (`'O'`) record covering the gap.
 
-```toml
-[dependencies]
-elle-hardware = { version = "0.1", features = ["ulog-logging"] }
-```
-
-### Basic Usage
-
-```rust
-use elle_hardware::ULogLogger;
-
-// Create logger
-static mut LOGGER: ULogLogger = ULogLogger::new();
-
-// Initialize (writes header and definitions to flash)
-logger.initialize().await?;
-
-// Log attitude data (from IMU)
-logger.log_attitude(
-    pitch, roll, yaw,
-    pitch_rate, roll_rate, yaw_rate
-).await?;
-
-// Log commands (from RC input)
-logger.log_commands(
-    throttle, pitch, roll, yaw,
-    attitude_mode,
-    pitch_setpoint_deg, roll_setpoint_deg
-).await?;
-
-// Log system status
-logger.log_status(
-    loop_time_us,
-    imu_errors,
-    calibrated,
-    armed,
-    cpu_load
-).await?;
-
-// Manually flush buffer to flash
-logger.flush().await?;
-```
-
-### Integration Example
-
-```rust
-#[embassy_executor::main]
-async fn main(spawner: Spawner) {
-    // Initialize logger
-    let mut logger = ULogLogger::new();
-    logger.initialize().await.unwrap();
-
-    // Main control loop (77Hz)
-    loop {
-        let attitude = imu.read_attitude().await;
-        let commands = rc.read_commands().await;
-
-        // Log data (buffered, auto-flushes when >75% full)
-        logger.log_attitude(
-            attitude.pitch, attitude.roll, attitude.yaw,
-            attitude.pitch_rate, attitude.roll_rate, attitude.yaw_rate
-        ).await.ok();
-
-        logger.log_commands(
-            commands.throttle, commands.pitch, commands.roll, commands.yaw,
-            commands.attitude_mode as u8,
-            commands.pitch_setpoint_deg, commands.roll_setpoint_deg
-        ).await.ok();
-
-        // Every 10th iteration, log status
-        if loop_count % 10 == 0 {
-            logger.log_status(
-                loop_time_us, imu_errors,
-                calibrated, armed, cpu_load
-            ).await.ok();
-        }
-
-        Timer::after(Duration::from_millis(13)).await;
-    }
-}
-```
-
-## Flash Layout
+## File layout
 
 ```
-Total: 16MB (0x000000 - 0xFFFFFF)
-├─ 0x000000 - 0xEFFFFF: Program code (~15MB)
-├─ 0xF00000 - 0xF0FFFF: Calibration storage (64KB)
-└─ 0xF10000 - 0xFFFFFF: ULog storage (~960KB)
+Header (16 B)      "ULog" magic, version 1, start timestamp (µs)
+Definitions        flag bits 'B', formats 'F', info 'I' (sys_name, ver_hw, ver_sw, sys_start_time_utc_ms)
+Data               subscriptions 'A', then data 'D', dropouts 'O'
 ```
 
-## Performance Characteristics
-
-- **Write size**: 4096 bytes per chunk
-- **Buffering**: Auto-flush at 75% (3KB)
-- **Flash wear**: Managed by sequential-storage wear-leveling
-- **Overhead**: ~3 bytes per message (header)
-- **Control loop impact**: Minimal - writes are async and buffered
-
-## Data Recovery
-
-ULog files can be extracted from flash and analyzed with PX4 tools:
-
-```bash
-# Extract flash region (requires probe-rs or similar)
-probe-rs dump --chip RP2350 --address 0xF10000 --size 983040 ulog.bin
-
-# Analyze with pyulog (Python)
-pip install pyulog
-ulog_info ulog.bin
-ulog_messages ulog.bin
-
-# Convert to CSV
-ulog2csv ulog.bin
-```
-
-## Specifications
-
-Implements the official PX4 ULog file format specification:
-https://docs.px4.io/main/en/dev_log/ulog_file_format
-
-## License
-
-Same as parent project (ELLE-RS).
+Little-endian throughout. Timestamps are µs since boot; the wall-clock start time
+comes from the AON timer (seeded from the build time) and names the file date on the SD
+card.
