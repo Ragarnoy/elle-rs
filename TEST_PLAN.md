@@ -269,6 +269,19 @@ shake — rest board on a surface with pitch axis free to rotate.
 | 1 | TUI: `autotune pitch`         | Autotune starts                             | [ ]  |
 | 2 | During relay, tilt board >20° | Immediate abort, `ERR!` on radio            | [ ]  |
 | 3 | Elevons return to normal      | Stabilized mode resumes with original gains | [ ]  |
+| 4 | `autotune roll`, tilt **pitch** >20° during settling (first 2 s) | Abort, event 93 | [ ]  |
+
+#### 3.4.4b Safety Abort — Loss of Control Authority
+
+Each row starts from a fresh `autotune pitch` during the relay; each must end with event
+93, `ERR!` on the radio, and the original gains in `pid_gains`.
+
+| # | Action                               | Expected                                          | Pass |
+|---|--------------------------------------|---------------------------------------------------|------|
+| 1 | CH6 to Manual                        | Abort; back to Stabilized does **not** resume it  | [ ]  |
+| 2 | CH8 kill                             | Abort                                             | [ ]  |
+| 3 | TX off (RC failsafe)                 | Abort                                             | [ ]  |
+| 4 | TUI: `autotune pitch 5 20`           | Refused: "autotune cycles must be 1-14"           | [ ]  |
 
 #### 3.4.5 Safety Abort — TUI Command
 
@@ -286,6 +299,7 @@ path which is only available in flight firmware, not RPC+RC.
 |---|----------------------------|-----------------------------------------------------------|------|
 | 1 | CH7 mid (pitch autotune)   | Autotune starts, `AT P` on radio                          | [ ]  |
 | 2 | CH7 low (off) during relay | Immediate abort, `ERR!` on radio, original gains restored | [ ]  |
+| 3 | CH7 mid, then straight to high during relay | Abort (event 92); roll does not start until CH7 goes off and back | [ ]  |
 
 ---
 

@@ -165,12 +165,12 @@ A relay test: the controller swings the attitude setpoint ± the relay amplitude
 measures the resulting oscillation, then derives gains (Tyreus–Luyben by default).
 
 **RC (flight mode):** armed, in Stabilized or AltitudeHold, move CH7 from off to pitch
-or roll. Relay 5°, 6 cycles. Back to off aborts and restores the previous gains (event
-92). After a successful pitch tune, pitch is locked until reboot so that parking CH7 in
+or roll. Relay 5°, 6 cycles. Back to off — or straight across to the other axis — aborts
+and restores the previous gains (event 92); a run never changes axis. After a successful pitch tune, pitch is locked until reboot so that parking CH7 in
 the middle position doesn't retune it; roll can be run again.
 
 **TUI (RPC mode):** `autotune pitch|roll [relay_deg] [cycles] [tl|zn|so]` (defaults 5°,
-6, `tl`) · `autotune abort` · `savepid` (save the current gains) · `clearpid` (back to
+6, `tl`; cycles 1–14, the most one run can measure) · `autotune abort` · `savepid` (save the current gains) · `clearpid` (back to
 firmware defaults on next boot; calibrations are kept). `clearpid` does nothing on the
 dart.
 
@@ -179,14 +179,17 @@ dart.
 - The result is validated before use: oscillation amplitude ≥ max(0.5°, 20 % of the
   relay), period 0.1–5 s, and gains inside the sane range. A failed check restores the
   previous gains and fires event 94 (*rejected*).
-- Safety abort on timeout or excessive amplitude: gains restored, event 93.
+- Safety abort, event 93, gains restored and setpoint override cleared:
+  - timeout (60 s, or 10 s after settling with no oscillation);
+  - pitch or roll beyond ±20° (or non-finite) at any point, settling included;
+  - the run loses the aircraft: kill switch, disarm (including failsafe), Manual mode or
+    Core 1 unhealthy (attitude controller off), or no valid attitude.
 - Success (event 91): the new gains apply **immediately**, and are written to flash
   **after the next disarm** — never in the air, since a flash write stalls both cores.
 - On the dart, `IGNORE_PID_FLASH` is set: tuned gains are used until power-off but never
   saved or loaded; the firmware defaults are always used at boot.
 
-Kill switch and failsafe disarm the aircraft but do not abort an active autotune by
-themselves; the relay stops mattering once disarmed. Abort with CH7 or `autotune abort`.
+Going back to Stabilized after an abort does not resume the test; start a new run.
 
 ## Flight recording (ULog)
 
