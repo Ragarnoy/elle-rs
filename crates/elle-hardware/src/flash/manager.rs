@@ -64,9 +64,15 @@ pub(crate) static ULOG_WRITE_CHANNEL: Channel<
 pub static FLASH_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, FlashRequest> = Signal::new();
 pub static FLASH_RESPONSE_SIGNAL: Signal<CriticalSectionRawMutex, FlashResponse> = Signal::new();
 
-/// ULog storage usage counters (readable from any context for `ulog info`)
+/// ULog storage usage counters (readable from any context for `ulog info`).
+/// Nothing writes to the legacy flash ULog region any more (recordings go to
+/// SD), so these are counted once when the flash manager starts and only go
+/// down as `ulog extract` pops items; erase zeroes them.
 pub static ULOG_BYTES_USED: AtomicU32 = AtomicU32::new(0);
 pub static ULOG_ITEMS_STORED: AtomicU32 = AtomicU32::new(0);
+
+/// Idle time before the one-off legacy ULog count runs (see `run`).
+const ULOG_COUNT_IDLE: Duration = Duration::from_secs(5);
 
 type FlashDevice<'a> = Flash<'a, Async, { elle_config::profile::FLASH_SIZE }>;
 
@@ -146,8 +152,28 @@ impl<'a> SequentialFlashManager<'a> {
     pub async fn run(&mut self) {
         info!("Core0: Flash manager started (profiles + ULog extraction only)");
 
+        // Count the legacy ULog queue once, but only after the boot-time loads
+        // (PID profile, mag cal, level cal) are done: they wait on this task with
+        // a 2 s timeout, and a long count ahead of them would drop the saved gains.
+        let mut ulog_counted = false;
         loop {
-            let request = FLASH_REQUEST_SIGNAL.wait().await;
+            let request = if ulog_counted {
+                FLASH_REQUEST_SIGNAL.wait().await
+            } else {
+                match embassy_futures::select::select(
+                    FLASH_REQUEST_SIGNAL.wait(),
+                    Timer::after(ULOG_COUNT_IDLE),
+                )
+                .await
+                {
+                    embassy_futures::select::Either::First(request) => request,
+                    embassy_futures::select::Either::Second(()) => {
+                        self.count_ulog_internal().await;
+                        ulog_counted = true;
+                        continue;
+                    }
+                }
+            };
             match request {
                 FlashRequest::PeekULog => {
                     let response = self.peek_ulog_internal().await;
@@ -244,6 +270,51 @@ impl<'a> SequentialFlashManager<'a> {
         response
     }
 
+    /// Count what the legacy ULog queue holds, for `ulog info`.
+    async fn count_ulog_internal(&mut self) {
+        let flash = self.take_flash();
+        let cache = self.queue_cache.take().expect("queue cache already taken");
+        let config = QueueConfig::new(ULOG_FLASH_START..super::constants::ULOG_FLASH_END_EXCL);
+        let mut queue = QueueStorage::new(flash, config, cache);
+
+        let mut items: u32 = 0;
+        let mut bytes: u32 = 0;
+        mask_sio_fifo();
+        let mut buf = [0u8; ULOG_CHUNK_SIZE];
+        let result = match queue.iter().await {
+            Ok(mut iter) => loop {
+                match iter.next(&mut buf).await {
+                    Ok(Some(entry)) => {
+                        items += 1;
+                        bytes += entry.len() as u32;
+                    }
+                    Ok(None) => break Ok(()),
+                    Err(e) => break Err(e),
+                }
+            },
+            Err(e) => Err(e),
+        };
+        unsafe { unmask_sio_fifo() };
+
+        match result {
+            Ok(()) => info!(
+                "Flash: legacy ULog queue holds {} items, {} bytes",
+                items, bytes
+            ),
+            Err(e) => warn!(
+                "Flash: ULog queue count stopped after {} items: {:?}",
+                items,
+                Debug2Format(&e)
+            ),
+        }
+        ULOG_ITEMS_STORED.store(items, Ordering::Relaxed);
+        ULOG_BYTES_USED.store(bytes, Ordering::Relaxed);
+
+        let (flash, cache) = queue.destroy();
+        self.put_flash(flash);
+        self.queue_cache = Some(cache);
+    }
+
     /// Pop the oldest ULog entry from the queue
     async fn pop_ulog_internal(&mut self) -> FlashResponse {
         let flash = self.take_flash();
@@ -258,8 +329,14 @@ impl<'a> SequentialFlashManager<'a> {
 
         let response = match result {
             Ok(Some(data)) => {
-                ULOG_BYTES_USED.fetch_sub(data.len() as u32, Ordering::Relaxed);
-                ULOG_ITEMS_STORED.fetch_sub(1, Ordering::Relaxed);
+                let len = data.len() as u32;
+                // Saturating: an under-count must never wrap to ~4 billion.
+                let _ = ULOG_BYTES_USED.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |b| {
+                    Some(b.saturating_sub(len))
+                });
+                let _ = ULOG_ITEMS_STORED.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                    Some(n.saturating_sub(1))
+                });
                 FlashResponse::ULogPopSuccess
             }
             Ok(None) => FlashResponse::ULogEmpty,
