@@ -842,7 +842,6 @@ const fn log_code_text(code: u16) -> &'static str {
         // ULog (30–39)
         30 => "ULog: recording started",
         31 => "ULog: init failed",
-        32 => "ULog: not compiled in",
         33 => "ULog: recording stopped",
         34 => "ULog: flash erased",
         // IMU / sensors (40–49)
@@ -859,7 +858,6 @@ const fn log_code_text(code: u16) -> &'static str {
         50 => "CRSF RX: first frame received",
         51 => "CRSF RX: UART error",
         // Flash storage (60–69)
-        60 => "Flash: ULog write failed",
         61 => "Flash: ULog erase failed",
         62 => "Flash: ULog write timeout",
         63 => "Flash: command refused while armed (disarm first)",
@@ -868,8 +866,7 @@ const fn log_code_text(code: u16) -> &'static str {
         71 => "Supervisor: Core1 restored",
         // Flight state (80–89)
         80 => "Attitude data stale",
-        81 => "ULog: RC switch ON",
-        82 => "ULog: RC switch OFF",
+        81 => "ULog: recording started (auto, SD)",
         // Autotune (90–99)
         90 => "Autotune: started",
         91 => "Autotune: complete",
@@ -891,6 +888,10 @@ const fn log_code_text(code: u16) -> &'static str {
         116 => "Mag cal: no saved cal",
         // Tap detection (120–129)
         120 => "IMU: double-tap detected (calibration gesture)",
+        // Heading hold (130–139)
+        130 => "Heading hold: engaged",
+        131 => "Heading hold: disengaged",
+        132 => "Heading hold: target set",
         // Level calibration (150–159)
         150 => "Level cal: started",
         151 => "Level cal: complete",
