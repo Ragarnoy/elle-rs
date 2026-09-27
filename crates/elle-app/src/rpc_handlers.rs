@@ -1,3 +1,4 @@
+use elle_control::PidConfig;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 
@@ -10,19 +11,12 @@ pub enum RpcCommand {
         left: i8,
         right: i8,
     },
-    SetMode(super::ControlMode),
+    SetMode(elle_rpc_icd::ControlMode),
     Arm,
     Disarm,
     EmergencyStop,
     SetPidGains {
-        pitch_kp: f32,
-        pitch_ki: f32,
-        pitch_kd: f32,
-        roll_kp: f32,
-        roll_ki: f32,
-        roll_kd: f32,
-        scale: f32,
-        i_limit: f32,
+        config: PidConfig,
     },
     StartULog,
     StopULog,

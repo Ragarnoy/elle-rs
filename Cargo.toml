@@ -8,6 +8,7 @@ members = [
     "crates/elle-system",
     "crates/elle-ulog",
     "crates/elle-rpc-icd",
+    "crates/elle-app",
     "crates/elle-eagle",
     "crates/elle-dart",
     "crates/elle-nav",
@@ -30,6 +31,7 @@ elle-control = { path = "crates/elle-control" }
 elle-system = { path = "crates/elle-system" }
 elle-ulog = { path = "crates/elle-ulog" }
 elle-rpc-icd = { path = "crates/elle-rpc-icd" }
+elle-app = { path = "crates/elle-app" }
 elle-nav = { path = "crates/elle-nav" }
 mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt"] }
 sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
@@ -48,7 +50,7 @@ crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = fa
 smart-leds = "0.4.0"
 
 # External dependencies - System libraries
-cortex-m-rt = "0.7.5"
+cortex-m-rt = "0.7.7"
 defmt = "1.0.1"
 defmt-rtt = "1.1"
 panic-probe = { version = "1.0", features = ["print-defmt"] }

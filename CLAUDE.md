@@ -6,6 +6,7 @@ Cargo workspace with embedded firmware and host tooling:
 
 - **`crates/elle-eagle/`** — Main firmware binary, twin-engine flying wing (RP2350, Embassy async, `no_std`)
 - **`crates/elle-dart/`** — Dart firmware binary, single-engine platform (same stack, `single-engine` feature)
+- **`crates/elle-app/`** — The application both binaries run: flight and RPC control loops, RPC dispatch, boot sequence, ULog per-tick logging, shared tasks. The binaries keep only pins, engine setup, `bind_interrupts!`, `led_task` and `main()` — **make behaviour changes here, once**, not in a binary.
 - **`crates/elle-system/`** — System-level firmware support (RPC transport, supervisor, etc.)
 - **`crates/elle-rpc-icd/`** — Shared RPC Interface Control Document (types, endpoints, topics)
 - **`crates/elle-hardware/`** — Hardware drivers (IMU, LED, PWM, CRSF, flash)
@@ -36,9 +37,9 @@ cargo run --release --no-default-features --features rpc-control,gnss      # fla
 spawned, so the TUI shows no satellites and no GNSS log lines at all, which
 looks exactly like a hardware or reception failure.
 
-Key feature flags for elle-eagle:
+Key feature flags (both binaries; they forward to `elle-app`):
 - `rpc-control` — postcard-RPC server over RTT (ground test mode). **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`); build with `--no-default-features --features rpc-control`. Enforced via `compile_error!`.
-- `rpc-rc` — RC/CRSF flight control in RPC mode. When combined with `rpc-control`, pilot commands come from the RC transmitter instead of RPC accumulators. The TUI still provides full monitoring. **Requires `rpc-control`** (enforced via `compile_error!`). Mitigates a build-specific DShot PIO issue in the RPC binary (see memory).
+- `rpc-rc` — RC/CRSF flight control in RPC mode. When combined with `rpc-control`, pilot commands come from the RC transmitter instead of RPC accumulators. The TUI still provides full monitoring. **Requires `rpc-control`** (enforced via `compile_error!` in `elle-app`). Mitigates a build-specific DShot PIO issue in the RPC binary (see memory). Available on the dart too since the `elle-app` split.
 - `defmt-logging` — defmt log output (default)
 - `performance-monitoring` — Timing instrumentation
 - `gnss` — SAM-M10Q GNSS receiver support (in `default`, both eagle and dart; works in both flight and RPC modes; provides ULog GPS logging + CRSF telemetry GPS frames). **RPC builds use `--no-default-features`, so `gnss` must be listed explicitly or there is no GNSS task at all.** Enables `elle-hardware/gnss`, which carries the shared `gnss` module.
@@ -53,9 +54,10 @@ Use `cargo hack` to verify all valid feature combinations compile:
 
 ```sh
 cargo hack check -p elle-eagle --feature-powerset --exclude-features defmt-logging,default,rpc-rc --release
+cargo hack check -p elle-dart  --feature-powerset --exclude-features defmt-logging,default,rpc-rc --release
 ```
 
-Excluded features: `defmt-logging`/`default` (mutually exclusive with `rpc-control`), `rpc-rc` (requires `rpc-control`, not valid standalone). The two `compile_error!` guards in `main.rs` enforce these constraints.
+Excluded features: `defmt-logging`/`default` (mutually exclusive with `rpc-control`), `rpc-rc` (requires `rpc-control`, not valid standalone). The `compile_error!` guards (`defmt-logging` × `rpc-control` in each `main.rs`, `rpc-rc` in `elle-app`) enforce these constraints.
 
 ### Host Tool
 
@@ -113,8 +115,8 @@ The firmware uses postcard-rpc's `define_dispatch!` macro for type-safe dispatch
 No extra postcard-rpc features needed — the macro works with elle's own WireTx/WireRx.
 
 - **ICD**: `crates/elle-rpc-icd/src/lib.rs` — Uses `endpoints!`/`topics!` macros generating `ENDPOINT_LIST`, `TOPICS_IN_LIST`, `TOPICS_OUT_LIST`
-- **Dispatch**: `crates/elle-eagle/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 34 blocking handler functions
-- **Server task**: `crates/elle-eagle/src/main.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
+- **Dispatch**: `crates/elle-app/src/rpc_app.rs` — `define_dispatch!` with `ElleApp` type, `RpcContext`, and 34 blocking handler functions
+- **Server task**: `crates/elle-app/src/tasks.rs` `rpc_server_task()` — Creates `ElleApp`, runs `Server::new().run()` loop
 
 ### RPC Protocol
 
@@ -140,14 +142,14 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 - **`ATTITUDE`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<AttitudeData>` — pitch/roll/yaw from AHRS at 1kHz, consumed by control loop via `try_take()`
 - **`MAG`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<MagReading>` — magnetometer XYZ counts at 10Hz, read by CRSF telemetry and RPC via `read_cached()`
 - **`BARO`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<BaroReading>` — pressure/temp/altitude at 2Hz, read by CRSF telemetry and RPC via `read_cached()`
-- **`FLIGHT_STATE`** (`crates/elle-eagle/src/flight_state.rs`) — `SignalCache<FlightState>` — `{ armed, failsafe, mode, rc_age_ms }`, published by both control loops, read by `handle_get_status`
-- **`CONTROLLER_OUTPUT`** (`crates/elle-eagle/src/flight_state.rs`) — `SignalCache<ControllerOutput>` — PID corrections/setpoints/servo μs, published by RPC control loop
-- **`RpcCommand`** (`crates/elle-eagle/src/rpc_handlers.rs`) — Enum + channel for RPC handler → main loop communication (includes ULog, autotune, PID save commands)
-- **`LogMsg`** (`crates/elle-eagle/src/log_channel.rs`) — Channel for firmware events → `log_publisher_task` → LogTopic
-- **`ULOG_ENABLED`** (`crates/elle-eagle/src/rpc_app.rs`) — AtomicBool flag controlling ULog recording in RPC mode. Set by StartULog/StopULog RPC commands.
+- **`FLIGHT_STATE`** (`crates/elle-app/src/flight_state.rs`) — `SignalCache<FlightState>` — `{ armed, failsafe, mode, rc_age_ms }`, published by both control loops, read by `handle_get_status`
+- **`CONTROLLER_OUTPUT`** (`crates/elle-app/src/flight_state.rs`) — `SignalCache<ControllerOutput>` — PID corrections/setpoints/servo μs, published by RPC control loop
+- **`RpcCommand`** (`crates/elle-app/src/rpc_handlers.rs`) — Enum + channel for RPC handler → main loop communication (includes ULog, autotune, PID save commands)
+- **`EVENT_CHANNEL`** (`crates/elle-hardware/src/event.rs`) — firmware events (`elle_event!`) → `log_publisher_task` (`crates/elle-app/src/tasks.rs`) → `LogMsg` on LogTopic
+- **`ULOG_ENABLED`** (`crates/elle-app/src/rpc_app.rs`) — AtomicBool flag controlling ULog recording in RPC mode. Set by StartULog/StopULog RPC commands.
 - **`DSHOT_THROTTLE`** (`crates/elle-hardware/src/dshot.rs`) — Signal carrying `(u32, u32)` eRPM target values from control loop to dedicated 1kHz DShot send task (governor converts to DShot commands)
 - **`ENGINE_CACHE`** (`crates/elle-hardware/src/dshot.rs`) — Mutex-based non-consuming cache for `EngineReading` (`{ left: EngineUnitReading, right: EngineUnitReading }` — per-engine eRPM, throttle, validity, EDT temperature/voltage/current). Written by `dshot_task` at 1kHz, read by RPC handler, CRSF telemetry, and ULog logger.
-- **`ULogState`** / **`ULOG_ITEM_SIGNAL`** (`crates/elle-eagle/src/rpc_app.rs`) — `#[repr(u8)]` enum state machine (Idle→Reading→Ready→Empty) + Signal for ULog extraction, bridging blocking RPC handlers to async flash operations
+- **`ULogState`** / **`ULOG_ITEM_SIGNAL`** (`crates/elle-app/src/rpc_app.rs`) — `#[repr(u8)]` enum state machine (Idle→Reading→Ready→Empty) + Signal for ULog extraction, bridging blocking RPC handlers to async flash operations
 
 ### Host Tool (`tools/elle-rpc-host/`)
 
@@ -227,6 +229,8 @@ The firmware main loop runs at 83Hz (12ms ticker; `CONTROL_LOOP_PERIOD_MS` is th
 - Uses `throttle_with_telemetry()` for bidirectional eRPM reading; writes `ENGINE_CACHE` every iteration
 - Per-engine auto-fallback: after 100 consecutive telemetry failures, switches to `throttle_async()` (fire-and-forget) and sets `valid=false`
 - Defaults to (0, 0) = MotorStop until the control loop publishes its first value
+
+Where it lives: `elle_app::boot::run` (IMU wait, supervisor barrier, PID / mag-cal / level-cal loads) hands off to `elle_app::flight::run_flight` or `elle_app::rpc::run_rpc`. Both loops publish engine output through `elle_app::engines::publish_engine_output`, which always sends both eRPM targets (the single-engine task reads only the left).
 
 **Flight mode** (default, no `rpc-control`):
 1. Reads CRSF/ELRS commands from dedicated receiver task
@@ -357,6 +361,8 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
   - EDFs running put 20–30 °/s of roll-rate noise on the gyro (0.1 °/s stopped), aliased into the 83 Hz loop through the D term: 100–200 µs elevon jitter with centred sticks. A 2nd-order Butterworth low-pass (`elle_control::filter`, `GYRO_RATE_LPF_HZ` = 30) now runs on Core1 at 1 kHz on the rates published for the PID; the AHRS integrates the unfiltered gyro. The ICM's own AAF is 488 Hz at 1 kHz ODR. Resize the cutoff from a `gyro-raw-log` capture.
   - Eagle default gains moved to the dart's flown values (pitch 0.45/0.020/0.16, roll 0.25/0.012/0.07); the old 1.0/0.1/0.25 pitch D sustained a 5–8 Hz elevon/airframe oscillation on the bench with engines off.
 
+- **Eagle/dart deduplication (`elle-app`)**: the two `main.rs` files (~2,200 lines each, ~88 % identical) and their identical `rpc_app` / `rpc_handlers` / `flight_state` collapsed into the `elle-app` crate; each `main.rs` is now ~270 lines of hardware setup, and `diff` between them shows only engine setup and the PIO2 IRQ binding. Divergences resolved to the superset: dart gained `rpc-rc`; the eagle gained the `IGNORE_PID_FLASH` gating (const is `false` there); `SetPidGains` carries a `PidConfig`. Loops take `epoch_ms` from `main()` rather than calling `compile_time::unix!()` (a library would bake in its own, possibly stale, build time). Async-fn gotcha found on the way: passing `FlightController` and `ULogLogger` down by value duplicated their storage in each enclosing future (+7.3 kB .bss); the controller is built in `boot::run` and lent to the loops, and each loop owns its logger. Post-refactor binaries: .bss +72..88 B, .text +1..2.5 kB vs. before.
+
 ### Known TODOs in Firmware
 None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).
 
@@ -420,7 +426,7 @@ Attitude comes from the flight controller's own IMU, so without this 0° means t
 **Triggers:**
 - TUI: `level cal start` · `level cal clear` · `level cal` (status). Refused while armed.
 - Direct CLI: `direct level-cal start|clear|status`
-- Field gesture (flight mode, and eagle `rpc-rc`): the mag-cal double-tap with the **CH7 autotune switch out of off** (pitch or roll position) starts level cal instead of mag cal. Kill switch on, throttle low, gyro quiet, as for mag cal. Safe: autotune only starts while armed and only on an off→on transition. LED fast-blinks cyan while collecting.
+- Field gesture (flight mode, and `rpc-rc`): the mag-cal double-tap with the **CH7 autotune switch out of off** (pitch or roll position) starts level cal instead of mag cal. Kill switch on, throttle low, gyro quiet, as for mag cal. Safe: autotune only starts while armed and only on an off→on transition. LED fast-blinks cyan while collecting.
 
 **Code:** math in `crates/elle-control/src/level_cal.rs` (host tests in `crates/elle-control/tests/level_cal.rs`); Core1 collection and the mount rotation in `elle-hardware/src/imu/driver.rs` (`level_cal_step`); Core0 plumbing — signals (`LEVEL_CALIBRATION_SIGNAL`, `LEVEL_CAL_START_SIGNAL`, `LEVEL_CAL_RESULT_SIGNAL`), `STATUS` for the RPC handler, and the flash round-trips — in `elle-hardware/src/imu/level_cal.rs`, called identically from both airframes and both modes (`load_from_flash`, `start`, `clear`, `poll_result`).
 
