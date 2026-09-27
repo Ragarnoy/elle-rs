@@ -560,7 +560,11 @@ impl<'a> Imu<'a> {
                     // num: 1=single, 2=double
                     if num == 2 {
                         crate::imu::TAP_SIGNAL.signal(());
-                        info!("ICM-42686: double-tap detected");
+                        crate::elle_event!(
+                            info,
+                            crate::event::EVT_DOUBLE_TAP,
+                            "ICM-42686: double-tap detected"
+                        );
                     } else if num == 1 {
                         info!("ICM-42686: single tap (num={})", num);
                     }
