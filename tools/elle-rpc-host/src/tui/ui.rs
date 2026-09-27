@@ -874,6 +874,7 @@ const fn log_code_text(code: u16) -> &'static str {
         91 => "Autotune: complete",
         92 => "Autotune: aborted (RC)",
         93 => "Autotune: safety abort",
+        94 => "Autotune: result rejected (gains restored)",
         // PID profile persistence (100–109)
         100 => "PID: saved to flash",
         101 => "PID: save failed",

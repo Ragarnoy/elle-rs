@@ -84,7 +84,10 @@ fn stale_low_throttle_cannot_rearm_during_failsafe() {
         a.update(THROTTLE_HIGH);
         a.update(THROTTLE_LOW);
     }
-    assert!(!a.armed, "re-armed from replayed frames while the link was lost");
+    assert!(
+        !a.armed,
+        "re-armed from replayed frames while the link was lost"
+    );
 }
 
 #[test]

@@ -413,9 +413,8 @@ const _: () = assert!(ELEVON_RIGHT_TRIM_US.abs() <= MAX_TRIM_US);
 const _: () = assert!(ENGINE_MIN_PULSE_US < ENGINE_START_PULSE_US);
 const _: () = assert!(ENGINE_START_PULSE_US < ENGINE_MAX_PULSE_US);
 // The arm gesture's "high" must be clearly into the thrust range.
-const _: () = assert!(
-    ARM_THROTTLE_HIGH_RAW as u32 > THROTTLE_START_POINT && ARM_THROTTLE_HIGH_RAW < 2047
-);
+const _: () =
+    assert!(ARM_THROTTLE_HIGH_RAW as u32 > THROTTLE_START_POINT && ARM_THROTTLE_HIGH_RAW < 2047);
 
 // Throttle curve breakpoints ordered inside the 0-2047 RC range
 const _: () = assert!(THROTTLE_DEADZONE < THROTTLE_START_POINT && THROTTLE_START_POINT < 2047);

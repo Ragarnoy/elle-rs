@@ -121,6 +121,9 @@ pub const EVT_AUTOTUNE_STARTED: u16 = 90;
 pub const EVT_AUTOTUNE_COMPLETE: u16 = 91;
 pub const EVT_AUTOTUNE_ABORTED: u16 = 92;
 pub const EVT_AUTOTUNE_ESTOP: u16 = 93;
+/// A finished autotune measurement failed its sanity checks (amplitude,
+/// period or gain range); the original gains were restored.
+pub const EVT_AUTOTUNE_REJECTED: u16 = 94;
 
 // PID profile persistence (100–109)
 pub const EVT_PID_SAVED: u16 = 100;

@@ -451,6 +451,18 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                             "Autotune safety abort (timeout/amplitude)"
                         );
                     }
+                    AutotuneAction::Rejected { reason, gains } => {
+                        fc.apply_saved_gains(&gains);
+                        fc.clear_setpoint_override();
+                        autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                        autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_AUTOTUNE_REJECTED,
+                            "Autotune result rejected ({}); original gains restored",
+                            reason
+                        );
+                    }
                     AutotuneAction::Completed(result) => {
                         if let Some(gains) = autotuner.computed_gains() {
                             fc.apply_saved_gains(&gains);
