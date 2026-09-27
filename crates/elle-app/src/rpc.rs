@@ -147,6 +147,13 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                     );
                 }
                 RpcCommand::Disarm => {
+                    // Drop the commanded throttle too: otherwise the next Arm
+                    // spins the engines straight back up to it. Elevons keep
+                    // their position (surface checks while disarmed are fine).
+                    #[cfg(not(feature = "rpc-rc"))]
+                    {
+                        rpc_throttle = 0.0;
+                    }
                     fc.disarm();
                     elle_hardware::elle_event!(
                         info,
