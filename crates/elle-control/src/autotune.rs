@@ -120,7 +120,7 @@ pub struct AutotuneResult {
 
 /// Autotune error conditions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
-pub enum AutotuneError {
+enum AutotuneError {
     InsufficientData,
     UnstablePeriod,
     InvalidParams,
@@ -155,7 +155,7 @@ struct HalfCycle {
 ///
 /// Tracks zero crossings, half-cycle peaks and durations, then computes
 /// the average period and amplitude after discarding initial transient cycles.
-pub struct OscillationDetector {
+struct OscillationDetector {
     half_cycles: [HalfCycle; MAX_HALF_CYCLES],
     half_cycle_count: usize,
     last_sign: Option<bool>,
@@ -167,20 +167,14 @@ pub struct OscillationDetector {
 
 /// Result from oscillation analysis.
 #[derive(Debug, Clone, Copy)]
-pub struct OscillationResult {
-    pub period_s: f32,
-    pub amplitude_deg: f32,
-    pub cycles_completed: usize,
-}
-
-impl Default for OscillationDetector {
-    fn default() -> Self {
-        Self::new()
-    }
+struct OscillationResult {
+    period_s: f32,
+    amplitude_deg: f32,
+    cycles_completed: usize,
 }
 
 impl OscillationDetector {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             half_cycles: [HalfCycle {
                 peak: 0.0,
@@ -196,7 +190,7 @@ impl OscillationDetector {
     }
 
     /// Feed a measurement sample. Returns the number of full cycles completed so far.
-    pub fn feed(&mut self, value: f32, tick: u32) -> usize {
+    fn feed(&mut self, value: f32, tick: u32) -> usize {
         let sign = value >= 0.0;
         let abs_val = if value < 0.0 { -value } else { value };
 
@@ -234,17 +228,17 @@ impl OscillationDetector {
     }
 
     /// Number of measurable full cycles (after discarding transient).
-    pub const fn measurable_cycles(&self) -> usize {
+    const fn measurable_cycles(&self) -> usize {
         self.full_cycle_count.saturating_sub(DISCARD_CYCLES)
     }
 
     /// Whether at least one zero crossing has been detected.
-    pub const fn has_crossings(&self) -> bool {
+    const fn has_crossings(&self) -> bool {
         self.half_cycle_count > 0
     }
 
     /// Compute oscillation result from collected half-cycles.
-    pub fn compute_result(&self) -> Result<OscillationResult, AutotuneError> {
+    fn compute_result(&self) -> Result<OscillationResult, AutotuneError> {
         let min_half_cycles = 2 * (DISCARD_CYCLES + 1);
         if self.half_cycle_count < min_half_cycles {
             return Err(AutotuneError::InsufficientData);
@@ -313,7 +307,7 @@ impl OscillationDetector {
 impl TuningRule {
     /// Compute PID gains from ultimate gain and period.
     /// Returns (kp, ki, kd) — these are effective gains (multiply by scale for actuator output).
-    pub fn compute(self, ku: f32, tu: f32) -> (f32, f32, f32) {
+    fn compute(self, ku: f32, tu: f32) -> (f32, f32, f32) {
         match self {
             Self::TyreusLuyben => {
                 let kp = 0.45 * ku;

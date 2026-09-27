@@ -2,17 +2,10 @@
 use defmt::Format;
 use elle_config::*;
 
-/// Convert RC values to normalized control inputs using ultra-fast LUT
-#[must_use]
-#[inline(always)]
-pub fn rc_to_normalized(rc_value: u16) -> f32 {
-    elle_config::rc_to_normalized(rc_value)
-}
-
 /// Convert normalized control input to servo pulse width using LUT
 #[must_use]
 #[inline(always)]
-pub fn normalized_to_servo_us(normalized: f32) -> u32 {
+fn normalized_to_servo_us(normalized: f32) -> u32 {
     // Convert normalized to RC equivalent for LUT lookup
     let rc_equiv = ((normalized * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
     rc_to_pulse_lut(rc_equiv)
@@ -120,17 +113,6 @@ pub fn mix_elevons_direct_lut(channels: &[u16]) -> ElevonOutputs {
     ElevonOutputs {
         left_us: rc_to_pulse_lut(left_rc),
         right_us: rc_to_pulse_lut(right_rc),
-        saturation: MixSaturation::default(),
-    }
-}
-
-/// Get direct elevon control using LUT (legacy mode, trim applied in PWM layer)
-#[must_use]
-#[inline(always)]
-pub fn direct_elevon_control(channels: &[u16]) -> ElevonOutputs {
-    ElevonOutputs {
-        left_us: rc_to_pulse_lut(channels[ELEVON_LEFT_CH]),
-        right_us: rc_to_pulse_lut(channels[ELEVON_RIGHT_CH]),
         saturation: MixSaturation::default(),
     }
 }

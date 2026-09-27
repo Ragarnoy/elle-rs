@@ -10,11 +10,9 @@ pub mod heading;
 pub mod level_cal;
 pub mod mixing;
 pub mod pid;
-pub mod throttle;
+mod throttle;
 
 // Re-export commonly used types
 pub use arming::ArmingState;
-pub use autotune::{AutotuneAction, AutotuneAxis, AutotuneResult, Autotuner, SavedGains};
-pub use commands::{NormalizedCommands, RawCommands};
-pub use heading::{HeadingController, wrap_heading_error_rad};
-pub use pid::{AttitudeController, PidConfig};
+pub use autotune::SavedGains;
+pub use pid::PidConfig;
