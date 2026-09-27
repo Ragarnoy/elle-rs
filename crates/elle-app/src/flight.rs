@@ -3,6 +3,7 @@
 use crate::engines::publish_engine_output;
 use crate::logging::log_flight_data;
 use crate::support::{
+    AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, RC_DEBUG_LOG_DIVISOR,
     save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal, validate_attitude,
 };
 
@@ -19,6 +20,11 @@ use elle_system::{
     FlightController, TimingMeasurement, log_performance_summary, update_control_loop_timing,
 };
 use embassy_time::{Duration, Instant, Ticker, Timer};
+
+/// Relay amplitude for an autotune started from the RC switch (degrees).
+const RC_AUTOTUNE_RELAY_DEG: f32 = 5.0;
+/// Oscillation cycles measured by an autotune started from the RC switch.
+const RC_AUTOTUNE_CYCLES: usize = 6;
 
 /// Run the flight-mode control loop forever. `epoch_ms` is the wall-clock time
 /// at boot (ms since the UNIX epoch), used to stamp new ULog files.
@@ -46,7 +52,6 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
     // Autotune display for CRSF telemetry (DONE/ERR shown for ~3s then reverts to Off)
     let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
     let mut autotune_display_timer: u32 = 0;
-    const AUTOTUNE_DISPLAY_DURATION: u32 = CONTROL_LOOP_FREQUENCY_HZ * 3; // ~3 s
 
     // Heading-hold state (CH5, 2-pos switch, modifier active only while Stabilized)
     let mut heading_hold_switch_debounced: bool = false;
@@ -77,8 +82,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
         // Check for latest RC commands from dedicated CRSF receiver task (non-blocking)
         if let Some(commands) = RC_COMMANDS.try_take() {
-            // Debug logging (~8Hz)
-            if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10)
+            // Debug logging (~10 Hz)
+            if loop_counter.is_multiple_of(RC_DEBUG_LOG_DIVISOR)
                 && let PilotCommands::Raw(raw) = &commands
             {
                 debug!(
@@ -170,7 +175,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                     use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
                     let data: [u8; 12] = bytemuck::cast([ox, oy, oz]);
                     FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data });
-                    let save_timeout = Timer::after(Duration::from_secs(5));
+                    let save_timeout = Timer::after(FLASH_WRITE_TIMEOUT);
                     match embassy_futures::select::select(
                         FLASH_RESPONSE_SIGNAL.wait(),
                         save_timeout,
@@ -330,8 +335,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                             let test_gains = autotuner.start(
                                 axis,
                                 current_gains,
-                                5.0, // relay_deg
-                                6,   // num_cycles
+                                RC_AUTOTUNE_RELAY_DEG,
+                                RC_AUTOTUNE_CYCLES,
                                 elle_control::autotune::TuningRule::TyreusLuyben,
                                 autotune_tick,
                             );
@@ -410,9 +415,9 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                 && let Some(att) = valid_attitude.as_ref()
             {
                 let measurement_deg = if autotune_stable_pos == 1 {
-                    att.pitch * (180.0 / core::f32::consts::PI)
+                    att.pitch * RAD_TO_DEG
                 } else {
-                    att.roll * (180.0 / core::f32::consts::PI)
+                    att.roll * RAD_TO_DEG
                 };
 
                 match autotuner.update(measurement_deg, autotune_tick) {

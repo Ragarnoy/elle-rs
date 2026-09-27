@@ -4,9 +4,11 @@
 
 use crate::engines::publish_engine_output;
 use crate::logging::log_flight_data;
+#[cfg(feature = "rpc-rc")]
+use crate::support::RC_DEBUG_LOG_DIVISOR;
 use crate::support::{
-    erase_pid_from_flash, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
-    validate_attitude,
+    AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, erase_pid_from_flash,
+    save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal, validate_attitude,
 };
 use crate::{flight_state, rc_signal, rpc_app, rpc_handlers};
 
@@ -27,6 +29,12 @@ use elle_system::{
     FlightController, TimingMeasurement, log_performance_summary, update_control_loop_timing,
 };
 use embassy_time::{Duration, Instant, Ticker, Timer};
+
+/// `StartAutotune.axis` magic value (sent by the host's `savepid`): save the
+/// current PID gains to flash instead of starting an autotune.
+const AUTOTUNE_AXIS_SAVE_PID: u8 = 0xFF;
+/// `StartAutotune.axis` magic value: erase the PID profile from flash.
+const AUTOTUNE_AXIS_ERASE_PID: u8 = 0xFE;
 
 /// Run the RPC-mode control loop forever. `epoch_ms` is the wall-clock time at
 /// boot (ms since the UNIX epoch), used to stamp new ULog files.
@@ -88,7 +96,6 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
     let mut was_killed = false;
     let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
     let mut autotune_display_timer: u32 = 0;
-    const AUTOTUNE_DISPLAY_DURATION: u32 = CONTROL_LOOP_FREQUENCY_HZ * 3; // ~3 s
 
     loop {
         ticker.next().await;
@@ -280,12 +287,10 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                     num_cycles,
                     rule,
                 } => {
-                    if axis == 0xFF {
-                        // Magic value: save current PID gains to flash
+                    if axis == AUTOTUNE_AXIS_SAVE_PID {
                         let gains = fc.get_pid_gains();
                         save_pid_to_flash(gains.to_bytes(), "savepid").await;
-                    } else if axis == 0xFE {
-                        // Magic value: erase PID profile from flash
+                    } else if axis == AUTOTUNE_AXIS_ERASE_PID {
                         erase_pid_from_flash().await;
                     } else {
                         use elle_control::autotune::TuningRule;
@@ -342,7 +347,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 }
                 RpcCommand::StartMagCal => {
                     elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
-                    rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
+                    rpc_app::MAG_CAL_STATUS.store(rpc_app::MAG_CAL_COLLECTING, Ordering::Relaxed);
                     elle_hardware::elle_event!(
                         info,
                         elle_hardware::event::EVT_MAG_CAL_STARTED,
@@ -352,13 +357,13 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 RpcCommand::ClearMagCal => {
                     // Save zeros to flash
                     FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data: [0; 12] });
-                    let save_timeout = Timer::after(Duration::from_secs(5));
+                    let save_timeout = Timer::after(FLASH_WRITE_TIMEOUT);
                     let _ =
                         embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), save_timeout)
                             .await;
                     // Signal zero offsets to IMU
                     elle_hardware::imu::MAG_CALIBRATION_SIGNAL.signal((0.0, 0.0, 0.0));
-                    rpc_app::MAG_CAL_STATUS.store(0, Ordering::Relaxed);
+                    rpc_app::MAG_CAL_STATUS.store(rpc_app::MAG_CAL_UNCALIBRATED, Ordering::Relaxed);
                     rpc_app::MAG_CAL_OFFSET.lock(|c| c.set((0.0, 0.0, 0.0)));
                     elle_hardware::elle_event!(
                         info,
@@ -410,8 +415,8 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             if let Some(commands) = RC_COMMANDS.try_take() {
                 if let PilotCommands::Raw(raw) = &commands {
                     rc_signal::RC_SIGNAL.signal(raw.channels);
-                    // Debug logging (~8Hz)
-                    if loop_counter.is_multiple_of(CONTROL_LOOP_FREQUENCY_HZ / 10) {
+                    // Debug logging (~10 Hz)
+                    if loop_counter.is_multiple_of(RC_DEBUG_LOG_DIVISOR) {
                         debug!(
                             "RC: CH1:{} CH2:{} CH3:{} CH4:{} CH5:{}",
                             raw.channels[ROLL_CH],
@@ -488,7 +493,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         if tapped
             && !fc.is_armed()
             && kill_active
-            && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != 1
+            && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != rpc_app::MAG_CAL_COLLECTING
             && !elle_hardware::imu::level_cal::is_collecting()
         {
             if !tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
@@ -497,7 +502,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 elle_hardware::imu::level_cal::start();
             } else {
                 elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
-                rpc_app::MAG_CAL_STATUS.store(1, Ordering::Relaxed);
+                rpc_app::MAG_CAL_STATUS.store(rpc_app::MAG_CAL_COLLECTING, Ordering::Relaxed);
                 elle_hardware::elle_event!(
                     info,
                     elle_hardware::event::EVT_MAG_CAL_STARTED,
@@ -539,8 +544,8 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             && let Some(att) = valid_attitude.as_ref()
         {
             let measurement_deg = match autotuner.axis() {
-                AutotuneAxis::Pitch => att.pitch * (180.0 / core::f32::consts::PI),
-                AutotuneAxis::Roll => att.roll * (180.0 / core::f32::consts::PI),
+                AutotuneAxis::Pitch => att.pitch * RAD_TO_DEG,
+                AutotuneAxis::Roll => att.roll * RAD_TO_DEG,
             };
             match autotuner.update(measurement_deg, autotune_tick) {
                 AutotuneAction::None => {}
@@ -619,7 +624,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 Some((ox, oy, oz)) => {
                     let data: [u8; 12] = bytemuck::cast([ox, oy, oz]);
                     FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data });
-                    let save_timeout = Timer::after(Duration::from_secs(5));
+                    let save_timeout = Timer::after(FLASH_WRITE_TIMEOUT);
                     match embassy_futures::select::select(
                         FLASH_RESPONSE_SIGNAL.wait(),
                         save_timeout,
@@ -641,7 +646,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                             );
                         }
                     }
-                    rpc_app::MAG_CAL_STATUS.store(2, Ordering::Relaxed);
+                    rpc_app::MAG_CAL_STATUS.store(rpc_app::MAG_CAL_CALIBRATED, Ordering::Relaxed);
                     rpc_app::MAG_CAL_OFFSET.lock(|c| c.set((ox, oy, oz)));
                     elle_hardware::elle_event!(
                         info,
@@ -650,7 +655,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                     );
                 }
                 None => {
-                    rpc_app::MAG_CAL_STATUS.store(0, Ordering::Relaxed);
+                    rpc_app::MAG_CAL_STATUS.store(rpc_app::MAG_CAL_UNCALIBRATED, Ordering::Relaxed);
                     elle_hardware::elle_event!(
                         warn,
                         elle_hardware::event::EVT_MAG_CAL_FAILED,

@@ -115,7 +115,7 @@ pub struct RttRx {
 }
 
 impl RttRx {
-    fn new(channel: DownChannel) -> Self {
+    const fn new(channel: DownChannel) -> Self {
         Self {
             channel,
             frames: FrameBuf::new(),

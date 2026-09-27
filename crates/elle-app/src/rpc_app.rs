@@ -49,8 +49,11 @@ pub(crate) static ULOG_ITEM_LEN: AtomicU16 = AtomicU16::new(0);
 /// Mag cal offsets (readable by GetMagCal handler)
 pub(crate) static MAG_CAL_OFFSET: Mutex<CriticalSectionRawMutex, Cell<(f32, f32, f32)>> =
     Mutex::new(Cell::new((0.0, 0.0, 0.0)));
-/// 0=uncalibrated, 1=collecting, 2=calibrated
-pub(crate) static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(0);
+/// One of `MAG_CAL_UNCALIBRATED`, `MAG_CAL_COLLECTING`, `MAG_CAL_CALIBRATED`.
+pub(crate) static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(MAG_CAL_UNCALIBRATED);
+pub(crate) const MAG_CAL_UNCALIBRATED: u8 = 0;
+pub(crate) const MAG_CAL_COLLECTING: u8 = 1;
+pub(crate) const MAG_CAL_CALIBRATED: u8 = 2;
 /// Context passed to all RPC handlers
 pub(crate) struct RpcContext {
     pub(crate) cmd_sender: Sender<'static, CriticalSectionRawMutex, RpcCommand, 16>,
@@ -73,7 +76,7 @@ fn load_ulog_state() -> ULogState {
 }
 
 /// Convert an `EngineUnitReading` (hardware) to an `EngineUnit` (ICD).
-fn engine_unit_from(r: &elle_hardware::dshot::EngineUnitReading) -> EngineUnit {
+const fn engine_unit_from(r: &elle_hardware::dshot::EngineUnitReading) -> EngineUnit {
     EngineUnit {
         erpm: r.erpm,
         throttle: r.throttle,
@@ -435,8 +438,8 @@ fn handle_get_mag_cal(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagCa
         offset_x: ox,
         offset_y: oy,
         offset_z: oz,
-        calibrated: status == 2,
-        collecting: status == 1,
+        calibrated: status == MAG_CAL_CALIBRATED,
+        collecting: status == MAG_CAL_COLLECTING,
         samples,
     }
 }

@@ -850,7 +850,7 @@ impl TaskTiming {
     }
 
     /// Get CPU utilization as percentage for a given target frequency
-    fn cpu_utilization_percent(&self, target_frequency_hz: u32) -> f32 {
+    const fn cpu_utilization_percent(&self, target_frequency_hz: u32) -> f32 {
         let target_period_us = 1_000_000 / target_frequency_hz;
         (self.avg_us as f32 / target_period_us as f32) * 100.0
     }
