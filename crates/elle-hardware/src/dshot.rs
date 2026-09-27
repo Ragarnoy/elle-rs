@@ -342,14 +342,20 @@ impl<'a> DshotEngines<'a> {
     }
 }
 
+/// MotorStop burst sent at startup so the ESCs arm (`elle_config::ARM_DURATION_MS`).
+const ARM_DURATION: Duration = Duration::from_millis(elle_config::ARM_DURATION_MS as u64);
+
 /// Single-engine variant: arms ESC on startup, then resends latest `DSHOT_THROTTLE` at ~1kHz.
 /// Only the left/primary eRPM value from `DSHOT_THROTTLE` is used; right stays zero.
 #[cfg(feature = "single-engine")]
 #[embassy_executor::task]
 pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1, 0>) {
-    defmt::info!("DShot single-engine task: arming ESC (2s)");
+    defmt::info!(
+        "DShot single-engine task: arming ESC ({}ms)",
+        ARM_DURATION.as_millis()
+    );
     let mut engine = engine;
-    warn_on_err("arm", engine.arm_async(Duration::from_secs(2)).await);
+    warn_on_err("arm", engine.arm_async(ARM_DURATION).await);
 
     // Assert spin direction before enabling telemetry — the ESC is stopped here
     // (arm_async just spent its whole duration sending MotorStop), which is what
@@ -456,9 +462,9 @@ pub async fn dshot_task(
     engine_left: BidirDshotPio<'static, PIO1, 0>,
     engine_right: BidirDshotPio<'static, PIO2, 0>,
 ) {
-    defmt::info!("DShot task: arming ESCs (2s)");
+    defmt::info!("DShot task: arming ESCs ({}ms)", ARM_DURATION.as_millis());
     let mut engines = DshotEngines::new(engine_left, engine_right);
-    engines.arm(Duration::from_secs(2)).await;
+    engines.arm(ARM_DURATION).await;
     defmt::info!("DShot task: armed, entering 1kHz send loop");
 
     let mut target = (0u32, 0u32);
