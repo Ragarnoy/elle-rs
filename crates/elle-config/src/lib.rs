@@ -115,6 +115,10 @@ pub const IMU_MAX_DRAIN: u32 = 32;
 
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
+/// Watchdog budget the flash manager sets before each request: flash ops pause
+/// Core 1 and block Core 0, so the control loop cannot feed the watchdog until
+/// they finish. Covers the slowest request (a multi-sector profile erase).
+pub const FLASH_OP_WATCHDOG_MS: u64 = 6_000;
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
 
 #[cfg(not(feature = "platform-dart"))]

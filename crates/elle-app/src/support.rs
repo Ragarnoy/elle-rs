@@ -23,6 +23,31 @@ pub(crate) const RC_DEBUG_LOG_DIVISOR: u32 = elle_config::CONTROL_LOOP_FREQUENCY
 /// reverting to Off (~3 s).
 pub(crate) const AUTOTUNE_DISPLAY_DURATION: u32 = elle_config::CONTROL_LOOP_FREQUENCY_HZ * 3;
 
+/// Stop the control-loop ticker from replaying missed ticks after a stall.
+///
+/// `Ticker::next()` returns immediately while it is behind schedule, so after a
+/// long stall the loop would run every missed tick back to back — the PID
+/// integrating the same stale attitude over and over at a fixed dt. When the
+/// gap since the previous tick exceeds two periods, restart the ticker from now.
+pub(crate) fn resync_after_stall(
+    ticker: &mut embassy_time::Ticker,
+    previous_tick: &mut Option<embassy_time::Instant>,
+    now: embassy_time::Instant,
+) {
+    let period = Duration::from_millis(elle_config::CONTROL_LOOP_PERIOD_MS);
+    if let Some(prev) = *previous_tick {
+        let gap = now.saturating_duration_since(prev);
+        if gap > period * 2 {
+            ticker.reset();
+            warn!(
+                "Control loop stalled {} ms; ticker resynced",
+                gap.as_millis()
+            );
+        }
+    }
+    *previous_tick = Some(now);
+}
+
 /// Helper to validate attitude data and return only if fresh
 #[inline]
 #[must_use]

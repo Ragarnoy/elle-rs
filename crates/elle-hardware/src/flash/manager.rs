@@ -168,12 +168,18 @@ impl<'a> SequentialFlashManager<'a> {
                 {
                     embassy_futures::select::Either::First(request) => request,
                     embassy_futures::select::Either::Second(()) => {
+                        crate::watchdog::feed(Duration::from_millis(
+                            elle_config::FLASH_OP_WATCHDOG_MS,
+                        ));
                         self.count_ulog_internal().await;
                         ulog_counted = true;
                         continue;
                     }
                 }
             };
+            // The loop can't feed the watchdog while this runs (Core 1 paused,
+            // Core 0 in blocking erase/program), so give it the whole budget.
+            crate::watchdog::feed(Duration::from_millis(elle_config::FLASH_OP_WATCHDOG_MS));
             #[cfg(feature = "performance-monitoring")]
             let started = embassy_time::Instant::now();
             match request {

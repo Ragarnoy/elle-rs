@@ -101,6 +101,9 @@ pub(crate) const EVT_CRSF_RX_UART_ERROR: u16 = 51;
 // 60 retired: ULog push to flash failed (ULog writes go to the SD card now)
 pub(crate) const EVT_FLASH_ULOG_ERASE_FAILED: u16 = 61;
 pub(crate) const EVT_FLASH_ULOG_WRITE_TIMEOUT: u16 = 62;
+/// A flash-writing command arrived while armed and was refused: flash writes
+/// pause Core 1 and block Core 0 (DShot included).
+pub const EVT_FLASH_REFUSED_ARMED: u16 = 63;
 
 // Supervisor / system (70–79)
 pub const EVT_CORE1_UNHEALTHY: u16 = 70;

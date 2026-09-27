@@ -860,6 +860,7 @@ const fn log_code_text(code: u16) -> &'static str {
         60 => "Flash: ULog write failed",
         61 => "Flash: ULog erase failed",
         62 => "Flash: ULog write timeout",
+        63 => "Flash: command refused while armed (disarm first)",
         // Supervisor (70–79)
         70 => "Supervisor: Core1 unhealthy",
         71 => "Supervisor: Core1 restored",
