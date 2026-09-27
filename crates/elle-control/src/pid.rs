@@ -18,11 +18,11 @@ pub struct AxisTerms {
 impl AxisTerms {
     /// The axis command: P + I + D.
     #[must_use]
-    pub fn total(self) -> f32 {
+    pub const fn total(self) -> f32 {
         self.p + self.i + self.d
     }
 
-    fn scaled(self, scale: f32) -> Self {
+    const fn scaled(self, scale: f32) -> Self {
         Self {
             p: self.p * scale,
             i: self.i * scale,
@@ -126,7 +126,7 @@ pub struct AttitudeController {
 impl AttitudeController {
     /// Create with the given gains/scale/limit.
     #[must_use]
-    pub fn with_config(config: PidConfig) -> Self {
+    pub const fn with_config(config: PidConfig) -> Self {
         Self {
             config,
             pitch_pid: AxisPid {

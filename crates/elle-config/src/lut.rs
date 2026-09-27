@@ -345,6 +345,31 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
     last.1
 }
 
+/// Table invariants `governor_feedforward` relies on: a non-zero first eRPM (it
+/// divides by it), strictly increasing eRPM (it divides by each step), and
+/// non-decreasing DShot (it subtracts adjacent entries unsigned).
+const fn governor_ff_table_is_valid() -> bool {
+    if GOVERNOR_FF_TABLE[0].0 == 0 {
+        return false;
+    }
+    let mut i = 1;
+    while i < GOVERNOR_FF_TABLE.len() {
+        if GOVERNOR_FF_TABLE[i].0 <= GOVERNOR_FF_TABLE[i - 1].0
+            || GOVERNOR_FF_TABLE[i].1 < GOVERNOR_FF_TABLE[i - 1].1
+        {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const _: () = assert!(governor_ff_table_is_valid());
+// The last row is pinned to the full-stick target.
+const _: () = assert!(GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1].0 == MAX_ERPM);
+// Throttle curve's motor-start point lies inside the DShot range.
+const _: () = assert!(DSHOT_START_THROTTLE <= DSHOT_THROTTLE_MAX);
+
 /// DShot value of the last `GOVERNOR_FF_TABLE` entry — the highest output the
 /// feedforward will ever produce. `GOVERNOR_DSHOT_MAX` must equal this (asserted
 /// in `lib.rs`), or the PI correction could push past where the table refuses to go.

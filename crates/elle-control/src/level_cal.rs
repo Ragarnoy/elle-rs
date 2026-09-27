@@ -12,6 +12,9 @@
 use elle_config::LEVEL_CAL_MAX_TILT_DEG;
 use nalgebra::{ComplexField, Quaternion, UnitQuaternion, Vector3};
 
+/// `LEVEL_CAL_MAX_TILT_DEG` in radians.
+const MAX_TILT_RAD: f32 = LEVEL_CAL_MAX_TILT_DEG.to_radians();
+
 /// Why a level calibration was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
 pub enum LevelCalFail {
@@ -43,7 +46,7 @@ pub fn compute_mount(
     // would otherwise pass as perfectly level.
     let up = mean_accel.try_normalize(1e-6).ok_or(LevelCalFail::Tilted)?;
     // Compare cosines (acos is not in core): tilt <= max  <=>  cos(tilt) >= cos(max).
-    if up.z.is_nan() || up.z < ComplexField::cos(LEVEL_CAL_MAX_TILT_DEG.to_radians()) {
+    if up.z.is_nan() || up.z < ComplexField::cos(MAX_TILT_RAD) {
         return Err(LevelCalFail::Tilted);
     }
     UnitQuaternion::rotation_between(&up, &Vector3::z()).ok_or(LevelCalFail::Tilted)
@@ -87,7 +90,7 @@ pub fn mount_from_bytes(data: &[u8; 16]) -> Option<UnitQuaternion<f32>> {
     }
     let mount = UnitQuaternion::from_quaternion(q);
     let angle = mount.angle();
-    if angle < 1e-6 || angle > LEVEL_CAL_MAX_TILT_DEG.to_radians() {
+    if angle < 1e-6 || angle > MAX_TILT_RAD {
         return None;
     }
     Some(mount)

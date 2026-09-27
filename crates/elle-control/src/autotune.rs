@@ -26,6 +26,13 @@ const DISCARD_CYCLES: usize = 2;
 const TEST_KP: f32 = 1.0;
 /// Maximum number of half-cycles we can record
 const MAX_HALF_CYCLES: usize = 32;
+/// Half-cycles recorded during the discarded transient
+const SKIP_HALF_CYCLES: usize = 2 * DISCARD_CYCLES;
+/// Fewest half-cycles that leave one full measurable cycle after the transient
+const MIN_HALF_CYCLES: usize = 2 * (DISCARD_CYCLES + 1);
+
+// A run must be able to record enough half-cycles to produce a result.
+const _: () = assert!(MIN_HALF_CYCLES <= MAX_HALF_CYCLES);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -239,13 +246,11 @@ impl OscillationDetector {
 
     /// Compute oscillation result from collected half-cycles.
     fn compute_result(&self) -> Result<OscillationResult, AutotuneError> {
-        let min_half_cycles = 2 * (DISCARD_CYCLES + 1);
-        if self.half_cycle_count < min_half_cycles {
+        if self.half_cycle_count < MIN_HALF_CYCLES {
             return Err(AutotuneError::InsufficientData);
         }
 
-        let skip = 2 * DISCARD_CYCLES;
-        let usable_count = self.half_cycle_count - skip;
+        let usable_count = self.half_cycle_count - SKIP_HALF_CYCLES;
         if usable_count < 2 {
             return Err(AutotuneError::InsufficientData);
         }
@@ -262,7 +267,7 @@ impl OscillationDetector {
 
         // First pass: compute means
         for i in 0..num_pairs {
-            let idx = skip + i * 2;
+            let idx = SKIP_HALF_CYCLES + i * 2;
             let h0 = &self.half_cycles[idx];
             let h1 = &self.half_cycles[idx + 1];
             let full_period = h0.duration_ticks + h1.duration_ticks;
@@ -307,7 +312,7 @@ impl OscillationDetector {
 impl TuningRule {
     /// Compute PID gains from ultimate gain and period.
     /// Returns (kp, ki, kd) — these are effective gains (multiply by scale for actuator output).
-    fn compute(self, ku: f32, tu: f32) -> (f32, f32, f32) {
+    const fn compute(self, ku: f32, tu: f32) -> (f32, f32, f32) {
         match self {
             Self::TyreusLuyben => {
                 let kp = 0.45 * ku;
@@ -369,7 +374,7 @@ impl Default for Autotuner {
 }
 
 impl Autotuner {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             phase: Phase::Idle,
             axis: AutotuneAxis::Pitch,
@@ -454,7 +459,7 @@ impl Autotuner {
     }
 
     /// Current relay setpoint in degrees (±relay_deg during relay, 0.0 during settling/idle).
-    pub fn current_setpoint_deg(&self) -> f32 {
+    pub const fn current_setpoint_deg(&self) -> f32 {
         match self.phase {
             Phase::Relay => {
                 if self.relay_positive {
@@ -468,12 +473,12 @@ impl Autotuner {
     }
 
     /// Current half-cycle peak amplitude (degrees), or 0.0 if no crossings yet.
-    pub fn current_amplitude_deg(&self) -> f32 {
+    pub const fn current_amplitude_deg(&self) -> f32 {
         self.detector.current_peak
     }
 
     /// Number of full oscillation cycles completed.
-    pub fn cycles_completed(&self) -> u8 {
+    pub const fn cycles_completed(&self) -> u8 {
         self.detector.full_cycle_count as u8
     }
 

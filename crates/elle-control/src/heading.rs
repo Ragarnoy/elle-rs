@@ -11,7 +11,7 @@ use elle_config::CONTROL_LOOP_DT;
 /// result is the signed error you'd get by always turning the short way
 /// around the compass (e.g. target=350deg, current=10deg -> ~-20deg, not ~-340deg).
 #[must_use]
-fn wrap_heading_error_rad(target_rad: f32, current_rad: f32) -> f32 {
+const fn wrap_heading_error_rad(target_rad: f32, current_rad: f32) -> f32 {
     let mut err = (target_rad - current_rad) % (2.0 * PI);
     if err > PI {
         err -= 2.0 * PI;
@@ -62,7 +62,7 @@ impl HeadingController {
 
     /// Returns the heading error in degrees (shortest path), for telemetry/observability.
     #[must_use]
-    pub fn heading_error_deg(&self, target_rad: f32, current_rad: f32) -> f32 {
+    pub const fn heading_error_deg(&self, target_rad: f32, current_rad: f32) -> f32 {
         wrap_heading_error_rad(target_rad, current_rad).to_degrees()
     }
 

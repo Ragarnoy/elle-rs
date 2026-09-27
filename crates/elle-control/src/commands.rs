@@ -71,7 +71,7 @@ impl PilotCommands {
 
     #[must_use]
     #[inline]
-    pub fn attitude_mode(&self) -> AttitudeMode {
+    pub const fn attitude_mode(&self) -> AttitudeMode {
         match self {
             Self::Raw(r) => decode_attitude_mode(r.channels[ATTITUDE_ENABLE_CH]),
             Self::Normalized(n) => n.attitude_mode,

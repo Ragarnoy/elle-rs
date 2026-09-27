@@ -396,3 +396,30 @@ const _: () = assert!(ELEVON_LEFT_CENTER_US >= SERVO_MIN_PULSE_US);
 const _: () = assert!(ELEVON_LEFT_CENTER_US <= SERVO_MAX_PULSE_US);
 const _: () = assert!(ELEVON_RIGHT_CENTER_US >= SERVO_MIN_PULSE_US);
 const _: () = assert!(ELEVON_RIGHT_CENTER_US <= SERVO_MAX_PULSE_US);
+
+// Trim within its declared safety bound
+const _: () = assert!(ELEVON_LEFT_TRIM_US.abs() <= MAX_TRIM_US);
+const _: () = assert!(ELEVON_RIGHT_TRIM_US.abs() <= MAX_TRIM_US);
+
+// ESC range: MIN < START < MAX, arming threshold inside it
+const _: () = assert!(ENGINE_MIN_PULSE_US < ENGINE_START_PULSE_US);
+const _: () = assert!(ENGINE_START_PULSE_US < ENGINE_MAX_PULSE_US);
+const _: () = assert!(
+    ENGINE_ARM_THRESHOLD > ENGINE_MIN_PULSE_US && ENGINE_ARM_THRESHOLD < ENGINE_MAX_PULSE_US
+);
+
+// Throttle curve breakpoints ordered inside the 0-2047 RC range
+const _: () = assert!(THROTTLE_DEADZONE < THROTTLE_START_POINT && THROTTLE_START_POINT < 2047);
+
+// RC link: warning stage fires before failsafe
+const _: () = assert!(RC_WARNING_MS < RC_TIMEOUT_MS);
+
+// Governor ceiling never exceeds the DShot protocol range
+const _: () = assert!(GOVERNOR_DSHOT_MAX <= DSHOT_THROTTLE_MAX);
+
+// Gyro filter corner below the 0.45 x Nyquist clamp in `LowPass2::new`
+const _: () =
+    assert!(GYRO_RATE_LPF_HZ > 0.0 && GYRO_RATE_LPF_HZ < 0.45 * IMU_UPDATE_FREQUENCY_HZ as f32);
+
+// A still window must fit inside the gyro-bias timeout
+const _: () = assert!(GYRO_BIAS_SAMPLES <= GYRO_BIAS_TIMEOUT_SAMPLES);
