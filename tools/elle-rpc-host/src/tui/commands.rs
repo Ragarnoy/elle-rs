@@ -320,9 +320,9 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
                 "abort" | "stop" => cmd_autotune_abort(client).await,
                 "pitch" | "roll" => {
                     let axis: u8 = if parts[1].to_lowercase() == "pitch" {
-                        0
+                        elle_rpc_icd::AUTOTUNE_AXIS_PITCH
                     } else {
-                        1
+                        elle_rpc_icd::AUTOTUNE_AXIS_ROLL
                     };
                     let relay_deg: f32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(5.0);
                     let cycles: u8 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(6);
@@ -671,7 +671,11 @@ async fn cmd_autotune_start(
         num_cycles: cycles,
         rule,
     };
-    let axis_name = if axis == 0 { "pitch" } else { "roll" };
+    let axis_name = if axis == elle_rpc_icd::AUTOTUNE_AXIS_PITCH {
+        "pitch"
+    } else {
+        "roll"
+    };
     let rule_name = match rule {
         1 => "ZieglerNichols",
         2 => "SomeOvershoot",
@@ -696,7 +700,7 @@ async fn cmd_autotune_abort(client: &HostClient<WireError>) -> CommandResult {
 
 async fn cmd_savepid(client: &HostClient<WireError>) -> CommandResult {
     let req = StartAutotuneReq {
-        axis: 0xFF, // Magic value = save current PID gains to flash
+        axis: elle_rpc_icd::AUTOTUNE_AXIS_SAVE_PID,
         relay_deg_x10: 0,
         num_cycles: 0,
         rule: 0,
@@ -710,7 +714,7 @@ async fn cmd_savepid(client: &HostClient<WireError>) -> CommandResult {
 
 async fn cmd_clearpid(client: &HostClient<WireError>) -> CommandResult {
     let req = StartAutotuneReq {
-        axis: 0xFE, // Magic value = erase PID profile from flash
+        axis: elle_rpc_icd::AUTOTUNE_AXIS_ERASE_PID,
         relay_deg_x10: 0,
         num_cycles: 0,
         rule: 0,

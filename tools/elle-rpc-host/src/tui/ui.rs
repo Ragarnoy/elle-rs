@@ -886,7 +886,7 @@ const fn log_code_text(code: u16) -> &'static str {
         115 => "Mag cal: loaded from flash",
         116 => "Mag cal: no saved cal",
         // Tap detection (120–129)
-        120 => "Double-tap: armed",
+        120 => "IMU: double-tap detected (calibration gesture)",
         // Level calibration (150–159)
         150 => "Level cal: started",
         151 => "Level cal: complete",

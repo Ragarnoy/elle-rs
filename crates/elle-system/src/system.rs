@@ -861,10 +861,10 @@ impl TaskTiming {
 #[derive(Debug, defmt::Format)]
 pub struct PerformanceMonitor {
     pub control_loop: TaskTiming,
-    pub imu_update: TaskTiming,
     led_update: TaskTiming,
-    flash_operation: TaskTiming,
     ulog_logging: TaskTiming,
+    // IMU (Core 1) and flash manager timings live in elle-hardware's `timing`
+    // module: those tasks are in that crate and cannot call back into this one.
 }
 
 #[cfg(feature = "performance-monitoring")]
@@ -879,9 +879,7 @@ impl PerformanceMonitor {
     const fn new() -> Self {
         Self {
             control_loop: TaskTiming::new(),
-            imu_update: TaskTiming::new(),
             led_update: TaskTiming::new(),
-            flash_operation: TaskTiming::new(),
             ulog_logging: TaskTiming::new(),
         }
     }
@@ -916,25 +914,28 @@ impl PerformanceMonitor {
             core0_led_cpu as u8
         );
 
-        // Core 1 tasks (IMU only)
-        let core1_imu_cpu = self.imu_update.cpu_utilization_percent(4000); // 4kHz actual rate
+        // Core 1 tasks (IMU only): one wake-up per 1 kHz DATA_RDY sample
+        let imu = elle_hardware::timing::IMU_TIMING.snapshot();
+        let core1_imu_cpu =
+            (imu.avg_us as f32 * elle_config::IMU_UPDATE_FREQUENCY_HZ as f32) / 10_000.0;
         info!("CORE 1 (IMU only): {}% total load", core1_imu_cpu as u8);
-        info!(
-            "  IMU: min={} avg={} max={}μs ({}% @ 4000Hz)",
-            self.imu_update.min_us,
-            self.imu_update.avg_us,
-            self.imu_update.max_us,
-            core1_imu_cpu as u8
-        );
+        if imu.samples > 0 {
+            info!(
+                "  IMU: min={} avg={} max={}μs ({}% @ {}Hz)",
+                imu.min_us,
+                imu.avg_us,
+                imu.max_us,
+                core1_imu_cpu as u8,
+                elle_config::IMU_UPDATE_FREQUENCY_HZ
+            );
+        }
 
         // Flash operations (on-demand, Core 0)
-        if self.flash_operation.samples > 0 {
+        let flash = elle_hardware::timing::FLASH_TIMING.snapshot();
+        if flash.samples > 0 {
             info!(
                 "Flash Operations: min={} avg={} max={}μs | {} operations completed",
-                self.flash_operation.min_us,
-                self.flash_operation.avg_us,
-                self.flash_operation.max_us,
-                self.flash_operation.samples
+                flash.min_us, flash.avg_us, flash.max_us, flash.samples
             );
         }
 
@@ -957,10 +958,10 @@ impl PerformanceMonitor {
 
     pub fn reset_all(&mut self) {
         self.control_loop.reset();
-        self.imu_update.reset();
         self.led_update.reset();
-        self.flash_operation.reset();
         self.ulog_logging.reset();
+        elle_hardware::timing::IMU_TIMING.reset();
+        elle_hardware::timing::FLASH_TIMING.reset();
     }
 }
 
@@ -1000,28 +1001,10 @@ pub fn update_control_loop_timing(elapsed_us: u32) {
 }
 
 #[cfg(feature = "performance-monitoring")]
-fn update_imu_timing(elapsed_us: u32) {
-    unsafe {
-        (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
-            .imu_update
-            .update(elapsed_us);
-    }
-}
-
-#[cfg(feature = "performance-monitoring")]
 pub fn update_led_timing(elapsed_us: u32) {
     unsafe {
         (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
             .led_update
-            .update(elapsed_us);
-    }
-}
-
-#[cfg(feature = "performance-monitoring")]
-fn update_flash_timing(elapsed_us: u32) {
-    unsafe {
-        (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
-            .flash_operation
             .update(elapsed_us);
     }
 }
@@ -1049,15 +1032,7 @@ pub const fn update_control_loop_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-const fn update_imu_timing(_elapsed_us: u32) {}
-
-#[cfg(not(feature = "performance-monitoring"))]
-#[inline(always)]
 pub const fn update_led_timing(_elapsed_us: u32) {}
-
-#[cfg(not(feature = "performance-monitoring"))]
-#[inline(always)]
-const fn update_flash_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
