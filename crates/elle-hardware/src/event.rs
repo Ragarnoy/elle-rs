@@ -32,19 +32,30 @@ pub fn send(level: u8, code: u16) {
 // ---------------------------------------------------------------------------
 
 // GNSS (1–9)
-pub const EVT_GNSS_FIRST_FIX: u16 = 1;
-pub const EVT_GNSS_PERIODIC: u16 = 2;
-pub const EVT_GNSS_UART_ERROR: u16 = 3;
-pub const EVT_GNSS_CFG_NAK: u16 = 4;
-pub const EVT_GNSS_PVT_ACQUIRED: u16 = 5;
-pub const EVT_GNSS_NMEA_FALLBACK: u16 = 6;
-pub const EVT_GNSS_BAUD_SWITCHED: u16 = 7;
-pub const EVT_GNSS_BAUD_FALLBACK: u16 = 8;
-pub const EVT_GNSS_NO_DATA: u16 = 9;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_FIRST_FIX: u16 = 1;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_PERIODIC: u16 = 2;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_UART_ERROR: u16 = 3;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_CFG_NAK: u16 = 4;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_PVT_ACQUIRED: u16 = 5;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_NMEA_FALLBACK: u16 = 6;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_BAUD_SWITCHED: u16 = 7;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_BAUD_FALLBACK: u16 = 8;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_NO_DATA: u16 = 9;
 
 // GNSS, continued (140–149) — the 1–9 block is full
-pub const EVT_GNSS_CFG_TIMEOUT: u16 = 140;
-pub const EVT_GNSS_CFG_PARTIAL: u16 = 141;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_CFG_TIMEOUT: u16 = 140;
+#[cfg(feature = "gnss")]
+pub(crate) const EVT_GNSS_CFG_PARTIAL: u16 = 141;
 
 // Safety (10–19)
 pub const EVT_MOTORS_ARMED: u16 = 10;
@@ -57,39 +68,39 @@ pub const EVT_KILL_ENGAGED: u16 = 16;
 pub const EVT_KILL_RELEASED: u16 = 17;
 
 // CRSF telemetry (20–29)
-pub const EVT_CRSF_TX_STARTED: u16 = 20;
-pub const EVT_CRSF_TX_FIRST_SEC: u16 = 21;
-pub const EVT_CRSF_TX_ERROR: u16 = 22;
-pub const EVT_CRSF_TX_STATS: u16 = 23;
+pub(crate) const EVT_CRSF_TX_STARTED: u16 = 20;
+pub(crate) const EVT_CRSF_TX_FIRST_SEC: u16 = 21;
+pub(crate) const EVT_CRSF_TX_ERROR: u16 = 22;
+pub(crate) const EVT_CRSF_TX_STATS: u16 = 23;
 
 // ULog (30–39)
 pub const EVT_ULOG_STARTED: u16 = 30;
 pub const EVT_ULOG_INIT_FAILED: u16 = 31;
-pub const EVT_ULOG_NOT_COMPILED: u16 = 32;
+// 32 retired: "ULog not compiled in" (ULog is always compiled in now)
 pub const EVT_ULOG_STOPPED: u16 = 33;
 pub const EVT_ULOG_ERASED: u16 = 34;
 
 // IMU / sensors (40–49)
-pub const EVT_IMU_INIT_FAILED: u16 = 40;
-pub const EVT_IMU_FIFO_OVERFLOW: u16 = 41;
-pub const EVT_IMU_READ_ERRORS: u16 = 42;
-pub const EVT_MAG_INIT_FAILED: u16 = 43;
-pub const EVT_BARO_INIT_FAILED: u16 = 44;
+pub(crate) const EVT_IMU_INIT_FAILED: u16 = 40;
+pub(crate) const EVT_IMU_FIFO_OVERFLOW: u16 = 41;
+pub(crate) const EVT_IMU_READ_ERRORS: u16 = 42;
+pub(crate) const EVT_MAG_INIT_FAILED: u16 = 43;
+pub(crate) const EVT_BARO_INIT_FAILED: u16 = 44;
 /// Core1 fell behind and drained several queued IMU samples in one wake-up.
-pub const EVT_IMU_CATCHUP: u16 = 45;
+pub(crate) const EVT_IMU_CATCHUP: u16 = 45;
 /// Boot-time gyro bias measured; the IMU now reports calibrated.
-pub const EVT_GYRO_BIAS_DONE: u16 = 46;
+pub(crate) const EVT_GYRO_BIAS_DONE: u16 = 46;
 /// No still window (or an implausible offset) at boot; flying with zero bias.
-pub const EVT_GYRO_BIAS_FAILED: u16 = 47;
+pub(crate) const EVT_GYRO_BIAS_FAILED: u16 = 47;
 
 // CRSF receiver (50–59)
-pub const EVT_CRSF_RX_FIRST_FRAME: u16 = 50;
-pub const EVT_CRSF_RX_UART_ERROR: u16 = 51;
+pub(crate) const EVT_CRSF_RX_FIRST_FRAME: u16 = 50;
+pub(crate) const EVT_CRSF_RX_UART_ERROR: u16 = 51;
 
 // Flash storage (60–69)
-pub const EVT_FLASH_ULOG_PUSH_FAILED: u16 = 60;
-pub const EVT_FLASH_ULOG_ERASE_FAILED: u16 = 61;
-pub const EVT_FLASH_ULOG_WRITE_TIMEOUT: u16 = 62;
+// 60 retired: ULog push to flash failed (ULog writes go to the SD card now)
+pub(crate) const EVT_FLASH_ULOG_ERASE_FAILED: u16 = 61;
+pub(crate) const EVT_FLASH_ULOG_WRITE_TIMEOUT: u16 = 62;
 
 // Supervisor / system (70–79)
 pub const EVT_CORE1_UNHEALTHY: u16 = 70;
@@ -98,7 +109,7 @@ pub const EVT_CORE1_RESTORED: u16 = 71;
 // Flight state (80–89)
 pub const EVT_ATTITUDE_STALE: u16 = 80;
 pub const EVT_ULOG_RC_ON: u16 = 81;
-pub const EVT_ULOG_RC_OFF: u16 = 82;
+// 82 retired: ULog RC switch off (recording runs until power-off, no RC switch)
 
 // Autotune (90–99)
 pub const EVT_AUTOTUNE_STARTED: u16 = 90;
@@ -122,7 +133,7 @@ pub const EVT_MAG_CAL_LOADED: u16 = 115;
 pub const EVT_MAG_CAL_LOAD_EMPTY: u16 = 116;
 
 // Tap detection (120–129)
-pub const EVT_DOUBLE_TAP: u16 = 120;
+pub(crate) const EVT_DOUBLE_TAP: u16 = 120;
 
 // Heading hold (130–139)
 pub const EVT_HEADING_HOLD_ENGAGED: u16 = 130;
@@ -130,15 +141,15 @@ pub const EVT_HEADING_HOLD_DISENGAGED: u16 = 131;
 pub const EVT_HEADING_HOLD_TARGET_SET: u16 = 132;
 
 // Level calibration (150–159) — IMU mounting offset
-pub const EVT_LEVEL_CAL_STARTED: u16 = 150;
-pub const EVT_LEVEL_CAL_COMPLETE: u16 = 151;
+pub(crate) const EVT_LEVEL_CAL_STARTED: u16 = 150;
+pub(crate) const EVT_LEVEL_CAL_COMPLETE: u16 = 151;
 pub const EVT_LEVEL_CAL_FAILED_MOVING: u16 = 152;
-pub const EVT_LEVEL_CAL_FAILED_TILTED: u16 = 153;
-pub const EVT_LEVEL_CAL_SAVED: u16 = 154;
-pub const EVT_LEVEL_CAL_SAVE_FAILED: u16 = 155;
-pub const EVT_LEVEL_CAL_CLEARED: u16 = 156;
-pub const EVT_LEVEL_CAL_LOADED: u16 = 157;
-pub const EVT_LEVEL_CAL_LOAD_EMPTY: u16 = 158;
+pub(crate) const EVT_LEVEL_CAL_FAILED_TILTED: u16 = 153;
+pub(crate) const EVT_LEVEL_CAL_SAVED: u16 = 154;
+pub(crate) const EVT_LEVEL_CAL_SAVE_FAILED: u16 = 155;
+pub(crate) const EVT_LEVEL_CAL_CLEARED: u16 = 156;
+pub(crate) const EVT_LEVEL_CAL_LOADED: u16 = 157;
+pub(crate) const EVT_LEVEL_CAL_LOAD_EMPTY: u16 = 158;
 
 // ---------------------------------------------------------------------------
 // Macro

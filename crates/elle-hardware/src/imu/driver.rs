@@ -347,12 +347,6 @@ impl<'a> Imu<'a> {
         Ok(())
     }
 
-    /// Permanently disable magnetometer reads. Call before `run()` on platforms
-    /// where the I2C bus is unreliable — prevents blocking hangs in the Core1 loop.
-    pub fn disable_mag(&mut self) {
-        self.mag_ok = false;
-    }
-
     /// Nothing to wait for here: the gyro bias is measured on the first still
     /// second of `run()`, without holding up the boot barrier.
     pub async fn wait_for_calibration(&mut self, _timeout_secs: u64) -> ElleResult<()> {

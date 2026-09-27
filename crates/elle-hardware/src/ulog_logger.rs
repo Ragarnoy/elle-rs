@@ -8,7 +8,7 @@ use elle_error::ULogError;
 use embassy_time::Instant;
 use heapless::Vec;
 
-use crate::flash::manager::ULOG_WRITE_CHANNEL;
+use crate::flash::ULOG_WRITE_CHANNEL;
 use crate::flash::{request_write_ulog, request_write_ulog_blocking};
 
 /// ULog logger state
@@ -606,18 +606,6 @@ impl ULogLogger {
     #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.initialized
-    }
-
-    /// Check if the logger needs flushing
-    #[must_use]
-    pub fn needs_flush(&self) -> bool {
-        self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE / 2)
-    }
-
-    /// Get the buffer fill percentage
-    #[must_use]
-    pub fn buffer_fill_percent(&self) -> u8 {
-        ((self.buffer.len() * 100) / ULOG_LOGGER_BUFFER_SIZE) as u8
     }
 }
 

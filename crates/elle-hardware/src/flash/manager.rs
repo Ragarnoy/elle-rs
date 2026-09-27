@@ -45,13 +45,13 @@ unsafe fn unmask_sio_fifo() {
 
 /// Fire-and-forget ULog write request (buffered channel, non-blocking send).
 /// Uses smaller chunk size (512B) to avoid 4KB stack allocations in the write path.
-pub struct ULogWriteRequest {
-    pub data: [u8; ULOG_WRITE_CHUNK_SIZE],
-    pub len: usize,
+pub(crate) struct ULogWriteRequest {
+    pub(crate) data: [u8; ULOG_WRITE_CHUNK_SIZE],
+    pub(crate) len: usize,
 }
 
 /// Buffered channel for fire-and-forget ULog writes (8 slots × 512B = 4KB)
-pub static ULOG_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, ULogWriteRequest, 8> =
+pub(crate) static ULOG_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, ULogWriteRequest, 8> =
     Channel::new();
 
 /// Inter-core communication signals for flash operations (non-ULog-write ops)
@@ -467,7 +467,7 @@ impl<'a> SequentialFlashManager<'a> {
 
 /// Fire-and-forget ULog write — returns immediately, data is queued for async flash write.
 /// Returns `false` if the channel is full (data dropped) or input is invalid.
-pub fn request_write_ulog(data: &[u8]) -> bool {
+pub(crate) fn request_write_ulog(data: &[u8]) -> bool {
     if data.is_empty() || data.len() > ULOG_WRITE_CHUNK_SIZE {
         warn!("Flash: invalid ULog data size: {}", data.len());
         return false;
@@ -491,7 +491,7 @@ pub fn request_write_ulog(data: &[u8]) -> bool {
 /// Blocking ULog write — waits until data is queued for flash write.
 /// Splits large payloads (e.g. ULog header) into ULOG_WRITE_CHUNK_SIZE chunks.
 /// Used for ULog header writes during initialization.
-pub async fn request_write_ulog_blocking(data: &[u8]) -> bool {
+pub(crate) async fn request_write_ulog_blocking(data: &[u8]) -> bool {
     if data.is_empty() {
         warn!("Flash: empty ULog data");
         return false;

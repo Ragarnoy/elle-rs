@@ -8,7 +8,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 
 /// CRSF baud rate (420 kbaud).
-pub const CRSF_BAUD: u32 = 420_000;
+pub(crate) const CRSF_BAUD: u32 = 420_000;
 
 /// Return a UART config suitable for CRSF (420 kbaud, 8N1).
 #[must_use]

@@ -137,7 +137,7 @@ No extra postcard-rpc features needed — the macro works with elle's own WireTx
 
 ### Shared State
 
-**`SignalCache<T>`** (`crates/elle-hardware/src/signal_cache.rs`) — Generic wrapper combining `Signal<CriticalSectionRawMutex, T>` + `Mutex<CriticalSectionRawMutex, Cell<T>>` for publish/subscribe with non-consuming cache reads. Methods: `publish()`, `read_cached()`, `try_take()`, `wait()`, `signal_only()`. Used throughout the firmware for inter-task communication.
+**`SignalCache<T>`** (`crates/elle-hardware/src/signal_cache.rs`) — Generic wrapper combining `Signal<CriticalSectionRawMutex, T>` + `Mutex<CriticalSectionRawMutex, Cell<T>>` for publish/subscribe with non-consuming cache reads. Methods: `publish()`, `read_cached()`, `try_take()`. Used throughout the firmware for inter-task communication.
 
 - **`ATTITUDE`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<AttitudeData>` — pitch/roll/yaw from AHRS at 1kHz, consumed by control loop via `try_take()`
 - **`MAG`** (`crates/elle-hardware/src/imu.rs`) — `SignalCache<MagReading>` — magnetometer XYZ counts at 10Hz, read by CRSF telemetry and RPC via `read_cached()`

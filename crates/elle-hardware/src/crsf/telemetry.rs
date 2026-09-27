@@ -27,7 +27,7 @@ static CRC8: Crc<u8> = Crc::<u8>::new(&CRC_8_DVB_S2);
 
 /// Dedicated attitude signal for the telemetry task (separate from ATTITUDE
 /// which is consumed by try_take in the control loop).
-pub static TELEMETRY_ATTITUDE: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
+pub(crate) static TELEMETRY_ATTITUDE: Signal<CriticalSectionRawMutex, AttitudeData> = Signal::new();
 
 /// Flight-mode signal, written by the main control loop after each fc.update().
 pub static CRSF_FLIGHT_MODE: Signal<CriticalSectionRawMutex, CrsfFlightMode> = Signal::new();
@@ -69,18 +69,18 @@ pub struct CrsfFlightMode {
 /// Lightweight GPS data for telemetry (avoids dependency on elle-rpc-icd).
 #[cfg(feature = "gnss")]
 #[derive(Clone, Copy, Debug, defmt::Format)]
-pub struct TelemetryGpsData {
-    pub latitude: f32,
-    pub longitude: f32,
-    pub altitude_m: f32,
-    pub num_satellites: u8,
+pub(crate) struct TelemetryGpsData {
+    pub(crate) latitude: f32,
+    pub(crate) longitude: f32,
+    pub(crate) altitude_m: f32,
+    pub(crate) num_satellites: u8,
     /// Ground speed in m/s, from UBX-NAV-PVT.
-    pub ground_speed_ms: f32,
+    pub(crate) ground_speed_ms: f32,
 }
 
 /// Dedicated GNSS signal for telemetry (populated by the GNSS task in elle-eagle).
 #[cfg(feature = "gnss")]
-pub static TELEMETRY_GNSS: Signal<CriticalSectionRawMutex, TelemetryGpsData> = Signal::new();
+pub(crate) static TELEMETRY_GNSS: Signal<CriticalSectionRawMutex, TelemetryGpsData> = Signal::new();
 
 // ---------------------------------------------------------------------------
 // Frame builders
