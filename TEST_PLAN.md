@@ -2,30 +2,37 @@
 
 Pre-flight verification checklist. Complete ALL tests before flight.
 
+Written for the eagle. On the **dart** (single engine) skip the differential-thrust rows
+(1.2, 5.2 #4) and 3.4.3 — `IGNORE_PID_FLASH` means tuned gains are never saved. How
+arming, failsafe, LEDs and event codes work is in
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ## Prerequisites
 
 - BetaFPV Pro transmitter bound and linked
+- CH5 (2-pos): Heading hold
 - CH6 (3-pos switch left): Manual / Stabilized / AltitudeHold
 - CH7 (3-pos switch right): Autotune off / pitch / roll (flight firmware only)
 - CH8 (2-pos switch right): Kill switch (high = disarm)
 - Props removed for all ground tests
 - SD card inserted (FAT32)
 - Probe-rs debug probe connected (RPC tests only)
+- Keep the aircraft still for ~1 s after every power-up (gyro bias; LED goes solid green,
+  or solid purple in RPC builds)
+- **Arming** is a gesture: throttle above ~30 %, then back to zero. Written "arm (gesture)"
+  below. Kill, failsafe and every disarm require a new gesture.
 
 ## Build Commands
 
 ```sh
 # Flight firmware (default — CRSF/ELRS)
-cd crates/elle-eagle
-cargo run --release --features gnss
+cd crates/elle-eagle          # or crates/elle-dart
+cargo run --release
 
-# RPC firmware (ground test mode)
-cargo run --release --no-default-features --features rpc-control
+# RPC firmware (ground test mode). Always list gnss: --no-default-features drops it.
+cargo run --release --no-default-features --features rpc-control,gnss
 
 # RPC + RC firmware (probe monitoring with RC control)
-cargo run --release --no-default-features --features rpc-control,rpc-rc
-
-# RPC + RC + GNSS firmware (autotune ground test with full monitoring)
 cargo run --release --no-default-features --features rpc-control,rpc-rc,gnss
 
 # Host TUI
@@ -78,19 +85,25 @@ Hold board in hand. Verify PID corrects **against** the tilt, not with it.
 | 6 | Quick pitch rotation | D-term damps the motion (opposes rate)      | [x]  |
 | 7 | Quick roll rotation  | D-term damps the motion (opposes rate)      | [x]  |
 
-If P-term is inverted (corrects wrong way at steady angle): negate the AHRS measurement for that axis in `system.rs`.
-If D-term is inverted (accelerates rotation): negate the AHRS rate for that axis in `system.rs`.
+If P-term is inverted (corrects wrong way at steady angle): the attitude sign for that axis is
+wrong. Roll and roll rate are already negated for this PCB in `Imu::run()`
+(`crates/elle-hardware/src/imu/driver.rs`); fix the sign there, for angle **and** rate.
+`PITCH_INVERT`/`ROLL_INVERT` only flip the sticks (`elle-control/src/commands.rs`) and
+cannot fix a PID sign.
+If D-term is inverted (accelerates rotation): the rate sign is wrong at the same place.
 
-### 1.4 Kill Switch + Beep
+### 1.4 Arming Gesture, Kill Switch + Beep
 
-| # | Action                       | Expected                                    | Pass |
-|---|------------------------------|---------------------------------------------|------|
-| 1 | Throttle low (auto-arm)      | Single beep from motors (arm confirmation)  | [x]  |
-| 2 | Throttle up                  | Motors spin normally                        | [x]  |
-| 3 | CH8 high (kill)              | Motors stop immediately, two beeps (disarm) | [x]  |
-| 4 | CH8 still high, throttle low | Motors stay off (no re-arm, no beep)        | [x]  |
-| 5 | CH8 low, throttle low        | Re-arms, single beep again                  | [x]  |
-| 6 | Throttle up                  | Motors spin normally                        | [x]  |
+| # | Action                                   | Expected                                           | Pass |
+|---|------------------------------------------|----------------------------------------------------|------|
+| 1 | Power on with throttle already low       | Stays disarmed, no beep                            | [ ]  |
+| 2 | Throttle to ~50 %                        | Still disarmed, motors stay off                    | [ ]  |
+| 3 | Throttle back to zero                    | Arms: single beep, event 10                        | [ ]  |
+| 4 | Throttle up                              | Motors spin normally                               | [ ]  |
+| 5 | CH8 high (kill)                          | Motors stop, elevons centre, two beeps, event 16   | [ ]  |
+| 6 | CH8 still high, throttle gesture         | Stays disarmed (kill blocks everything)            | [ ]  |
+| 7 | CH8 low (event 17), throttle at zero     | Stays disarmed: the old gesture was cleared        | [ ]  |
+| 8 | Throttle up, then zero                   | Re-arms, single beep                               | [ ]  |
 
 ---
 
@@ -166,20 +179,20 @@ ULog auto-starts only in flight firmware.
 | # | Check                    | Expected                             | Pass |
 |---|--------------------------|--------------------------------------|------|
 | 1 | `ulog_info LOG_NNNN.ULG` | All message types present, no errors | [x]  |
-| 2 | attitude_data rate       | ~77 Hz                               | [x]  |
+| 2 | attitude_data rate       | ~83 Hz                               | [ ]  |
 | 3 | File has real timestamp  | Correct date/time (not 1970/1980)    | [x]  |
 
 ### 3.3 Autotune ULog + Performance (RPC+RC mode)
 
 | # | Steps                              | Expected                                                 | Pass |
 |---|------------------------------------|----------------------------------------------------------|------|
-| 1 | CH6 mid (Stabilized), throttle low | Armed in Stabilized (TUI shows ARMED + Stabilized)       | [x]  |
+| 1 | CH6 mid (Stabilized), arm (gesture) | Armed in Stabilized (TUI shows ARMED + Stabilized)      | [x]  |
 | 2 | TUI: `autotune pitch`              | Autotune starts, TUI header shows `AT PITCH`             | [x]  |
 | 3 | Let it run for ~10s                | No "attitude data lost" abort event                      | [x]  |
 | 4 | TUI: `autotune abort`              | Autotune aborts normally, `AT PITCH` disappears          | [ ]  |
 | 5 | Pull SD, check ULog                | `autotune_status` message present with phase transitions | [x]  |
-| 6 | Check `system_status.loop_time_us` | All values < 13000µs (13ms budget)                       | [x]  |
-| 7 | Check attitude_data rate           | Still ~77 Hz during autotune (no drops)                  | [x]  |
+| 6 | Check `system_status.loop_time_us` | All values < 12000µs (12ms budget)                       | [ ]  |
+| 7 | Check attitude_data rate           | Still ~83 Hz during autotune (no drops)                  | [ ]  |
 
 ### 3.4 Autotune Oscillation Verification (RPC+RC mode, props off)
 
@@ -202,7 +215,7 @@ elevons push the right way, cycle counter increments, run completes).
 
 #### 3.4.1 Pitch Autotune — Oscillation Forms
 
-Hold board level in hand. Switch to Stabilized (CH6 mid), let it arm.
+Hold board level in hand. Switch to Stabilized (CH6 mid), arm (gesture).
 **Start autotune via TUI command** (CH7 switch does NOT work in RPC+RC mode).
 
 | # | Action                      | Expected                                              | Pass |
@@ -215,8 +228,13 @@ Hold board level in hand. Switch to Stabilized (CH6 mid), let it arm.
 | 6 | Wait ~10-15s for completion | `DONE` on radio, gains printed in TUI                 | [x]  |
 
 **If it aborts with ERR! after ~10s:** oscillation never formed — sign mismatch between
-autotuner measurement and PID. Check `PITCH_INVERT` is applied in both the PID measurement
-path (`system.rs`) and the autotuner measurement path (`main.rs`).
+autotuner measurement and PID. Both must use the **raw** attitude: the autotuner step in
+`crates/elle-app/src/flight.rs` / `rpc.rs` must not apply `PITCH_INVERT` (that constant is
+for sticks only).
+
+**If it ends with event 94 (rejected):** the run completed but the result failed
+validation (amplitude < max(0.5°, 20 % of relay), period outside 0.1–5 s, or gains out of
+range). Original gains are restored; nothing is saved.
 
 **If oscillation grows until 20° safety abort:** TEST_KP (1.0) × scale (5.0) is too aggressive.
 Retry with `autotune pitch 3` (3° relay amplitude).
@@ -234,13 +252,15 @@ shake — rest board on a surface with pitch axis free to rotate.
 | 4 | Observe elevons             | Elevons oscillate in split (left up/right down, then swap) | [x]  |
 | 5 | Wait ~10-15s for completion | `DONE` on radio, gains printed in TUI                      | [x]  |
 
-#### 3.4.3 Gains Survive Reboot
+#### 3.4.3 Gains Survive Reboot (eagle only)
 
 | # | Action                      | Expected                                                    | Pass |
 |---|-----------------------------|-------------------------------------------------------------|------|
 | 1 | Note gains from 3.4.1/3.4.2 | Record Kp/Ki/Kd for pitch and roll                          | [ ]  |
-| 2 | Power cycle the board       | —                                                           | [ ]  |
-| 3 | Check TUI startup logs      | "PID loaded P(...) R(...) s=... il=..." with matching gains | [ ]  |
+| 2 | Still armed                 | No flash write yet (no event 100)                           | [ ]  |
+| 3 | Disarm                      | Event 100 "PID: saved to flash"                             | [ ]  |
+| 4 | Power cycle the board       | —                                                           | [ ]  |
+| 5 | Check TUI log + ULog         | Event 102 "PID: loaded from flash"; `pid_gains` matches     | [ ]  |
 
 #### 3.4.4 Safety Abort — Amplitude Limit
 
@@ -271,7 +291,7 @@ path which is only available in flight firmware, not RPC+RC.
 
 ## Part 4: RPC Mode Tests (probe connected)
 
-Flash `--features rpc-control`, launch TUI.
+Flash `--no-default-features --features rpc-control,gnss`, launch TUI.
 
 ### 4.1 TUI Command Acceptance
 
@@ -296,8 +316,6 @@ Flash `--features rpc-control`, launch TUI.
 
 ---
 
----
-
 ## Part 5: ULog Post-Validation
 
 After completing Parts 1-4, pull the SD card and validate the ULog file(s).
@@ -309,14 +327,17 @@ Each test leaves a signature in the data that can be checked after the fact.
 
 | # | Check                                | Expected                         | Pass |
 |---|--------------------------------------|----------------------------------|------|
-| 1 | `attitude_data` messages present     | Yes, ~77 Hz rate                 | [x]  |
-| 2 | `commands` messages present          | Yes, ~77 Hz rate                 | [x]  |
-| 3 | `engine_data` messages present       | Yes, ~77 Hz rate                 | [x]  |
-| 4 | `system_status` messages present     | Yes, ~7.7 Hz rate                | [x]  |
-| 5 | `barometer_data` messages present    | Yes, ~4 Hz rate                  | [x]  |
-| 6 | `magnetometer_data` messages present | Yes, ~9.6 Hz rate                | [x]  |
-| 7 | `log_event` messages present         | Yes (arm/disarm/kill events)     | [x]  |
-| 8 | `autotune_status` messages present   | Yes (if autotune was run in 3.4) | [x]  |
+| 1 | `attitude_data` messages present     | Yes, ~83 Hz rate                 | [ ]  |
+| 2 | `commands` messages present          | Yes, ~83 Hz rate                 | [ ]  |
+| 3 | `controller` messages present        | Yes, ~83 Hz rate                 | [ ]  |
+| 4 | `engine_data` messages present       | Yes, ~83 Hz rate                 | [ ]  |
+| 5 | `system_status` messages present     | Yes, ~8.3 Hz rate                | [ ]  |
+| 6 | `barometer_data` messages present    | Yes, ~4.4 Hz rate                | [ ]  |
+| 7 | `magnetometer_data` messages present | Yes, ~10 Hz rate                 | [ ]  |
+| 8 | `gnss_data` messages present         | Yes, ~1 Hz rate                  | [ ]  |
+| 9 | `pid_gains` messages present         | Once at file start, then on change | [ ]  |
+| 10 | `log_event` messages present        | Yes (arm/disarm/kill events)     | [ ]  |
+| 11 | `autotune_status` messages present  | Yes (if autotune was run in 3.4) | [ ]  |
 
 ### 5.2 Axis Verification (validates Part 1)
 
@@ -334,9 +355,9 @@ Plot `commands.pitch` vs `commands.elevon_left_us` and `commands.elevon_right_us
 Plot `attitude_data.pitch` vs `commands.pitch_correction` during Stabilized mode
 (`commands.attitude_mode == 1`):
 
-Note: positive pitch_correction = elevons UP = nose-down push (correct).
-PITCH_INVERT flips the measurement inside the PID, so positive raw pitch
-produces positive correction which pushes against the tilt.
+Note: positive pitch_correction = elevons UP = nose-down push (correct). The PID
+works on raw attitude; `PITCH_INVERT` only flips the stick. `controller` has the same
+correction split into P/I/D terms.
 
 | # | Check                            | Expected                                             | Pass |
 |---|----------------------------------|------------------------------------------------------|------|
@@ -379,10 +400,75 @@ Plot `autotune_status` fields:
 
 | # | Check                                      | Expected                               | Pass |
 |---|--------------------------------------------|----------------------------------------|------|
-| 1 | system_status.loop_time_us: max            | < 13000 µs (13ms budget)               | [x]  |
-| 2 | system_status.loop_time_us: average        | < 5000 µs (comfortable margin)         | [x]  |
-| 3 | attitude_data sample interval              | Consistent ~13ms, no gaps > 26ms       | [x]  |
-| 4 | During autotune: loop_time_us not elevated | < 13000 µs (no performance regression) | [x]  |
+| 1 | system_status.loop_time_us: max            | < 12000 µs (12ms budget)               | [ ]  |
+| 2 | system_status.loop_time_us: average        | < 5000 µs (comfortable margin)         | [ ]  |
+| 3 | controller.dt_us                           | ~12000, no gaps > 24000                | [ ]  |
+| 4 | controller.att_age_us                      | < 2000 (fresh attitude every tick)     | [ ]  |
+| 5 | During autotune: loop_time_us not elevated | < 12000 µs (no performance regression) | [ ]  |
+
+---
+
+## Part 6: Safety and Recent Changes (props off)
+
+### 6.1 RC Failsafe (flight or RPC+RC)
+
+| # | Action                               | Expected                                                        | Pass |
+|---|--------------------------------------|-----------------------------------------------------------------|------|
+| 1 | Arm (gesture), throttle ~20 %        | Motors spin                                                     | [ ]  |
+| 2 | Switch the transmitter off           | Event 13 then 14 within ~300 ms; motors stop, elevons centre, LED rapid orange | [ ]  |
+| 3 | Transmitter back on                  | Event 15; stays disarmed                                        | [ ]  |
+| 4 | Throttle at zero                     | Stays disarmed (the gesture was cleared)                        | [ ]  |
+| 5 | Arm (gesture)                        | Arms normally                                                   | [ ]  |
+
+### 6.2 Host-Link Failsafe (pure RPC, `rpc-control,gnss`)
+
+| # | Action                                            | Expected                                                   | Pass |
+|---|---------------------------------------------------|------------------------------------------------------------|------|
+| 1 | TUI: `throttle 20`, then `arm`                    | Refused: event 18 (throttle not at zero)                   | [ ]  |
+| 2 | TUI: `throttle 0`, `arm`, `throttle 20`           | Arms, motors spin                                          | [ ]  |
+| 3 | Kill the TUI process (or unplug the probe)        | Within ~300 ms: disarm, motors stop                        | [ ]  |
+| 4 | Restart the TUI                                   | Disarmed, throttle reads 0 (not the old 20 %)              | [ ]  |
+| 5 | `direct throttle 0`, `direct arm`                 | `direct arm` stays running, pinging, motors armed          | [ ]  |
+| 6 | Ctrl-C the `direct` process                       | Sends throttle 0 + disarm, exits; aircraft disarmed        | [ ]  |
+
+### 6.3 No Flash Writes While Armed
+
+| # | Action (RPC mode, armed)        | Expected                                              | Pass |
+|---|---------------------------------|-------------------------------------------------------|------|
+| 1 | `savepid`                       | Refused, event 63                                     | [ ]  |
+| 2 | `mag cal start`                 | Refused, event 63                                     | [ ]  |
+| 3 | `level cal start`               | Refused (event 152)                                   | [ ]  |
+| 4 | Disarm, `savepid`               | Event 100; control loop keeps running (no watchdog reset) | [ ]  |
+
+### 6.4 Gyro Bias at Boot
+
+| # | Action                                   | Expected                                                   | Pass |
+|---|------------------------------------------|------------------------------------------------------------|------|
+| 1 | Power on, aircraft still                 | Event 46 within ~1 s; LED solid green (purple in RPC); TUI "Cal" | [ ]  |
+| 2 | Power on while moving it for > 10 s      | Event 47; LED keeps pulsing; TUI not "Cal"                 | [ ]  |
+
+### 6.5 Heading Hold (CH5, Stabilized)
+
+| # | Action                                   | Expected                                                     | Pass |
+|---|------------------------------------------|--------------------------------------------------------------|------|
+| 1 | Stabilized, CH5 on                       | Event 130 after ~0.5 s; LED pulses blue when armed           | [ ]  |
+| 2 | Yaw the aircraft by hand ~30°            | Elevons command a bank back toward the captured heading (≤ 25°) | [ ]  |
+| 3 | Switch CH6 to Manual                     | Event 131, direct control                                    | [ ]  |
+| 4 | Back to Stabilized with CH5 still on     | Event 130 again, new heading captured                        | [ ]  |
+
+### 6.6 I2C Fault
+
+| # | Action                                           | Expected                                               | Pass |
+|---|--------------------------------------------------|--------------------------------------------------------|------|
+| 1 | Disturb the I2C0 bus (short SDA briefly) on the bench | Event 48; mag and baro stop updating in the TUI     | [ ]  |
+| 2 | Watch attitude                                   | IMU keeps running at 1 kHz (6-DOF), no Core 1 restart  | [ ]  |
+
+### 6.7 Elevon Latency (scope)
+
+| # | Action                                          | Expected                                        | Pass |
+|---|-------------------------------------------------|-------------------------------------------------|------|
+| 1 | Scope PIN_12 and PIN_13, Manual mode, stick step | New pulse width within one 20 ms frame of the step (compare with `commands` in ULog) | [ ]  |
+| 2 | TUI log during engines-on bench run              | Event 45 rare (catch-up drains), no event 41    | [ ]  |
 
 ---
 
@@ -393,12 +479,13 @@ Stop testing and investigate if any of these occur:
 - Any axis in 1.1/1.2/1.3 is reversed — fix inversions before proceeding
 - Kill switch does not stop motors — do NOT fly
 - Manual mode escape does not immediately disable PID
-- PID oscillates uncontrollably in Stabilized mode (reduce `config.scale` in system.rs)
+- PID oscillates uncontrollably in Stabilized mode (reduce `PID_SCALE` in `elle-config/src/lib.rs`)
+- Any Part 6 failsafe test fails — do NOT fly
 - Mode switch has no effect (check CH6 wiring / thresholds)
 - SD card not mounting or ULog not auto-starting
 
 ## Post-Ground Sign-Off
 
-All tests in Part 1 through Part 4 passed: [ ]
+All tests in Part 1 through Part 6 passed: [ ]
 Reviewed by: _______________
 Date: _______________

@@ -1,9 +1,10 @@
 #![no_std]
 
-//! ULog flash logging implementation
+//! PX4 ULog encoder
 //!
-//! This crate implements the PX4 ULog file format for embedded flash storage.
-//! ULog is a self-describing binary format with little-endian byte ordering.
+//! Encodes the PX4 ULog format (self-describing, little-endian) into a byte
+//! buffer. Buffering and storage (the SD card) are handled by
+//! `elle_hardware::ULogLogger`; see the crate README for the message set.
 //!
 //! # Format Structure
 //! ```text

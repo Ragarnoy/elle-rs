@@ -30,7 +30,8 @@ use super::constants::{
 /// and enters the pause loop *on Core0*, deadlocking both cores (HardFault).
 ///
 /// Masking the interrupt on Core0's NVIC before flash ops prevents this race.
-/// Core1's handler is unaffected (NVIC is per-core).
+/// Core1's handler is unaffected (NVIC is per-core). Full analysis:
+/// `docs/embassy-rp-sio-irq-fifo-flash-bug.md`.
 fn mask_sio_fifo() {
     NVIC::mask(interrupt::SIO_IRQ_FIFO);
 }

@@ -1,5 +1,12 @@
 # Dart attitude PID
 
+> **Status (27 Sep 2026).** The "Next (fit)" gains below are now the firmware defaults
+> on **both** airframes (`elle-config/src/lib.rs`). Since this note: `GOVERNOR_FF_TABLE`
+> was re-swept on the 3-blade (26 Sep), the mixer-aware anti-windup, the 90°/s setpoint
+> limit and the 30 Hz gyro-rate low-pass are live, and ULog logs the P/I/D terms and
+> gains directly (`controller`, `pid_gains`), so the least-squares fit below is no longer
+> needed to see what ran. The rest is kept as the record of how the gains were derived.
+
 Engineering note from ULogs `LOG_0020`–`LOG_0035` (13 Sep 2026).
 All times are **seconds from the start of the log**, not the boot-clock
 timestamps stored in the file (those run ~4 s ahead; on absolute time the
@@ -17,7 +24,8 @@ on one airframe. Do **not** fold in `LOG_0014`–`LOG_0018`: at the same pack
 voltage those reach 87 k eRPM at DShot 1000–1200 and 141–146 k at full stick,
 against 72–79 k and ~103 k for everything from 0020 on — a ~30% different plant
 at the top end. `GOVERNOR_FF_TABLE` as committed describes the *broken* prop
-(see the governor note in `elle-config`).
+(see the governor note in `elle-config`). *Since re-swept on the 3-blade — see the
+status note above.*
 
 Flash PID is currently ignored (`IGNORE_PID_FLASH`). Do not `clearpid` — that
 path erases the whole 64 KB profile sector (mag cal lives there) and has
@@ -25,7 +33,7 @@ crashed the MCU.
 
 ---
 
-## Next hop
+## Next hop (done — now the defaults)
 
 The 0.35 / 0.20 step was an interpolation between “too soft” and “too hot”.
 Replayed on the holds, it does **not** fit: at the 0026 sag it produces only

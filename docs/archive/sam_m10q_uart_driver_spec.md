@@ -1,14 +1,17 @@
 # SAM-M10Q (u-blox M10) — UART Host Driver Spec & Requirements
 
-Target: a robust, idiomatic Rust driver for the **u-blox SAM-M10Q** GNSS antenna module over **UART**, focusing on transport and message framing (UBX + NMEA). [file:32]
+> **Archived.** Pre-implementation spec, now fully implemented and superseded by the
+> driver source in [`drivers/sam-m10q`](../../drivers/sam-m10q/). Kept for its datasheet notes.
 
-> This document is based on the SAM-M10Q datasheet (UBX-22013293 R05). It does **not** replace the u-blox M10 *Interface description*; for the full UBX protocol (message classes/IDs, configuration keys, etc.) consult the referenced u-blox document. [file:32]
+Target: a robust, idiomatic Rust driver for the **u-blox SAM-M10Q** GNSS antenna module over **UART**, focusing on transport and message framing (UBX + NMEA).
+
+> This document is based on the SAM-M10Q datasheet (UBX-22013293 R05). It does **not** replace the u-blox M10 *Interface description*; for the full UBX protocol (message classes/IDs, configuration keys, etc.) consult the referenced u-blox document.
 
 ## 1. Scope and assumptions
 
 ### In scope
 - UART transport layer.
-- Streaming decode of mixed **UBX** (binary) and **NMEA** (ASCII) on the same UART. [file:32]
+- Streaming decode of mixed **UBX** (binary) and **NMEA** (ASCII) on the same UART.
 - Minimal send helpers for UBX and NMEA.
 - Optional integration with a GPIO reset pin.
 
@@ -19,27 +22,27 @@ Target: a robust, idiomatic Rust driver for the **u-blox SAM-M10Q** GNSS antenna
 ## 2. Hardware / electrical constraints (driver-relevant)
 
 ### Pins and functions (for documentation)
-- UART pins: `TXD` (module output) and `RXD` (module input). [file:32]
-- Reset: `RESET_N` is active low and must be held low for at least **1 ms** to trigger a reset. [file:32]
-- `V_IO` defines digital IO levels. [file:32]
+- UART pins: `TXD` (module output) and `RXD` (module input).
+- Reset: `RESET_N` is active low and must be held low for at least **1 ms** to trigger a reset.
+- `V_IO` defines digital IO levels.
 
 ### Operating conditions (for system docs)
-- `VCC`: 2.7–3.6 V. [file:32]
-- `V_IO`: 2.7 V up to `VCC` (max 3.6 V). [file:32]
+- `VCC`: 2.7–3.6 V.
+- `V_IO`: 2.7 V up to `VCC` (max 3.6 V).
 
 ## 3. UART requirements
 
-- Baud rate range: **9600 to 921600 bit/s**. [file:32]
-- Hardware flow control: **not supported**. [file:32]
-- Default UART settings: **9600 baud, 8 data bits, no parity, 1 stop bit (8-N-1)**. [file:32]
+- Baud rate range: **9600 to 921600 bit/s**.
+- Hardware flow control: **not supported**.
+- Default UART settings: **9600 baud, 8 data bits, no parity, 1 stop bit (8-N-1)**.
 - Default protocol configuration on UART:
   - Input messages: **NMEA and UBX**.
-  - Output messages: NMEA **GGA, GLL, GSA, GSV, RMC, VTG, TXT**. [file:32]
+  - Output messages: NMEA **GGA, GLL, GSA, GSV, RMC, VTG, TXT**.
 
 ## 4. Supported protocols (UART payload)
 
-- UBX: input/output, binary, u-blox proprietary. [file:32]
-- NMEA: versions 2.1, 2.3, 4.0, 4.10 and 4.11 (default). [file:32]
+- UBX: input/output, binary, u-blox proprietary.
+- NMEA: versions 2.1, 2.3, 4.0, 4.10 and 4.11 (default).
 
 ## 5. Driver architecture (Rust)
 
@@ -88,11 +91,11 @@ Define `enum Error<E>`:
 - Ability to send raw bytes.
 
 **SHOULD**
-- Provide a convenience constructor for datasheet defaults (9600 8N1), while letting the application configure UART externally. [file:32]
+- Provide a convenience constructor for datasheet defaults (9600 8N1), while letting the application configure UART externally.
 
 ### 6.2 Reset handling
 **MUST**
-- Document reset timing: `RESET_N` low for >= 1 ms. [file:32]
+- Document reset timing: `RESET_N` low for >= 1 ms.
 
 **SHOULD**
 - Optional `reset(&mut self, reset_pin, delay)` method, where `reset_pin` is a user-provided GPIO and `delay` can wait >=1 ms.
@@ -107,8 +110,8 @@ Define `enum Error<E>`:
   - Mixed stream (NMEA then UBX then NMEA).
 
 **SHOULD**
-- Golden test vectors that reflect the datasheet default NMEA outputs (GGA/GLL/GSA/GSV/RMC/VTG/TXT). [file:32]
+- Golden test vectors that reflect the datasheet default NMEA outputs (GGA/GLL/GSA/GSV/RMC/VTG/TXT).
 
 ## 8. References
-- SAM-M10Q Data sheet, UBX-22013293 R05. [file:32]
-- u-blox M10 SPG 5.10 Interface description (UBX-21035062) for UBX protocol/message definitions. [file:32]
+- SAM-M10Q Data sheet, UBX-22013293 R05.
+- u-blox M10 SPG 5.10 Interface description (UBX-21035062) for UBX protocol/message definitions.

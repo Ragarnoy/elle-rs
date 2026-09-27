@@ -2,12 +2,17 @@
 
 ## Summary
 
+> **Status (2026-09):** worked around in Elle by `mask_sio_fifo()` / `unmask_sio_fifo()`
+> in `crates/elle-hardware/src/flash/manager.rs`. Elle does not use an
+> `InterruptExecutor`, so dropping the `executor-interrupt` feature from the workspace
+> `embassy-rp` dependency should remove the trigger altogether — not yet tried.
+
 When both `executor-thread` and `executor-interrupt` features are enabled on RP2350, flash write/erase operations cause a **deadlock followed by HardFault**. The `SIO_IRQ_FIFO` interrupt handler on Core0 consumes the `PAUSE_TOKEN` acknowledgment from the inter-core FIFO before `pause_core1()`'s polling loop can read it, causing Core0's handler to enter the pause/wait path meant for Core1.
 
 ## Environment
 
 - Chip: RP2350 (rp235xa)
-- embassy-rp rev: `5565326e`
+- embassy-rp rev: `5565326e` (found); still present at `340bf1de` (current, line numbers below)
 - Features: `executor-thread`, `executor-interrupt`, `time-driver`, `critical-section-impl`
 - Both cores active: Core0 runs the main application (thread executor), Core1 runs sensor tasks (thread executor via `spawn_core1` + `Executor::new()`)
 - Flash operations via `sequential-storage` crate, which calls embassy's `NorFlash` impl internally
@@ -25,7 +30,7 @@ Minimal reproduction: a single `flash.erase(0x210000, 0x211000).await` is enough
 On RP2350, there is a single `SIO_IRQ_FIFO` interrupt (unlike RP2040 which has per-core `SIO_IRQ_PROC0`/`SIO_IRQ_PROC1`). The handler in `multicore.rs` is compiled once and runs on whichever core's NVIC has the interrupt enabled:
 
 ```rust
-// multicore.rs:159-187
+// multicore.rs:160 (SIO_IRQ_FIFO handler)
 #[cfg(all(feature = "rt", feature = "_rp235x"))]
 #[interrupt]
 unsafe fn SIO_IRQ_FIFO() {
@@ -49,15 +54,15 @@ This handler is designed for **Core1**: it receives `PAUSE_TOKEN` from Core0, ac
 
 ### The enablement asymmetry
 
-- **Core1** always enables `SIO_IRQ_FIFO` in `core1_startup()` (line 219-222) — **unconditional**, needed for `pause_core1()` to work.
-- **Core0** enables `SIO_IRQ_FIFO` in `spawn_core1()` (line 323-326) — **only when `executor-interrupt` is enabled**, intended for the interrupt executor's `PEND_IRQ_TOKEN` cross-core waking.
+- **Core1** always enables `SIO_IRQ_FIFO` in `core1_startup()` (line 221) — **unconditional**, needed for `pause_core1()` to work.
+- **Core0** enables `SIO_IRQ_FIFO` in `spawn_core1()` (line 323-325) — **only when `executor-interrupt` is enabled**, intended for the interrupt executor's `PEND_IRQ_TOKEN` cross-core waking.
 
 ### The deadlock sequence
 
 When `executor-interrupt` is enabled and Core0 performs a flash operation:
 
-1. `in_ram()` calls `pause_core1()` (flash.rs:946)
-2. `pause_core1()` writes `PAUSE_TOKEN` to the FIFO and polls: `while fifo_read() != PAUSE_TOKEN {}` (multicore.rs:332-334)
+1. `in_ram()` calls `pause_core1()` (flash.rs:943)
+2. `pause_core1()` writes `PAUSE_TOKEN` to the FIFO and polls: `while fifo_read() != PAUSE_TOKEN {}` (multicore.rs:330-334)
 3. Core1's `SIO_IRQ_FIFO` handler fires, receives `PAUSE_TOKEN`, sends back `PAUSE_TOKEN` as acknowledgment
 4. **Core0's `SIO_IRQ_FIFO` handler fires** (because it's enabled via `executor-interrupt`), reads the acknowledgment `PAUSE_TOKEN` from the FIFO **before** the polling loop in step 2 can read it
 5. Core0's handler sees `PAUSE_TOKEN` and interprets it as a pause request — it disables interrupts on Core0, sends `PAUSE_TOKEN` (a second ack), and waits for `RESUME_TOKEN`
