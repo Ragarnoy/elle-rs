@@ -62,6 +62,8 @@ Implemented, but not yet confirmed on hardware:
 
 **Flash crash blackbox** — ULog now goes to SD only. A low-rate status + events stream in the legacy flash region would survive SD failure or ejection.
 
+**`clearpid` as a map-key delete** — it erases the whole 64 KB profile sector today, wiping mag and level cal too. Remove key 1 through `sequential-storage` instead.
+
 **Servo trim via RPC (~1.5 h)** — `SetTrimReq { left_us, right_us }`, persisted (new flash key), TUI `trim left 10`.
 
 **Expo curves (~1.5 h)** — per-axis expo on pitch/roll/yaw via compile-time LUTs.

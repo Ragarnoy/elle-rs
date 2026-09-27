@@ -127,8 +127,9 @@ pub(crate) async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
     }
 }
 
-/// Erase the PID profile map entry. No-op while `IGNORE_PID_FLASH` is set —
-/// the erase is a 64KB sector wipe (shared with mag cal) and has crashed the MCU.
+/// Erase the PID profile. This wipes the whole 64KB profile region, so the mag
+/// and level calibrations go with it. No-op while `IGNORE_PID_FLASH` is set —
+/// the sector wipe has crashed the MCU.
 #[cfg(feature = "rpc-control")]
 pub(crate) async fn erase_pid_from_flash() {
     use elle_config::profile::{FlashRequest, FlashResponse};

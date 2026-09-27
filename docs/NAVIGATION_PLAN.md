@@ -2,11 +2,17 @@
 
 ## Current State
 
-- Inner attitude PID (pitch/roll to elevons) at 77Hz
-- AHRS heading (magnetometer + gyro fusion via Madgwick)
-- GPS position/altitude at ~1Hz (SAM-M10Q)
-- Barometric altitude at ~2Hz (BMP390)
-- Differential thrust (2 engines)
+- Inner attitude PID (pitch/roll to elevons) at 83 Hz (12 ms)
+- AHRS heading (Madgwick, magnetometer + gyro), hard-iron and level calibration
+- GNSS: SAM-M10Q, UBX-NAV-PVT at 5 Hz over 115200 baud (position, velocity NED, ground
+  speed, course, accuracy estimates); NMEA GGA fallback
+- Barometric altitude at ~20 Hz (BMP390)
+- Modes: Manual, Stabilized, AltitudeHold (currently a 0°/0° **level** hold — no altitude loop yet)
+- **Heading hold** (CH5, Stabilized): P controller from heading error to bank setpoint,
+  `elle-control/src/heading.rs` — this is the "simpler alternative" heading controller
+  of Layer 2 and step 2 of the build order
+- Eagle: differential thrust (2 engines); dart: single engine
+- `crates/elle-nav` is a workspace member but has no firmware users yet
 - No airspeed sensor (pitot tube planned)
 
 ---
@@ -28,7 +34,7 @@ Pure math, no hardware. Can be written and unit-tested on the host.
 ## Layer 1 — State Estimation Upgrades
 
 - **Altitude estimator**: Complementary filter blending baro (smooth, drifty) with GPS altitude (noisy, absolute). Output: estimated altitude + climb rate.
-- **Position rate**: GPS is 1Hz. Between fixes, dead-reckon using AHRS heading + last known groundspeed for smoother position estimates. SAM-M10Q may support up to 10Hz if configured.
+- **Position rate**: GNSS runs at 5 Hz (NAV-PVT). Between fixes, dead-reckon using AHRS heading + last known groundspeed for smoother position estimates; the SAM-M10Q can go to 10 Hz if needed.
 - **Groundspeed/track**: GPS provides these directly. Apply smoothing filter to reject outlier fixes.
 - **Wind estimation** (nice-to-have): Assuming roughly constant airspeed, the difference between heading vector (mag) and GPS track vector gives wind. Helps predict stall risk in turns.
 
@@ -155,7 +161,7 @@ Non-negotiable for autonomous flight.
 | Step | Deliverable | What It Enables |
 |------|-------------|-----------------|
 | 1 | Nav math library (`elle-nav`) | Unit-testable coordinate/bearing/distance functions |
-| 2 | Heading controller | Fly a commanded heading (yaw -> roll setpoint) |
+| 2 | ~~Heading controller~~ (done: heading hold) | Fly a commanded heading (yaw -> roll setpoint) |
 | 3 | Altitude hold | Outer loop on baro altitude -> pitch setpoint |
 | 4 | Fly-to-point (Guided mode) | Combine heading + alt to reach a single GPS coordinate |
 | 5 | Waypoint sequencing | Chain multiple points together |

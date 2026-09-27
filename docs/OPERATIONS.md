@@ -169,8 +169,11 @@ or roll. Relay 5°, 6 cycles. Back to off aborts and restores the previous gains
 the middle position doesn't retune it; roll can be run again.
 
 **TUI (RPC mode):** `autotune pitch|roll [relay_deg] [cycles] [tl|zn|so]` (defaults 5°,
-6, `tl`) · `autotune abort` · `savepid` (save the current gains) · `clearpid` (erase
-saved gains, back to firmware defaults on next boot).
+6, `tl`) · `autotune abort` · `savepid` (save the current gains) · `clearpid` (back to
+firmware defaults on next boot).
+
+> **`clearpid` erases the whole 64 KB profile region**, so it also wipes the mag and
+> level calibrations — redo both afterwards. It is a no-op on the dart.
 
 **Outcome:**
 
