@@ -833,6 +833,7 @@ const fn log_code_text(code: u16) -> &'static str {
         15 => "RC: signal restored",
         16 => "Kill switch ENGAGED",
         17 => "Kill switch released",
+        18 => "Arm refused: throttle not at zero",
         // CRSF telemetry TX (20–29)
         20 => "CRSF TX: telemetry started",
         21 => "CRSF TX: first second OK",

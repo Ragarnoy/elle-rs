@@ -66,6 +66,8 @@ pub const EVT_RC_SIGNAL_LOST: u16 = 14;
 pub const EVT_RC_RESTORED: u16 = 15;
 pub const EVT_KILL_ENGAGED: u16 = 16;
 pub const EVT_KILL_RELEASED: u16 = 17;
+/// RPC arm refused because the commanded throttle was not zero.
+pub const EVT_ARM_REFUSED_THROTTLE: u16 = 18;
 
 // CRSF telemetry (20–29)
 pub(crate) const EVT_CRSF_TX_STARTED: u16 = 20;

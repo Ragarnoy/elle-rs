@@ -171,6 +171,15 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 }
                 #[cfg(feature = "rpc-rc")]
                 RpcCommand::SetMode(_) => {} // Ignored in RC mode
+                // An explicit arm must not start with thrust already commanded.
+                #[cfg(not(feature = "rpc-rc"))]
+                RpcCommand::Arm if rpc_throttle > 0.0 => {
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_ARM_REFUSED_THROTTLE,
+                        "RPC: arm refused, throttle not at zero"
+                    );
+                }
                 RpcCommand::Arm => {
                     fc.arm();
                     elle_hardware::elle_event!(

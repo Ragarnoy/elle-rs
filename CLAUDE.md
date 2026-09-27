@@ -241,6 +241,8 @@ Where it lives: `elle_app::boot::run` (IMU wait, supervisor barrier, PID / mag-c
 6. ULog recording auto-starts once the SD card is ready (`SD_READY`), runs until power-off
 7. Auto-saves PID gains to flash on autotune completion
 
+**Arming** (`elle-control/src/arming.rs`): RC auto-arm needs a deliberate gesture — throttle above `ARM_THROTTLE_HIGH_RAW` (~30 %), then back to zero thrust (where the throttle curve outputs 0, raw ≤ `THROTTLE_DEADZONE`). Needed at boot and again after every disarm, kill switch or failsafe. It used to arm below 1100 µs on the 1000–1600 µs scale (raw 341, ~16.7 % stick), which the throttle curve already turns into ~5,400 RPM on the eagle. RPC `Arm` is refused (event 18) while the RPC throttle is non-zero.
+
 RC aux channel map (`elle-config/src/lib.rs`): CH5 = heading hold (2-pos), CH6 = flight mode (3-pos: Manual/Stabilized/AltitudeHold), CH7 = autotune (3-pos: off/pitch/roll), CH8 = kill switch (2-pos, high = disarm).
 
 **RPC mode** (`rpc-control` feature):
