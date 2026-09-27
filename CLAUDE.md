@@ -192,8 +192,8 @@ Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` 
 
 ### Flash persistence (`elle-hardware/src/flash/`)
 
-- Profile region 0x200000–0x20FFFF: `sequential-storage` MapStorage, `MAP_KEY_SLOTS = 4`. Keys: **1** PID gains (32 B), **2** mag cal offsets (12 B), **3** level cal quaternion (16 B). A new key needs `MAP_KEY_SLOTS` raised.
-- **Erasing the PID profile (`clearpid`) erases the whole profile region**, taking keys 2 and 3 with it — it bypasses `sequential-storage` rather than removing key 1.
+- Profile region 0x200000–0x20FFFF: `sequential-storage` MapStorage, `MAP_KEY_SLOTS = 4`. Entries are `elle_config::profile::ProfileEntry` — **1** PID gains (32 B), **2** mag cal offsets (12 B), **3** level cal quaternion (16 B); never renumber. A new entry needs `MAP_KEY_SLOTS` raised.
+- **Policy: one setting per key, all access through `sequential-storage`.** Clearing a setting (`clearpid`, `mag cal clear`, `level cal clear`) is `FlashRequest::ClearProfileEntry`, which calls `remove_item` on that key only (the RP flash driver is `MultiwriteNorFlash`); boot then falls back to firmware defaults. Never erase the profile region directly. The loaders still treat zero mag offsets and an identity mount as "not calibrated", which is what older firmware stored on clear.
 - ULog region 0x210000–0xFFFFFF: legacy queue, still served by extract/erase RPC.
 - **No flash write while armed.** A write pauses Core 1 and blocks Core 0 (DShot included). Autotune saves are deferred until disarm; calibration results are only collected when disarmed; RPC commands with `writes_flash()` are refused while armed (event 63).
 - `IGNORE_PID_FLASH` (true on the dart only): PID gains are never loaded or saved; firmware defaults always apply.

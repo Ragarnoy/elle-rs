@@ -117,7 +117,8 @@ The LED slow-blinks blue while the IMU initialises.
 ## Calibration
 
 Both calibrations are stored in flash, reload at every boot, and are **refused while
-armed**. Collection runs only while disarmed.
+armed**. Collection runs only while disarmed. Each is stored separately: clearing one
+(`… clear`) removes only that one, and `clearpid` touches neither.
 
 ### Magnetometer (hard iron)
 
@@ -170,10 +171,8 @@ the middle position doesn't retune it; roll can be run again.
 
 **TUI (RPC mode):** `autotune pitch|roll [relay_deg] [cycles] [tl|zn|so]` (defaults 5°,
 6, `tl`) · `autotune abort` · `savepid` (save the current gains) · `clearpid` (back to
-firmware defaults on next boot).
-
-> **`clearpid` erases the whole 64 KB profile region**, so it also wipes the mag and
-> level calibrations — redo both afterwards. It is a no-op on the dart.
+firmware defaults on next boot; calibrations are kept). `clearpid` does nothing on the
+dart.
 
 **Outcome:**
 

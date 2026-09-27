@@ -7,7 +7,7 @@ use crate::logging::log_flight_data;
 #[cfg(feature = "rpc-rc")]
 use crate::support::RC_DEBUG_LOG_DIVISOR;
 use crate::support::{
-    AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, erase_pid_from_flash,
+    AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, clear_pid_from_flash,
     resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
     validate_attitude,
 };
@@ -336,7 +336,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                         let gains = fc.get_pid_gains();
                         save_pid_to_flash(gains.to_bytes(), "savepid").await;
                     } else if axis == AUTOTUNE_AXIS_ERASE_PID {
-                        erase_pid_from_flash().await;
+                        clear_pid_from_flash().await;
                     } else {
                         use elle_control::autotune::TuningRule;
                         let at_axis = match axis {
@@ -409,8 +409,9 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                     );
                 }
                 RpcCommand::ClearMagCal => {
-                    // Save zeros to flash
-                    FLASH_REQUEST_SIGNAL.signal(FlashRequest::SaveMagCal { data: [0; 12] });
+                    FLASH_REQUEST_SIGNAL.signal(FlashRequest::ClearProfileEntry {
+                        entry: elle_config::profile::ProfileEntry::MagCal,
+                    });
                     let save_timeout = Timer::after(FLASH_WRITE_TIMEOUT);
                     let _ =
                         embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), save_timeout)

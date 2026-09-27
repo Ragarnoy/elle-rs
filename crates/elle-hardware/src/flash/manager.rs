@@ -1,7 +1,9 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::NVIC;
 use defmt::*;
-use elle_config::profile::{FlashRequest, FlashResponse, ULOG_CHUNK_SIZE, ULOG_WRITE_CHUNK_SIZE};
+use elle_config::profile::{
+    FlashRequest, FlashResponse, ProfileEntry, ULOG_CHUNK_SIZE, ULOG_WRITE_CHUNK_SIZE,
+};
 use embassy_rp::flash::Flash;
 use embassy_rp::interrupt;
 use embassy_rp::mode::Async;
@@ -81,8 +83,7 @@ type FlashDevice<'a> = Flash<'a, Async, { elle_config::profile::FLASH_SIZE }>;
 const PROFILE_PAGE_COUNT: usize = ((PROFILE_FLASH_END - PROFILE_FLASH_START) as usize) / ERASE_SIZE;
 /// Number of erase pages in the ULog queue region (~14MB / 4KB = 3584)
 const ULOG_PAGE_COUNT: usize = ULOG_FLASH_SIZE / ERASE_SIZE;
-/// Key slots in the map cache — keys in use: 1 (PID profile), 2 (mag cal), 3 (level
-/// cal), plus one spare
+/// Key slots in the map cache — one per `ProfileEntry` (keys 1–3), plus one spare
 const MAP_KEY_SLOTS: usize = 4;
 
 /// Persistent cache for the profile map region: full page states/pointers plus key
@@ -119,8 +120,8 @@ pub struct SequentialFlashManager<'a> {
     /// so we move flash into QueueStorage and back via destroy().
     flash: Option<FlashDevice<'a>>,
     /// Persistent map cache, moved into each MapStorage and recovered via destroy().
-    /// Must be reset whenever the profile region is mutated outside sequential-storage
-    /// (see `erase_pid_profile_internal`).
+    /// Must be reset if the profile region is ever mutated outside sequential-storage
+    /// (nothing does today; compare `queue_cache` and `erase_ulog_internal`).
     map_cache: Option<MapCache>,
     /// Persistent queue cache, same protocol as `map_cache` (see `erase_ulog_internal`).
     queue_cache: Option<QueueCache>,
@@ -210,9 +211,8 @@ impl<'a> SequentialFlashManager<'a> {
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
 
-                FlashRequest::ErasePidProfile => {
-                    info!("Flash: erasing PID profile region");
-                    let response = self.erase_pid_profile_internal().await;
+                FlashRequest::ClearProfileEntry { entry } => {
+                    let response = self.clear_profile_entry_internal(entry).await;
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
 
@@ -383,6 +383,32 @@ impl<'a> SequentialFlashManager<'a> {
         result.is_ok()
     }
 
+    /// Remove a key from flash map storage. Other keys are untouched; a missing
+    /// key is not an error. Needs `MultiwriteNorFlash`, which the RP flash
+    /// driver implements. Slow in general (it scans every item), but this map
+    /// holds three small entries.
+    async fn remove_from_map(&mut self, key: u8) -> bool {
+        let flash = self.take_flash();
+        let cache = self.map_cache.take().expect("map cache already taken");
+        let config = MapConfig::new(PROFILE_FLASH_START..PROFILE_FLASH_END);
+        let mut map: MapStorage<u8, _, _> = MapStorage::new(flash, config, cache);
+
+        let mut data_buffer = [0u8; 128];
+        mask_sio_fifo();
+        let result = map.remove_item(&mut data_buffer, &key).await;
+        unsafe { unmask_sio_fifo() };
+
+        if let Err(e) = &result {
+            warn!("Flash: key {} remove failed: {:?}", key, Debug2Format(e));
+        }
+
+        let (flash, cache) = map.destroy();
+        self.put_flash(flash);
+        self.map_cache = Some(cache);
+
+        result.is_ok()
+    }
+
     /// Load a value from flash map storage by key, returning up to `N` bytes.
     async fn load_from_map<const N: usize>(&mut self, key: u8) -> Option<[u8; N]> {
         let flash = self.take_flash();
@@ -426,7 +452,10 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Save PID profile to flash map storage
     async fn save_pid_profile_internal(&mut self, data: &[u8; 32]) -> FlashResponse {
-        if self.save_to_map(1, data.as_slice()).await {
+        if self
+            .save_to_map(ProfileEntry::Pid.key(), data.as_slice())
+            .await
+        {
             info!("Flash: PID profile saved");
             FlashResponse::PidProfileSaved
         } else {
@@ -435,30 +464,19 @@ impl<'a> SequentialFlashManager<'a> {
         }
     }
 
-    /// Erase the PID profile flash region (64KB)
-    async fn erase_pid_profile_internal(&mut self) -> FlashResponse {
-        // Direct erase bypasses sequential-storage, so the persistent cache
-        // is stale afterwards (even on partial/failed erase) — reset it.
-        self.map_cache = Some(fresh_map_cache());
-        let flash = self.flash.as_mut().expect("flash not available");
-        mask_sio_fifo();
-        match flash.erase(PROFILE_FLASH_START, PROFILE_FLASH_END).await {
-            Ok(_) => {
-                unsafe { unmask_sio_fifo() };
-                info!("Flash: PID profile region erased");
-                FlashResponse::PidProfileErased
-            }
-            Err(e) => {
-                unsafe { unmask_sio_fifo() };
-                warn!("Flash: PID profile erase failed: {:?}", Debug2Format(&e));
-                FlashResponse::PidProfileEraseFailed
-            }
+    /// Remove one profile entry (PID gains, mag cal or level cal)
+    async fn clear_profile_entry_internal(&mut self, entry: ProfileEntry) -> FlashResponse {
+        if self.remove_from_map(entry.key()).await {
+            info!("Flash: {:?} cleared", Debug2Format(&entry));
+            FlashResponse::ProfileEntryCleared
+        } else {
+            FlashResponse::ProfileEntryClearFailed
         }
     }
 
     /// Load PID profile from flash map storage
     async fn load_pid_profile_internal(&mut self) -> FlashResponse {
-        match self.load_from_map::<32>(1).await {
+        match self.load_from_map::<32>(ProfileEntry::Pid.key()).await {
             Some(data) => {
                 info!("Flash: PID profile loaded");
                 FlashResponse::PidProfileLoaded { data }
@@ -472,7 +490,10 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Save mag calibration offsets to flash map storage (key=2, 12 bytes)
     async fn save_mag_cal_internal(&mut self, data: &[u8; 12]) -> FlashResponse {
-        if self.save_to_map(2, data.as_slice()).await {
+        if self
+            .save_to_map(ProfileEntry::MagCal.key(), data.as_slice())
+            .await
+        {
             info!("Flash: Mag cal saved");
             FlashResponse::MagCalSaved
         } else {
@@ -483,7 +504,7 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Load mag calibration offsets from flash map storage (key=2, 12 bytes)
     async fn load_mag_cal_internal(&mut self) -> FlashResponse {
-        match self.load_from_map::<12>(2).await {
+        match self.load_from_map::<12>(ProfileEntry::MagCal.key()).await {
             Some(data) => {
                 info!("Flash: Mag cal loaded");
                 FlashResponse::MagCalLoaded { data }
@@ -497,7 +518,10 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Save the level-cal mount quaternion to flash map storage (key=3, 16 bytes)
     async fn save_level_cal_internal(&mut self, data: &[u8; 16]) -> FlashResponse {
-        if self.save_to_map(3, data.as_slice()).await {
+        if self
+            .save_to_map(ProfileEntry::LevelCal.key(), data.as_slice())
+            .await
+        {
             info!("Flash: Level cal saved");
             FlashResponse::LevelCalSaved
         } else {
@@ -508,7 +532,7 @@ impl<'a> SequentialFlashManager<'a> {
 
     /// Load the level-cal mount quaternion from flash map storage (key=3, 16 bytes)
     async fn load_level_cal_internal(&mut self) -> FlashResponse {
-        match self.load_from_map::<16>(3).await {
+        match self.load_from_map::<16>(ProfileEntry::LevelCal.key()).await {
             Some(data) => {
                 info!("Flash: Level cal loaded");
                 FlashResponse::LevelCalLoaded { data }

@@ -10,9 +10,9 @@
 
 use core::cell::Cell;
 
-use elle_config::profile::{FlashRequest, FlashResponse};
+use elle_config::profile::{FlashRequest, FlashResponse, ProfileEntry};
 use elle_control::level_cal::{
-    LevelCalFail, identity_bytes, mount_from_bytes, mount_to_bytes, mount_to_display_deg,
+    LevelCalFail, mount_from_bytes, mount_to_bytes, mount_to_display_deg,
 };
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::Mutex;
@@ -138,12 +138,12 @@ pub fn start() {
     );
 }
 
-/// Drop the calibration: Core1 runs uncorrected and flash stores the identity.
+/// Drop the calibration: Core1 runs uncorrected and the flash entry is removed.
 pub async fn clear() {
     LEVEL_CALIBRATION_SIGNAL.signal(UnitQuaternion::identity());
     set_mount(None);
-    let data = identity_bytes();
-    let _ = flash_round_trip(FlashRequest::SaveLevelCal { data }, SAVE_TIMEOUT).await;
+    let entry = ProfileEntry::LevelCal;
+    let _ = flash_round_trip(FlashRequest::ClearProfileEntry { entry }, SAVE_TIMEOUT).await;
     crate::elle_event!(
         info,
         event::EVT_LEVEL_CAL_CLEARED,

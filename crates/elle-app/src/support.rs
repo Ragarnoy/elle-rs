@@ -127,27 +127,29 @@ pub(crate) async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
     }
 }
 
-/// Erase the PID profile. This wipes the whole 64KB profile region, so the mag
-/// and level calibrations go with it. No-op while `IGNORE_PID_FLASH` is set —
-/// the sector wipe has crashed the MCU.
+/// Remove the saved PID gains; the next boot uses firmware defaults. Only the
+/// PID entry goes — mag and level cal stay. No-op while `IGNORE_PID_FLASH` is
+/// set, since PID flash is then neither loaded nor saved.
 #[cfg(feature = "rpc-control")]
-pub(crate) async fn erase_pid_from_flash() {
-    use elle_config::profile::{FlashRequest, FlashResponse};
+pub(crate) async fn clear_pid_from_flash() {
+    use elle_config::profile::{FlashRequest, FlashResponse, ProfileEntry};
     use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 
     if elle_config::IGNORE_PID_FLASH {
-        info!("PID flash ignored — skip erase");
+        info!("PID flash ignored — skip clear");
         return;
     }
 
-    FLASH_REQUEST_SIGNAL.signal(FlashRequest::ErasePidProfile);
+    FLASH_REQUEST_SIGNAL.signal(FlashRequest::ClearProfileEntry {
+        entry: ProfileEntry::Pid,
+    });
     let timeout = Timer::after(FLASH_WRITE_TIMEOUT);
     match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), timeout).await {
-        embassy_futures::select::Either::First(FlashResponse::PidProfileErased) => {
-            info!("PID profile erased from flash");
+        embassy_futures::select::Either::First(FlashResponse::ProfileEntryCleared) => {
+            info!("PID profile cleared from flash");
         }
         _ => {
-            warn!("PID profile erase failed or timed out");
+            warn!("PID profile clear failed or timed out");
         }
     }
 }
