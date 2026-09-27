@@ -176,9 +176,15 @@ dart.
 
 **Outcome:**
 
+- Zero crossings (and relay flips) use a ±0.5° hysteresis band, so attitude noise near
+  level neither chatters the relay nor counts as oscillation. Noise alone ends in the
+  no-oscillation timeout (event 93).
 - The result is validated before use: oscillation amplitude ≥ max(0.5°, 20 % of the
-  relay), period 0.1–5 s, and gains inside the sane range. A failed check restores the
-  previous gains and fires event 94 (*rejected*).
+  relay), period 0.1–5 s, gains inside the sane range, and the tuned axis's Kp and Kd
+  within 3× (up or down) of the gains flown before the run. Ki is not ratio-limited —
+  the flown Ki is deliberately far below what the tuning rules give. A failed check
+  restores the previous gains and fires event 94 (*rejected*). To move gains further
+  than 3×, set them by hand (`pid`) or tune again from the new result.
 - Safety abort, event 93, gains restored and setpoint override cleared:
   - timeout (60 s, or 10 s after settling with no oscillation);
   - pitch or roll beyond ±20° (or non-finite) at any point, settling included;
