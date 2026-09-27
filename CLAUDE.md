@@ -363,6 +363,14 @@ RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never
 
 - **Eagle/dart deduplication (`elle-app`)**: the two `main.rs` files (~2,200 lines each, ~88 % identical) and their identical `rpc_app` / `rpc_handlers` / `flight_state` collapsed into the `elle-app` crate; each `main.rs` is now ~270 lines of hardware setup, and `diff` between them shows only engine setup and the PIO2 IRQ binding. Divergences resolved to the superset: dart gained `rpc-rc`; the eagle gained the `IGNORE_PID_FLASH` gating (const is `false` there); `SetPidGains` carries a `PidConfig`. Loops take `epoch_ms` from `main()` rather than calling `compile_time::unix!()` (a library would bake in its own, possibly stale, build time). Async-fn gotcha found on the way: passing `FlightController` and `ULogLogger` down by value duplicated their storage in each enclosing future (+7.3 kB .bss); the controller is built in `boot::run` and lent to the loops, and each loop owns its logger. Post-refactor binaries: .bss +72..88 B, .text +1..2.5 kB vs. before.
 
+- **Visibility / const passes and the bugs they surfaced**: `pub` items cut ~36 % across the firmware crates so rustc's dead-code lint can see unused code (~100 dead items removed); ~33 `const fn`, 26 new compile-time checks, ULog `FORMAT_MSG` bytes derived from `FORMAT` at compile time. Bugs found and fixed:
+  - dart yaw cut its only engine's thrust up to 20 % (the yaw LUT ignored `YAW_TO_DIFF_GAIN`);
+  - legacy flash ULog counters were never incremented (now counted once when the flash manager goes idle after boot, decremented with saturation);
+  - IMU/flash timings were never recorded (`elle_hardware::timing`, behind `performance-monitoring`, is read by the summary and `GetPerformance`);
+  - double-tap event 120 was never emitted;
+  - an unknown autotune axis started roll tuning (axis values are now `elle_rpc_icd::AUTOTUNE_AXIS_*`, unknown ones NAK'd with `AUTOTUNE_ERR_BAD_AXIS`);
+  - `ARM_DURATION_MS` was unused; `GetVersion` was hard-coded.
+
 ### Known TODOs in Firmware
 None currently tracked — see `TODO.md` for the feature backlog (waypoint navigation, pitot tube).
 
