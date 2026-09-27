@@ -88,7 +88,7 @@ struct SatsInView {
 const GNSS_KINDS: usize = 6;
 
 /// Stable index for a constellation, so counts can be kept side by side.
-fn gnss_index(kind: GnssType) -> usize {
+const fn gnss_index(kind: GnssType) -> usize {
     match kind {
         GnssType::Gps => 0,
         GnssType::Galileo => 1,
@@ -229,14 +229,14 @@ struct CfgGroup {
 }
 
 impl CfgGroup {
-    fn one(item: CfgVal) -> Self {
+    const fn one(item: CfgVal) -> Self {
         Self {
             items: [item, item],
             len: 1,
         }
     }
 
-    fn pair(a: CfgVal, b: CfgVal) -> Self {
+    const fn pair(a: CfgVal, b: CfgVal) -> Self {
         Self {
             items: [a, b],
             len: 2,

@@ -195,7 +195,7 @@ struct DshotEngines<'a> {
 }
 
 impl<'a> DshotEngines<'a> {
-    fn new(left: BidirDshotPio<'a, PIO1, 0>, right: BidirDshotPio<'a, PIO2, 0>) -> Self {
+    const fn new(left: BidirDshotPio<'a, PIO1, 0>, right: BidirDshotPio<'a, PIO2, 0>) -> Self {
         Self { left, right }
     }
 

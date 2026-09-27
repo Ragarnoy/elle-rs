@@ -263,7 +263,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
 
     let mut ticker = Ticker::every(Duration::from_millis(20)); // 50 Hz
     let mut slot: u8 = 0;
-    let num_slots: u8 = 5; // attitude, flight_mode, gps, baro, battery
+    const NUM_SLOTS: u8 = 5; // attitude, flight_mode, gps, baro, battery
 
     let mut frame_count: u32 = 0;
     let mut error_count: u32 = 0;
@@ -363,7 +363,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
             }
         }
 
-        slot = (slot + 1) % num_slots;
+        slot = (slot + 1) % NUM_SLOTS;
         frame_count += 1;
 
         if frame_count == 50 {

@@ -50,9 +50,15 @@ pub(crate) struct ULogWriteRequest {
     pub(crate) len: usize,
 }
 
+/// Slots in [`ULOG_WRITE_CHANNEL`].
+pub(crate) const ULOG_WRITE_CHANNEL_DEPTH: usize = 8;
+
 /// Buffered channel for fire-and-forget ULog writes (8 slots × 512B = 4KB)
-pub(crate) static ULOG_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, ULogWriteRequest, 8> =
-    Channel::new();
+pub(crate) static ULOG_WRITE_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    ULogWriteRequest,
+    ULOG_WRITE_CHANNEL_DEPTH,
+> = Channel::new();
 
 /// Inter-core communication signals for flash operations (non-ULog-write ops)
 pub static FLASH_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, FlashRequest> = Signal::new();
@@ -124,12 +130,12 @@ impl<'a> SequentialFlashManager<'a> {
     }
 
     /// Take the flash device out. Panics if already taken.
-    const fn take_flash(&mut self) -> FlashDevice<'a> {
+    fn take_flash(&mut self) -> FlashDevice<'a> {
         self.flash.take().expect("flash already taken")
     }
 
     /// Put the flash device back.
-    const fn put_flash(&mut self, flash: FlashDevice<'a>) {
+    fn put_flash(&mut self, flash: FlashDevice<'a>) {
         self.flash = Some(flash);
     }
 
@@ -435,6 +441,7 @@ impl<'a> SequentialFlashManager<'a> {
         let mut addr = ULOG_FLASH_START;
         let end = super::constants::ULOG_FLASH_END_EXCL;
         const ERASE_CHUNK: u32 = 64 * 1024; // 64KB per iteration
+        const _: () = core::assert!((ERASE_CHUNK as usize).is_multiple_of(ERASE_SIZE));
 
         while addr < end {
             let chunk_end = (addr + ERASE_CHUNK).min(end);

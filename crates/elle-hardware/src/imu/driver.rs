@@ -114,6 +114,15 @@ fn fuse_sample(
     })
 }
 
+/// Consecutive FIFO read errors before the attitude is published as stale and
+/// the loop backs off for a second.
+const IMU_ERROR_THRESHOLD: u32 = 10;
+
+/// Magnetometer samples collected per hard-iron calibration (~30 s at 10 Hz).
+const MAG_CAL_SAMPLES: u32 = 300;
+// The live count is published through an `AtomicU16`.
+const _: () = core::assert!(MAG_CAL_SAMPLES <= u16::MAX as u32);
+
 type I2cBus<'a> = i2c::I2c<'a, Blocking>;
 type SharedI2c<'a> = I2cRefCellDevice<'a, I2cBus<'a>>;
 type SpiDev<'a> = ExclusiveDevice<spi::Spi<'a, Blocking>, Output<'a>, embassy_time::Delay>;
@@ -131,7 +140,6 @@ pub struct Imu<'a> {
     last_mag: nalgebra::Vector3<f32>,
     has_mag: bool,
     mag_ok: bool,
-    error_threshold: u32,
     mag_offset: nalgebra::Vector3<f32>,
     /// Level calibration: rotation from the IMU frame to the airframe frame,
     /// applied to every sensor vector before the AHRS. Identity = uncorrected.
@@ -178,7 +186,6 @@ impl<'a> Imu<'a> {
             last_mag: nalgebra::Vector3::zeros(),
             has_mag: false,
             mag_ok: false,
-            error_threshold: 10,
             mag_offset: nalgebra::Vector3::zeros(),
             mount: nalgebra::UnitQuaternion::identity(),
             level_cal: None,
@@ -440,7 +447,7 @@ impl<'a> Imu<'a> {
                                 Debug2Format(&e)
                             );
                         }
-                        if consecutive_errors >= self.error_threshold {
+                        if consecutive_errors >= IMU_ERROR_THRESHOLD {
                             let mut failed = self.last_attitude;
                             failed.timestamp = Instant::from_ticks(0);
                             ATTITUDE.publish(failed);
@@ -590,8 +597,8 @@ impl<'a> Imu<'a> {
                                 core::sync::atomic::Ordering::Relaxed,
                             );
 
-                            // After 300 samples (~30s at 10Hz): compute and validate
-                            if self.mag_cal_samples >= 300 {
+                            // After MAG_CAL_SAMPLES (~30s at 10Hz): compute and validate
+                            if self.mag_cal_samples >= MAG_CAL_SAMPLES {
                                 const MIN_RANGE: f32 = 5000.0;
                                 let ranges_ok = (0..3).all(|i| {
                                     (self.mag_cal_max[i] - self.mag_cal_min[i]) >= MIN_RANGE

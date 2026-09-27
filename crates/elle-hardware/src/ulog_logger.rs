@@ -9,7 +9,16 @@ use embassy_time::Instant;
 use heapless::Vec;
 
 use crate::flash::ULOG_WRITE_CHANNEL;
-use crate::flash::{request_write_ulog, request_write_ulog_blocking};
+use crate::flash::{ULOG_WRITE_CHANNEL_DEPTH, request_write_ulog, request_write_ulog_blocking};
+
+/// Buffer fill level above which `buffer_writer_output` flushes.
+const FLUSH_THRESHOLD: usize = ULOG_LOGGER_BUFFER_SIZE * 3 / 4;
+
+// `flush` sends the whole buffer or nothing, so a full buffer must fit in the
+// write channel at once, or every flush of it would be dropped.
+const _: () = core::assert!(
+    ULOG_LOGGER_BUFFER_SIZE.div_ceil(ULOG_WRITE_CHUNK_SIZE) <= ULOG_WRITE_CHANNEL_DEPTH
+);
 
 /// ULog logger state
 pub struct ULogLogger {
@@ -222,7 +231,7 @@ impl ULogLogger {
             .extend_from_slice(self.writer.buffer())
             .map_err(|_| ULogError::BufferFull)?;
 
-        if self.buffer.len() > (ULOG_LOGGER_BUFFER_SIZE * 3 / 4) {
+        if self.buffer.len() > FLUSH_THRESHOLD {
             self.flush()?;
         }
 
@@ -604,7 +613,7 @@ impl ULogLogger {
 
     /// Check if the logger has been initialized
     #[must_use]
-    pub fn is_initialized(&self) -> bool {
+    pub const fn is_initialized(&self) -> bool {
         self.initialized
     }
 }
