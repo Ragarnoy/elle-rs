@@ -210,12 +210,32 @@ fn handle_ping(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) {
     // Echo - nothing to do for () -> ()
 }
 
-fn handle_get_version(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> VersionResp {
-    VersionResp {
-        major: 0,
-        minor: 1,
-        patch: 0,
+/// Parse a decimal version component at compile time. Fails the build if it
+/// is empty, not a number, or over 255 (VersionResp carries u8s).
+const fn version_component(s: &str) -> u8 {
+    let bytes = s.as_bytes();
+    assert!(!bytes.is_empty(), "empty version component");
+    let mut value: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i];
+        assert!(digit.is_ascii_digit(), "non-numeric version component");
+        value = value * 10 + (digit - b'0') as u32;
+        assert!(value <= u8::MAX as u32, "version component over 255");
+        i += 1;
     }
+    value as u8
+}
+
+/// The workspace version (every crate shares it, so this is the firmware's).
+const VERSION: VersionResp = VersionResp {
+    major: version_component(env!("CARGO_PKG_VERSION_MAJOR")),
+    minor: version_component(env!("CARGO_PKG_VERSION_MINOR")),
+    patch: version_component(env!("CARGO_PKG_VERSION_PATCH")),
+};
+
+fn handle_get_version(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> VersionResp {
+    VERSION
 }
 
 fn handle_get_magnetometer(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> MagnetometerResp {
