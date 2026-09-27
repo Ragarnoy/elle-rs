@@ -3,8 +3,7 @@
 //!   cargo test -p elle-control --target x86_64-unknown-linux-gnu --test level_cal
 
 use elle_control::level_cal::{
-    LevelCalFail, compute_mount, identity_bytes, mount_from_bytes, mount_to_bytes,
-    mount_to_display_deg,
+    LevelCalFail, compute_mount, mount_from_bytes, mount_to_bytes, mount_to_display_deg,
 };
 use nalgebra::{UnitQuaternion, Vector3};
 
@@ -104,7 +103,11 @@ fn bytes_round_trip() {
 
 #[test]
 fn cleared_and_corrupt_storage_load_as_none() {
-    assert_eq!(mount_from_bytes(&identity_bytes()), None);
+    // Identity is what "clear" stored before it removed the entry; old flash may hold it.
+    assert_eq!(
+        mount_from_bytes(&mount_to_bytes(&UnitQuaternion::identity())),
+        None
+    );
     assert_eq!(mount_from_bytes(&[0u8; 16]), None); // not unit
     assert_eq!(mount_from_bytes(&[0xFF; 16]), None); // NaN
     let tilted = UnitQuaternion::from_euler_angles(0.0, 30f32.to_radians(), 0.0);

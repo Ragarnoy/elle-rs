@@ -722,7 +722,7 @@ async fn cmd_clearpid(client: &HostClient<WireError>) -> CommandResult {
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<StartAutotuneEndpoint>(&req)).await,
         "PID clear",
-        "PID profile erased from flash".into(),
+        "PID gains cleared from flash (calibrations kept)".into(),
     )
 }
 

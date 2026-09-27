@@ -13,18 +13,52 @@ pub const ULOG_WRITE_CHUNK_SIZE: usize = 512;
 /// a 2KB buffer flushes roughly every 11 iterations (~7 flushes/sec).
 pub const ULOG_LOGGER_BUFFER_SIZE: usize = 2048;
 
+/// An entry in the flash profile map (sequential-storage `MapStorage`). Each
+/// setting lives under its own key; clearing one removes only that key, and the
+/// boot loader falls back to firmware defaults when a key is absent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileEntry {
+    /// PID gains, 32 bytes
+    Pid,
+    /// Magnetometer hard-iron offsets, 12 bytes
+    MagCal,
+    /// Level-cal mount quaternion, 16 bytes
+    LevelCal,
+}
+
+impl ProfileEntry {
+    /// Map key. Stored data is addressed by these numbers — never renumber.
+    #[must_use]
+    pub const fn key(self) -> u8 {
+        match self {
+            Self::Pid => 1,
+            Self::MagCal => 2,
+            Self::LevelCal => 3,
+        }
+    }
+}
+
 // Flash operation requests and responses
 #[derive(Debug)]
 pub enum FlashRequest {
     PeekULog,
     PopULog,
     EraseULog,
-    SavePidProfile { data: [u8; 32] },
+    SavePidProfile {
+        data: [u8; 32],
+    },
     LoadPidProfile,
-    ErasePidProfile,
-    SaveMagCal { data: [u8; 12] },
+    /// Remove one entry from the profile map, leaving the others intact
+    ClearProfileEntry {
+        entry: ProfileEntry,
+    },
+    SaveMagCal {
+        data: [u8; 12],
+    },
     LoadMagCal,
-    SaveLevelCal { data: [u8; 16] },
+    SaveLevelCal {
+        data: [u8; 16],
+    },
     LoadLevelCal,
 }
 
@@ -41,8 +75,8 @@ pub enum FlashResponse {
     ULogEraseFailed,
     PidProfileSaved,
     PidProfileSaveFailed,
-    PidProfileErased,
-    PidProfileEraseFailed,
+    ProfileEntryCleared,
+    ProfileEntryClearFailed,
     PidProfileLoaded {
         data: [u8; 32],
     },

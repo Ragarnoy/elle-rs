@@ -69,15 +69,9 @@ pub fn mount_to_bytes(mount: &UnitQuaternion<f32>) -> [u8; 16] {
     bytemuck::cast([q.w, q.i, q.j, q.k])
 }
 
-/// Bytes stored by "clear": the identity rotation, i.e. no correction.
-#[must_use]
-pub fn identity_bytes() -> [u8; 16] {
-    mount_to_bytes(&UnitQuaternion::identity())
-}
-
 /// Parse a stored mount. `None` for anything that must not be applied: non-finite
 /// or non-unit values (corrupt flash), an offset beyond `LEVEL_CAL_MAX_TILT_DEG`,
-/// or the identity that "clear" stores.
+/// or the identity (what "clear" stored before it removed the entry instead).
 #[must_use]
 pub fn mount_from_bytes(data: &[u8; 16]) -> Option<UnitQuaternion<f32>> {
     let [w, i, j, k]: [f32; 4] = bytemuck::pod_read_unaligned(data);
