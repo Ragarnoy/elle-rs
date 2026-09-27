@@ -46,18 +46,16 @@ pub enum RcLinkState {
 
 /// Core health monitoring structure
 #[derive(Debug, Clone, Copy, defmt::Format)]
-pub struct CoreHealth {
-    pub last_heartbeat: Instant,
-    pub heartbeat_count: u32,
-    pub is_healthy: bool,
-    pub last_logged_healthy: bool,
+struct CoreHealth {
+    last_heartbeat: Instant,
+    is_healthy: bool,
+    last_logged_healthy: bool,
 }
 
 impl Default for CoreHealth {
     fn default() -> Self {
         Self {
             last_heartbeat: Instant::now(),
-            heartbeat_count: 0,
             is_healthy: true,
             last_logged_healthy: true,
         }
@@ -65,13 +63,12 @@ impl Default for CoreHealth {
 }
 
 impl CoreHealth {
-    pub fn update_heartbeat(&mut self) {
+    fn update_heartbeat(&mut self) {
         self.last_heartbeat = Instant::now();
-        self.heartbeat_count = self.heartbeat_count.wrapping_add(1);
         self.is_healthy = true;
     }
 
-    pub fn check_health(&mut self, timeout: Duration) -> bool {
+    fn check_health(&mut self, timeout: Duration) -> bool {
         if self.last_heartbeat.elapsed() > timeout {
             self.is_healthy = false;
             false
@@ -228,7 +225,7 @@ impl<'a> FlightController<'a> {
     }
 
     /// Feed the watchdog timer to prevent system reset
-    pub fn kick_watchdog(&mut self) {
+    fn kick_watchdog(&mut self) {
         if let Some(ref mut wd) = self.watchdog {
             wd.feed(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
             self.last_watchdog_kick = Instant::now();
@@ -236,7 +233,7 @@ impl<'a> FlightController<'a> {
     }
 
     /// Check and update Core 1 health based on heartbeat signal
-    pub fn check_core1_health(&mut self) -> bool {
+    fn check_core1_health(&mut self) -> bool {
         if !self.supervisor_enabled {
             return true;
         }
@@ -294,16 +291,6 @@ impl<'a> FlightController<'a> {
         }
 
         core1_healthy
-    }
-
-    /// Get supervisor status for monitoring
-    #[must_use]
-    pub const fn supervisor_status(&self) -> (bool, bool, u32) {
-        (
-            self.supervisor_enabled,
-            self.core1_health.is_healthy,
-            self.core1_health.heartbeat_count,
-        )
     }
 
     /// Record RC packet arrival for link-age tracking / failsafe.
@@ -818,10 +805,10 @@ impl<'a> FlightController<'a> {
 #[cfg(feature = "performance-monitoring")]
 #[derive(Debug, Clone, Copy, defmt::Format)]
 pub struct TaskTiming {
-    pub min_us: u32,
+    min_us: u32,
     pub max_us: u32,
     pub avg_us: u32,
-    pub samples: u32,
+    samples: u32,
 }
 
 #[cfg(feature = "performance-monitoring")]
@@ -833,7 +820,7 @@ impl Default for TaskTiming {
 
 #[cfg(feature = "performance-monitoring")]
 impl TaskTiming {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             min_us: u32::MAX,
             max_us: 0,
@@ -842,7 +829,7 @@ impl TaskTiming {
         }
     }
 
-    pub fn update(&mut self, execution_time_us: u32) {
+    fn update(&mut self, execution_time_us: u32) {
         self.min_us = self.min_us.min(execution_time_us);
         self.max_us = self.max_us.max(execution_time_us);
 
@@ -858,12 +845,12 @@ impl TaskTiming {
         self.samples = self.samples.saturating_add(1);
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         *self = Self::new();
     }
 
     /// Get CPU utilization as percentage for a given target frequency
-    pub fn cpu_utilization_percent(&self, target_frequency_hz: u32) -> f32 {
+    const fn cpu_utilization_percent(&self, target_frequency_hz: u32) -> f32 {
         let target_period_us = 1_000_000 / target_frequency_hz;
         (self.avg_us as f32 / target_period_us as f32) * 100.0
     }
@@ -875,9 +862,9 @@ impl TaskTiming {
 pub struct PerformanceMonitor {
     pub control_loop: TaskTiming,
     pub imu_update: TaskTiming,
-    pub led_update: TaskTiming,
-    pub flash_operation: TaskTiming,
-    pub ulog_logging: TaskTiming,
+    led_update: TaskTiming,
+    flash_operation: TaskTiming,
+    ulog_logging: TaskTiming,
 }
 
 #[cfg(feature = "performance-monitoring")]
@@ -889,7 +876,7 @@ impl Default for PerformanceMonitor {
 
 #[cfg(feature = "performance-monitoring")]
 impl PerformanceMonitor {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             control_loop: TaskTiming::new(),
             imu_update: TaskTiming::new(),
@@ -899,7 +886,7 @@ impl PerformanceMonitor {
         }
     }
 
-    pub fn log_performance_summary(&self) {
+    fn log_performance_summary(&self) {
         info!("=== DUAL-CORE PERFORMANCE SUMMARY ===");
 
         // Core 0 tasks (Control, LED, Flash)
@@ -1013,7 +1000,7 @@ pub fn update_control_loop_timing(elapsed_us: u32) {
 }
 
 #[cfg(feature = "performance-monitoring")]
-pub fn update_imu_timing(elapsed_us: u32) {
+fn update_imu_timing(elapsed_us: u32) {
     unsafe {
         (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
             .imu_update
@@ -1031,7 +1018,7 @@ pub fn update_led_timing(elapsed_us: u32) {
 }
 
 #[cfg(feature = "performance-monitoring")]
-pub fn update_flash_timing(elapsed_us: u32) {
+fn update_flash_timing(elapsed_us: u32) {
     unsafe {
         (*core::ptr::addr_of_mut!(PERFORMANCE_MONITOR))
             .flash_operation
@@ -1055,18 +1042,6 @@ pub fn log_performance_summary() {
     }
 }
 
-#[cfg(feature = "performance-monitoring")]
-pub fn debug_timing_test() {
-    let timer = TimingMeasurement::start();
-    // Do a tiny bit of work to test timing precision
-    let mut x = 0u32;
-    for _ in 0..100 {
-        x = x.wrapping_add(1);
-    }
-    let elapsed = timer.elapsed_us();
-    info!("DEBUG: Timing test took {}μs (x={})", elapsed, x);
-}
-
 // No-op stubs when performance monitoring is disabled
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
@@ -1074,7 +1049,7 @@ pub const fn update_control_loop_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub const fn update_imu_timing(_elapsed_us: u32) {}
+const fn update_imu_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
@@ -1082,7 +1057,7 @@ pub const fn update_led_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]
-pub const fn update_flash_timing(_elapsed_us: u32) {}
+const fn update_flash_timing(_elapsed_us: u32) {}
 
 #[cfg(not(feature = "performance-monitoring"))]
 #[inline(always)]

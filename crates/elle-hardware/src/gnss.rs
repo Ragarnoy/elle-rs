@@ -88,7 +88,7 @@ struct SatsInView {
 const GNSS_KINDS: usize = 6;
 
 /// Stable index for a constellation, so counts can be kept side by side.
-fn gnss_index(kind: GnssType) -> usize {
+const fn gnss_index(kind: GnssType) -> usize {
     match kind {
         GnssType::Gps => 0,
         GnssType::Galileo => 1,
@@ -115,7 +115,7 @@ pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssData> = Signal::new(
 pub const DEFAULT_BAUD: u32 = 9600;
 /// Baud rate we switch to. 9600 is 960 B/s; the default sentence set already
 /// uses most of that at 1 Hz, leaving no room for a faster solution.
-pub const TARGET_BAUD: u32 = 115_200;
+pub(crate) const TARGET_BAUD: u32 = 115_200;
 /// Solution interval at 115200 baud — 200 ms is 5 Hz.
 const NAV_RATE_MS: u16 = 200;
 /// Solution interval to use if we are stuck at 9600 baud.
@@ -229,14 +229,14 @@ struct CfgGroup {
 }
 
 impl CfgGroup {
-    fn one(item: CfgVal) -> Self {
+    const fn one(item: CfgVal) -> Self {
         Self {
             items: [item, item],
             len: 1,
         }
     }
 
-    fn pair(a: CfgVal, b: CfgVal) -> Self {
+    const fn pair(a: CfgVal, b: CfgVal) -> Self {
         Self {
             items: [a, b],
             len: 2,

@@ -1,10 +1,10 @@
 //! ICM-42686-P IMU integration with AHRS sensor fusion
 
 use defmt::*;
-pub use elle_error::ElleResult;
-pub use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use elle_error::ElleResult;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-pub use embassy_time::Instant;
+use embassy_time::Instant;
 
 use crate::signal_cache::SignalCache;
 
@@ -25,7 +25,7 @@ pub struct AttitudeData {
 
 impl AttitudeData {
     #[must_use]
-    pub const fn zero() -> Self {
+    pub(crate) const fn zero() -> Self {
         Self {
             pitch: 0.0,
             roll: 0.0,
@@ -43,7 +43,7 @@ pub struct ImuStatus {
     pub initialized: bool,
     pub calibrated: bool,
     pub error_count: u32,
-    pub last_update: Instant,
+    pub(crate) last_update: Instant,
 }
 
 impl Default for ImuStatus {
@@ -54,7 +54,7 @@ impl Default for ImuStatus {
 
 impl ImuStatus {
     #[must_use]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             initialized: false,
             calibrated: false,

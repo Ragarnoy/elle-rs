@@ -8,7 +8,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 
 /// CRSF baud rate (420 kbaud).
-pub const CRSF_BAUD: u32 = 420_000;
+pub(crate) const CRSF_BAUD: u32 = 420_000;
 
 /// Return a UART config suitable for CRSF (420 kbaud, 8N1).
 #[must_use]
@@ -39,12 +39,20 @@ impl<'d> CrsfReceiver<'d> {
     }
 }
 
+/// CRSF 11-bit channel minimum (center is 992).
+const CRSF_CHANNEL_MIN: u16 = 172;
+/// CRSF 11-bit channel maximum.
+const CRSF_CHANNEL_MAX: u16 = 1811;
+/// Top of the 0–2047 range the RC LUTs expect.
+const RC_VALUE_MAX: u32 = 2047;
+const CRSF_CHANNEL_RANGE: u32 = (CRSF_CHANNEL_MAX - CRSF_CHANNEL_MIN) as u32;
+
 /// Scale CRSF channel value (172–1811) to 0–2047 range for LUT compatibility.
 /// CRSF 11-bit channels: min=172, center=992, max=1811 (range=1639).
 #[inline]
 fn crsf_to_rc(value: u16) -> u16 {
-    let v = value.clamp(172, 1811) as u32;
-    ((v - 172) * 2047 / 1639) as u16
+    let v = u32::from(value.clamp(CRSF_CHANNEL_MIN, CRSF_CHANNEL_MAX));
+    ((v - u32::from(CRSF_CHANNEL_MIN)) * RC_VALUE_MAX / CRSF_CHANNEL_RANGE) as u16
 }
 
 /// Dedicated CRSF receiver task that runs independently from the control loop.

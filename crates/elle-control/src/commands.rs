@@ -1,6 +1,6 @@
 use defmt::Format;
 use elle_config::*;
-use embassy_time::{Duration, Instant};
+use embassy_time::Instant;
 
 // Import LUT functions and channel indices for decoding
 use elle_config::{
@@ -71,13 +71,7 @@ impl PilotCommands {
 
     #[must_use]
     #[inline]
-    pub fn is_fresh(&self, max_age: Duration) -> bool {
-        self.timestamp().elapsed() < max_age
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn attitude_mode(&self) -> AttitudeMode {
+    pub const fn attitude_mode(&self) -> AttitudeMode {
         match self {
             Self::Raw(r) => decode_attitude_mode(r.channels[ATTITUDE_ENABLE_CH]),
             Self::Normalized(n) => n.attitude_mode,
@@ -101,7 +95,7 @@ impl NormalizedCommands {
 
 // Helper functions
 #[must_use]
-pub const fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
+const fn decode_attitude_mode(ch5_value: u16) -> AttitudeMode {
     if ch5_value < MANUAL_MODE_THRESHOLD {
         AttitudeMode::Manual
     } else if ch5_value < STABILIZED_MODE_THRESHOLD {

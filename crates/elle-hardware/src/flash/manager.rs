@@ -45,14 +45,20 @@ unsafe fn unmask_sio_fifo() {
 
 /// Fire-and-forget ULog write request (buffered channel, non-blocking send).
 /// Uses smaller chunk size (512B) to avoid 4KB stack allocations in the write path.
-pub struct ULogWriteRequest {
-    pub data: [u8; ULOG_WRITE_CHUNK_SIZE],
-    pub len: usize,
+pub(crate) struct ULogWriteRequest {
+    pub(crate) data: [u8; ULOG_WRITE_CHUNK_SIZE],
+    pub(crate) len: usize,
 }
 
+/// Slots in [`ULOG_WRITE_CHANNEL`].
+pub(crate) const ULOG_WRITE_CHANNEL_DEPTH: usize = 8;
+
 /// Buffered channel for fire-and-forget ULog writes (8 slots × 512B = 4KB)
-pub static ULOG_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, ULogWriteRequest, 8> =
-    Channel::new();
+pub(crate) static ULOG_WRITE_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    ULogWriteRequest,
+    ULOG_WRITE_CHANNEL_DEPTH,
+> = Channel::new();
 
 /// Inter-core communication signals for flash operations (non-ULog-write ops)
 pub static FLASH_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, FlashRequest> = Signal::new();
@@ -124,12 +130,12 @@ impl<'a> SequentialFlashManager<'a> {
     }
 
     /// Take the flash device out. Panics if already taken.
-    const fn take_flash(&mut self) -> FlashDevice<'a> {
+    fn take_flash(&mut self) -> FlashDevice<'a> {
         self.flash.take().expect("flash already taken")
     }
 
     /// Put the flash device back.
-    const fn put_flash(&mut self, flash: FlashDevice<'a>) {
+    fn put_flash(&mut self, flash: FlashDevice<'a>) {
         self.flash = Some(flash);
     }
 
@@ -435,6 +441,7 @@ impl<'a> SequentialFlashManager<'a> {
         let mut addr = ULOG_FLASH_START;
         let end = super::constants::ULOG_FLASH_END_EXCL;
         const ERASE_CHUNK: u32 = 64 * 1024; // 64KB per iteration
+        const _: () = core::assert!((ERASE_CHUNK as usize).is_multiple_of(ERASE_SIZE));
 
         while addr < end {
             let chunk_end = (addr + ERASE_CHUNK).min(end);
@@ -467,7 +474,7 @@ impl<'a> SequentialFlashManager<'a> {
 
 /// Fire-and-forget ULog write — returns immediately, data is queued for async flash write.
 /// Returns `false` if the channel is full (data dropped) or input is invalid.
-pub fn request_write_ulog(data: &[u8]) -> bool {
+pub(crate) fn request_write_ulog(data: &[u8]) -> bool {
     if data.is_empty() || data.len() > ULOG_WRITE_CHUNK_SIZE {
         warn!("Flash: invalid ULog data size: {}", data.len());
         return false;
@@ -491,7 +498,7 @@ pub fn request_write_ulog(data: &[u8]) -> bool {
 /// Blocking ULog write — waits until data is queued for flash write.
 /// Splits large payloads (e.g. ULog header) into ULOG_WRITE_CHUNK_SIZE chunks.
 /// Used for ULog header writes during initialization.
-pub async fn request_write_ulog_blocking(data: &[u8]) -> bool {
+pub(crate) async fn request_write_ulog_blocking(data: &[u8]) -> bool {
     if data.is_empty() {
         warn!("Flash: empty ULog data");
         return false;

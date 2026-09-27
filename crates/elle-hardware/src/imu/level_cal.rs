@@ -25,14 +25,14 @@ use crate::event;
 use crate::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 
 /// Core0 → Core1: mount rotation to apply (loaded at boot, or identity on clear).
-pub static LEVEL_CALIBRATION_SIGNAL: Signal<CriticalSectionRawMutex, UnitQuaternion<f32>> =
+pub(crate) static LEVEL_CALIBRATION_SIGNAL: Signal<CriticalSectionRawMutex, UnitQuaternion<f32>> =
     Signal::new();
 
 /// Core0 → Core1: start collecting a new calibration.
-pub static LEVEL_CAL_START_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub(crate) static LEVEL_CAL_START_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Core1 → Core0: the finished calibration, already applied on Core1 when `Ok`.
-pub static LEVEL_CAL_RESULT_SIGNAL: Signal<
+pub(crate) static LEVEL_CAL_RESULT_SIGNAL: Signal<
     CriticalSectionRawMutex,
     Result<UnitQuaternion<f32>, LevelCalFail>,
 > = Signal::new();
@@ -49,7 +49,7 @@ pub struct LevelCalStatus {
 }
 
 /// Current status, read by the RPC `GetLevelCal` handler.
-pub static STATUS: Mutex<CriticalSectionRawMutex, Cell<LevelCalStatus>> =
+pub(crate) static STATUS: Mutex<CriticalSectionRawMutex, Cell<LevelCalStatus>> =
     Mutex::new(Cell::new(LevelCalStatus {
         roll_deg: 0.0,
         pitch_deg: 0.0,

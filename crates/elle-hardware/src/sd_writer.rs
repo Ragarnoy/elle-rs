@@ -28,7 +28,7 @@ use sdspi::SdSpi;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use crate::flash::manager::ULOG_WRITE_CHANNEL;
+use crate::flash::ULOG_WRITE_CHANNEL;
 
 /// Commands sent to the SD writer task
 #[derive(Clone, Copy, defmt::Format)]

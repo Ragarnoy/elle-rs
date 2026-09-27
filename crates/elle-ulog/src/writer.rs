@@ -2,7 +2,9 @@
 //!
 //! Provides a buffered writer for ULog messages to minimize flash writes.
 
-use crate::format::{FLAG_BITS_MSG, InfoMessage, MessageHeader, SubscriptionMessage, ULogHeader};
+use crate::format::{
+    FLAG_BITS_MSG, InfoMessage, MESSAGE_HEADER_SIZE, MessageHeader, SubscriptionMessage, ULogHeader,
+};
 use crate::messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
     EngineMessage, GnssMessage, GyroRawMessage, LogEventMessage, MagnetometerMessage, MessageType,
@@ -12,7 +14,10 @@ use embassy_time::Instant;
 use heapless::Vec;
 
 /// Maximum buffer size for ULog data (4KB)
-pub const BUFFER_SIZE: usize = 4096;
+pub(crate) const BUFFER_SIZE: usize = 4096;
+
+/// Largest data ('D') message payload: 2-byte msg_id plus the serialized message
+const MAX_DATA_PAYLOAD: usize = 128;
 
 /// Write errors
 #[derive(Debug, Clone, Copy, defmt::Format)]
@@ -21,8 +26,6 @@ pub enum WriteError {
     BufferFull,
     /// Invalid message
     InvalidMessage,
-    /// Flash write failed
-    FlashError,
 }
 
 /// ULog writer with buffering
@@ -40,7 +43,7 @@ pub struct ULogWriter {
 impl ULogWriter {
     /// Create a new ULog writer
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             buffer: Vec::new(),
             next_msg_id: 0,
@@ -151,10 +154,10 @@ impl ULogWriter {
     fn write_data_payload(&mut self, msg_id: u16, data_bytes: &[u8]) -> Result<(), WriteError> {
         // 2 bytes for msg_id + data_bytes; use a stack buffer sized for the largest message
         let total = 2 + data_bytes.len();
-        if total > 128 {
+        if total > MAX_DATA_PAYLOAD {
             return Err(WriteError::InvalidMessage);
         }
-        let mut payload = [0u8; 128];
+        let mut payload = [0u8; MAX_DATA_PAYLOAD];
         payload[0..2].copy_from_slice(&msg_id.to_le_bytes());
         payload[2..total].copy_from_slice(data_bytes);
         self.write_message(MessageType::Data, &payload[..total])
@@ -282,7 +285,7 @@ impl ULogWriter {
         let header_bytes = header.to_bytes();
 
         // Check if we have space
-        if self.buffer.len() + 3 + payload.len() > BUFFER_SIZE {
+        if self.buffer.len() + MESSAGE_HEADER_SIZE + payload.len() > BUFFER_SIZE {
             return Err(WriteError::BufferFull);
         }
 
@@ -300,18 +303,6 @@ impl ULogWriter {
     #[must_use]
     pub fn buffer(&self) -> &[u8] {
         &self.buffer
-    }
-
-    /// Get the buffer size
-    #[must_use]
-    pub fn buffer_len(&self) -> usize {
-        self.buffer.len()
-    }
-
-    /// Check if buffer needs flushing (>75% full)
-    #[must_use]
-    pub fn needs_flush(&self) -> bool {
-        self.buffer.len() > (BUFFER_SIZE * 3 / 4)
     }
 
     /// Clear the buffer after successful flush

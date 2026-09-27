@@ -4,26 +4,19 @@ use embassy_rp::Peri;
 use embassy_rp::dma;
 use embassy_rp::pio::{Common, StateMachine};
 use embassy_rp::pio_programs::ws2812::{Grb, PioWs2812, PioWs2812Program};
-use embassy_time::{Duration, Timer};
 use smart_leds::RGB8;
 
 /// LED colors for different states
 pub mod colors {
     use smart_leds::RGB8;
 
-    pub const OFF: RGB8 = RGB8 { r: 0, g: 0, b: 0 };
-    pub const RED: RGB8 = RGB8 { r: 50, g: 0, b: 0 };
+    pub(crate) const OFF: RGB8 = RGB8 { r: 0, g: 0, b: 0 };
     pub const GREEN: RGB8 = RGB8 { r: 0, g: 50, b: 0 };
     pub const BLUE: RGB8 = RGB8 { r: 0, g: 0, b: 50 };
     pub const YELLOW: RGB8 = RGB8 { r: 50, g: 50, b: 0 };
     pub const ORANGE: RGB8 = RGB8 { r: 50, g: 20, b: 0 };
     pub const PURPLE: RGB8 = RGB8 { r: 50, g: 0, b: 50 };
     pub const CYAN: RGB8 = RGB8 { r: 0, g: 50, b: 50 };
-    pub const WHITE: RGB8 = RGB8 {
-        r: 30,
-        g: 30,
-        b: 30,
-    };
 }
 
 /// LED patterns for different system states
@@ -70,11 +63,6 @@ where
             pattern_counter: 0,
             brightness: 100, // Default brightness percentage
         }
-    }
-
-    /// Set the LED brightness (0-100%)
-    pub fn set_brightness(&mut self, brightness: u8) {
-        self.brightness = brightness.min(100);
     }
 
     /// Apply brightness scaling to a color
@@ -162,40 +150,6 @@ where
         self.ws2812.write_slice(&[color; 1]).await;
 
         self.pattern_counter = self.pattern_counter.wrapping_add(1);
-    }
-
-    /// Run the LED update loop
-    pub async fn run(&mut self) {
-        loop {
-            self.update().await;
-            Timer::after(Duration::from_millis(10)).await;
-        }
-    }
-
-    /// Quick helper to show a color briefly
-    pub async fn flash(&mut self, color: RGB8, duration_ms: u64) {
-        let scaled = self.scale_brightness(color);
-        self.ws2812.write_slice(&[scaled; 1]).await;
-        Timer::after(Duration::from_millis(duration_ms)).await;
-        self.ws2812.write_slice(&[colors::OFF; 1]).await;
-    }
-
-    /// Show calibration progress with color gradient
-    pub async fn show_calibration_progress(&mut self, sys: u8, gyro: u8, accel: u8, mag: u8) {
-        // Calculate overall progress (0-12 total)
-        let total = sys + gyro + accel + mag;
-
-        let color = if total < 4 {
-            colors::RED // Poor calibration
-        } else if total < 8 {
-            colors::ORANGE // Getting there
-        } else if total < 11 {
-            colors::YELLOW // Almost ready
-        } else {
-            colors::GREEN // Fully calibrated
-        };
-
-        self.set_pattern(LedPattern::Pulse(color)).await;
     }
 }
 

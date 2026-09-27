@@ -13,6 +13,10 @@ use elle_system::{FlightController, SUP_FC_READY, SUP_START_FC};
 use embassy_rp::watchdog::Watchdog;
 use embassy_time::{Duration, Timer};
 
+/// How long boot waits for each saved profile (PID gains, mag cal) to load
+/// from flash before carrying on with defaults.
+const FLASH_LOAD_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Bring the flight controller up and run the control loop forever.
 ///
 /// Call at the end of `main()`, after every task is spawned. `epoch_ms` is the
@@ -77,7 +81,7 @@ pub async fn run(pwm: PwmOutputs<'static>, watchdog: Watchdog<'static>, epoch_ms
 
         info!("Core0: Loading PID profile from flash");
         FLASH_REQUEST_SIGNAL.signal(FlashRequest::LoadPidProfile);
-        let load_timeout = Timer::after(Duration::from_secs(2));
+        let load_timeout = Timer::after(FLASH_LOAD_TIMEOUT);
         match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), load_timeout).await {
             embassy_futures::select::Either::First(FlashResponse::PidProfileLoaded { data }) => {
                 if let Some(gains) = SavedGains::from_bytes(&data) {
@@ -126,7 +130,7 @@ pub async fn run(pwm: PwmOutputs<'static>, watchdog: Watchdog<'static>, epoch_ms
 
         info!("Core0: Loading mag calibration from flash");
         FLASH_REQUEST_SIGNAL.signal(FlashRequest::LoadMagCal);
-        let load_timeout = Timer::after(Duration::from_secs(2));
+        let load_timeout = Timer::after(FLASH_LOAD_TIMEOUT);
         match embassy_futures::select::select(FLASH_RESPONSE_SIGNAL.wait(), load_timeout).await {
             embassy_futures::select::Either::First(FlashResponse::MagCalLoaded { data }) => {
                 let [ox, oy, oz]: [f32; 3] = bytemuck::pod_read_unaligned(&data);
@@ -148,8 +152,10 @@ pub async fn run(pwm: PwmOutputs<'static>, watchdog: Watchdog<'static>, epoch_ms
                     #[cfg(feature = "rpc-control")]
                     {
                         crate::rpc_app::MAG_CAL_OFFSET.lock(|c| c.set((ox, oy, oz)));
-                        crate::rpc_app::MAG_CAL_STATUS
-                            .store(2, core::sync::atomic::Ordering::Relaxed);
+                        crate::rpc_app::MAG_CAL_STATUS.store(
+                            crate::rpc_app::MAG_CAL_CALIBRATED,
+                            core::sync::atomic::Ordering::Relaxed,
+                        );
                     }
                     elle_hardware::elle_event!(
                         info,

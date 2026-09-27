@@ -4,8 +4,6 @@ use elle_config::{
     GOVERNOR_KP,
 };
 
-/// Per-engine PI controller for RPM governing.
-/// Converts target eRPM to DShot output using feedforward + PI correction.
 /// Consecutive telemetry readings the spike filter may reject before it gives up and
 /// accepts one. Without this the filter can latch permanently on a stale value: every
 /// new reading looks like a spike relative to the stale one, so the stale one is never
@@ -13,6 +11,11 @@ use elle_config::{
 /// glitch, short enough that a real step change is adopted almost immediately.
 const MAX_CONSECUTIVE_SPIKE_REJECTS: u8 = 20;
 
+/// `GOVERNOR_DSHOT_MAX` as the float the PI arithmetic clamps against.
+const DSHOT_MAX_F32: f32 = GOVERNOR_DSHOT_MAX as f32;
+
+/// Per-engine PI controller for RPM governing.
+/// Converts target eRPM to DShot output using feedforward + PI correction.
 #[derive(Default)]
 pub struct RpmGovernor {
     integrator: f32,
@@ -68,7 +71,7 @@ impl RpmGovernor {
 
         // Inside deadband: no correction, freeze integrator
         if error.abs() < GOVERNOR_DEADBAND_ERPM {
-            return (ff + self.integrator).clamp(0.0, GOVERNOR_DSHOT_MAX as f32) as u16;
+            return (ff + self.integrator).clamp(0.0, DSHOT_MAX_F32) as u16;
         }
 
         let p_term = GOVERNOR_KP * error;
@@ -79,14 +82,14 @@ impl RpmGovernor {
         // a region the feedforward table refuses to enter (declining RPM for a
         // given throttle increase), so windup there is runaway, not correction.
         let candidate = ff + p_term + self.integrator;
-        if (candidate > 0.0 && candidate < GOVERNOR_DSHOT_MAX as f32)
+        if (candidate > 0.0 && candidate < DSHOT_MAX_F32)
             || (candidate <= 0.0 && error > 0.0)
-            || (candidate >= GOVERNOR_DSHOT_MAX as f32 && error < 0.0)
+            || (candidate >= DSHOT_MAX_F32 && error < 0.0)
         {
             self.integrator += GOVERNOR_KI * error * GOVERNOR_DT;
         }
 
-        (ff + p_term + self.integrator).clamp(0.0, GOVERNOR_DSHOT_MAX as f32) as u16
+        (ff + p_term + self.integrator).clamp(0.0, DSHOT_MAX_F32) as u16
     }
 
     /// Reset integrator (e.g. on disarm or mode switch)

@@ -5,7 +5,7 @@
 use elle_control::mixing::elevons::{ControlInputs, MixSaturation, mix_elevons};
 use elle_control::pid::{AttitudeController, PidConfig};
 
-fn inputs(pitch: f32, roll: f32) -> ControlInputs {
+const fn inputs(pitch: f32, roll: f32) -> ControlInputs {
     ControlInputs {
         pitch,
         roll,
@@ -57,7 +57,7 @@ fn left_roll_saturates_through_the_left_elevon() {
 }
 
 /// Integral-only controller: output == scale * ki * integral.
-fn integrator() -> AttitudeController {
+const fn integrator() -> AttitudeController {
     let mut c = AttitudeController::with_config(PidConfig {
         kp_pitch: 0.0,
         ki_pitch: 1.0,

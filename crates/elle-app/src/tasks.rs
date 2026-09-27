@@ -101,7 +101,7 @@ pub async fn flash_manager_task(flash: Flash<'static, Async, { FLASH_SIZE }>) {
 
 #[cfg(feature = "rpc-control")]
 #[embassy_executor::task]
-pub async fn log_publisher_task(sender: postcard_rpc::server::Sender<elle_system::rpc::RttTx>) {
+async fn log_publisher_task(sender: postcard_rpc::server::Sender<elle_system::rpc::RttTx>) {
     use postcard_rpc::header::VarSeq;
 
     let mut seq: u16 = 0;

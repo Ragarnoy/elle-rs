@@ -72,7 +72,7 @@ pub struct EngineUnitReading {
 
 impl EngineUnitReading {
     #[must_use]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             erpm: 0,
             throttle: 0,
@@ -105,7 +105,7 @@ pub struct EngineReading {
 
 impl EngineReading {
     #[must_use]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             left: EngineUnitReading::new(),
             right: EngineUnitReading::new(),
@@ -195,7 +195,7 @@ struct DshotEngines<'a> {
 }
 
 impl<'a> DshotEngines<'a> {
-    fn new(left: BidirDshotPio<'a, PIO1, 0>, right: BidirDshotPio<'a, PIO2, 0>) -> Self {
+    const fn new(left: BidirDshotPio<'a, PIO1, 0>, right: BidirDshotPio<'a, PIO2, 0>) -> Self {
         Self { left, right }
     }
 

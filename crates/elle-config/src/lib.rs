@@ -5,7 +5,6 @@ pub mod profile;
 
 // Re-export LUT functions for easy access
 pub use lut::*;
-pub use profile::*;
 
 // Platform identification (used for ULog ver_hw, etc.)
 #[cfg(not(feature = "platform-dart"))]
@@ -19,25 +18,20 @@ pub const REFRESH_INTERVAL_US: u32 = 20_000; // 50Hz servo refresh rate
 // Servo range (standard 1000-2000μs)
 pub const SERVO_MIN_PULSE_US: u32 = 1_000;
 pub const SERVO_MAX_PULSE_US: u32 = 2_000;
-pub const SERVO_CENTER_US: u32 = 1_500;
+const SERVO_CENTER_US: u32 = 1_500;
 
 // ESC range
 pub const ENGINE_MIN_PULSE_US: u32 = 1_000; // Absolute minimum (motors off)
-pub const ENGINE_START_PULSE_US: u32 = 1_150; // Actual point where motors start spinning
+const ENGINE_START_PULSE_US: u32 = 1_150; // Actual point where motors start spinning
 pub const ENGINE_MAX_PULSE_US: u32 = 1_600; // Maximum throttle
 
 // Throttle curve
-pub const THROTTLE_DEADZONE: u32 = 200; // RC values 0-200 = motors off
-pub const THROTTLE_START_POINT: u32 = 300; // RC value where motors start
+const THROTTLE_DEADZONE: u32 = 200; // RC values 0-200 = motors off
+const THROTTLE_START_POINT: u32 = 300; // RC value where motors start
 
 // Arming parameters
 pub const ENGINE_ARM_THRESHOLD: u32 = 1_100; // Must have low throttle to arm
 pub const ARM_DURATION_MS: u32 = 2_000; // Hold at min for 2 seconds during init
-
-// Differential thrust parameters
-pub const DIFF_NEUTRAL_MIN: u16 = 1_000;
-pub const DIFF_NEUTRAL_MAX: u16 = 1_010;
-pub const DIFF_MAX_PERCENT: i32 = 20;
 
 // DShot configuration
 pub const DSHOT_THROTTLE_MAX: u16 = 1999;
@@ -45,7 +39,7 @@ pub const DSHOT_THROTTLE_MAX: u16 = 1999;
 // RC parameters (protocol-independent, values in 0–2047 range)
 pub const RC_WARNING_MS: u64 = 200;
 pub const RC_TIMEOUT_MS: u64 = 300;
-pub const RC_CENTER: u16 = 1024; // CRSF center 992 scaled to 0–2047
+const RC_CENTER: u16 = 1024; // CRSF center 992 scaled to 0–2047
 
 // Control loop timing parameters
 /// Control loop period: the single source of truth for loop timing. The rate
@@ -55,7 +49,6 @@ pub const CONTROL_LOOP_PERIOD_MS: u64 = 12;
 pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = (1000 / CONTROL_LOOP_PERIOD_MS) as u32; // 83
 pub const CONTROL_LOOP_DT: f32 = CONTROL_LOOP_PERIOD_MS as f32 / 1000.0;
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
-pub const RC_MAX_LATENCY_MS: u64 = 100; // Max acceptable RC packet age
 
 // ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ)
 pub const ULOG_STATUS_DIVISOR: u32 = 10; // 83/10 ≈ 8.3 Hz
@@ -85,12 +78,6 @@ pub const PITCH_INVERT: f32 = -1.0;
 pub const ROLL_INVERT: f32 = 1.0;
 pub const YAW_INVERT: f32 = -1.0;
 
-// Legacy direct elevon channels (if needed for fallback)
-pub const ELEVON_LEFT_CH: usize = 0;
-pub const ELEVON_RIGHT_CH: usize = 1;
-pub const ENGINE_CH: usize = 2;
-pub const DIFFERENTIAL_CH: usize = 3;
-
 // Elevon mixing parameters
 pub const ELEVON_PITCH_GAIN: f32 = 1.0; // How much pitch affects elevons
 pub const ELEVON_ROLL_GAIN: f32 = 1.0; // How much roll affects elevons
@@ -99,9 +86,6 @@ pub const YAW_TO_DIFF_GAIN: f32 = 1.0; // How much yaw affects differential thru
 #[cfg(feature = "platform-dart")]
 pub const YAW_TO_DIFF_GAIN: f32 = 0.0; // Single engine — no yaw via differential thrust
 pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons for coordination
-
-// Control mode selection
-pub const USE_MIXING_MODE: bool = true; // Set to false for direct elevon control
 
 // IMU parameters
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C fast mode (MMC5616WA + BMP390)
@@ -132,7 +116,6 @@ pub const IMU_MAX_DRAIN: u32 = 32;
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
-pub const SUPERVISOR_CHECK_INTERVAL_MS: u64 = 50; // How often to check supervisor health
 
 #[cfg(not(feature = "platform-dart"))]
 pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
@@ -291,9 +274,9 @@ pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;
 // asymmetric thrust. The engines are ~5% apart at the top (the previous
 // sweep had them ~2% apart), so the right side lost more top-end.
 #[cfg(not(feature = "platform-dart"))]
-pub const MOTOR_POLES: u8 = 14;
+const MOTOR_POLES: u8 = 14;
 #[cfg(not(feature = "platform-dart"))]
-pub const MAX_RPM: u32 = 20_300; // right engine plateau, rpm_range sweep 2026-09-26
+const MAX_RPM: u32 = 20_300; // right engine plateau, rpm_range sweep 2026-09-26
 #[cfg(not(feature = "platform-dart"))]
 pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 142,100
 
@@ -304,9 +287,9 @@ pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 142,100
 // logs LOG_0020–0035. The curve is still rising at full throttle, so there is
 // no stall region above it.
 #[cfg(feature = "platform-dart")]
-pub const MOTOR_POLES: u8 = 14;
+const MOTOR_POLES: u8 = 14;
 #[cfg(feature = "platform-dart")]
-pub const MAX_RPM: u32 = 15_300; // 3-blade, rpm_range sweep 2026-09-26
+const MAX_RPM: u32 = 15_300; // 3-blade, rpm_range sweep 2026-09-26
 #[cfg(feature = "platform-dart")]
 pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // 107,100
 
@@ -413,3 +396,30 @@ const _: () = assert!(ELEVON_LEFT_CENTER_US >= SERVO_MIN_PULSE_US);
 const _: () = assert!(ELEVON_LEFT_CENTER_US <= SERVO_MAX_PULSE_US);
 const _: () = assert!(ELEVON_RIGHT_CENTER_US >= SERVO_MIN_PULSE_US);
 const _: () = assert!(ELEVON_RIGHT_CENTER_US <= SERVO_MAX_PULSE_US);
+
+// Trim within its declared safety bound
+const _: () = assert!(ELEVON_LEFT_TRIM_US.abs() <= MAX_TRIM_US);
+const _: () = assert!(ELEVON_RIGHT_TRIM_US.abs() <= MAX_TRIM_US);
+
+// ESC range: MIN < START < MAX, arming threshold inside it
+const _: () = assert!(ENGINE_MIN_PULSE_US < ENGINE_START_PULSE_US);
+const _: () = assert!(ENGINE_START_PULSE_US < ENGINE_MAX_PULSE_US);
+const _: () = assert!(
+    ENGINE_ARM_THRESHOLD > ENGINE_MIN_PULSE_US && ENGINE_ARM_THRESHOLD < ENGINE_MAX_PULSE_US
+);
+
+// Throttle curve breakpoints ordered inside the 0-2047 RC range
+const _: () = assert!(THROTTLE_DEADZONE < THROTTLE_START_POINT && THROTTLE_START_POINT < 2047);
+
+// RC link: warning stage fires before failsafe
+const _: () = assert!(RC_WARNING_MS < RC_TIMEOUT_MS);
+
+// Governor ceiling never exceeds the DShot protocol range
+const _: () = assert!(GOVERNOR_DSHOT_MAX <= DSHOT_THROTTLE_MAX);
+
+// Gyro filter corner below the 0.45 x Nyquist clamp in `LowPass2::new`
+const _: () =
+    assert!(GYRO_RATE_LPF_HZ > 0.0 && GYRO_RATE_LPF_HZ < 0.45 * IMU_UPDATE_FREQUENCY_HZ as f32);
+
+// A still window must fit inside the gyro-bias timeout
+const _: () = assert!(GYRO_BIAS_SAMPLES <= GYRO_BIAS_TIMEOUT_SAMPLES);

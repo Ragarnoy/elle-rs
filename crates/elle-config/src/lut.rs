@@ -12,22 +12,9 @@ const fn const_clamp_i32(v: i32, lo: i32, hi: i32) -> i32 {
     }
 }
 
-/// Compute reduction percentage, clamped to `[0, max_percent]`.
-const fn compute_reduction(amount: i32, max_range: i32, max_percent: i32) -> i32 {
-    let raw = if max_range > 0 {
-        amount * max_percent / max_range
-    } else {
-        max_percent
-    };
-    if raw < max_percent { raw } else { max_percent }
-}
-
 /// RC value range (0-2047, so we need 2048 entries)
-pub const RC_MAX_VALUE: usize = 2047;
-pub const RC_LUT_SIZE: usize = RC_MAX_VALUE + 1;
-
-// Differential thrust LUT size - covers full RC range
-pub const DIFF_LUT_SIZE: usize = RC_LUT_SIZE;
+const RC_MAX_VALUE: usize = 2047;
+const RC_LUT_SIZE: usize = RC_MAX_VALUE + 1;
 
 /// DShot throttle value where motors start spinning (equivalent to ENGINE_START_PULSE_US in µs space)
 const DSHOT_START_THROTTLE: u16 = ((ENGINE_START_PULSE_US - ENGINE_MIN_PULSE_US)
@@ -98,35 +85,6 @@ const fn generate_normalized_lut(center: u16) -> [i32; RC_LUT_SIZE] {
     lut
 }
 
-/// Generate differential thrust multiplier LUT (legacy support)
-const fn generate_differential_lut() -> [(u32, u32); DIFF_LUT_SIZE] {
-    let mut lut = [(100u32, 100u32); DIFF_LUT_SIZE];
-    let mut i = 0;
-
-    while i < DIFF_LUT_SIZE {
-        let ch4_value = i as u16;
-
-        let (left, right) = if ch4_value >= DIFF_NEUTRAL_MIN && ch4_value <= DIFF_NEUTRAL_MAX {
-            (100, 100)
-        } else if ch4_value < DIFF_NEUTRAL_MIN {
-            let amount = (DIFF_NEUTRAL_MIN - ch4_value) as i32;
-            let max_range = (DIFF_NEUTRAL_MIN - 300) as i32;
-            let reduction = compute_reduction(amount, max_range, DIFF_MAX_PERCENT);
-            ((100 - reduction) as u32, 100)
-        } else {
-            let amount = (ch4_value - DIFF_NEUTRAL_MAX) as i32;
-            let max_range = (1700 - DIFF_NEUTRAL_MAX) as i32;
-            let reduction = compute_reduction(amount, max_range, DIFF_MAX_PERCENT);
-            (100, (100 - reduction) as u32)
-        };
-
-        lut[i] = (left, right);
-        i += 1;
-    }
-
-    lut
-}
-
 /// Generate yaw differential factors LUT (for mixing mode)
 const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
     let mut lut = [(1024i32, 1024i32); RC_LUT_SIZE]; // 1024 = 1.0 in fixed point
@@ -168,18 +126,16 @@ const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
 }
 
 // Pre-computed lookup tables - all generated at compile time
-pub static THROTTLE_LUT: [u16; RC_LUT_SIZE] = generate_throttle_lut();
-pub static SERVO_LUT: [u32; RC_LUT_SIZE] =
-    generate_servo_lut(SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
-pub static ENGINE_LUT: [u32; RC_LUT_SIZE] =
+static THROTTLE_LUT: [u16; RC_LUT_SIZE] = generate_throttle_lut();
+static SERVO_LUT: [u32; RC_LUT_SIZE] = generate_servo_lut(SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+static ENGINE_LUT: [u32; RC_LUT_SIZE] =
     generate_servo_lut(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US);
 
 // Single normalized lookup table — all channels share RC_CENTER after CRSF scaling
-pub static NORMALIZED_LUT: [i32; RC_LUT_SIZE] = generate_normalized_lut(RC_CENTER);
+static NORMALIZED_LUT: [i32; RC_LUT_SIZE] = generate_normalized_lut(RC_CENTER);
 
-// Differential thrust LUTs
-pub static DIFFERENTIAL_LEGACY_LUT: [(u32, u32); DIFF_LUT_SIZE] = generate_differential_lut();
-pub static YAW_DIFFERENTIAL_LUT: [(i32, i32); RC_LUT_SIZE] = generate_yaw_differential_lut();
+// Yaw differential thrust LUT
+static YAW_DIFFERENTIAL_LUT: [(i32, i32); RC_LUT_SIZE] = generate_yaw_differential_lut();
 
 /// Ultra-fast throttle curve lookup - single array access (returns DShot 0-1999)
 #[must_use]
@@ -222,20 +178,10 @@ pub fn rc_to_normalized(rc_value: u16) -> f32 {
     }
 }
 
-/// Ultra-fast differential thrust calculation (legacy)
-#[must_use]
-#[inline(always)]
-pub fn calculate_differential_lut(ch4_value: u16) -> (u32, u32) {
-    unsafe {
-        // SAFETY: We clamp the index to valid range
-        *DIFFERENTIAL_LEGACY_LUT.get_unchecked((ch4_value as usize).min(RC_MAX_VALUE))
-    }
-}
-
 /// Ultra-fast yaw differential factors (mixing mode)
 #[must_use]
 #[inline(always)]
-pub fn calculate_yaw_differential_lut(yaw_rc: u16) -> (f32, f32) {
+fn calculate_yaw_differential_lut(yaw_rc: u16) -> (f32, f32) {
     unsafe {
         // SAFETY: We clamp the index to valid range
         let (left_fp, right_fp) =
@@ -399,23 +345,35 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
     last.1
 }
 
-/// Apply differential thrust using pre-computed values (legacy, DShot space)
-#[must_use]
-#[inline(always)]
-pub fn apply_differential_lut(base_thrust: u16, ch4_value: u16) -> (u16, u16) {
-    if base_thrust == 0 {
-        return (0, 0);
+/// Table invariants `governor_feedforward` relies on: a non-zero first eRPM (it
+/// divides by it), strictly increasing eRPM (it divides by each step), and
+/// non-decreasing DShot (it subtracts adjacent entries unsigned).
+const fn governor_ff_table_is_valid() -> bool {
+    if GOVERNOR_FF_TABLE[0].0 == 0 {
+        return false;
     }
-    let (left_mult, right_mult) = calculate_differential_lut(ch4_value);
-    let left = ((base_thrust as u32 * left_mult / 100) as u16).min(DSHOT_THROTTLE_MAX);
-    let right = ((base_thrust as u32 * right_mult / 100) as u16).min(DSHOT_THROTTLE_MAX);
-    (left, right)
+    let mut i = 1;
+    while i < GOVERNOR_FF_TABLE.len() {
+        if GOVERNOR_FF_TABLE[i].0 <= GOVERNOR_FF_TABLE[i - 1].0
+            || GOVERNOR_FF_TABLE[i].1 < GOVERNOR_FF_TABLE[i - 1].1
+        {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
+
+const _: () = assert!(governor_ff_table_is_valid());
+// The last row is pinned to the full-stick target.
+const _: () = assert!(GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1].0 == MAX_ERPM);
+// Throttle curve's motor-start point lies inside the DShot range.
+const _: () = assert!(DSHOT_START_THROTTLE <= DSHOT_THROTTLE_MAX);
 
 /// DShot value of the last `GOVERNOR_FF_TABLE` entry — the highest output the
 /// feedforward will ever produce. `GOVERNOR_DSHOT_MAX` must equal this (asserted
 /// in `lib.rs`), or the PI correction could push past where the table refuses to go.
 #[must_use]
-pub const fn governor_ff_max_dshot() -> u16 {
+pub(crate) const fn governor_ff_max_dshot() -> u16 {
     GOVERNOR_FF_TABLE[GOVERNOR_FF_TABLE.len() - 1].1
 }
