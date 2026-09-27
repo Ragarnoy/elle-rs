@@ -85,7 +85,17 @@ const fn generate_normalized_lut(center: u16) -> [i32; RC_LUT_SIZE] {
     lut
 }
 
-/// Generate yaw differential factors LUT (for mixing mode)
+/// `YAW_TO_DIFF_GAIN` in the LUT's 1024 = 1.0 fixed point.
+const YAW_TO_DIFF_GAIN_FP: i32 = (YAW_TO_DIFF_GAIN * 1024.0) as i32;
+
+// A gain outside 0..=1 is not a differential-thrust setting (the reduction is
+// capped at 20 % anyway, so > 1 would only move where the cap is reached).
+const _: () = assert!(YAW_TO_DIFF_GAIN >= 0.0 && YAW_TO_DIFF_GAIN <= 1.0);
+
+/// Generate yaw differential factors LUT (for mixing mode). Yaw input is scaled
+/// by `YAW_TO_DIFF_GAIN`: 1.0 on the twin-engine eagle, 0.0 on the single-engine
+/// dart, whose only engine is fed the *left* target — without the gain, right yaw
+/// cut its thrust by up to 20 %.
 const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
     let mut lut = [(1024i32, 1024i32); RC_LUT_SIZE]; // 1024 = 1.0 in fixed point
     let mut i = 0;
@@ -97,8 +107,7 @@ const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
         let normalized_fp = rc_value as i32 - center;
         let yaw_input_fp = const_clamp_i32(normalized_fp, -1024, 1024);
 
-        // Apply YAW_TO_DIFF_GAIN (assuming 1.0 for now, can be adjusted)
-        let yaw_factor_fp = yaw_input_fp; // * YAW_TO_DIFF_GAIN in fixed point
+        let yaw_factor_fp = (yaw_input_fp * YAW_TO_DIFF_GAIN_FP) / 1024;
 
         let (left_mult_fp, right_mult_fp) = if yaw_factor_fp > 0 {
             // Right turn: reduce left engine
