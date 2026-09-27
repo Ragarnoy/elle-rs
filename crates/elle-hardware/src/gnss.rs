@@ -150,7 +150,8 @@ const CFG_ABANDONED: u16 = 1 << 15;
 
 // The abandoned marker must stay clear of the per-group bits.
 const _: () = assert!(CFG_GROUP_COUNT < 15);
-/// Bit position of the solution-rate key within the configuration mask.
+/// Bit position of the solution-rate key within the configuration mask: the
+/// `RateMeas` group must stay at index 1 of [`config_groups`].
 const CFG_BIT_RATE_MEAS: u16 = 1 << 1;
 /// The module's own default solution interval, used when our rate key did not
 /// take, so the reported rate is what the receiver is really doing.
@@ -158,7 +159,7 @@ const MODULE_DEFAULT_RATE_MS: u16 = 1_000;
 /// How long to wait for traffic after a baud change before declaring it failed.
 const BAUD_PROBE_TIMEOUT: Duration = Duration::from_millis(2_000);
 /// Settling time after the cold-start reset.
-const COLD_START_SETTLE: Duration = Duration::from_millis(500);
+const RESET_SETTLE: Duration = Duration::from_millis(500);
 /// Upper bound on waiting for the UART to clock out a queued message.
 const TX_DRAIN_TIMEOUT: Duration = Duration::from_millis(200);
 /// How long the module may say nothing before we report the link as silent.
@@ -209,6 +210,7 @@ fn config_groups(rate_ms: u16, gsv: bool) -> [CfgGroup; CFG_GROUP_COUNT] {
             CfgVal::NavSpgDynModel(NavDynamicModel::AirborneWithLess4gAcceleration),
             CfgVal::NavSpgFixMode(NavFixMode::Only3D),
         ),
+        // Index 1: `CFG_BIT_RATE_MEAS` reports whether this group took.
         CfgGroup::one(CfgVal::RateMeas(rate_ms)),
         CfgGroup::one(CfgVal::RateNav(1)),
         CfgGroup::one(CfgVal::MsgOutUbxNavPvtUart1(1)),
@@ -351,28 +353,23 @@ async fn link_alive(gnss: &mut Gnss<'_>) -> bool {
 
 #[embassy_executor::task]
 pub async fn gnss_task(mut uart: BufferedUart<'static>) {
-    // Cold start, so acquisition does not depend on stale almanac state.
+    // GNSS-only hot reset, so the receiver starts from its power-on defaults.
     {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
         // UBX-CFG-RST: navBbrMask = 0x0000, resetMode = 0x02 (GNSS-only
         // software reset). 0x0000 is a *hot* start — ephemeris and almanac are
         // kept, which is what we want: it gives the fastest time to first fix.
-        // (A cold start would be 0xFFFF; the previous comment here said "cold"
-        // and was simply wrong.)
+        // (A cold start would be 0xFFFF.)
         if gnss
             .send_ubx(ubx::class::CFG, ubx::cfg::RST, &[0x00, 0x00, 0x02, 0x00])
             .await
             .is_err()
         {
-            elle_event!(
-                warn,
-                event::EVT_GNSS_UART_ERROR,
-                "GNSS: cold start send failed"
-            );
+            elle_event!(warn, event::EVT_GNSS_UART_ERROR, "GNSS: reset send failed");
         }
     }
-    Timer::after(COLD_START_SETTLE).await;
+    Timer::after(RESET_SETTLE).await;
 
     // Change baud FIRST, then configure at whatever rate we actually achieved.
     // The reverse order is a trap: a solution rate that only fits at 115200,

@@ -41,6 +41,7 @@ pub struct ULogLogger {
     autotune_msg_id: Option<u16>,
     controller_msg_id: Option<u16>,
     pid_gains_msg_id: Option<u16>,
+    #[cfg(feature = "gyro-raw-log")]
     gyro_raw_msg_id: Option<u16>,
     /// Gains version last written to this file; `None` right after `initialize`.
     logged_gains_version: Option<u32>,
@@ -70,6 +71,7 @@ impl ULogLogger {
             autotune_msg_id: None,
             controller_msg_id: None,
             pid_gains_msg_id: None,
+            #[cfg(feature = "gyro-raw-log")]
             gyro_raw_msg_id: None,
             logged_gains_version: None,
             start_time: None,
@@ -97,8 +99,8 @@ impl ULogLogger {
         // Import ULog types
         use elle_ulog::{
             AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
-            EngineMessage, GnssMessage, GyroRawMessage, LogEventMessage, MagnetometerMessage,
-            PidGainsMessage, StatusMessage,
+            EngineMessage, GnssMessage, LogEventMessage, MagnetometerMessage, PidGainsMessage,
+            StatusMessage,
         };
 
         let start_time = Instant::now();
@@ -175,14 +177,18 @@ impl ULogLogger {
                 .add_subscription(PidGainsMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
-        self.gyro_raw_msg_id = Some(
-            self.writer
-                .add_subscription(GyroRawMessage::NAME)
-                .map_err(|_| ULogError::InitFailed)?,
-        );
+        // Only capture builds write gyro_raw, so only they subscribe to it.
+        #[cfg(feature = "gyro-raw-log")]
+        {
+            self.gyro_raw_msg_id = Some(
+                self.writer
+                    .add_subscription(elle_ulog::GyroRawMessage::NAME)
+                    .map_err(|_| ULogError::InitFailed)?,
+            );
+        }
 
         info!(
-            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}, autotune={}",
+            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}, autotune={}, controller={}, pid_gains={}",
             self.attitude_msg_id.unwrap(),
             self.commands_msg_id.unwrap(),
             self.status_msg_id.unwrap(),
@@ -191,7 +197,14 @@ impl ULogLogger {
             self.gnss_msg_id.unwrap(),
             self.engine_msg_id.unwrap(),
             self.log_event_msg_id.unwrap(),
-            self.autotune_msg_id.unwrap()
+            self.autotune_msg_id.unwrap(),
+            self.controller_msg_id.unwrap(),
+            self.pid_gains_msg_id.unwrap()
+        );
+        #[cfg(feature = "gyro-raw-log")]
+        info!(
+            "ULog subscription: gyro_raw={}",
+            self.gyro_raw_msg_id.unwrap()
         );
 
         // Flush header and definitions to flash
@@ -289,6 +302,7 @@ impl ULogLogger {
     }
 
     /// Log one raw gyro sample (`gyro-raw-log` builds). Keeps its own timestamp.
+    #[cfg(feature = "gyro-raw-log")]
     pub fn log_gyro_raw(&mut self, msg: &elle_ulog::GyroRawMessage) -> Result<(), ULogError> {
         if !self.initialized {
             return Err(ULogError::NotInitialized);
@@ -449,8 +463,6 @@ impl ULogLogger {
         self.buffer_writer_output()
     }
 
-    /// Log GNSS data
-    #[allow(clippy::too_many_arguments)]
     /// Log a GNSS solution.
     ///
     /// Takes the whole `GnssData` rather than positional arguments: the record
