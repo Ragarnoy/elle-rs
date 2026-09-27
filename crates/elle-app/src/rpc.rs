@@ -8,7 +8,7 @@ use crate::logging::log_flight_data;
 use crate::support::RC_DEBUG_LOG_DIVISOR;
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, clear_pid_from_flash,
-    resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
+    guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
     validate_attitude,
 };
 use crate::{flight_state, rc_signal, rpc_app, rpc_handlers};
@@ -608,15 +608,19 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             rpc_elevon_right = 0.0;
         }
 
-        // Autotuner per-tick update
+        // Autotuner per-tick update. The run stops the moment it no longer
+        // owns the aircraft (kill, disarm, failsafe, Manual, no attitude).
+        if guard_autotune(&mut autotuner, fc, kill_active, valid_attitude.is_some()) {
+            autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+            autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
+        }
         if autotuner.is_active()
             && let Some(att) = valid_attitude.as_ref()
         {
-            let measurement_deg = match autotuner.axis() {
-                AutotuneAxis::Pitch => att.pitch * RAD_TO_DEG,
-                AutotuneAxis::Roll => att.roll * RAD_TO_DEG,
-            };
-            match autotuner.update(measurement_deg, autotune_tick) {
+            let pitch_deg = att.pitch * RAD_TO_DEG;
+            let roll_deg = att.roll * RAD_TO_DEG;
+            let measurement_deg = autotuner.measurement(pitch_deg, roll_deg);
+            match autotuner.update(pitch_deg, roll_deg, autotune_tick) {
                 AutotuneAction::None => {}
                 AutotuneAction::SetpointOverride {
                     pitch_deg,
@@ -635,7 +639,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                     elle_hardware::elle_event!(
                         warn,
                         elle_hardware::event::EVT_AUTOTUNE_ESTOP,
-                        "Autotune safety abort (timeout/amplitude)"
+                        "Autotune safety abort (timeout/attitude envelope)"
                     );
                 }
                 AutotuneAction::Rejected { reason, gains } => {

@@ -18,7 +18,9 @@ const SETTLE_TICKS: u32 = 2 * CONTROL_LOOP_FREQUENCY_HZ;
 const TOTAL_TIMEOUT_TICKS: u32 = 60 * CONTROL_LOOP_FREQUENCY_HZ;
 /// No-oscillation timeout in ticks (10 s)
 const NO_OSC_TIMEOUT_TICKS: u32 = 10 * CONTROL_LOOP_FREQUENCY_HZ;
-/// Maximum safe amplitude in degrees
+/// Attitude envelope in degrees, on both axes, for the whole run (settling
+/// included): the tuned axis swings about zero and the other axis is held at
+/// zero, so either one beyond this means the test has lost control.
 const MAX_AMPLITUDE_DEG: f32 = 20.0;
 /// Number of initial cycles to discard (transient)
 const DISCARD_CYCLES: usize = 2;
@@ -30,6 +32,10 @@ const MAX_HALF_CYCLES: usize = 32;
 const SKIP_HALF_CYCLES: usize = 2 * DISCARD_CYCLES;
 /// Fewest half-cycles that leave one full measurable cycle after the transient
 const MIN_HALF_CYCLES: usize = 2 * (DISCARD_CYCLES + 1);
+
+/// Most measurable cycles a run can use: the half-cycle buffer holds this many
+/// full cycles after the discarded transient. `start` clamps requests to it.
+pub const AUTOTUNE_MAX_CYCLES: usize = (MAX_HALF_CYCLES - SKIP_HALF_CYCLES) / 2;
 
 // A run must be able to record enough half-cycles to produce a result.
 const _: () = assert!(MIN_HALF_CYCLES <= MAX_HALF_CYCLES);
@@ -203,6 +209,46 @@ pub fn validate_result(
         return Err(AutotuneReject::GainsOutOfRange);
     }
     Ok(())
+}
+
+/// Why an active run had to stop before its next update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+pub enum AutotuneStop {
+    /// Disarmed: RPC/gesture disarm, kill switch or failsafe.
+    Disarmed,
+    /// Kill switch engaged.
+    Killed,
+    /// The attitude controller is off: Manual mode, failsafe, or Core 1 unhealthy.
+    NotStabilized,
+    /// No valid attitude this tick.
+    AttitudeLost,
+}
+
+/// Whether an active run still owns the aircraft. The relay test only means
+/// anything while the stabilized controller is flying the test gains; any other
+/// motion would be measured as the test response.
+///
+/// # Errors
+///
+/// The first condition that fails, in the order killed, disarmed, not
+/// stabilized, attitude lost.
+pub const fn check_run_conditions(
+    armed: bool,
+    attitude_enabled: bool,
+    killed: bool,
+    has_attitude: bool,
+) -> Result<(), AutotuneStop> {
+    if killed {
+        Err(AutotuneStop::Killed)
+    } else if !armed {
+        Err(AutotuneStop::Disarmed)
+    } else if !attitude_enabled {
+        Err(AutotuneStop::NotStabilized)
+    } else if !has_attitude {
+        Err(AutotuneStop::AttitudeLost)
+    } else {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -460,7 +506,8 @@ impl Autotuner {
     ///
     /// `current_gains` — snapshot of current PID configuration (will be restored on abort).
     /// `relay_deg` — relay amplitude in degrees (typically 5.0).
-    /// `num_cycles` — number of measurable cycles to collect (typically 6).
+    /// `num_cycles` — number of measurable cycles to collect (typically 6),
+    ///   clamped to `1..=AUTOTUNE_MAX_CYCLES`.
     /// `rule` — tuning rule for gain computation.
     /// `tick` — current monotonic tick counter.
     ///
@@ -478,7 +525,7 @@ impl Autotuner {
         self.axis = axis;
         self.rule = rule;
         self.relay_deg = relay_deg;
-        self.num_cycles = num_cycles;
+        self.num_cycles = num_cycles.clamp(1, AUTOTUNE_MAX_CYCLES);
         self.saved_gains = current_gains;
         self.start_tick = tick;
         self.detector = OscillationDetector::new();
@@ -497,6 +544,19 @@ impl Autotuner {
     /// Which axis is being tuned (only meaningful while active).
     pub const fn axis(&self) -> AutotuneAxis {
         self.axis
+    }
+
+    /// Measurable cycles this run collects (the request after clamping).
+    pub const fn num_cycles(&self) -> usize {
+        self.num_cycles
+    }
+
+    /// The tuned axis's attitude out of a pitch/roll pair, in degrees.
+    pub const fn measurement(&self, pitch_deg: f32, roll_deg: f32) -> f32 {
+        match self.axis {
+            AutotuneAxis::Pitch => pitch_deg,
+            AutotuneAxis::Roll => roll_deg,
+        }
     }
 
     /// Current phase as u8 for ULog logging.
@@ -552,9 +612,24 @@ impl Autotuner {
 
     /// Tick the autotuner state machine.
     ///
-    /// `measurement_deg` — current attitude on the tuned axis in degrees.
+    /// `pitch_deg`, `roll_deg` — current raw attitude in degrees. The tuner
+    /// measures its own axis and holds both inside the attitude envelope.
     /// `tick` — monotonic tick counter.
-    pub fn update(&mut self, measurement_deg: f32, tick: u32) -> AutotuneAction {
+    pub fn update(&mut self, pitch_deg: f32, roll_deg: f32, tick: u32) -> AutotuneAction {
+        if !self.is_active() {
+            return AutotuneAction::None;
+        }
+
+        // Safety: finite attitude inside the envelope on both axes, in every
+        // active phase. Settling already flies the test gains.
+        let in_envelope =
+            |deg: f32| deg.is_finite() && (-MAX_AMPLITUDE_DEG..=MAX_AMPLITUDE_DEG).contains(&deg);
+        if !in_envelope(pitch_deg) || !in_envelope(roll_deg) {
+            self.phase = Phase::Aborted;
+            return AutotuneAction::RestoreGains(self.saved_gains);
+        }
+        let measurement_deg = self.measurement(pitch_deg, roll_deg);
+
         match self.phase {
             Phase::Idle | Phase::Complete | Phase::Aborted => AutotuneAction::None,
 
@@ -575,17 +650,6 @@ impl Autotuner {
 
                 // Total timeout check
                 if elapsed >= TOTAL_TIMEOUT_TICKS {
-                    self.phase = Phase::Aborted;
-                    return AutotuneAction::RestoreGains(self.saved_gains);
-                }
-
-                // Safety: amplitude check
-                let abs_meas = if measurement_deg < 0.0 {
-                    -measurement_deg
-                } else {
-                    measurement_deg
-                };
-                if abs_meas > MAX_AMPLITUDE_DEG {
                     self.phase = Phase::Aborted;
                     return AutotuneAction::RestoreGains(self.saved_gains);
                 }

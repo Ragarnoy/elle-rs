@@ -1,11 +1,13 @@
 //! Small helpers shared by the control loops: attitude freshness, the
-//! calibration tap gesture, and PID profile persistence.
+//! autotune run guard, the calibration tap gesture, and PID profile persistence.
 
 #[cfg(feature = "rpc-control")]
 use defmt::info;
 use defmt::warn;
 use elle_config::IMU_MAX_AGE_MS;
+use elle_control::autotune::{Autotuner, check_run_conditions};
 use elle_hardware::imu::{AttitudeData, is_attitude_valid};
+use elle_system::FlightController;
 use embassy_time::{Duration, Timer};
 
 /// How long a flash save or erase may take before the control loop gives up
@@ -53,6 +55,42 @@ pub(crate) fn resync_after_stall(
 #[must_use]
 pub(crate) fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
     attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
+}
+
+/// Stop an active autotune run that no longer owns the aircraft: killed,
+/// disarmed (including failsafe), attitude controller off (Manual, Core 1
+/// unhealthy) or no valid attitude. Restores the saved gains and clears the
+/// setpoint override, so returning to Stabilized can't resume the test.
+/// Call it every tick before the autotuner update. Returns true when it
+/// aborted a run.
+pub(crate) fn guard_autotune(
+    autotuner: &mut Autotuner,
+    fc: &mut FlightController<'static>,
+    killed: bool,
+    has_attitude: bool,
+) -> bool {
+    if !autotuner.is_active() {
+        return false;
+    }
+    let Err(reason) = check_run_conditions(
+        fc.is_armed(),
+        fc.is_attitude_enabled(),
+        killed,
+        has_attitude,
+    ) else {
+        return false;
+    };
+    if let Some(saved) = autotuner.abort() {
+        fc.apply_saved_gains(&saved);
+    }
+    fc.clear_setpoint_override();
+    elle_hardware::elle_event!(
+        warn,
+        elle_hardware::event::EVT_AUTOTUNE_ESTOP,
+        "Autotune aborted: {}",
+        reason
+    );
+    true
 }
 
 /// Gate for the double-tap mag-cal gesture: only start calibration when

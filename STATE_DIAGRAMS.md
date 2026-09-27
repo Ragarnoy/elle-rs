@@ -96,8 +96,8 @@ stateDiagram-v2
 
     [*] --> I
     I --> R: CH7 off → pitch/roll\n(armed, Stabilized or AltitudeHold;\npitch locked after a pitch success)
-    R --> I: CH7 off (event 92)\ngains restored
-    R --> I: timeout / amplitude > 20° /\nattitude lost (event 93)\ngains restored
+    R --> I: CH7 off or other axis (event 92)\ngains restored
+    R --> I: timeout / attitude > 20° /\nkill, disarm, failsafe, Manual /\nattitude lost (event 93)\ngains restored
     R --> I: result fails validation (event 94)\ngains restored, nothing saved
     R --> P: complete (event 91)\nnew gains active
     P --> I: next disarm → flash save (event 100)\n(dart: never saved)
@@ -105,8 +105,10 @@ stateDiagram-v2
 
 - RPC mode uses `autotune pitch|roll|abort` instead of CH7; there is no pitch lock.
 - The relay swings the setpoint ±5° (default) and needs 2 discarded + 6 measured cycles.
-- Kill switch and failsafe disarm but **do not abort** the autotuner; switching to
-  Manual turns the PID off without aborting it either. Abort with CH7 or `autotune abort`.
+- The run aborts as soon as it stops owning the aircraft (kill, disarm, failsafe, Manual,
+  Core 1 unhealthy, no attitude), so no pilot or ground motion is measured as the test
+  response. Returning to Stabilized does not resume it.
+- The ±20° envelope applies to both axes from the start of settling.
 - Flash is never written while armed, hence the pending state.
 
 ## Calibrations

@@ -273,6 +273,12 @@ pub const AUTOTUNE_AXIS_SAVE_PID: u8 = 0xFF;
 pub const AUTOTUNE_AXIS_ERASE_PID: u8 = 0xFE;
 /// `AckResp::error_code` for a `StartAutotuneReq` with an unknown axis.
 pub const AUTOTUNE_ERR_BAD_AXIS: u8 = 2;
+/// `AckResp::error_code` for a pitch/roll `StartAutotuneReq` whose `num_cycles`
+/// is 0 or above [`AUTOTUNE_MAX_CYCLES`].
+pub const AUTOTUNE_ERR_BAD_CYCLES: u8 = 3;
+/// Most measurable cycles one autotune run can collect (the firmware's
+/// half-cycle buffer size).
+pub const AUTOTUNE_MAX_CYCLES: u8 = 14;
 
 /// Start autotune on a specific axis
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
@@ -282,7 +288,8 @@ pub struct StartAutotuneReq {
     pub axis: u8,
     /// Relay amplitude * 10 (e.g. 50 = 5.0°)
     pub relay_deg_x10: u8,
-    /// Number of measurable cycles to collect
+    /// Number of measurable cycles to collect, `1..=AUTOTUNE_MAX_CYCLES` for
+    /// pitch/roll (else error code [`AUTOTUNE_ERR_BAD_CYCLES`]).
     pub num_cycles: u8,
     /// Tuning rule: 0=TyreusLuyben, 1=ZieglerNichols, 2=SomeOvershoot
     pub rule: u8,
