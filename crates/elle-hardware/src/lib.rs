@@ -10,6 +10,8 @@ pub mod imu;
 pub mod led;
 pub mod pwm;
 pub mod sd_writer;
+#[cfg(feature = "performance-monitoring")]
+pub mod timing;
 mod signal_cache;
 
 mod ulog_logger;

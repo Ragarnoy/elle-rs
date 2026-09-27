@@ -379,11 +379,23 @@ impl<'a> Imu<'a> {
         let mut tap_counter: u32 = 0;
         let mut last_catchup_event: Option<Instant> = None;
 
+        // Busy time of the previous wake-up, recorded just before the next wait.
+        #[cfg(feature = "performance-monitoring")]
+        let mut wake_started: Option<Instant> = None;
+
         loop {
             // Wait for DATA_RDY: INT1 goes high when new sample is ready
             // (active-high, latched — cleared on INT_STATUS read inside read_sample).
             // Uses true async GPIO (embassy-rp multicore executor enables cross-core IRQ wakeup).
+            #[cfg(feature = "performance-monitoring")]
+            if let Some(started) = wake_started.take() {
+                crate::timing::IMU_TIMING.record(started.elapsed().as_micros() as u32);
+            }
             self.int1.wait_for_high().await;
+            #[cfg(feature = "performance-monitoring")]
+            {
+                wake_started = Some(Instant::now());
+            }
 
             // 1. Drain the ICM-42686 FIFO. Every queued sample goes through the
             // AHRS in order (it integrates at a fixed 1 kHz step, so none may be

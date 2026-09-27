@@ -26,7 +26,7 @@ static_cell = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 
 [features]
-performance-monitoring = []  # Enable detailed performance monitoring
+performance-monitoring = ["elle-hardware/performance-monitoring"]  # Enable detailed performance monitoring
 defmt-logging = ["defmt-rtt"]  # Use defmt-rtt for logging
 rpc-control = ["rtt-target", "postcard-rpc", "postcard", "cobs", "static_cell", "serde"]  # postcard-RPC over RTT
 

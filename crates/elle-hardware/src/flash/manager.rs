@@ -174,6 +174,8 @@ impl<'a> SequentialFlashManager<'a> {
                     }
                 }
             };
+            #[cfg(feature = "performance-monitoring")]
+            let started = embassy_time::Instant::now();
             match request {
                 FlashRequest::PeekULog => {
                     let response = self.peek_ulog_internal().await;
@@ -227,6 +229,8 @@ impl<'a> SequentialFlashManager<'a> {
                     FLASH_RESPONSE_SIGNAL.signal(response);
                 }
             }
+            #[cfg(feature = "performance-monitoring")]
+            crate::timing::FLASH_TIMING.record(started.elapsed().as_micros() as u32);
 
             // Small yield to ensure other tasks can run
             Timer::after(Duration::from_millis(1)).await;

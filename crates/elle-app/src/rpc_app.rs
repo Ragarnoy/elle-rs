@@ -178,11 +178,12 @@ fn handle_get_performance(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> P
     #[cfg(feature = "performance-monitoring")]
     {
         let pm = unsafe { &*core::ptr::addr_of!(elle_system::PERFORMANCE_MONITOR) };
+        let imu = elle_hardware::timing::IMU_TIMING.snapshot();
         PerformanceResp {
             control_loop_avg_us: pm.control_loop.avg_us,
             control_loop_max_us: pm.control_loop.max_us,
-            imu_avg_us: pm.imu_update.avg_us,
-            imu_max_us: pm.imu_update.max_us,
+            imu_avg_us: imu.avg_us,
+            imu_max_us: imu.max_us,
         }
     }
     #[cfg(not(feature = "performance-monitoring"))]
