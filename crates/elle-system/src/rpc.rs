@@ -5,6 +5,7 @@
 
 use core::cell::RefCell;
 use core::fmt::Arguments;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use defmt::info;
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
@@ -123,6 +124,11 @@ impl RttRx {
     }
 }
 
+/// When the last well-formed frame arrived from the host, in ms since boot (0:
+/// never). The RPC control loop uses it as its command timestamp, so the RC
+/// failsafe also covers a dead host link (TUI closed, probe unplugged).
+pub static HOST_LAST_RX_MS: AtomicU32 = AtomicU32::new(0);
+
 impl WireRx for RttRx {
     type Error = WireRxErrorKind;
 
@@ -137,6 +143,10 @@ impl WireRx for RttRx {
                     && len > 0
                     && let Ok(decoded_len) = cobs::decode_in_place(&mut buf[..len])
                 {
+                    HOST_LAST_RX_MS.store(
+                        embassy_time::Instant::now().as_millis() as u32,
+                        Ordering::Relaxed,
+                    );
                     return Ok(&mut buf[..decoded_len]);
                 }
             }

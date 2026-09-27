@@ -15,6 +15,46 @@ use crate::probe;
 use crate::wire::{ProbeRttRx, ProbeRttTx, TokSpawn};
 
 const CMD_TIMEOUT: Duration = Duration::from_secs(2);
+/// Keepalive period while holding the link: well inside the firmware's 200 ms
+/// warning / 300 ms failsafe thresholds.
+const KEEPALIVE_PERIOD: Duration = Duration::from_millis(100);
+/// Consecutive failed keepalives before giving up (the firmware will have
+/// failed safe by then anyway).
+const KEEPALIVE_MAX_FAILURES: u32 = 5;
+
+/// Keep the host link alive after a command that leaves the aircraft moving,
+/// until Ctrl-C; then command throttle 0 and disarm before exiting.
+async fn hold_link(client: &HostClient<WireError>) -> Result<()> {
+    println!("Holding the link (the firmware fails safe if the host goes quiet).");
+    println!("Ctrl-C to stop: sends throttle 0 and disarm.");
+    let mut failures = 0;
+    let mut ticker = tokio::time::interval(KEEPALIVE_PERIOD);
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            _ = ticker.tick() => {
+                match timeout(KEEPALIVE_PERIOD * 2, client.send_resp::<PingEndpoint>(&())).await {
+                    Ok(Ok(())) => failures = 0,
+                    _ => {
+                        failures += 1;
+                        if failures >= KEEPALIVE_MAX_FAILURES {
+                            println!("Link lost: the firmware has failed safe.");
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = timeout(
+        CMD_TIMEOUT,
+        client.send_resp::<SetThrottleEndpoint>(&SetThrottleReq { percent: 0 }),
+    )
+    .await;
+    let _ = timeout(CMD_TIMEOUT, client.send_resp::<DisarmEndpoint>(&())).await;
+    println!("Throttle 0, disarmed.");
+    Ok(())
+}
 
 #[derive(Subcommand)]
 pub enum DirectCommand {
@@ -120,6 +160,13 @@ fn connect_client() -> Result<ProbeConnection> {
 pub async fn run(cmd: DirectCommand) -> Result<()> {
     let conn = connect_client()?;
     let client = &conn.client;
+
+    // Commands that leave something moving. The firmware fails safe ~300 ms
+    // after the host goes quiet, so these keep the link alive until Ctrl-C.
+    let hold = matches!(
+        cmd,
+        DirectCommand::Throttle { percent } if percent > 0
+    ) || matches!(cmd, DirectCommand::Elevon { .. } | DirectCommand::Arm);
 
     match cmd {
         DirectCommand::Ping => {
@@ -381,6 +428,10 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                 );
             }
         }
+    }
+
+    if hold {
+        hold_link(client).await?;
     }
 
     // Signal the RTT worker to stop and wait for it to release the probe

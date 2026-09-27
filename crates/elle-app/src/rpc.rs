@@ -498,7 +498,11 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,
                 yaw: 0.0,
                 attitude_mode: rpc_mode,
-                timestamp: Instant::now(),
+                // When the host last talked to us, not "now": this is what the
+                // failsafe ages, so a dead TUI or probe trips it like a dead TX.
+                timestamp: Instant::from_millis(u64::from(
+                    elle_system::rpc::HOST_LAST_RX_MS.load(Ordering::Relaxed),
+                )),
             }))
         };
 
@@ -587,11 +591,21 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         }
         was_armed = now_armed;
 
-        // Check for RC signal loss (only relevant when RC is the command source).
-        // Packet arrival is stamped via note_rc_packet(), so this stays
-        // accurate even while the kill switch blocks fc.update().
-        #[cfg(feature = "rpc-rc")]
+        // Command-link loss: the RC link with rpc-rc (stamped via
+        // note_rc_packet(), so it stays accurate even while the kill switch
+        // blocks fc.update()), the host RPC link otherwise (commands carry
+        // HOST_LAST_RX_MS). Same 200/300 ms thresholds either way.
+        #[cfg(not(feature = "rpc-rc"))]
+        let link_was_lost = fc.rc_link_state() == elle_system::RcLinkState::Lost;
         fc.check_failsafe();
+        // Host gone: forget the commanded throttle and surfaces, so neither
+        // comes back when it reconnects and re-arms.
+        #[cfg(not(feature = "rpc-rc"))]
+        if !link_was_lost && fc.rc_link_state() == elle_system::RcLinkState::Lost {
+            rpc_throttle = 0.0;
+            rpc_elevon_left = 0.0;
+            rpc_elevon_right = 0.0;
+        }
 
         // Autotuner per-tick update
         if autotuner.is_active()

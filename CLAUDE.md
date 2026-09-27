@@ -258,6 +258,8 @@ RC aux channel map (`elle-config/src/lib.rs`): CH5 = heading hold (2-pos), CH6 =
 
 RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never directly control hardware.
 
+**Host-link failsafe (RPC mode):** every well-formed frame from the host stamps `elle_system::rpc::HOST_LAST_RX_MS`, and pure RPC builds use it as the command timestamp, so the ordinary failsafe (`RC_WARNING_MS`/`RC_TIMEOUT_MS`, 200/300 ms, events 13/14 even though they say "RC") trips when the TUI or probe dies: disarm, surfaces centred, RPC throttle and elevons zeroed. The TUI's 10–20 Hz polling keeps the link alive. `direct throttle N>0`, `direct elevon` and `direct arm` hold the link with 100 ms pings until Ctrl-C, then send throttle 0 and disarm.
+
 **Important**: ULog extraction uses `FLASH_REQUEST_SIGNAL` which is single-valued. Recording must be stopped before extraction to avoid signal contention. The host `ulog extract` command auto-sends `StopULog` first.
 
 ## Key Dependencies
