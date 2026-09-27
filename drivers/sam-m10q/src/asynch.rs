@@ -129,7 +129,10 @@ where
     pub async fn send_ubx(&mut self, class: u8, id: u8, payload: &[u8]) -> Result<(), Error<E>> {
         let mut frame = [0u8; MAX_FRAME_SIZE + ubx::HEADER_SIZE + ubx::CHECKSUM_SIZE];
         let len = ubx::build_frame(&mut frame, class, id, payload).ok_or(Error::FrameTooLarge)?;
-        self.tx.write_all(&frame[..len]).await.map_err(Error::Uart)?;
+        self.tx
+            .write_all(&frame[..len])
+            .await
+            .map_err(Error::Uart)?;
         self.tx.flush().await.map_err(Error::Uart)
     }
 
@@ -151,7 +154,10 @@ where
     ) -> Result<(), Error<E>> {
         let mut frame = [0u8; ubx::cfg::MAX_VALSET_FRAME];
         let len = ubx::cfg::build_valset(&mut frame, layers, items).ok_or(Error::FrameTooLarge)?;
-        self.tx.write_all(&frame[..len]).await.map_err(Error::Uart)?;
+        self.tx
+            .write_all(&frame[..len])
+            .await
+            .map_err(Error::Uart)?;
         self.tx.flush().await.map_err(Error::Uart)
     }
 
@@ -308,7 +314,9 @@ mod tests {
     fn skips_corrupt_frames_without_dropping_the_next_one() {
         let mut stream = Vec::new();
         // Corrupt NMEA checksum, then a good sentence.
-        stream.extend_from_slice(b"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,47.0,M,,*4E\r\n");
+        stream.extend_from_slice(
+            b"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,47.0,M,,*4E\r\n",
+        );
         stream.extend_from_slice(GGA);
         let mut gnss = SamM10q::new(MockRx::new(&stream, 16), MockTx::default());
 

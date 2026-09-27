@@ -239,11 +239,7 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             );
             println!(
                 "      spd={:.2}m/s trk={:.1}° vel_ned=({:.2},{:.2},{:.2})m/s",
-                g.ground_speed_ms,
-                g.heading_motion_deg,
-                g.vel_n_ms,
-                g.vel_e_ms,
-                g.vel_d_ms
+                g.ground_speed_ms, g.heading_motion_deg, g.vel_n_ms, g.vel_e_ms, g.vel_d_ms
             );
             println!(
                 "      hAcc={:.2}m vAcc={:.2}m sAcc={:.2}m/s",
@@ -251,7 +247,11 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
             );
             println!(
                 "      source={} link={} baud rate={} ms",
-                if g.pvt_active { "NAV-PVT" } else { "NMEA (fallback)" },
+                if g.pvt_active {
+                    "NAV-PVT"
+                } else {
+                    "NMEA (fallback)"
+                },
                 g.link_baud,
                 g.nav_rate_ms
             );
@@ -273,7 +273,10 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                         missing.join(", ")
                     );
                 } else if missing.is_empty() {
-                    println!("      config: all {} keys accepted", GNSS_CFG_KEY_NAMES.len());
+                    println!(
+                        "      config: all {} keys accepted",
+                        GNSS_CFG_KEY_NAMES.len()
+                    );
                 } else {
                     println!("      config: REJECTED {}", missing.join(", "));
                 }

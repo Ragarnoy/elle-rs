@@ -91,12 +91,18 @@ mod tests {
         let len = build_valset(&mut buf, LAYER_RAM, &[CfgVal::RateMeas(200)]).unwrap();
 
         // 6 header + (4 valset header + 6 kv) + 2 checksum
-        assert_eq!(len, ubx::HEADER_SIZE + VALSET_HEADER_SIZE + 6 + ubx::CHECKSUM_SIZE);
+        assert_eq!(
+            len,
+            ubx::HEADER_SIZE + VALSET_HEADER_SIZE + 6 + ubx::CHECKSUM_SIZE
+        );
         assert_eq!(buf[0], ubx::SYNC1);
         assert_eq!(buf[1], ubx::SYNC2);
         assert_eq!(buf[2], ubx::class::CFG);
         assert_eq!(buf[3], VALSET);
-        assert_eq!(u16::from_le_bytes([buf[4], buf[5]]) as usize, VALSET_HEADER_SIZE + 6);
+        assert_eq!(
+            u16::from_le_bytes([buf[4], buf[5]]) as usize,
+            VALSET_HEADER_SIZE + 6
+        );
 
         // VALSET payload header
         assert_eq!(buf[6], VALSET_VERSION);
@@ -104,7 +110,10 @@ mod tests {
         assert_eq!(&buf[8..10], &[0, 0], "reserved bytes must be zero");
 
         // Key ID little-endian, then the value.
-        assert_eq!(u32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]), 0x3021_0001);
+        assert_eq!(
+            u32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]),
+            0x3021_0001
+        );
         assert_eq!(u16::from_le_bytes([buf[14], buf[15]]), 200);
 
         // Checksum covers class..payload end.
@@ -123,12 +132,24 @@ mod tests {
         ];
         let len = build_valset(&mut buf, LAYER_RAM, &items).unwrap();
         // 6 + 6 + 4 (two u16 keys) + 5 (one u8 key) + 2
-        assert_eq!(len, ubx::HEADER_SIZE + VALSET_HEADER_SIZE + 6 + 6 + 5 + ubx::CHECKSUM_SIZE);
+        assert_eq!(
+            len,
+            ubx::HEADER_SIZE + VALSET_HEADER_SIZE + 6 + 6 + 5 + ubx::CHECKSUM_SIZE
+        );
 
         let payload = &buf[ubx::HEADER_SIZE + VALSET_HEADER_SIZE..len - 2];
-        assert_eq!(u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]), 0x3021_0001);
-        assert_eq!(u32::from_le_bytes([payload[6], payload[7], payload[8], payload[9]]), 0x3021_0002);
-        assert_eq!(u32::from_le_bytes([payload[12], payload[13], payload[14], payload[15]]), 0x2091_0007);
+        assert_eq!(
+            u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]),
+            0x3021_0001
+        );
+        assert_eq!(
+            u32::from_le_bytes([payload[6], payload[7], payload[8], payload[9]]),
+            0x3021_0002
+        );
+        assert_eq!(
+            u32::from_le_bytes([payload[12], payload[13], payload[14], payload[15]]),
+            0x2091_0007
+        );
         assert_eq!(payload[16], 1);
     }
 

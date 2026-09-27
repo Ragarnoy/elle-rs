@@ -711,7 +711,10 @@ mod tests {
     fn oversized_ubx_skip_is_capped() {
         let mut dec = Decoder::new();
         // 0xFFFF announces 65,537 bytes to discard, counting the checksum.
-        feed_oversized_header(&mut dec, &ubx_header(ubx::class::NAV, ubx::nav::PVT, 0xFFFF));
+        feed_oversized_header(
+            &mut dec,
+            &ubx_header(ubx::class::NAV, ubx::nav::PVT, 0xFFFF),
+        );
 
         // Far fewer bytes than the header claimed, but more than the cap: an
         // uncapped decoder is still discarding here and eats the sentence.
@@ -797,7 +800,11 @@ mod tests {
         rest.extend_from_slice(GGA);
 
         let frames = collect_frames(&mut dec, &rest);
-        assert_eq!(frames.len(), 1, "expected only the trailing GGA, got {frames:?}");
+        assert_eq!(
+            frames.len(),
+            1,
+            "expected only the trailing GGA, got {frames:?}"
+        );
         assert_eq!(frames[0], GGA_RAW);
     }
 
@@ -814,7 +821,11 @@ mod tests {
         data.extend_from_slice(GGA);
 
         let frames = collect_frames(&mut dec, &data);
-        assert_eq!(frames.len(), 1, "expected only the trailing GGA, got {frames:?}");
+        assert_eq!(
+            frames.len(),
+            1,
+            "expected only the trailing GGA, got {frames:?}"
+        );
         assert_eq!(frames[0], GGA_RAW);
     }
 
