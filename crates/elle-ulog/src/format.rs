@@ -35,7 +35,7 @@ impl ULogHeader {
 
     /// Create a new ULog header with timestamp from current Instant
     #[must_use]
-    pub fn from_instant(instant: Instant) -> Self {
+    pub const fn from_instant(instant: Instant) -> Self {
         Self::new(instant.as_micros())
     }
 
@@ -69,12 +69,43 @@ impl MessageHeader {
 
     /// Serialize to bytes (3 bytes)
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; 3] {
-        let mut buf = [0u8; 3];
-        buf[0..2].copy_from_slice(&self.msg_size.to_le_bytes());
-        buf[2] = self.msg_type;
-        buf
+    pub const fn to_bytes(&self) -> [u8; MESSAGE_HEADER_SIZE] {
+        let [lo, hi] = self.msg_size.to_le_bytes();
+        [lo, hi, self.msg_type]
     }
+}
+
+/// Size of a ULog message header (`msg_size: u16` + `msg_type: u8`)
+pub(crate) const MESSAGE_HEADER_SIZE: usize = 3;
+
+/// Build a complete ULog format definition message ('F') from its format
+/// string, at compile time: little-endian `format.len()` as the u16 size, the
+/// `'F'` type byte, then the format text.
+///
+/// `N` must be `format.len() + MESSAGE_HEADER_SIZE`; a mismatch, or a format
+/// too long for the u16 size field, fails const evaluation.
+pub(crate) const fn format_msg<const N: usize>(format: &str) -> [u8; N] {
+    let text = format.as_bytes();
+    assert!(
+        N == text.len() + MESSAGE_HEADER_SIZE,
+        "format_msg: N must be format.len() + 3"
+    );
+    assert!(
+        text.len() <= u16::MAX as usize,
+        "format_msg: format too long"
+    );
+
+    let mut buf = [0u8; N];
+    let [lo, hi] = (text.len() as u16).to_le_bytes();
+    buf[0] = lo;
+    buf[1] = hi;
+    buf[2] = b'F';
+    let mut i = 0;
+    while i < text.len() {
+        buf[MESSAGE_HEADER_SIZE + i] = text[i];
+        i += 1;
+    }
+    buf
 }
 
 /// Pre-serialized default FlagBits message (header + payload, computed at compile time)
@@ -99,7 +130,7 @@ pub(crate) struct InfoMessage<'a> {
 impl<'a> InfoMessage<'a> {
     /// Create a new info message
     #[must_use]
-    pub fn new(key: &'a str, value: &'a str) -> Self {
+    pub const fn new(key: &'a str, value: &'a str) -> Self {
         Self { key, value }
     }
 
@@ -128,7 +159,7 @@ pub(crate) struct SubscriptionMessage<'a> {
 impl<'a> SubscriptionMessage<'a> {
     /// Create a new subscription
     #[must_use]
-    pub fn new(multi_id: u8, msg_id: u16, message_name: &'a str) -> Self {
+    pub const fn new(multi_id: u8, msg_id: u16, message_name: &'a str) -> Self {
         Self {
             multi_id,
             msg_id,

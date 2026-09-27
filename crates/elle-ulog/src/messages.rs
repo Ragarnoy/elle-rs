@@ -2,6 +2,7 @@
 //!
 //! Defines the message structures and formats for logging flight controller data.
 
+use crate::format::{MESSAGE_HEADER_SIZE, format_msg};
 use embassy_time::Instant;
 
 /// Message type identifiers
@@ -65,12 +66,13 @@ impl AttitudeMessage {
     /// Message name
     pub const NAME: &'static str = "attitude_data";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\x71\x00Fattitude_data:uint64_t timestamp;float pitch;float roll;float yaw;float pitch_rate;float roll_rate;float yaw_rate";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Create a new attitude message
     #[must_use]
-    pub fn new(
+    pub const fn new(
         timestamp: Instant,
         pitch: f32,
         roll: f32,
@@ -147,8 +149,9 @@ impl CommandsMessage {
     /// Message name
     pub const NAME: &'static str = "commands";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\xf0\x00Fcommands:uint64_t timestamp;float throttle;float pitch;float roll;float yaw;uint8_t attitude_mode;float pitch_setpoint_deg;float roll_setpoint_deg;float pitch_correction;float roll_correction;uint32_t elevon_left_us;uint32_t elevon_right_us";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 49; // 8 + 4*4 + 1 + 2*4 + 2*4 + 2*4
@@ -156,7 +159,7 @@ impl CommandsMessage {
     /// Create a new commands message
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub const fn new(
         timestamp: Instant,
         throttle: f32,
         pitch: f32,
@@ -251,8 +254,9 @@ impl ControllerMessage {
     /// Message name
     pub const NAME: &'static str = "controller";
 
-    /// Pre-serialized format definition message (header + payload)
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\x06\x01Fcontroller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 53;
@@ -279,20 +283,6 @@ impl ControllerMessage {
     }
 }
 
-// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
-const _: () = assert!(
-    ControllerMessage::FORMAT_MSG.len() == ControllerMessage::FORMAT.len() + 3,
-    "ControllerMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
-);
-const _: () = assert!(
-    ControllerMessage::FORMAT_MSG[0] as usize | ((ControllerMessage::FORMAT_MSG[1] as usize) << 8)
-        == ControllerMessage::FORMAT.len(),
-    "ControllerMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
-);
-const _: () = assert!(
-    ControllerMessage::FORMAT_MSG[2] == b'F',
-    "ControllerMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
-);
 const _: () = assert!(
     ControllerMessage::SIZE == 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 2 + 2,
     "ControllerMessage::SIZE does not match its field widths"
@@ -331,8 +321,9 @@ impl PidGainsMessage {
     /// Message name
     pub const NAME: &'static str = "pid_gains";
 
-    /// Pre-serialized format definition message (header + payload)
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\x8d\x00Fpid_gains:uint64_t timestamp;float kp_pitch;float ki_pitch;float kd_pitch;float kp_roll;float ki_roll;float kd_roll;float i_limit;float scale";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 40;
@@ -354,20 +345,6 @@ impl PidGainsMessage {
     }
 }
 
-// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
-const _: () = assert!(
-    PidGainsMessage::FORMAT_MSG.len() == PidGainsMessage::FORMAT.len() + 3,
-    "PidGainsMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
-);
-const _: () = assert!(
-    PidGainsMessage::FORMAT_MSG[0] as usize | ((PidGainsMessage::FORMAT_MSG[1] as usize) << 8)
-        == PidGainsMessage::FORMAT.len(),
-    "PidGainsMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
-);
-const _: () = assert!(
-    PidGainsMessage::FORMAT_MSG[2] == b'F',
-    "PidGainsMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
-);
 const _: () = assert!(
     PidGainsMessage::SIZE == 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4,
     "PidGainsMessage::SIZE does not match its field widths"
@@ -401,9 +378,9 @@ impl GyroRawMessage {
     /// Message name
     pub const NAME: &'static str = "gyro_raw";
 
-    /// Pre-serialized format definition message (header + payload)
+    /// Format definition message (header + `FORMAT`), built at compile time
     pub(crate) const FORMAT_MSG: &'static [u8] =
-        b"\x42\x00Fgyro_raw:uint64_t timestamp;float gyro_x;float gyro_y;float gyro_z";
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 20;
@@ -420,20 +397,6 @@ impl GyroRawMessage {
     }
 }
 
-// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
-const _: () = assert!(
-    GyroRawMessage::FORMAT_MSG.len() == GyroRawMessage::FORMAT.len() + 3,
-    "GyroRawMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
-);
-const _: () = assert!(
-    GyroRawMessage::FORMAT_MSG[0] as usize | ((GyroRawMessage::FORMAT_MSG[1] as usize) << 8)
-        == GyroRawMessage::FORMAT.len(),
-    "GyroRawMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
-);
-const _: () = assert!(
-    GyroRawMessage::FORMAT_MSG[2] == b'F',
-    "GyroRawMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
-);
 const _: () = assert!(
     GyroRawMessage::SIZE == 8 + 4 + 4 + 4,
     "GyroRawMessage::SIZE does not match its field widths"
@@ -468,15 +431,16 @@ impl StatusMessage {
     /// Message name
     pub const NAME: &'static str = "system_status";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\x8d\x00Fsystem_status:uint64_t timestamp;uint32_t loop_time_us;uint32_t imu_errors;uint8_t calibrated;uint8_t armed;float cpu_load;uint16_t rc_age_ms";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 24; // 8 + 4 + 4 + 1 + 1 + 4 + 2
 
     /// Create a new status message
     #[must_use]
-    pub fn new(
+    pub const fn new(
         timestamp: Instant,
         loop_time_us: u32,
         imu_errors: u32,
@@ -536,15 +500,16 @@ impl BarometerMessage {
     /// Message name
     pub const NAME: &'static str = "barometer_data";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\x68\x00Fbarometer_data:uint64_t timestamp;float pressure_hpa;float temperature_c;float altitude_m;float vario_ms";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 24; // 8 + 4*4
 
     /// Create a new barometer message
     #[must_use]
-    pub fn new(
+    pub const fn new(
         timestamp: Instant,
         pressure_hpa: f32,
         temperature_c: f32,
@@ -597,16 +562,16 @@ impl MagnetometerMessage {
     /// Message name
     pub const NAME: &'static str = "magnetometer_data";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    /// Format definition message (header + `FORMAT`), built at compile time
     pub(crate) const FORMAT_MSG: &'static [u8] =
-        b"\x48\x00Fmagnetometer_data:uint64_t timestamp;float mag_x;float mag_y;float mag_z";
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 20; // 8 + 3*4
 
     /// Create a new magnetometer message
     #[must_use]
-    pub fn new(timestamp: Instant, mag_x: f32, mag_y: f32, mag_z: f32) -> Self {
+    pub const fn new(timestamp: Instant, mag_x: f32, mag_y: f32, mag_z: f32) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
             mag_x,
@@ -675,12 +640,9 @@ impl GnssMessage {
     /// Message name
     pub const NAME: &'static str = "gnss_data";
 
-    /// Pre-serialized format definition message (header + payload)
-    ///
-    /// The two leading bytes are `FORMAT.len()` as a little-endian u16, then
-    /// the `'F'` message type. The `const` assertions below make a mismatch a
-    /// compile error — this literal is hand-written and nothing else checks it.
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\x09\x01Fgnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop;float vel_n_ms;float vel_e_ms;float vel_d_ms;float ground_speed_ms;float heading_motion_deg;float h_acc_m;float v_acc_m;float s_acc_ms";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 58; // 8 + 3*4 + 1 + 1 + 4 + 8*4
@@ -688,7 +650,7 @@ impl GnssMessage {
     /// Create a new GNSS message
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub const fn new(
         timestamp: Instant,
         latitude: f32,
         longitude: f32,
@@ -747,20 +709,6 @@ impl GnssMessage {
     }
 }
 
-// The FORMAT_MSG literal carries FORMAT's length by hand; keep them in step.
-const _: () = assert!(
-    GnssMessage::FORMAT_MSG.len() == GnssMessage::FORMAT.len() + 3,
-    "GnssMessage::FORMAT_MSG must be a 3-byte ULog header plus FORMAT"
-);
-const _: () = assert!(
-    GnssMessage::FORMAT_MSG[0] as usize | ((GnssMessage::FORMAT_MSG[1] as usize) << 8)
-        == GnssMessage::FORMAT.len(),
-    "GnssMessage::FORMAT_MSG length prefix does not match FORMAT.len()"
-);
-const _: () = assert!(
-    GnssMessage::FORMAT_MSG[2] == b'F',
-    "GnssMessage::FORMAT_MSG must declare the ULog 'F' (format) message type"
-);
 // 8 (u64) + 3 f32 + 2 u8 + 1 f32 + 8 f32
 const _: () = assert!(
     GnssMessage::SIZE == 8 + 3 * 4 + 1 + 1 + 4 + 8 * 4,
@@ -793,14 +741,15 @@ impl EngineMessage {
 
     pub const NAME: &'static str = "engine_data";
 
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\x42\x01Fengine_data:uint64_t timestamp;uint32_t left_erpm;uint32_t right_erpm;uint16_t left_throttle;uint16_t right_throttle;uint32_t left_target_erpm;uint32_t right_target_erpm;uint8_t left_temperature;uint8_t right_temperature;uint32_t left_voltage_mv;uint32_t right_voltage_mv;uint32_t left_current_ma;uint32_t right_current_ma";
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size: 8 + 4+4 + 2+2 + 4+4 + 1+1 + 4+4 + 4+4 = 46
     pub(crate) const SIZE: usize = 46;
 
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub const fn new(
         timestamp: Instant,
         left_erpm: u32,
         right_erpm: u32,
@@ -874,16 +823,16 @@ impl LogEventMessage {
     /// Message name
     pub const NAME: &'static str = "log_event";
 
-    /// Pre-serialized format definition message (header + payload, computed at compile time)
+    /// Format definition message (header + `FORMAT`), built at compile time
     pub(crate) const FORMAT_MSG: &'static [u8] =
-        b"\x38\x00Flog_event:uint64_t timestamp;uint8_t level;uint16_t code";
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 11; // 8 + 1 + 2
 
     /// Create a new log event message
     #[must_use]
-    pub fn new(timestamp: Instant, level: u8, code: u16) -> Self {
+    pub const fn new(timestamp: Instant, level: u8, code: u16) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
             level,
@@ -933,10 +882,9 @@ impl AutotuneMessage {
     /// Message name
     pub const NAME: &'static str = "autotune_status";
 
-    // FORMAT string is 165 chars. FORMAT_MSG = 3-byte header (LE u16 size + 'F') + format string.
-    // Total payload = 165 bytes → LE u16 = 0x00A5.
-    /// Pre-serialized format definition message
-    pub(crate) const FORMAT_MSG: &'static [u8] = b"\xa5\x00Fautotune_status:uint64_t timestamp;uint8_t phase;uint8_t axis;uint8_t relay_positive;float setpoint_deg;float measurement_deg;uint8_t cycles_done;float amplitude_deg";
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
     pub(crate) const SIZE: usize = 24; // 8 + 1 + 1 + 1 + 4 + 4 + 1 + 4
@@ -944,7 +892,7 @@ impl AutotuneMessage {
     /// Create a new autotune status message
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub const fn new(
         timestamp: Instant,
         phase: u8,
         axis: u8,
@@ -981,87 +929,3 @@ impl AutotuneMessage {
         buf
     }
 }
-
-// Compile-time checks: the msg_size field (LE u16 in first 2 bytes of FORMAT_MSG)
-// must equal FORMAT string length, and total FORMAT_MSG length must be 3 + FORMAT length.
-const _: () = {
-    // AttitudeMessage
-    let encoded =
-        AttitudeMessage::FORMAT_MSG[0] as usize | (AttitudeMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == AttitudeMessage::FORMAT.len(),
-        "AttitudeMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(AttitudeMessage::FORMAT_MSG.len() == 3 + AttitudeMessage::FORMAT.len());
-
-    // CommandsMessage
-    let encoded =
-        CommandsMessage::FORMAT_MSG[0] as usize | (CommandsMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == CommandsMessage::FORMAT.len(),
-        "CommandsMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(CommandsMessage::FORMAT_MSG.len() == 3 + CommandsMessage::FORMAT.len());
-
-    // StatusMessage
-    let encoded =
-        StatusMessage::FORMAT_MSG[0] as usize | (StatusMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == StatusMessage::FORMAT.len(),
-        "StatusMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(StatusMessage::FORMAT_MSG.len() == 3 + StatusMessage::FORMAT.len());
-
-    // BarometerMessage
-    let encoded =
-        BarometerMessage::FORMAT_MSG[0] as usize | (BarometerMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == BarometerMessage::FORMAT.len(),
-        "BarometerMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(BarometerMessage::FORMAT_MSG.len() == 3 + BarometerMessage::FORMAT.len());
-
-    // MagnetometerMessage
-    let encoded = MagnetometerMessage::FORMAT_MSG[0] as usize
-        | (MagnetometerMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == MagnetometerMessage::FORMAT.len(),
-        "MagnetometerMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(MagnetometerMessage::FORMAT_MSG.len() == 3 + MagnetometerMessage::FORMAT.len());
-
-    // GnssMessage
-    let encoded = GnssMessage::FORMAT_MSG[0] as usize | (GnssMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == GnssMessage::FORMAT.len(),
-        "GnssMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(GnssMessage::FORMAT_MSG.len() == 3 + GnssMessage::FORMAT.len());
-
-    // LogEventMessage
-    let encoded =
-        LogEventMessage::FORMAT_MSG[0] as usize | (LogEventMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == LogEventMessage::FORMAT.len(),
-        "LogEventMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(LogEventMessage::FORMAT_MSG.len() == 3 + LogEventMessage::FORMAT.len());
-
-    // EngineMessage
-    let encoded =
-        EngineMessage::FORMAT_MSG[0] as usize | (EngineMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == EngineMessage::FORMAT.len(),
-        "EngineMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(EngineMessage::FORMAT_MSG.len() == 3 + EngineMessage::FORMAT.len());
-
-    // AutotuneMessage
-    let encoded =
-        AutotuneMessage::FORMAT_MSG[0] as usize | (AutotuneMessage::FORMAT_MSG[1] as usize) << 8;
-    assert!(
-        encoded == AutotuneMessage::FORMAT.len(),
-        "AutotuneMessage FORMAT_MSG msg_size mismatch"
-    );
-    assert!(AutotuneMessage::FORMAT_MSG.len() == 3 + AutotuneMessage::FORMAT.len());
-};
