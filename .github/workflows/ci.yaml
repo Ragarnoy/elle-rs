@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  firmware:
+    name: Build ${{ matrix.airframe }} (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        airframe: [eagle, dart]
+        variant: [flight, rpc, rpc-rc]
+        # Each entry matches a `variant` value, so it adds `features` to both
+        # airframes' jobs for that variant rather than creating new jobs.
+        include:
+          - variant: flight
+            features: ""
+          - variant: rpc
+            features: --no-default-features --features rpc-control,gnss
+          - variant: rpc-rc
+            features: --no-default-features --features rpc-control,rpc-rc,gnss
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv8m.main-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.airframe }}-${{ matrix.variant }}
+      - name: Build
+        working-directory: crates/elle-${{ matrix.airframe }}
+        run: cargo build --release ${{ matrix.features }}
+
+  checks:
+    name: Feature powerset, clippy, fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv8m.main-none-eabihf
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: Feature powerset (eagle)
+        run: cargo hack check -p elle-eagle --feature-powerset --exclude-features defmt-logging,default,rpc-rc --release
+      - name: Feature powerset (dart)
+        run: cargo hack check -p elle-dart --feature-powerset --exclude-features defmt-logging,default,rpc-rc --release
+      - name: Clippy (no warnings)
+        run: |
+          for airframe in eagle dart; do
+            for features in "" "--no-default-features --features rpc-control,rpc-rc,gnss"; do
+              (cd "crates/elle-$airframe" && cargo clippy --release $features -- -D warnings)
+            done
+          done
+
+  host:
+    name: Host tool and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries for probe-rs
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: Host tool
+        run: cargo clippy -p elle-rpc-host --target x86_64-unknown-linux-gnu -- -D warnings
+      - name: elle-control tests (eagle)
+        run: cargo test -p elle-control --target x86_64-unknown-linux-gnu
+      - name: elle-control tests (dart)
+        run: cargo test -p elle-control --target x86_64-unknown-linux-gnu --features platform-dart
