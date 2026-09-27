@@ -55,85 +55,110 @@ fn crsf_to_rc(value: u16) -> u16 {
     ((v - u32::from(CRSF_CHANNEL_MIN)) * RC_VALUE_MAX / CRSF_CHANNEL_RANGE) as u16
 }
 
-/// Dedicated CRSF receiver task that runs independently from the control loop.
-/// Reads UART data in chunks, parses CRSF packets, scales channel values to
-/// 0–2047 range, and updates RC_COMMANDS signal with latest packets.
-#[embassy_executor::task]
-pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
-    let mut frame_count: u32 = 0;
-    let mut error_count: u32 = 0;
-    let mut parse_error_count: u32 = 0;
+/// CRSF frame header bytes that can start a frame (sync / device addresses).
+const CRSF_FRAME_STARTS: [u8; 4] = [crsf::SYNC_BYTE, crsf::SYNC_RC_BYTE, 0xEA, 0xEC];
+/// Valid CRSF length byte: type + payload + CRC, at most 62 (64-byte frames).
+const CRSF_LEN_RANGE: core::ops::RangeInclusive<u8> = 2..=62;
 
-    loop {
-        let mut buf = [0u8; 64];
+/// Receiver-task counters, for the periodic debug line and rate-limited logs.
+#[derive(Default)]
+struct RxStats {
+    frames: u32,
+    parse_errors: u32,
+    uart_errors: u32,
+}
 
-        match receiver.uart.read(&mut buf).await {
-            Ok(()) => {
-                // Process all parsed packets from this chunk
-                let mut remaining = &buf[..];
-                while !remaining.is_empty() {
-                    match receiver.parser.push_bytes(remaining) {
-                        Some((result, rest)) => {
-                            remaining = rest;
-                            match result {
-                                Ok(packet) => {
-                                    if let Packet::RcChannelsPacked(channels) = packet {
-                                        frame_count += 1;
-                                        if frame_count == 1 {
-                                            crate::elle_event!(
-                                                info,
-                                                crate::event::EVT_CRSF_RX_FIRST_FRAME,
-                                                "CRSF: first RC frame received (ch1={} ch2={} ch3={} ch4={})",
-                                                channels.0[0],
-                                                channels.0[1],
-                                                channels.0[2],
-                                                channels.0[3]
-                                            );
-                                        } else if frame_count.is_multiple_of(500) {
-                                            debug!(
-                                                "CRSF: {} frames ok, {} parse errors, {} uart errors",
-                                                frame_count, parse_error_count, error_count
-                                            );
-                                        }
-                                        let scaled =
-                                            core::array::from_fn(|i| crsf_to_rc(channels.0[i]));
-                                        let commands = PilotCommands::Raw(RawCommands {
-                                            channels: scaled,
-                                            timestamp: Instant::now(),
-                                        });
-                                        RC_COMMANDS.signal(commands);
-                                    }
-                                }
-                                Err(_) => {
-                                    parse_error_count += 1;
-                                    if parse_error_count <= 3
-                                        || parse_error_count.is_multiple_of(1000)
-                                    {
-                                        warn!("CRSF: parse error (total={})", parse_error_count);
-                                    }
-                                }
-                            }
-                        }
-                        None => break,
-                    }
-                }
-            }
-            Err(e) => {
-                error_count += 1;
-                if error_count <= 3 || error_count.is_multiple_of(1000) {
+/// Feed one frame's bytes to the parser and publish any RC channels it yields.
+fn handle_frame(parser: &mut Parser, bytes: &[u8], stats: &mut RxStats) {
+    let mut remaining = bytes;
+    while !remaining.is_empty() {
+        let Some((result, rest)) = parser.push_bytes(remaining) else {
+            break;
+        };
+        remaining = rest;
+        match result {
+            Ok(Packet::RcChannelsPacked(channels)) => {
+                stats.frames += 1;
+                if stats.frames == 1 {
                     crate::elle_event!(
-                        warn,
-                        crate::event::EVT_CRSF_RX_UART_ERROR,
-                        "CRSF: UART error: {} (total={})",
-                        e,
-                        error_count
+                        info,
+                        crate::event::EVT_CRSF_RX_FIRST_FRAME,
+                        "CRSF: first RC frame received (ch1={} ch2={} ch3={} ch4={})",
+                        channels.0[0],
+                        channels.0[1],
+                        channels.0[2],
+                        channels.0[3]
+                    );
+                } else if stats.frames.is_multiple_of(500) {
+                    debug!(
+                        "CRSF: {} frames ok, {} parse errors, {} uart errors",
+                        stats.frames, stats.parse_errors, stats.uart_errors
                     );
                 }
-                Timer::after(Duration::from_millis(1)).await;
+                let scaled = core::array::from_fn(|i| crsf_to_rc(channels.0[i]));
+                RC_COMMANDS.signal(PilotCommands::Raw(RawCommands {
+                    channels: scaled,
+                    timestamp: Instant::now(),
+                }));
+            }
+            Ok(_) => {}
+            Err(_) => {
+                stats.parse_errors += 1;
+                if stats.parse_errors <= 3 || stats.parse_errors.is_multiple_of(1000) {
+                    warn!("CRSF: parse error (total={})", stats.parse_errors);
+                }
             }
         }
+    }
+}
 
-        // Yield briefly to ensure other tasks get CPU time
-        Timer::after(Duration::from_micros(100)).await;
+/// Dedicated CRSF receiver task that runs independently from the control loop.
+///
+/// Reads exactly one frame at a time: the start byte, the length byte, then
+/// exactly `len` bytes, so each RC frame is published the moment its last byte
+/// arrives. (A fixed 64-byte read held a finished 26-byte frame until the
+/// buffer filled: up to ~2 frame periods, 13 ms at 150 Hz, 40 ms at 50 Hz.)
+/// Every frame begins by checking its start byte, so after a bad length, a
+/// parse error or a UART error it hunts byte by byte for a valid frame start
+/// before trusting a length again.
+#[embassy_executor::task]
+pub async fn crsf_receiver_task(mut receiver: CrsfReceiver<'static>) {
+    let mut stats = RxStats::default();
+    let mut frame = [0u8; 64];
+    loop {
+        let result: Result<(), embassy_rp::uart::Error> = async {
+            // Hunt for a frame start (one byte at a time: cheap, and only long
+            // when out of step).
+            loop {
+                receiver.uart.read(&mut frame[..1]).await?;
+                if CRSF_FRAME_STARTS.contains(&frame[0]) {
+                    break;
+                }
+            }
+            receiver.uart.read(&mut frame[1..2]).await?;
+            let len = frame[1];
+            if !CRSF_LEN_RANGE.contains(&len) {
+                return Ok(()); // not a frame start after all: hunt again
+            }
+            let end = 2 + usize::from(len);
+            receiver.uart.read(&mut frame[2..end]).await?;
+            handle_frame(&mut receiver.parser, &frame[..end], &mut stats);
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            stats.uart_errors += 1;
+            if stats.uart_errors <= 3 || stats.uart_errors.is_multiple_of(1000) {
+                crate::elle_event!(
+                    warn,
+                    crate::event::EVT_CRSF_RX_UART_ERROR,
+                    "CRSF: UART error: {} (total={})",
+                    e,
+                    stats.uart_errors
+                );
+            }
+            Timer::after(Duration::from_millis(1)).await;
+        }
     }
 }

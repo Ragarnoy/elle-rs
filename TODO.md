@@ -37,7 +37,7 @@
 
 **2. Pre-arm checks (~1h)**
 - **Attitude signal freshness**: `ATTITUDE` cache age < 100ms — proves Core1 alive + IMU producing data (single check replaces separate Core1/IMU gates; ICM-42686 is factory-calibrated so `calibrated` flag is always true and useless as a gate)
-- **Throttle edge detection**: require `seen_throttle_high` before low-throttle can trigger arm — prevents instant arming on boot when stick is already at 0. Add `seen_throttle_high: bool` to `ArmingState`, set when throttle > ~1300µs
+- ~~**Throttle edge detection**~~: done — `ArmingState` arms only after the throttle has been above `ARM_THROTTLE_HIGH_RAW` (~30 %) and then back to zero thrust; the gesture is cleared on every disarm and failsafe. RPC `Arm` is refused while the RPC throttle is non-zero.
 - **ESC arming complete**: `dshot_task` runs 2s MotorStop burst on boot; gate arming on `static ESCS_READY: AtomicBool` set after sequence completes
 - Return specific error code per failed check (RPC `ArmEndpoint` already returns `error_code`)
 - Apply to both RC throttle-based arming and RPC arm command

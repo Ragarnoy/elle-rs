@@ -833,6 +833,7 @@ const fn log_code_text(code: u16) -> &'static str {
         15 => "RC: signal restored",
         16 => "Kill switch ENGAGED",
         17 => "Kill switch released",
+        18 => "Arm refused: throttle not at zero",
         // CRSF telemetry TX (20–29)
         20 => "CRSF TX: telemetry started",
         21 => "CRSF TX: first second OK",
@@ -853,6 +854,7 @@ const fn log_code_text(code: u16) -> &'static str {
         45 => "IMU: caught up queued samples",
         46 => "IMU: gyro bias measured",
         47 => "IMU: gyro bias failed (keep still at boot)",
+        48 => "I2C0 error: mag and baro disabled (AHRS 6-DOF)",
         // CRSF receiver (50–59)
         50 => "CRSF RX: first frame received",
         51 => "CRSF RX: UART error",
@@ -860,6 +862,7 @@ const fn log_code_text(code: u16) -> &'static str {
         60 => "Flash: ULog write failed",
         61 => "Flash: ULog erase failed",
         62 => "Flash: ULog write timeout",
+        63 => "Flash: command refused while armed (disarm first)",
         // Supervisor (70–79)
         70 => "Supervisor: Core1 unhealthy",
         71 => "Supervisor: Core1 restored",
@@ -872,6 +875,7 @@ const fn log_code_text(code: u16) -> &'static str {
         91 => "Autotune: complete",
         92 => "Autotune: aborted (RC)",
         93 => "Autotune: safety abort",
+        94 => "Autotune: result rejected (gains restored)",
         // PID profile persistence (100–109)
         100 => "PID: saved to flash",
         101 => "PID: save failed",

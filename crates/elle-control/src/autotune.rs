@@ -95,20 +95,24 @@ impl SavedGains {
     /// - i_limit: 0.0..=1000.0
     pub fn from_bytes(b: &[u8; 32]) -> Option<Self> {
         let g: Self = bytemuck::pod_read_unaligned(b);
+        g.is_valid().then_some(g)
+    }
+
+    /// Every gain finite and within the range the flash loader accepts. The
+    /// autotuner checks its result against this too, so it can never apply or
+    /// save gains that the next boot would silently throw away.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
         let gain_ok = |v: f32| v.is_finite() && (0.0..=100.0).contains(&v);
-        if !gain_ok(g.pitch_kp)
-            || !gain_ok(g.pitch_ki)
-            || !gain_ok(g.pitch_kd)
-            || !gain_ok(g.roll_kp)
-            || !gain_ok(g.roll_ki)
-            || !gain_ok(g.roll_kd)
-            || !gain_ok(g.scale)
-            || !g.i_limit.is_finite()
-            || !(0.0..=1000.0).contains(&g.i_limit)
-        {
-            return None;
-        }
-        Some(g)
+        gain_ok(self.pitch_kp)
+            && gain_ok(self.pitch_ki)
+            && gain_ok(self.pitch_kd)
+            && gain_ok(self.roll_kp)
+            && gain_ok(self.roll_ki)
+            && gain_ok(self.roll_kd)
+            && gain_ok(self.scale)
+            && self.i_limit.is_finite()
+            && (0.0..=1000.0).contains(&self.i_limit)
     }
 }
 
@@ -146,6 +150,59 @@ pub enum AutotuneAction {
     RestoreGains(SavedGains),
     /// Autotune completed successfully.
     Completed(AutotuneResult),
+    /// The measurement finished but the result failed [`validate_result`]:
+    /// restore these (original) gains.
+    Rejected {
+        reason: AutotuneReject,
+        gains: SavedGains,
+    },
+}
+
+/// Why a finished autotune measurement was not applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+pub enum AutotuneReject {
+    /// Oscillation too small to measure: a noise-level amplitude divides into a
+    /// huge ultimate gain.
+    AmplitudeTooSmall,
+    /// Oscillation period outside the plausible airframe range.
+    PeriodOutOfRange,
+    /// Computed gains are non-finite or outside what the flash loader accepts.
+    GainsOutOfRange,
+}
+
+/// Smallest usable oscillation amplitude, in degrees, whatever the relay size.
+pub const AUTOTUNE_MIN_AMPLITUDE_DEG: f32 = 0.5;
+/// Smallest usable amplitude as a fraction of the relay amplitude. With the
+/// setpoint relay, the airframe oscillates at roughly the relay's size; a much
+/// smaller swing is noise, and Ku ~ relay / amplitude blows up.
+pub const AUTOTUNE_MIN_AMPLITUDE_RELAY_FRACTION: f32 = 0.2;
+/// Plausible oscillation period range for these airframes, in seconds.
+pub const AUTOTUNE_PERIOD_RANGE_S: core::ops::RangeInclusive<f32> = 0.1..=5.0;
+
+/// Check a finished relay measurement and the gains it produced before they
+/// are applied in flight or saved.
+///
+/// # Errors
+///
+/// The first check that fails, in the order amplitude, period, gains.
+pub fn validate_result(
+    amplitude_deg: f32,
+    relay_deg: f32,
+    tu_s: f32,
+    gains: &SavedGains,
+) -> Result<(), AutotuneReject> {
+    let min_amplitude =
+        AUTOTUNE_MIN_AMPLITUDE_DEG.max(AUTOTUNE_MIN_AMPLITUDE_RELAY_FRACTION * relay_deg);
+    if !amplitude_deg.is_finite() || amplitude_deg < min_amplitude {
+        return Err(AutotuneReject::AmplitudeTooSmall);
+    }
+    if !AUTOTUNE_PERIOD_RANGE_S.contains(&tu_s) {
+        return Err(AutotuneReject::PeriodOutOfRange);
+    }
+    if !gains.is_valid() {
+        return Err(AutotuneReject::GainsOutOfRange);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -620,6 +677,19 @@ impl Autotuner {
         };
 
         self.result = Some(result);
+        let gains = self.computed_gains();
+        let check = match gains {
+            Some(g) => validate_result(a_deg, self.relay_deg, tu, &g),
+            None => Err(AutotuneReject::GainsOutOfRange),
+        };
+        if let Err(reason) = check {
+            self.result = None;
+            self.phase = Phase::Aborted;
+            return AutotuneAction::Rejected {
+                reason,
+                gains: self.saved_gains,
+            };
+        }
         self.phase = Phase::Complete;
 
         AutotuneAction::Completed(result)

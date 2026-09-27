@@ -137,8 +137,6 @@ const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
 // Pre-computed lookup tables - all generated at compile time
 static THROTTLE_LUT: [u16; RC_LUT_SIZE] = generate_throttle_lut();
 static SERVO_LUT: [u32; RC_LUT_SIZE] = generate_servo_lut(SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
-static ENGINE_LUT: [u32; RC_LUT_SIZE] =
-    generate_servo_lut(ENGINE_MIN_PULSE_US, ENGINE_MAX_PULSE_US);
 
 // Single normalized lookup table — all channels share RC_CENTER after CRSF scaling
 static NORMALIZED_LUT: [i32; RC_LUT_SIZE] = generate_normalized_lut(RC_CENTER);
@@ -163,16 +161,6 @@ pub fn rc_to_pulse_lut(rc_value: u16) -> u32 {
     unsafe {
         // SAFETY: We clamp the index to valid range
         *SERVO_LUT.get_unchecked((rc_value as usize).min(RC_MAX_VALUE))
-    }
-}
-
-/// Ultra-fast engine pulse lookup (for arming logic - linear mapping)
-#[must_use]
-#[inline(always)]
-pub fn rc_to_engine_pulse_lut(rc_value: u16) -> u32 {
-    unsafe {
-        // SAFETY: We clamp the index to valid range
-        *ENGINE_LUT.get_unchecked((rc_value as usize).min(RC_MAX_VALUE))
     }
 }
 

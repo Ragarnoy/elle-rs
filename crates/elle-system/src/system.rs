@@ -129,7 +129,6 @@ pub struct FlightController<'a> {
     // Controller output snapshot for observability
     last_output: ControllerOutputSnapshot,
     // Supervisor components
-    watchdog: Option<Watchdog<'static>>,
     core1_health: CoreHealth,
     last_watchdog_kick: Instant,
     supervisor_enabled: bool,
@@ -176,7 +175,6 @@ impl<'a> FlightController<'a> {
             gains_version: 0,
             current_control_mode: ControlMode::Manual,
             last_output: ControllerOutputSnapshot::default(),
-            watchdog: None,
             core1_health: CoreHealth::default(),
             last_watchdog_kick: Instant::now(),
             supervisor_enabled: false,
@@ -206,10 +204,10 @@ impl<'a> FlightController<'a> {
     }
 
     /// Initialize supervisor components (watchdog and health monitoring)
-    pub fn initialize_supervisor(&mut self, mut watchdog: Watchdog<'static>) {
-        // Configure watchdog for critical flight safety timeout
-        watchdog.start(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
-        self.watchdog = Some(watchdog);
+    pub fn initialize_supervisor(&mut self, watchdog: Watchdog<'static>) {
+        // Configure watchdog for critical flight safety timeout. It lives in
+        // elle_hardware::watchdog so the flash manager can extend it too.
+        elle_hardware::watchdog::install(watchdog, Duration::from_millis(WATCHDOG_TIMEOUT_MS));
         // Keep supervisor health monitoring disabled until explicitly enabled
         self.last_watchdog_kick = Instant::now();
         info!(
@@ -226,10 +224,8 @@ impl<'a> FlightController<'a> {
 
     /// Feed the watchdog timer to prevent system reset
     fn kick_watchdog(&mut self) {
-        if let Some(ref mut wd) = self.watchdog {
-            wd.feed(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
-            self.last_watchdog_kick = Instant::now();
-        }
+        elle_hardware::watchdog::feed(Duration::from_millis(WATCHDOG_TIMEOUT_MS));
+        self.last_watchdog_kick = Instant::now();
     }
 
     /// Check and update Core 1 health based on heartbeat signal

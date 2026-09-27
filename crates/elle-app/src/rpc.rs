@@ -8,7 +8,8 @@ use crate::logging::log_flight_data;
 use crate::support::RC_DEBUG_LOG_DIVISOR;
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, erase_pid_from_flash,
-    save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal, validate_attitude,
+    resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
+    validate_attitude,
 };
 use crate::{flight_state, rc_signal, rpc_app, rpc_handlers};
 
@@ -31,6 +32,24 @@ use elle_system::{
 use embassy_time::{Duration, Instant, Ticker, Timer};
 
 use elle_rpc_icd::{AUTOTUNE_AXIS_ERASE_PID, AUTOTUNE_AXIS_SAVE_PID};
+
+/// Commands that write or erase flash. A flash write pauses Core 1 and blocks
+/// Core 0 (DShot included) for its whole duration, so these are refused while
+/// armed. Mag cal is included because it saves to flash when it completes.
+fn writes_flash(cmd: &rpc_handlers::RpcCommand) -> bool {
+    use rpc_handlers::RpcCommand;
+    match cmd {
+        RpcCommand::PopAndPeekULog
+        | RpcCommand::EraseULog
+        | RpcCommand::StartMagCal
+        | RpcCommand::ClearMagCal
+        | RpcCommand::ClearLevelCal => true,
+        RpcCommand::StartAutotune { axis, .. } => {
+            *axis == AUTOTUNE_AXIS_SAVE_PID || *axis == AUTOTUNE_AXIS_ERASE_PID
+        }
+        _ => false,
+    }
+}
 
 /// Run the RPC-mode control loop forever. `epoch_ms` is the wall-clock time at
 /// boot (ms since the UNIX epoch), used to stamp new ULog files.
@@ -69,6 +88,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
 
     // Ticker for consistent control loop timing
     let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
+    let mut previous_tick = None;
 
     // RPC commands accumulator (updated by RPC handlers, unused when rc feature is active)
     #[cfg(not(feature = "rpc-rc"))]
@@ -96,6 +116,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
     loop {
         ticker.next().await;
         let loop_start = Instant::now();
+        resync_after_stall(&mut ticker, &mut previous_tick, loop_start);
         let loop_timer = TimingMeasurement::start();
 
         // Supervisor check
@@ -106,6 +127,18 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
 
         // Process all pending RPC commands
         while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
+            if fc.is_armed() && writes_flash(&cmd) {
+                if matches!(cmd, RpcCommand::PopAndPeekULog) {
+                    // End the extraction cleanly rather than leave the host waiting.
+                    ULOG_STATE.store(ULogState::Empty as u8, Ordering::Release);
+                }
+                elle_hardware::elle_event!(
+                    warn,
+                    elle_hardware::event::EVT_FLASH_REFUSED_ARMED,
+                    "RPC: flash command refused while armed"
+                );
+                continue;
+            }
             match cmd {
                 #[cfg(not(feature = "rpc-rc"))]
                 RpcCommand::SetThrottle(percent) => {
@@ -138,6 +171,15 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 }
                 #[cfg(feature = "rpc-rc")]
                 RpcCommand::SetMode(_) => {} // Ignored in RC mode
+                // An explicit arm must not start with thrust already commanded.
+                #[cfg(not(feature = "rpc-rc"))]
+                RpcCommand::Arm if rpc_throttle > 0.0 => {
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_ARM_REFUSED_THROTTLE,
+                        "RPC: arm refused, throttle not at zero"
+                    );
+                }
                 RpcCommand::Arm => {
                     fc.arm();
                     elle_hardware::elle_event!(
@@ -456,7 +498,11 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 roll: (rpc_elevon_right - rpc_elevon_left) / 2.0,
                 yaw: 0.0,
                 attitude_mode: rpc_mode,
-                timestamp: Instant::now(),
+                // When the host last talked to us, not "now": this is what the
+                // failsafe ages, so a dead TUI or probe trips it like a dead TX.
+                timestamp: Instant::from_millis(u64::from(
+                    elle_system::rpc::HOST_LAST_RX_MS.load(Ordering::Relaxed),
+                )),
             }))
         };
 
@@ -545,11 +591,21 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         }
         was_armed = now_armed;
 
-        // Check for RC signal loss (only relevant when RC is the command source).
-        // Packet arrival is stamped via note_rc_packet(), so this stays
-        // accurate even while the kill switch blocks fc.update().
-        #[cfg(feature = "rpc-rc")]
+        // Command-link loss: the RC link with rpc-rc (stamped via
+        // note_rc_packet(), so it stays accurate even while the kill switch
+        // blocks fc.update()), the host RPC link otherwise (commands carry
+        // HOST_LAST_RX_MS). Same 200/300 ms thresholds either way.
+        #[cfg(not(feature = "rpc-rc"))]
+        let link_was_lost = fc.rc_link_state() == elle_system::RcLinkState::Lost;
         fc.check_failsafe();
+        // Host gone: forget the commanded throttle and surfaces, so neither
+        // comes back when it reconnects and re-arms.
+        #[cfg(not(feature = "rpc-rc"))]
+        if !link_was_lost && fc.rc_link_state() == elle_system::RcLinkState::Lost {
+            rpc_throttle = 0.0;
+            rpc_elevon_left = 0.0;
+            rpc_elevon_right = 0.0;
+        }
 
         // Autotuner per-tick update
         if autotuner.is_active()
@@ -579,6 +635,18 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                         warn,
                         elle_hardware::event::EVT_AUTOTUNE_ESTOP,
                         "Autotune safety abort (timeout/amplitude)"
+                    );
+                }
+                AutotuneAction::Rejected { reason, gains } => {
+                    fc.apply_saved_gains(&gains);
+                    fc.clear_setpoint_override();
+                    autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                    autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
+                    elle_hardware::elle_event!(
+                        warn,
+                        elle_hardware::event::EVT_AUTOTUNE_REJECTED,
+                        "Autotune result rejected ({}); original gains restored",
+                        reason
                     );
                 }
                 AutotuneAction::Completed(result) => {
@@ -622,16 +690,24 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         }
         autotune_tick += 1;
 
-        // Auto-save PID gains to flash after autotune completion
-        if let Some(data) = rpc_save_pending.take() {
+        // Persist autotuned gains once disarmed (see the flight loop).
+        if !fc.is_armed()
+            && let Some(data) = rpc_save_pending.take()
+        {
             save_pid_to_flash(data, "autotune").await;
         }
 
         // Poll level calibration result from IMU task
-        elle_hardware::imu::level_cal::poll_result().await;
+        // Calibration results are applied on Core 1 at once; saving them
+        // writes flash, which must wait until disarmed.
+        if !fc.is_armed() {
+            elle_hardware::imu::level_cal::poll_result().await;
+        }
 
         // Poll mag calibration result from IMU task
-        if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
+        if !fc.is_armed()
+            && let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take()
+        {
             match result {
                 Some((ox, oy, oz)) => {
                     let data: [u8; 12] = bytemuck::cast([ox, oy, oz]);

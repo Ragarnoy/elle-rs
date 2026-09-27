@@ -66,6 +66,8 @@ pub const EVT_RC_SIGNAL_LOST: u16 = 14;
 pub const EVT_RC_RESTORED: u16 = 15;
 pub const EVT_KILL_ENGAGED: u16 = 16;
 pub const EVT_KILL_RELEASED: u16 = 17;
+/// RPC arm refused because the commanded throttle was not zero.
+pub const EVT_ARM_REFUSED_THROTTLE: u16 = 18;
 
 // CRSF telemetry (20–29)
 pub(crate) const EVT_CRSF_TX_STARTED: u16 = 20;
@@ -92,6 +94,8 @@ pub(crate) const EVT_IMU_CATCHUP: u16 = 45;
 pub(crate) const EVT_GYRO_BIAS_DONE: u16 = 46;
 /// No still window (or an implausible offset) at boot; flying with zero bias.
 pub(crate) const EVT_GYRO_BIAS_FAILED: u16 = 47;
+/// An I2C0 error: the bus is assumed stuck, so mag and baro are both disabled.
+pub(crate) const EVT_I2C_BUS_FAILED: u16 = 48;
 
 // CRSF receiver (50–59)
 pub(crate) const EVT_CRSF_RX_FIRST_FRAME: u16 = 50;
@@ -101,6 +105,9 @@ pub(crate) const EVT_CRSF_RX_UART_ERROR: u16 = 51;
 // 60 retired: ULog push to flash failed (ULog writes go to the SD card now)
 pub(crate) const EVT_FLASH_ULOG_ERASE_FAILED: u16 = 61;
 pub(crate) const EVT_FLASH_ULOG_WRITE_TIMEOUT: u16 = 62;
+/// A flash-writing command arrived while armed and was refused: flash writes
+/// pause Core 1 and block Core 0 (DShot included).
+pub const EVT_FLASH_REFUSED_ARMED: u16 = 63;
 
 // Supervisor / system (70–79)
 pub const EVT_CORE1_UNHEALTHY: u16 = 70;
@@ -116,6 +123,9 @@ pub const EVT_AUTOTUNE_STARTED: u16 = 90;
 pub const EVT_AUTOTUNE_COMPLETE: u16 = 91;
 pub const EVT_AUTOTUNE_ABORTED: u16 = 92;
 pub const EVT_AUTOTUNE_ESTOP: u16 = 93;
+/// A finished autotune measurement failed its sanity checks (amplitude,
+/// period or gain range); the original gains were restored.
+pub const EVT_AUTOTUNE_REJECTED: u16 = 94;
 
 // PID profile persistence (100–109)
 pub const EVT_PID_SAVED: u16 = 100;

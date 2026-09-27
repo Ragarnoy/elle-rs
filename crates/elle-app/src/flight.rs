@@ -4,7 +4,8 @@ use crate::engines::publish_engine_output;
 use crate::logging::log_flight_data;
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, RC_DEBUG_LOG_DIVISOR,
-    save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal, validate_attitude,
+    resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
+    validate_attitude,
 };
 
 use defmt::{debug, info};
@@ -63,6 +64,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
     // Create ticker for the control loop period (CONTROL_LOOP_PERIOD_MS)
     let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
+    let mut previous_tick = None;
 
     // Track last commands for consistent update rate
     let mut last_commands: Option<PilotCommands> = None;
@@ -72,6 +74,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
     loop {
         ticker.next().await; // Wait for next tick BEFORE processing
         let loop_start = Instant::now();
+        resync_after_stall(&mut ticker, &mut previous_tick, loop_start);
         let loop_timer = TimingMeasurement::start();
 
         // Supervisor check - monitor core health and kick watchdog
@@ -164,10 +167,16 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
         }
 
         // Poll level calibration result from IMU task (tap-triggered collection)
-        elle_hardware::imu::level_cal::poll_result().await;
+        // Calibration results are applied on Core 1 at once; saving them
+        // writes flash, which must wait until disarmed.
+        if !fc.is_armed() {
+            elle_hardware::imu::level_cal::poll_result().await;
+        }
 
         // Poll mag calibration result from IMU task (tap-triggered collection)
-        if let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take() {
+        if !fc.is_armed()
+            && let Some(result) = elle_hardware::imu::MAG_CAL_RESULT_SIGNAL.try_take()
+        {
             mag_cal_collecting = false;
             match result {
                 Some((ox, oy, oz)) => {
@@ -442,6 +451,18 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                             "Autotune safety abort (timeout/amplitude)"
                         );
                     }
+                    AutotuneAction::Rejected { reason, gains } => {
+                        fc.apply_saved_gains(&gains);
+                        fc.clear_setpoint_override();
+                        autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                        autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_AUTOTUNE_REJECTED,
+                            "Autotune result rejected ({}); original gains restored",
+                            reason
+                        );
+                    }
                     AutotuneAction::Completed(result) => {
                         if let Some(gains) = autotuner.computed_gains() {
                             fc.apply_saved_gains(&gains);
@@ -487,8 +508,12 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
             autotune_tick += 1;
 
-            // Auto-save PID gains to flash after autotune completion
-            if let Some(data) = save_pending.take() {
+            // Persist autotuned gains once disarmed. They are already applied in
+            // RAM; a flash write pauses Core 1 and blocks Core 0 (DShot included),
+            // so it must never happen in the air.
+            if !fc.is_armed()
+                && let Some(data) = save_pending.take()
+            {
                 save_pid_to_flash(data, "autotune").await;
             }
 

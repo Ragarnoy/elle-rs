@@ -30,7 +30,11 @@ const THROTTLE_DEADZONE: u32 = 200; // RC values 0-200 = motors off
 const THROTTLE_START_POINT: u32 = 300; // RC value where motors start
 
 // Arming parameters
-pub const ENGINE_ARM_THRESHOLD: u32 = 1_100; // Must have low throttle to arm
+/// RC throttle (0-2047) the stick must pass above before a return to zero thrust
+/// can arm (~30 %): arming takes a deliberate up-then-down, so a boot with the
+/// stick already low, a kill-switch release or a restored link never arms by
+/// itself. Arming itself happens only where the throttle curve gives zero thrust.
+pub const ARM_THROTTLE_HIGH_RAW: u16 = 614;
 pub const ARM_DURATION_MS: u32 = 2_000; // Hold at min for 2 seconds during init
 
 // DShot configuration
@@ -115,6 +119,10 @@ pub const IMU_MAX_DRAIN: u32 = 32;
 
 // Supervisor parameters
 pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
+/// Watchdog budget the flash manager sets before each request: flash ops pause
+/// Core 1 and block Core 0, so the control loop cannot feed the watchdog until
+/// they finish. Covers the slowest request (a multi-sector profile erase).
+pub const FLASH_OP_WATCHDOG_MS: u64 = 6_000;
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
 
 #[cfg(not(feature = "platform-dart"))]
@@ -401,12 +409,12 @@ const _: () = assert!(ELEVON_RIGHT_CENTER_US <= SERVO_MAX_PULSE_US);
 const _: () = assert!(ELEVON_LEFT_TRIM_US.abs() <= MAX_TRIM_US);
 const _: () = assert!(ELEVON_RIGHT_TRIM_US.abs() <= MAX_TRIM_US);
 
-// ESC range: MIN < START < MAX, arming threshold inside it
+// ESC range: MIN < START < MAX
 const _: () = assert!(ENGINE_MIN_PULSE_US < ENGINE_START_PULSE_US);
 const _: () = assert!(ENGINE_START_PULSE_US < ENGINE_MAX_PULSE_US);
-const _: () = assert!(
-    ENGINE_ARM_THRESHOLD > ENGINE_MIN_PULSE_US && ENGINE_ARM_THRESHOLD < ENGINE_MAX_PULSE_US
-);
+// The arm gesture's "high" must be clearly into the thrust range.
+const _: () =
+    assert!(ARM_THROTTLE_HIGH_RAW as u32 > THROTTLE_START_POINT && ARM_THROTTLE_HIGH_RAW < 2047);
 
 // Throttle curve breakpoints ordered inside the 0-2047 RC range
 const _: () = assert!(THROTTLE_DEADZONE < THROTTLE_START_POINT && THROTTLE_START_POINT < 2047);

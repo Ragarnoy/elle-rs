@@ -15,6 +15,7 @@ mod signal_cache;
 pub mod timing;
 
 mod ulog_logger;
+pub mod watchdog;
 
 pub use signal_cache::SignalCache;
 

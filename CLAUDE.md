@@ -241,6 +241,8 @@ Where it lives: `elle_app::boot::run` (IMU wait, supervisor barrier, PID / mag-c
 6. ULog recording auto-starts once the SD card is ready (`SD_READY`), runs until power-off
 7. Auto-saves PID gains to flash on autotune completion
 
+**Arming** (`elle-control/src/arming.rs`): RC auto-arm needs a deliberate gesture — throttle above `ARM_THROTTLE_HIGH_RAW` (~30 %), then back to zero thrust (where the throttle curve outputs 0, raw ≤ `THROTTLE_DEADZONE`). Needed at boot and again after every disarm, kill switch or failsafe. It used to arm below 1100 µs on the 1000–1600 µs scale (raw 341, ~16.7 % stick), which the throttle curve already turns into ~5,400 RPM on the eagle. RPC `Arm` is refused (event 18) while the RPC throttle is non-zero.
+
 RC aux channel map (`elle-config/src/lib.rs`): CH5 = heading hold (2-pos), CH6 = flight mode (3-pos: Manual/Stabilized/AltitudeHold), CH7 = autotune (3-pos: off/pitch/roll), CH8 = kill switch (2-pos, high = disarm).
 
 **RPC mode** (`rpc-control` feature):
@@ -255,6 +257,8 @@ RC aux channel map (`elle-config/src/lib.rs`): CH5 = heading hold (2-pos), CH6 =
 9. Handles ULog extraction commands (ReadULogChunk, PopAndPeekULog, EraseULog) via `FLASH_REQUEST_SIGNAL`
 
 RPC handlers send commands to the main loop via `RPC_CMD_CHANNEL` — they never directly control hardware.
+
+**Host-link failsafe (RPC mode):** every well-formed frame from the host stamps `elle_system::rpc::HOST_LAST_RX_MS`, and pure RPC builds use it as the command timestamp, so the ordinary failsafe (`RC_WARNING_MS`/`RC_TIMEOUT_MS`, 200/300 ms, events 13/14 even though they say "RC") trips when the TUI or probe dies: disarm, surfaces centred, RPC throttle and elevons zeroed. The TUI's 10–20 Hz polling keeps the link alive. `direct throttle N>0`, `direct elevon` and `direct arm` hold the link with 100 ms pings until Ctrl-C, then send throttle 0 and disarm.
 
 **Important**: ULog extraction uses `FLASH_REQUEST_SIGNAL` which is single-valued. Recording must be stopped before extraction to avoid signal contention. The host `ulog extract` command auto-sends `StopULog` first.
 

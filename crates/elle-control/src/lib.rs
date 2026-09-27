@@ -10,7 +10,6 @@ pub mod heading;
 pub mod level_cal;
 pub mod mixing;
 pub mod pid;
-mod throttle;
 
 // Re-export commonly used types
 pub use arming::ArmingState;
