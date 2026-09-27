@@ -20,11 +20,11 @@ use crate::rpc_handlers::RpcCommand;
 const RAD_TO_CDEG: f32 = 5729.578;
 
 // ULog recording enable flag (checked by main loop before logging)
-pub static ULOG_ENABLED: AtomicBool = AtomicBool::new(false);
+pub(crate) static ULOG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 // ULog transfer state machine
 #[repr(u8)]
-pub enum ULogState {
+pub(crate) enum ULogState {
     Idle = 0,
     Reading = 1,
     Ready = 2,
@@ -32,27 +32,29 @@ pub enum ULogState {
 }
 
 /// ULog transfer state (atomic for cross-context access)
-pub static ULOG_STATE: AtomicU8 = AtomicU8::new(ULogState::Idle as u8);
+pub(crate) static ULOG_STATE: AtomicU8 = AtomicU8::new(ULogState::Idle as u8);
 
 /// Full queue item buffer (up to ULOG_CHUNK_SIZE bytes) from flash peek
-pub static ULOG_ITEM_SIGNAL: Signal<CriticalSectionRawMutex, ([u8; ULOG_CHUNK_SIZE], usize)> =
-    Signal::new();
+pub(crate) static ULOG_ITEM_SIGNAL: Signal<
+    CriticalSectionRawMutex,
+    ([u8; ULOG_CHUNK_SIZE], usize),
+> = Signal::new();
 
 /// Fragment tracking: offset within current item
-pub static ULOG_OFFSET: AtomicU16 = AtomicU16::new(0);
+pub(crate) static ULOG_OFFSET: AtomicU16 = AtomicU16::new(0);
 /// Total length of current item
-pub static ULOG_ITEM_LEN: AtomicU16 = AtomicU16::new(0);
+pub(crate) static ULOG_ITEM_LEN: AtomicU16 = AtomicU16::new(0);
 
 // Mag calibration observability statics
 /// Mag cal offsets (readable by GetMagCal handler)
-pub static MAG_CAL_OFFSET: Mutex<CriticalSectionRawMutex, Cell<(f32, f32, f32)>> =
+pub(crate) static MAG_CAL_OFFSET: Mutex<CriticalSectionRawMutex, Cell<(f32, f32, f32)>> =
     Mutex::new(Cell::new((0.0, 0.0, 0.0)));
 /// 0=uncalibrated, 1=collecting, 2=calibrated
-pub static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(0);
+pub(crate) static MAG_CAL_STATUS: AtomicU8 = AtomicU8::new(0);
 /// Context passed to all RPC handlers
-pub struct RpcContext {
-    pub cmd_sender: Sender<'static, CriticalSectionRawMutex, RpcCommand, 16>,
-    pub aon_timer: &'static AonTimer<'static>,
+pub(crate) struct RpcContext {
+    pub(crate) cmd_sender: Sender<'static, CriticalSectionRawMutex, RpcCommand, 16>,
+    pub(crate) aon_timer: &'static AonTimer<'static>,
 }
 
 // ---------------------------------------------------------------------------
@@ -503,8 +505,7 @@ fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp
 // Dispatch table
 // ---------------------------------------------------------------------------
 
-#[allow(unused_imports)]
-use elle_system::rpc::{ElleWireSpawn, RttTx, elle_spawn};
+use elle_system::rpc::{ElleWireSpawn, RttTx};
 
 postcard_rpc::define_dispatch! {
     app: ElleApp;

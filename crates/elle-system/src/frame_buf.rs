@@ -7,7 +7,7 @@
 
 /// A frame larger than the caller's output buffer. It has been consumed and dropped.
 #[derive(Debug, PartialEq, Eq)]
-pub struct FrameTooLarge;
+pub(crate) struct FrameTooLarge;
 
 /// Accumulates bytes from a stream and hands them out one delimited frame at a time.
 ///
@@ -15,14 +15,14 @@ pub struct FrameTooLarge;
 /// end in the latest read: one read can deliver several frames, and the ones
 /// after the first must come out on the next call rather than wait for (and get
 /// glued onto) whatever arrives next.
-pub struct FrameBuf<const N: usize> {
+pub(crate) struct FrameBuf<const N: usize> {
     buf: [u8; N],
     used: usize,
 }
 
 impl<const N: usize> FrameBuf<N> {
     #[must_use]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             buf: [0; N],
             used: 0,
@@ -30,23 +30,23 @@ impl<const N: usize> FrameBuf<N> {
     }
 
     /// Free space to read new bytes into; follow with [`commit`](Self::commit).
-    pub fn spare(&mut self) -> &mut [u8] {
+    pub(crate) fn spare(&mut self) -> &mut [u8] {
         &mut self.buf[self.used..]
     }
 
     /// Record `n` bytes written into [`spare`](Self::spare).
-    pub fn commit(&mut self, n: usize) {
+    pub(crate) fn commit(&mut self, n: usize) {
         self.used = (self.used + n).min(N);
     }
 
     /// Full with no delimiter anywhere: the stream is out of sync or a frame is
     /// longer than the buffer. [`clear`](Self::clear) to resynchronise.
     #[must_use]
-    pub fn is_stuck(&self) -> bool {
+    pub(crate) fn is_stuck(&self) -> bool {
         self.used == N && !self.buf.contains(&0)
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.used = 0;
     }
 
@@ -55,7 +55,7 @@ impl<const N: usize> FrameBuf<N> {
     /// `None` when no complete frame is buffered. `Some(Ok(len))` copies the
     /// frame into `out[..len]` (may be 0 for back-to-back delimiters).
     /// `Some(Err(FrameTooLarge))` when it would not fit; it is dropped either way.
-    pub fn pop_frame(&mut self, out: &mut [u8]) -> Option<Result<usize, FrameTooLarge>> {
+    pub(crate) fn pop_frame(&mut self, out: &mut [u8]) -> Option<Result<usize, FrameTooLarge>> {
         let pos = self.buf[..self.used].iter().position(|&b| b == 0)?;
         let result = if pos <= out.len() {
             out[..pos].copy_from_slice(&self.buf[..pos]);

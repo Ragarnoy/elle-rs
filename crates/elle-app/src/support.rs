@@ -11,7 +11,7 @@ use embassy_time::{Duration, Timer};
 /// Helper to validate attitude data and return only if fresh
 #[inline]
 #[must_use]
-pub fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
+pub(crate) fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData> {
     attitude.filter(|att| is_attitude_valid(att, Duration::from_millis(IMU_MAX_AGE_MS)))
 }
 
@@ -19,7 +19,7 @@ pub fn validate_attitude(attitude: Option<AttitudeData>) -> Option<AttitudeData>
 /// throttle is commanded low and the gyro is quiet, so motor vibration or
 /// handling can't trigger a spurious calibration.
 #[must_use]
-pub fn tap_cal_allowed(
+pub(crate) fn tap_cal_allowed(
     commands: Option<&elle_control::commands::PilotCommands>,
     attitude: Option<&AttitudeData>,
 ) -> bool {
@@ -42,7 +42,9 @@ pub fn tap_cal_allowed(
 /// autotune switch is out of its off position. Safe to reuse because autotune only
 /// starts while armed, and only on an off → on transition.
 #[must_use]
-pub fn tap_selects_level_cal(commands: Option<&elle_control::commands::PilotCommands>) -> bool {
+pub(crate) fn tap_selects_level_cal(
+    commands: Option<&elle_control::commands::PilotCommands>,
+) -> bool {
     commands.is_some_and(|cmd| match cmd {
         elle_control::commands::PilotCommands::Raw(raw) => {
             raw.channels[elle_config::AUTOTUNE_CH] >= elle_config::AUTOTUNE_OFF_THRESHOLD
@@ -52,7 +54,7 @@ pub fn tap_selects_level_cal(commands: Option<&elle_control::commands::PilotComm
 }
 
 /// Save PID gains to flash with timeout. Returns true on success.
-pub async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
+pub(crate) async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
     if elle_config::IGNORE_PID_FLASH {
         warn!("PID flash ignored — skip save ({})", context);
         return false;
@@ -88,7 +90,7 @@ pub async fn save_pid_to_flash(data: [u8; 32], context: &str) -> bool {
 /// Erase the PID profile map entry. No-op while `IGNORE_PID_FLASH` is set —
 /// the erase is a 64KB sector wipe (shared with mag cal) and has crashed the MCU.
 #[cfg(feature = "rpc-control")]
-pub async fn erase_pid_from_flash() {
+pub(crate) async fn erase_pid_from_flash() {
     use elle_config::profile::{FlashRequest, FlashResponse};
     use elle_hardware::flash::{FLASH_REQUEST_SIGNAL, FLASH_RESPONSE_SIGNAL};
 

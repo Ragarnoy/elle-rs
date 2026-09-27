@@ -27,7 +27,7 @@ use embassy_time::{Duration, Instant, Ticker, Timer};
 /// its storage in every enclosing future too. The ULog logger (~6 KB of buffers)
 /// is created here for the same reason. It starts uninitialised: recording
 /// starts once the SD card is ready.
-pub async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64) -> ! {
+pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64) -> ! {
     let mut ulog_logger = ULogLogger::new();
     let mut loop_counter = 0u32;
 

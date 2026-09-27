@@ -29,7 +29,7 @@ static BUF_TX_2: StaticCell<[u8; TX_BUF_SIZE]> = StaticCell::new();
 static TX_STO: StaticCell<Mutex<CriticalSectionRawMutex, RefCell<RttTxInner>>> = StaticCell::new();
 
 /// RTT TX transport inner state
-pub struct RttTxInner {
+struct RttTxInner {
     channel: UpChannel,
     buf1: &'static mut [u8; TX_BUF_SIZE],
     buf2: &'static mut [u8; TX_BUF_SIZE],
@@ -173,20 +173,11 @@ impl postcard_rpc::server::WireSpawn for ElleWireSpawn {
     }
 }
 
-/// Placeholder spawn function for define_dispatch! (never called with blocking-only handlers)
-pub fn elle_spawn<S>(_sp: &ElleWireSpawn, _tok: S) -> Result<(), core::convert::Infallible> {
-    Ok(())
-}
-
 /// RTT channels for RPC communication
 pub struct RttChannels {
     pub tx: RttTx,
     pub rx: RttRx,
 }
-
-// Re-export ICD types for convenience
-#[cfg(feature = "rpc-control")]
-pub use elle_rpc_icd::*;
 
 /// Initialize RTT for postcard-RPC
 ///

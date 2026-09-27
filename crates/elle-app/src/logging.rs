@@ -12,7 +12,7 @@ use elle_system::{FlightController, TimingMeasurement, update_ulog_timing};
 /// - Commands: control-loop rate (every call)
 /// - Controller cycle: control-loop rate; PID gains on change
 /// - Status: ~8Hz (every 10th call)
-pub fn log_flight_data(
+pub(crate) fn log_flight_data(
     logger: &mut ULogLogger,
     attitude: Option<&AttitudeData>,
     commands: &elle_control::commands::PilotCommands,

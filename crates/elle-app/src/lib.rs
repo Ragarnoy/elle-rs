@@ -12,28 +12,28 @@
 compile_error!("rpc-rc requires rpc-control (RC command source only applies in RPC mode)");
 
 pub mod boot;
-pub mod engines;
-pub mod logging;
-pub mod support;
+mod engines;
+mod logging;
+mod support;
 pub mod tasks;
 
 #[cfg(not(feature = "rpc-control"))]
-pub mod flight;
+mod flight;
 #[cfg(feature = "rpc-control")]
-pub mod rpc;
+mod rpc;
 
 #[cfg(feature = "rpc-control")]
-pub mod flight_state;
+mod flight_state;
 #[cfg(feature = "rpc-control")]
-pub mod rpc_app;
+mod rpc_app;
 #[cfg(feature = "rpc-control")]
-pub mod rpc_handlers;
+mod rpc_handlers;
 
 /// Latest raw RC channels, for the `GetRcChannels` RPC handler.
 #[cfg(feature = "rpc-control")]
-pub mod rc_signal {
+mod rc_signal {
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::signal::Signal;
 
-    pub static RC_SIGNAL: Signal<CriticalSectionRawMutex, [u16; 16]> = Signal::new();
+    pub(crate) static RC_SIGNAL: Signal<CriticalSectionRawMutex, [u16; 16]> = Signal::new();
 }

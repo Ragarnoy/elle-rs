@@ -1,6 +1,6 @@
 #![no_std]
 
-pub mod system;
+mod system;
 
 #[cfg(feature = "rpc-control")]
 mod frame_buf;
@@ -8,7 +8,7 @@ mod frame_buf;
 pub mod rpc;
 
 // Re-export main types
-pub use system::{ControlMode, CoreHealth, FlightController, RcLinkState};
+pub use system::{ControlMode, FlightController, RcLinkState};
 
 // Re-export supervisor signals and task
 pub use system::{

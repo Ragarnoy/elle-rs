@@ -4,8 +4,10 @@ use embassy_sync::channel::Channel;
 
 /// Commands sent from RPC handlers to flight controller
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // Some variant fields unused when `rc` feature ignores RPC flight commands
-pub enum RpcCommand {
+// Under `rpc-rc` the RC link is the pilot source, so the loop ignores the
+// payloads of SetThrottle/SetElevons/SetMode.
+#[cfg_attr(feature = "rpc-rc", allow(dead_code))]
+pub(crate) enum RpcCommand {
     SetThrottle(u8),
     SetElevons {
         left: i8,
@@ -30,11 +32,6 @@ pub enum RpcCommand {
         rule: u8,
     },
     AbortAutotune,
-    #[allow(dead_code)] // pre-wired for savepid TUI command
-    SavePidProfile {
-        data: [u8; 32],
-    },
-    ClearPidProfile,
     StartMagCal,
     ClearMagCal,
     StartLevelCal,
@@ -46,4 +43,5 @@ pub enum RpcCommand {
 }
 
 /// Channel for RPC commands to flight controller
-pub static RPC_CMD_CHANNEL: Channel<CriticalSectionRawMutex, RpcCommand, 16> = Channel::new();
+pub(crate) static RPC_CMD_CHANNEL: Channel<CriticalSectionRawMutex, RpcCommand, 16> =
+    Channel::new();
