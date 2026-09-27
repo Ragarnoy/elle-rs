@@ -390,6 +390,12 @@ fn handle_set_pid_gains(ctx: &mut RpcContext, _hdr: VarHeader, req: SetPidGainsR
 }
 
 fn handle_start_autotune(ctx: &mut RpcContext, _hdr: VarHeader, req: StartAutotuneReq) -> AckResp {
+    if !matches!(
+        req.axis,
+        AUTOTUNE_AXIS_PITCH | AUTOTUNE_AXIS_ROLL | AUTOTUNE_AXIS_SAVE_PID | AUTOTUNE_AXIS_ERASE_PID
+    ) {
+        return AckResp::error(AUTOTUNE_ERR_BAD_AXIS);
+    }
     send_cmd(
         ctx,
         RpcCommand::StartAutotune {

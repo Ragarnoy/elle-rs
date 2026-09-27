@@ -30,11 +30,7 @@ use elle_system::{
 };
 use embassy_time::{Duration, Instant, Ticker, Timer};
 
-/// `StartAutotune.axis` magic value (sent by the host's `savepid`): save the
-/// current PID gains to flash instead of starting an autotune.
-const AUTOTUNE_AXIS_SAVE_PID: u8 = 0xFF;
-/// `StartAutotune.axis` magic value: erase the PID profile from flash.
-const AUTOTUNE_AXIS_ERASE_PID: u8 = 0xFE;
+use elle_rpc_icd::{AUTOTUNE_AXIS_ERASE_PID, AUTOTUNE_AXIS_SAVE_PID};
 
 /// Run the RPC-mode control loop forever. `epoch_ms` is the wall-clock time at
 /// boot (ms since the UNIX epoch), used to stamp new ULog files.
@@ -294,12 +290,16 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                         erase_pid_from_flash().await;
                     } else {
                         use elle_control::autotune::TuningRule;
-                        if fc.is_armed() && fc.is_attitude_enabled() && !autotuner.is_active() {
-                            let at_axis = if axis == 0 {
-                                AutotuneAxis::Pitch
-                            } else {
-                                AutotuneAxis::Roll
-                            };
+                        let at_axis = match axis {
+                            elle_rpc_icd::AUTOTUNE_AXIS_PITCH => Some(AutotuneAxis::Pitch),
+                            elle_rpc_icd::AUTOTUNE_AXIS_ROLL => Some(AutotuneAxis::Roll),
+                            _ => None,
+                        };
+                        if let Some(at_axis) = at_axis
+                            && fc.is_armed()
+                            && fc.is_attitude_enabled()
+                            && !autotuner.is_active()
+                        {
                             let relay_deg = relay_deg_x10 as f32 / 10.0;
                             let at_rule = match rule {
                                 1 => TuningRule::ZieglerNichols,
@@ -320,11 +320,16 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                                 info,
                                 elle_hardware::event::EVT_AUTOTUNE_STARTED,
                                 "Autotune STARTED via RPC (axis={})",
-                                if axis == 0 { "pitch" } else { "roll" }
+                                if at_axis == AutotuneAxis::Pitch {
+                                    "pitch"
+                                } else {
+                                    "roll"
+                                }
                             );
                         } else {
                             info!(
-                                "RPC: Autotune rejected (armed={} attitude={} active={})",
+                                "RPC: Autotune rejected (axis={} armed={} attitude={} active={})",
+                                axis,
                                 fc.is_armed(),
                                 fc.is_attitude_enabled(),
                                 autotuner.is_active()

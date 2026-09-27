@@ -263,10 +263,22 @@ pub struct SetPidGainsReq {
     pub i_limit_x10: i16,
 }
 
+/// `StartAutotuneReq::axis`: tune pitch.
+pub const AUTOTUNE_AXIS_PITCH: u8 = 0;
+/// `StartAutotuneReq::axis`: tune roll.
+pub const AUTOTUNE_AXIS_ROLL: u8 = 1;
+/// `StartAutotuneReq::axis`: save the current PID gains to flash (no tuning).
+pub const AUTOTUNE_AXIS_SAVE_PID: u8 = 0xFF;
+/// `StartAutotuneReq::axis`: erase the saved PID profile from flash (no tuning).
+pub const AUTOTUNE_AXIS_ERASE_PID: u8 = 0xFE;
+/// `AckResp::error_code` for a `StartAutotuneReq` with an unknown axis.
+pub const AUTOTUNE_ERR_BAD_AXIS: u8 = 2;
+
 /// Start autotune on a specific axis
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct StartAutotuneReq {
-    /// 0=pitch, 1=roll
+    /// One of the `AUTOTUNE_AXIS_*` values. Anything else is rejected
+    /// (`AckResp` error code [`AUTOTUNE_ERR_BAD_AXIS`]).
     pub axis: u8,
     /// Relay amplitude * 10 (e.g. 50 = 5.0°)
     pub relay_deg_x10: u8,
