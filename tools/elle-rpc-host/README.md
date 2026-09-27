@@ -1,11 +1,12 @@
 # elle-rpc-host
 
 Host-side CLI for the Elle flight controller. Talks postcard-RPC over RTT through a
-debug probe, so the firmware must be built with the `rpc-control` feature:
+debug probe, so the firmware must be built with the `rpc-control` feature. List `gnss`
+too — `--no-default-features` drops it, and without it there is no GNSS at all:
 
 ```sh
-# firmware (ground test mode)
-cargo run --release -p elle-dart --no-default-features --features rpc-control
+# firmware (ground test mode); elle-eagle works the same
+cargo run --release -p elle-dart --no-default-features --features rpc-control,gnss
 
 # host tool — the workspace defaults to thumbv8m, so name the host target
 cargo build -p elle-rpc-host --release --target x86_64-unknown-linux-gnu
@@ -16,7 +17,21 @@ Two modes:
 - **`elle`** (no subcommand) — the TUI monitoring dashboard.
 - **`elle direct <cmd>`** — one RPC call and exit, for scripting.
   `ping`, `version`, `status`, `attitude`, `throttle`, `elevon`, `arm`, `disarm`,
-  `stop`, `perf`, `mag`, `gnss`, `engine`, `mag-cal {start|clear|status}`.
+  `stop`, `perf`, `mag`, `gnss`, `engine`, `mag-cal {start|clear|status}`,
+  `level-cal {start|clear|status}`.
+
+Arming, calibration, autotune and the event codes shown in the Logs panel are explained
+in [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md).
+
+## Link keepalive
+
+In pure RPC mode the firmware treats the host like an RC transmitter: if nothing arrives
+for 300 ms it fails safe — disarm, throttle and surfaces zeroed (events 13/14). The TUI
+polls continuously, so it holds the link by itself. `direct throttle` (non-zero),
+`direct elevon` and `direct arm` keep running after the command, pinging every 100 ms,
+until Ctrl-C; they then send throttle 0 and disarm before releasing the probe. Other
+`direct` commands exit immediately. `arm` is refused while the commanded throttle is
+above zero (event 18).
 
 ## Dashboard layout
 
@@ -36,7 +51,7 @@ Two modes:
 ```
 
 Values are health-coloured where a threshold is meaningful (satellites, HDOP, ESC
-temperature, control-loop time against the 13 ms budget at 77 Hz, RC age against the
+temperature, control-loop time against the 12 ms budget at 83 Hz, RC age against the
 firmware's warning/timeout staging). Missing data is dimmed rather than shown at full
 brightness.
 
