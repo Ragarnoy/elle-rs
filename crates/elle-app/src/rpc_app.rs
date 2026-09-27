@@ -409,12 +409,20 @@ fn handle_set_pid_gains(ctx: &mut RpcContext, _hdr: VarHeader, req: SetPidGainsR
     )
 }
 
+// The ICD's cycle limit is what the autotuner can actually measure.
+const _: () = assert!(AUTOTUNE_MAX_CYCLES as usize == elle_control::autotune::AUTOTUNE_MAX_CYCLES);
+
 fn handle_start_autotune(ctx: &mut RpcContext, _hdr: VarHeader, req: StartAutotuneReq) -> AckResp {
     if !matches!(
         req.axis,
         AUTOTUNE_AXIS_PITCH | AUTOTUNE_AXIS_ROLL | AUTOTUNE_AXIS_SAVE_PID | AUTOTUNE_AXIS_ERASE_PID
     ) {
         return AckResp::error(AUTOTUNE_ERR_BAD_AXIS);
+    }
+    if matches!(req.axis, AUTOTUNE_AXIS_PITCH | AUTOTUNE_AXIS_ROLL)
+        && !(1..=AUTOTUNE_MAX_CYCLES).contains(&req.num_cycles)
+    {
+        return AckResp::error(AUTOTUNE_ERR_BAD_CYCLES);
     }
     send_cmd(
         ctx,

@@ -4,7 +4,7 @@ use crate::engines::publish_engine_output;
 use crate::logging::log_flight_data;
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, RC_DEBUG_LOG_DIVISOR,
-    resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
+    guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
     validate_attitude,
 };
 
@@ -264,10 +264,9 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
             // Update autotune display state for CRSF telemetry
             if autotuner.is_active() {
-                autotune_display = if autotune_stable_pos == 1 {
-                    elle_hardware::crsf::AutotuneDisplay::Pitch
-                } else {
-                    elle_hardware::crsf::AutotuneDisplay::Roll
+                autotune_display = match autotuner.axis() {
+                    AutotuneAxis::Pitch => elle_hardware::crsf::AutotuneDisplay::Pitch,
+                    AutotuneAxis::Roll => elle_hardware::crsf::AutotuneDisplay::Roll,
                 };
             } else if autotune_display_timer > 0 {
                 autotune_display_timer -= 1;
@@ -315,9 +314,15 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
                 if autotune_debounce_count == elle_config::AUTOTUNE_DEBOUNCE_TICKS {
                     let new_pos = autotune_debounce_pos;
+                    let new_axis = match new_pos {
+                        1 => Some(AutotuneAxis::Pitch),
+                        2 => Some(AutotuneAxis::Roll),
+                        _ => None,
+                    };
 
-                    if new_pos == 0 && autotuner.is_active() {
-                        // Abort: switch moved to off while active
+                    if autotuner.is_active() && new_axis != Some(autotuner.axis()) {
+                        // Abort: switch moved to off, or straight to the other
+                        // axis, while active. A run never changes axis.
                         if let Some(saved) = autotuner.abort() {
                             fc.apply_saved_gains(&saved);
                             fc.clear_setpoint_override();
@@ -326,7 +331,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                             elle_hardware::elle_event!(
                                 warn,
                                 elle_hardware::event::EVT_AUTOTUNE_ABORTED,
-                                "Autotune ABORTED (RC switch off)"
+                                "Autotune ABORTED (RC switch moved)"
                             );
                         }
                     } else if autotune_stable_pos == 0
@@ -334,12 +339,10 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                         && !autotuner.is_active()
                     {
                         // Start: from off to pitch (not locked) or roll
-                        if fc.is_armed() && fc.is_attitude_enabled() {
-                            let axis = if new_pos == 1 {
-                                AutotuneAxis::Pitch
-                            } else {
-                                AutotuneAxis::Roll
-                            };
+                        if let Some(axis) = new_axis
+                            && fc.is_armed()
+                            && fc.is_attitude_enabled()
+                        {
                             let current_gains = fc.get_pid_gains();
                             let test_gains = autotuner.start(
                                 axis,
@@ -354,7 +357,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                                 info,
                                 elle_hardware::event::EVT_AUTOTUNE_STARTED,
                                 "Autotune STARTED (axis={})",
-                                if new_pos == 1 { "pitch" } else { "roll" }
+                                axis
                             );
                         }
                     }
@@ -405,31 +408,20 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                 heading_hold_effective_prev = heading_hold_effective;
             }
 
-            // Autotune state machine tick
-            if autotuner.is_active() && valid_attitude.is_none() {
-                // Attitude data lost during autotune — abort for safety
-                if let Some(saved) = autotuner.abort() {
-                    fc.apply_saved_gains(&saved);
-                    fc.clear_setpoint_override();
-                    autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
-                    autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
-                    elle_hardware::elle_event!(
-                        error,
-                        elle_hardware::event::EVT_AUTOTUNE_ESTOP,
-                        "Autotune aborted: attitude data lost"
-                    );
-                }
+            // Autotune state machine tick. The run stops the moment it no
+            // longer owns the aircraft (kill, disarm, failsafe, Manual, no attitude).
+            if guard_autotune(&mut autotuner, fc, kill_active, valid_attitude.is_some()) {
+                autotune_display = elle_hardware::crsf::AutotuneDisplay::Error;
+                autotune_display_timer = AUTOTUNE_DISPLAY_DURATION;
             }
             if autotuner.is_active()
                 && let Some(att) = valid_attitude.as_ref()
             {
-                let measurement_deg = if autotune_stable_pos == 1 {
-                    att.pitch * RAD_TO_DEG
-                } else {
-                    att.roll * RAD_TO_DEG
-                };
+                let pitch_deg = att.pitch * RAD_TO_DEG;
+                let roll_deg = att.roll * RAD_TO_DEG;
+                let measurement_deg = autotuner.measurement(pitch_deg, roll_deg);
 
-                match autotuner.update(measurement_deg, autotune_tick) {
+                match autotuner.update(pitch_deg, roll_deg, autotune_tick) {
                     AutotuneAction::None => {}
                     AutotuneAction::SetpointOverride {
                         pitch_deg,
@@ -448,7 +440,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                         elle_hardware::elle_event!(
                             warn,
                             elle_hardware::event::EVT_AUTOTUNE_ESTOP,
-                            "Autotune safety abort (timeout/amplitude)"
+                            "Autotune safety abort (timeout/attitude envelope)"
                         );
                     }
                     AutotuneAction::Rejected { reason, gains } => {

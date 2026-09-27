@@ -326,6 +326,12 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
                     };
                     let relay_deg: f32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(5.0);
                     let cycles: u8 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(6);
+                    if !(1..=elle_rpc_icd::AUTOTUNE_MAX_CYCLES).contains(&cycles) {
+                        return CommandResult::Err(format!(
+                            "autotune cycles must be 1-{}",
+                            elle_rpc_icd::AUTOTUNE_MAX_CYCLES
+                        ));
+                    }
                     let rule: u8 = match parts.get(4).map(|s| s.to_lowercase()).as_deref() {
                         Some("zn") => 1,
                         Some("so") => 2,
