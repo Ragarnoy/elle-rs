@@ -27,9 +27,8 @@ at the top end. `GOVERNOR_FF_TABLE` as committed describes the *broken* prop
 (see the governor note in `elle-config`). *Since re-swept on the 3-blade — see the
 status note above.*
 
-Flash PID is currently ignored (`IGNORE_PID_FLASH`). Do not `clearpid` — that
-path erases the whole 64 KB profile sector (mag cal lives there) and has
-crashed the MCU.
+Flash PID is currently ignored (`IGNORE_PID_FLASH`). *(The `clearpid` sector
+erase this note warned about is gone: it now removes only the PID entry.)*
 
 ---
 
@@ -387,5 +386,5 @@ In the hop itself:
 - **`ATTITUDE_MAX_AUTHORITY`** actually applied, or a mix that prioritises
   roll when both axes ask for > 0.7. Only after a hop proves one axis is
   starving the other.
-- **`clearpid`** rewritten as a map-key delete, not a 64 KB sector erase.
-  Until then, keep `IGNORE_PID_FLASH`.
+- ~~**`clearpid`** rewritten as a map-key delete, not a 64 KB sector erase.~~
+  Done. `IGNORE_PID_FLASH` can go once a dart bench run confirms it (TEST_PLAN 6.3).

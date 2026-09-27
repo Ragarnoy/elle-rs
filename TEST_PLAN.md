@@ -440,6 +440,16 @@ Plot `autotune_status` fields:
 | 3 | `level cal start`               | Refused (event 152)                                   | [ ]  |
 | 4 | Disarm, `savepid`               | Event 100; control loop keeps running (no watchdog reset) | [ ]  |
 
+Each flash setting is cleared on its own (eagle; on the dart skip rows 2–3, `clearpid`
+does nothing there):
+
+| # | Action (RPC mode, disarmed)                         | Expected                                              | Pass |
+|---|-----------------------------------------------------|-------------------------------------------------------|------|
+| 1 | Mag cal and level cal done, `savepid`               | Events 113, 154, 100                                  | [ ]  |
+| 2 | `clearpid`, power cycle                             | Event 103 (no PID) **and** 115 + 157 (both cals load) | [ ]  |
+| 3 | `savepid`, `mag cal clear`, power cycle             | Events 102 + 157, and 116 (mag cal gone)              | [ ]  |
+| 4 | `level cal clear`, power cycle                      | Event 158 (level cal gone), 102 still                 | [ ]  |
+
 ### 6.4 Gyro Bias at Boot
 
 | # | Action                                   | Expected                                                   | Pass |

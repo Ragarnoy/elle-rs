@@ -20,6 +20,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Elevon latency**: scope PIN_12/13 against a stick step — expect ≤ one 20 ms frame.
 - [ ] **Pitch autotune** since the measurement-invert fix, and autotune in general since the latency fixes (gains derived before them were compensating for delay). Check the save lands after disarm and that a bad run is rejected (event 94).
 - [ ] **Governor** at sustained full throttle on the dart's re-swept table (2026-09-26): RPM should hold flat.
+- [ ] **Per-entry flash clear**: `clearpid`, `mag cal clear`, `level cal clear` each remove only their own entry (TEST_PLAN 6.3).
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term
@@ -61,8 +62,6 @@ Implemented, but not yet confirmed on hardware:
 **Flight timer + boot counter (~1 h)** — armed time in `StatusResp` and ULog; persistent boot counter in flash (new key).
 
 **Flash crash blackbox** — ULog now goes to SD only. A low-rate status + events stream in the legacy flash region would survive SD failure or ejection.
-
-**`clearpid` as a map-key delete** — it erases the whole 64 KB profile sector today, wiping mag and level cal too. Remove key 1 through `sequential-storage` instead.
 
 **Servo trim via RPC (~1.5 h)** — `SetTrimReq { left_us, right_us }`, persisted (new flash key), TUI `trim left 10`.
 
