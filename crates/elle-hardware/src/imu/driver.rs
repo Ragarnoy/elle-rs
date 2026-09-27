@@ -123,6 +123,23 @@ const MAG_CAL_SAMPLES: u32 = 300;
 // The live count is published through an `AtomicU16`.
 const _: () = core::assert!(MAG_CAL_SAMPLES <= u16::MAX as u32);
 
+/// An I2C error leaves the shared I2C0 bus stuck on this hardware: the next
+/// transaction on it — from *either* device — would block Core 1 indefinitely.
+/// So one failure takes both the magnetometer and the barometer off the bus.
+/// The AHRS falls back to 6-DOF (dropping `has_mag` stops it fusing a frozen
+/// `last_mag`, which would drag yaw to a stale heading) and baro data stops.
+fn i2c_bus_failed<B>(mag_ok: &mut bool, has_mag: &mut bool, baro: &mut Option<B>, who: &str) {
+    *mag_ok = false;
+    *has_mag = false;
+    *baro = None;
+    crate::elle_event!(
+        error,
+        crate::event::EVT_I2C_BUS_FAILED,
+        "I2C0 error on {}: mag and baro disabled, AHRS on 6-DOF",
+        who
+    );
+}
+
 type I2cBus<'a> = i2c::I2c<'a, Blocking>;
 type SharedI2c<'a> = I2cRefCellDevice<'a, I2cBus<'a>>;
 type SpiDev<'a> = ExclusiveDevice<spi::Spi<'a, Blocking>, Output<'a>, embassy_time::Delay>;
@@ -581,6 +598,9 @@ impl<'a> Imu<'a> {
                 info!("Core1: Mag calibration started — rotate board in all orientations");
             }
 
+            // Set by a mag or baro I2C error; both go off the bus (see i2c_bus_failed).
+            let mut i2c_failed: Option<&str> = None;
+
             // 4. Read MMC5616WA at ~10 Hz
             mag_counter += ticks;
             if self.mag_ok && mag_counter >= elle_config::MAG_READ_INTERVAL_TICKS {
@@ -649,20 +669,14 @@ impl<'a> Imu<'a> {
                         self.has_mag = true;
                     }
                     Err(e) => {
-                        // Any I2C error leaves the bus stuck on this hardware — the next call
-                        // would block Core1 indefinitely. Disable mag immediately, and drop
-                        // has_mag so the AHRS falls back to 6-DOF instead of fusing the
-                        // frozen last_mag vector forever (which drags yaw to a stale heading).
                         warn!("MMC5616WA: read error: {}", e);
-                        self.mag_ok = false;
-                        self.has_mag = false;
-                        crate::elle_event!(
-                            warn,
-                            crate::event::EVT_IMU_INIT_FAILED,
-                            "MMC5616WA: disabling mag after I2C error — falling back to 6-DOF"
-                        );
+                        i2c_failed = Some("MMC5616WA");
                     }
                 }
+            }
+
+            if let Some(who) = i2c_failed.take() {
+                i2c_bus_failed(&mut self.mag_ok, &mut self.has_mag, &mut self.baro, who);
             }
 
             // 5. Read BMP390 at ~20 Hz
@@ -702,9 +716,15 @@ impl<'a> Imu<'a> {
                             };
                             BARO.publish(reading);
                         }
-                        Err(e) => warn!("BMP390: measure error: {}", e),
+                        Err(e) => {
+                            warn!("BMP390: measure error: {}", e);
+                            i2c_failed = Some("BMP390");
+                        }
                     }
                 }
+            }
+            if let Some(who) = i2c_failed {
+                i2c_bus_failed(&mut self.mag_ok, &mut self.has_mag, &mut self.baro, who);
             }
         }
     }

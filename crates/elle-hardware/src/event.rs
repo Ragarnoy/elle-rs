@@ -94,6 +94,8 @@ pub(crate) const EVT_IMU_CATCHUP: u16 = 45;
 pub(crate) const EVT_GYRO_BIAS_DONE: u16 = 46;
 /// No still window (or an implausible offset) at boot; flying with zero bias.
 pub(crate) const EVT_GYRO_BIAS_FAILED: u16 = 47;
+/// An I2C0 error: the bus is assumed stuck, so mag and baro are both disabled.
+pub(crate) const EVT_I2C_BUS_FAILED: u16 = 48;
 
 // CRSF receiver (50–59)
 pub(crate) const EVT_CRSF_RX_FIRST_FRAME: u16 = 50;

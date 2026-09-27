@@ -854,6 +854,7 @@ const fn log_code_text(code: u16) -> &'static str {
         45 => "IMU: caught up queued samples",
         46 => "IMU: gyro bias measured",
         47 => "IMU: gyro bias failed (keep still at boot)",
+        48 => "I2C0 error: mag and baro disabled (AHRS 6-DOF)",
         // CRSF receiver (50–59)
         50 => "CRSF RX: first frame received",
         51 => "CRSF RX: UART error",
