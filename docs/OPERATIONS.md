@@ -211,7 +211,9 @@ terms, setpoints, saturation, elevon pulses, loop dt) and engine telemetry; stat
 8.3 Hz; baro, mag and GNSS at their sensor rates; PID gains once per file and on every
 change. ESC link health (`esc_health`, ~1 Hz) counts DShot telemetry replies, timeouts,
 corrupt replies and re-configurations per ESC: corrupt replies point at wiring noise, and
-timeouts climbing at idle mean an ESC is silent. The `gyro-raw-log` build adds every
+timeouts climbing at idle mean an ESC is silent. Core 1 load (`core1_load`, ~1 Hz) gives
+the IMU task's mean and max busy time per 1 ms sample and its longest mag and baro reads.
+The `gyro-raw-log` build adds every
 1 kHz gyro sample for vibration analysis.
 See [`crates/elle-ulog/README.md`](../crates/elle-ulog/README.md).
 

@@ -7,8 +7,8 @@ use crate::format::{
 };
 use crate::messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
-    EngineMessage, EscHealthMessage, GnssMessage, GyroRawMessage, LogEventMessage,
-    MagnetometerMessage, MessageType, PidGainsMessage, StatusMessage,
+    Core1LoadMessage, EngineMessage, EscHealthMessage, GnssMessage, GyroRawMessage,
+    LogEventMessage, MagnetometerMessage, MessageType, PidGainsMessage, StatusMessage,
 };
 use embassy_time::Instant;
 use heapless::Vec;
@@ -129,6 +129,9 @@ impl ULogWriter {
         self.buffer
             .extend_from_slice(EscHealthMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(Core1LoadMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
 
         // Write info messages (type 'I')
         self.write_info("char[] sys_name", sys_name)?;
@@ -240,6 +243,15 @@ impl ULogWriter {
         &mut self,
         msg_id: u16,
         data: &EscHealthMessage,
+    ) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a Core 1 load message
+    pub fn write_core1_load(
+        &mut self,
+        msg_id: u16,
+        data: &Core1LoadMessage,
     ) -> Result<(), WriteError> {
         self.write_data_payload(msg_id, &data.to_bytes())
     }

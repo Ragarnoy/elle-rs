@@ -157,5 +157,6 @@ pub static IMU_STATUS: embassy_sync::rwlock::RwLock<CriticalSectionRawMutex, Imu
     embassy_sync::rwlock::RwLock::new(ImuStatus::new());
 
 mod driver;
+pub mod i2c_sensors;
 pub mod level_cal;
 pub use driver::Imu;

@@ -1,7 +1,8 @@
 //! Per-tick ULog recording, shared by the flight and RPC loops.
 
 use elle_config::{
-    ULOG_BARO_DIVISOR, ULOG_ESC_HEALTH_DIVISOR, ULOG_MAG_DIVISOR, ULOG_STATUS_DIVISOR,
+    ULOG_BARO_DIVISOR, ULOG_CORE1_LOAD_DIVISOR, ULOG_ESC_HEALTH_DIVISOR, ULOG_MAG_DIVISOR,
+    ULOG_STATUS_DIVISOR,
 };
 use elle_hardware::ULogLogger;
 use elle_hardware::imu::{AttitudeData, BARO, IMU_STATUS, MAG};
@@ -114,6 +115,12 @@ pub(crate) fn log_flight_data(
         if loop_counter.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR) {
             let _ = logger.log_esc_health(&eng);
         }
+    }
+
+    // Core 1 load at ~1 Hz; each record covers the window since the previous one.
+    if loop_counter.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR) {
+        let load = elle_hardware::timing::CORE1_LOAD.take();
+        let _ = logger.log_core1_load(&load);
     }
 
     // Log status at reduced rate (~8Hz)

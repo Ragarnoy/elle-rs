@@ -33,7 +33,7 @@ elle-ulog = { path = "crates/elle-ulog" }
 elle-rpc-icd = { path = "crates/elle-rpc-icd" }
 elle-app = { path = "crates/elle-app" }
 elle-nav = { path = "crates/elle-nav" }
-mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt"] }
+mmc5616wa = { path = "drivers/mmc5616wa", features = ["defmt", "async"] }
 sam-m10q = { path = "drivers/sam-m10q", features = ["defmt"] }
 
 # External dependencies - Embassy ecosystem (pinned to git HEAD for multicore executor support)
@@ -63,7 +63,7 @@ heapless = { version = "0.9", features = ["serde"] }
 postcard = { version = "1.1", default-features = false }
 postcard-rpc = { version = "0.12", default-features = false }
 postcard-schema = { version = "0.2", default-features = false, features = ["derive", "heapless-v0_9"] }
-bmp390 = { version = "0.4", default-features = false, features = ["sync"] }
+bmp390 = { version = "0.4", default-features = false }
 embedded-hal-bus = { version = "0.3", default-features = false }
 ahrs = { version = "0.8", default-features = false }
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }

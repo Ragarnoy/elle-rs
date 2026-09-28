@@ -131,7 +131,7 @@ are free — the GNSS UART is interrupt-buffered because only `BufferedUart` imp
 
 - **Core 0, thread executor:** control loop (`elle_app::boot::run` → `flight::run_flight` or `rpc::run_rpc`), flash manager, SD writer, LED, CRSF RX/TX, GNSS, supervisor, RPC server.
 - **Core 0, interrupt executor** (`EXECUTOR_DSHOT` on SWI_IRQ_0, priority P2, set up in each binary): the DShot task alone, so thread-executor stalls can't delay its frames. Flash operations still pause it (interrupts off), which is fine because they only happen disarmed. This makes `executor-interrupt` and the SIO FIFO masking load-bearing ([embassy-rp bug note](docs/embassy-rp-sio-irq-fifo-flash-bug.md)).
-- **Core 1:** `imu_task` — ICM-42686 over **blocking** SPI0 (DMA IRQs are bound on Core 0's NVIC), MMC5616WA + BMP390 sharing I2C0 through `RefCell` + `embedded-hal-bus::RefCellDevice`, Madgwick AHRS, calibrations.
+- **Core 1:** `imu_task` — ICM-42686 over **blocking** SPI0 (DMA IRQs are bound on Core 0's NVIC), Madgwick AHRS, level cal. `i2c_sensors_task` (spawned by it, `elle_hardware::imu::i2c_sensors`) — MMC5616WA + BMP390 on interrupt-driven I2C0 (`I2C0_IRQ` bound in `elle-app`, enabled on Core 1), shared through an async `I2cDevice`, mag calibration, vario. It publishes the offset-corrected field in `MAG_FIELD`; the IMU task applies the mount and fuses it.
 
 `boot::run` waits for the IMU and the supervisor barrier, loads PID / mag cal / level
 cal from flash, builds the `FlightController`, then hands it by `&mut` to the loop.
@@ -178,6 +178,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 
 Any I2C error on mag or baro takes **both** off the bus (`i2c_bus_failed`, event 48).
 Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` at 1 kHz).
+They run in their own task, so bus transfers never hold up a 1 kHz sample, and every I2C operation has a 20 ms timeout (a stuck bus disables both instead of hanging Core 1). `elle_hardware::timing::CORE1_LOAD` accumulates IMU busy time per wake, the longest mag and baro read durations and the largest FIFO drain; the control loop logs and resets it about once a second as ULog `core1_load`.
 
 ### DShot and RPM governor (`elle-hardware/src/dshot.rs`, `elle-control/src/governor.rs`)
 

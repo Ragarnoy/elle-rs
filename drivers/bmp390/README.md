@@ -4,9 +4,9 @@
 > over crates.io in the workspace `Cargo.toml` (`[patch.crates-io]`). Changes for Elle:
 > accepts the BMP384 chip ID (`0x50`, same register map) as well as `0x60`; `uom` 0.38;
 > no `embassy-time` dependency (it clashed with the workspace's git embassy). The
-> firmware uses the **synchronous** driver (`sync` feature) through
-> `embedded-hal-bus::RefCellDevice`, sharing I2C0 with the magnetometer. The upstream
-> text below still applies otherwise.
+> firmware uses the **asynchronous** driver on interrupt-driven I2C0, through an
+> `embassy-embedded-hal` async `I2cDevice` shared with the magnetometer
+> (`elle_hardware::imu::i2c_sensors`). The upstream text below still applies otherwise.
 
 
 The BMP390 is a digital sensor with pressure and temperature measurement based on proven sensing principles. The sensor is more accurate than its predecessor BMP380, covering a wider measurement range. It offers new interrupt functionality, lower power, and a FIFO functionality. The integrated 512 byte FIFO buffer supports low power applications and prevents data loss in non-real-time systems.
