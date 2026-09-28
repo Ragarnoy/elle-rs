@@ -77,7 +77,9 @@ same minutes in each mode) and say which files are which only after checking wit
 - **Late ticks.** A tick gap over 24 ms is what `support::resync_after_stall`
   warns about. Bursts of them mean a thread-mode task stopped yielding (the SD
   busy-wait was one); check `esc` to see whether DShot kept 1000 replies/s through
-  them.
+  them. A gap with a ULog dropout inside it is lost log data, not a stall: the
+  SD writer fell behind and records were discarded while the loop kept running.
+  `timing` and `window` report those separately as logging gaps.
 - **Core 1** (`core1_load`, ~1 Hz windows): the first window covers boot — skip it.
   `busy_*` is per IMU wake-up against a 1 ms deadline; `max_drain` > 1 means samples
   queued. Mag/baro durations come from the separate I2C task and include waiting
