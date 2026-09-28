@@ -27,6 +27,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Mag rate** (branch `mag-odr-fix`): `magnetometer_data` changes on every ~10 Hz read (it changed once a second before: `CMM_FREQ_EN` was the wrong bit); log shows `MMC5616WA: ... continuous mode at 50 Hz`; mag cal still completes. The async I2C task itself is verified (LOG_0047: mag/baro at their rates, no event 48).
 - [ ] **GNSS after `cargo run`** (branch `gnss-baud-probe`): run twice without a power cycle; the second boot should log `GNSS: 115200 baud, 200 ms solution`, with no steady `Framing error` stream and no unanswered config keys.
 - [ ] **EDT retry** (branch `esc-edt-retry`): across several boots, `esc_health` `*_edt_frames` climbs on both ESCs every time, and voltage/temperature appear in `engine_data`; a session where the boot configuration missed shows event 162/163 about 5 s after boot. On the dart, confirm the spin direction on each boot.
+- [ ] **ULog buffering** (branch `ulog-buffering`): a long armed log shows no ULog dropouts after boot (`elle_log.py timing` reports no logging gaps; LOG_0058 had four of 95–180 ms with 8 channel slots).
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term
