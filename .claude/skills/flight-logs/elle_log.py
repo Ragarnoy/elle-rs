@@ -31,7 +31,11 @@ from pyulog import ULog  # noqa: E402
 REPO = Path(__file__).resolve().parents[3]
 UI_RS = REPO / "tools/elle-rpc-host/src/tui/ui.rs"
 MODES = {0: "Manual", 1: "Stabilized", 2: "AltitudeHold"}
-LATE_TICK_MS = 24  # two 12 ms control periods: what support::resync_after_stall warns on
+def late_threshold_ms(dt_ms):
+    """Two control periods, what support::resync_after_stall warns on. Taken from the
+    log's own median tick period, so 12 ms (83 Hz) and 5 ms (200 Hz) logs are both
+    judged correctly."""
+    return 2 * float(np.median(dt_ms))
 
 
 def event_labels():
@@ -161,9 +165,10 @@ def cmd_timing(logs, _args):
         print(f"== {log.name}")
         ts = log.tick_timestamps()
         dt = np.diff(ts) / 1000
-        late, lost = split_gaps(log, ts, np.nonzero(dt > LATE_TICK_MS)[0])
+        limit = late_threshold_ms(dt)
+        late, lost = split_gaps(log, ts, np.nonzero(dt > limit)[0])
         tt = log.t(ts)
-        print(f"  ticks {len(ts)}, median period {np.median(dt):.2f} ms, late (> {LATE_TICK_MS} ms): {len(late)}"
+        print(f"  ticks {len(ts)}, median period {np.median(dt):.2f} ms, late (> {limit:.0f} ms): {len(late)}"
               + (f", max {max(dt[i] for i in late):.0f} ms" if late else "")
               + (f"; logging gaps (ULog dropouts, loop kept running): {len(lost)}" if lost else ""))
         if late:
@@ -293,7 +298,8 @@ def cmd_window(logs, args):
     tt = log.t(ts)
     dt_all = np.diff(ts) / 1000
     inside = np.nonzero((tt[1:] >= a) & (tt[1:] <= b))[0]
-    late, lost = split_gaps(log, ts, [i for i in inside if dt_all[i] > LATE_TICK_MS])
+    limit = late_threshold_ms(dt_all)
+    late, lost = split_gaps(log, ts, [i for i in inside if dt_all[i] > limit])
     print(f"  ticks {len(inside)}, late {len(late)}" + (f", max {max(dt_all[i] for i in late):.0f} ms" if late else "")
           + (f"; logging gaps (ULog dropouts): {len(lost)}" if lost else ""))
     s = log.m["system_status"]

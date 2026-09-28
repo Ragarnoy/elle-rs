@@ -41,7 +41,7 @@ or more files and degrades gracefully on older logs that lack newer messages:
 |---|---|
 | `list` | duration, armed time, mag change rate, which newer messages exist — use it to tell sessions and builds apart |
 | `summary` | armed intervals, mode share, event counts and timeline (labels from `ui.rs`), ULog dropouts |
-| `timing` | tick period and late ticks (> 24 ms) per 10 s, `loop_time_us` by armed/mode/engines, Core 1 load and FIFO backlogs |
+| `timing` | tick period and late ticks (> two periods) per 10 s, `loop_time_us` by armed/mode/engines, Core 1 load and FIFO backlogs |
 | `esc` | per-ESC replies / timeouts / corrupt replies / re-configurations, target-while-disarmed check, whether EDT (voltage) ever arrived |
 | `sensors` | mag and baro logged rate vs value-change rate, GNSS sats/fix, attitude ranges |
 | `stages` | flight-loop time per stage (`loop_stages`: intake, update, outputs, switches, autotune, log, tail) by armed/mode/engines, and the DShot executor's share of Core 0 |
@@ -74,8 +74,9 @@ same minutes in each mode) and say which files are which only after checking wit
   ULog write. It includes interrupt and DShot-executor preemption. While armed the
   flight loop has no `await` before that point, so other thread tasks are not in
   it; while disarmed, the level-cal poll can be.
-- **Late ticks.** A tick gap over 24 ms is what `support::resync_after_stall`
-  warns about. Bursts of them mean a thread-mode task stopped yielding (the SD
+- **Late ticks.** A tick gap over two control periods (24 ms at the old 83 Hz,
+  10 ms at 200 Hz; the tool uses each log's own period) is what
+  `support::resync_after_stall` warns about. Bursts of them mean a thread-mode task stopped yielding (the SD
   busy-wait was one); check `esc` to see whether DShot kept 1000 replies/s through
   them. A gap with a ULog dropout inside it is lost log data, not a stall: the
   SD writer fell behind and records were discarded while the loop kept running.

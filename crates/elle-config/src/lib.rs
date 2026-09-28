@@ -75,15 +75,20 @@ const RC_CENTER: u16 = 1024; // CRSF center 992 scaled to 0–2047
 /// Control loop period: the single source of truth for loop timing. The rate
 /// and the PID/autotune dt are derived from it so they cannot disagree (they
 /// once did: a "77 Hz" rate gave a 12 ms ticker while dt stayed 0.013).
-pub const CONTROL_LOOP_PERIOD_MS: u64 = 12;
-pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = (1000 / CONTROL_LOOP_PERIOD_MS) as u32; // 83
+/// 5 ms: matches the 200 Hz elevon PWM frame (`REFRESH_INTERVAL_US`), so every
+/// command reaches the servos.
+pub const CONTROL_LOOP_PERIOD_MS: u64 = 5;
+pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = (1000 / CONTROL_LOOP_PERIOD_MS) as u32; // 200
 pub const CONTROL_LOOP_DT: f32 = CONTROL_LOOP_PERIOD_MS as f32 / 1000.0;
+// The integer frequency (tick counts, divisors) must be exact.
+const _: () = assert!(1000 % CONTROL_LOOP_PERIOD_MS == 0);
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
 
-// ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ)
-pub const ULOG_STATUS_DIVISOR: u32 = 10; // 83/10 ≈ 8.3 Hz
-pub const ULOG_MAG_DIVISOR: u32 = 8; // 83/8 ≈ 10 Hz
-pub const ULOG_BARO_DIVISOR: u32 = 19; // 83/19 ≈ 4.4 Hz
+// ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ), derived so
+// the recorded rates don't change with the loop rate.
+pub const ULOG_STATUS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 8; // 8 Hz (also the loop_stages window)
+pub const ULOG_MAG_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 10; // 10 Hz
+pub const ULOG_BARO_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 5; // 5 Hz
 pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_ESC_HEALTH_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_CORE1_LOAD_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz window
@@ -91,6 +96,16 @@ pub const STALE_EVENT_DRAIN_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 
 // LED update interval (iterations at CONTROL_LOOP_FREQUENCY_HZ)
 pub const LED_UPDATE_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 4; // ~4s
+
+// The flight loop resets its tick counter every LED_UPDATE_INTERVAL, so every
+// divisor used on that counter must divide it, or its cadence jumps every 4 s.
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_STATUS_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_MAG_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_BARO_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_GNSS_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR));
 
 // Performance log interval
 pub const PERF_LOG_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 10; // ~10s
@@ -307,9 +322,15 @@ pub const GYRO_BIAS_MAX_RAD_S: f32 = 0.1;
 pub const GYRO_BIAS_TIMEOUT_SAMPLES: u32 = 10_000;
 
 // Setpoint smoothing parameters
-pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
+/// Time constant of the stick-to-setpoint low-pass. Set in seconds so the feel
+/// doesn't change with the loop rate: 0.068 s is what the old per-tick alpha of
+/// 0.15 gave at 12 ms (tau = dt (1 - alpha) / alpha).
+pub const SETPOINT_FILTER_TAU_S: f32 = 0.068;
+/// Per-tick EMA weight for `SETPOINT_FILTER_TAU_S` at the current loop rate
+/// (0.15 at 12 ms, ~0.068 at 5 ms).
+pub const SETPOINT_FILTER_ALPHA: f32 = CONTROL_LOOP_DT / (SETPOINT_FILTER_TAU_S + CONTROL_LOOP_DT);
 /// Max rate the smoothed attitude setpoint may move (°/s). Caps the EMA's
-/// initial jump on a stick step (~500°/s at alpha 0.15, 83 Hz): full bank in 0.5 s.
+/// initial jump on a stick step (several hundred °/s otherwise): full bank in 0.5 s.
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;
 
 // Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
