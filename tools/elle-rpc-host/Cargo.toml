@@ -9,6 +9,7 @@ name = "elle"
 path = "src/main.rs"
 
 [dependencies]
+elle-config = { workspace = true }
 elle-rpc-icd = { workspace = true, features = ["use-std"] }
 postcard-rpc = { workspace = true, features = ["use-std"] }
 cobs = { workspace = true }
