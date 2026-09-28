@@ -805,9 +805,10 @@ impl EngineMessage {
 ///
 /// `bad_frames` (replies failing GCR decoding or CRC) is the line-noise
 /// indicator; `timeouts` climbing while stopped means the ESC is silent;
-/// `reconfigs` counts configurations re-sent after an ESC (re)appeared.
+/// `reconfigs` counts configurations re-sent after an ESC (re)appeared or sent
+/// no EDT; `edt_frames` staying at 0 while `replies` climb means EDT is off.
 ///
-/// Format: "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs"
+/// Format: "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs;uint32_t left_edt_frames;uint32_t right_edt_frames"
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EscHealthMessage {
@@ -821,11 +822,13 @@ pub struct EscHealthMessage {
     pub right_bad_frames: u32,
     pub left_reconfigs: u16,
     pub right_reconfigs: u16,
+    pub left_edt_frames: u32,
+    pub right_edt_frames: u32,
 }
 
 impl EscHealthMessage {
     /// Format definition string for ULog
-    pub(crate) const FORMAT: &'static str = "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs";
+    pub(crate) const FORMAT: &'static str = "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs;uint32_t left_edt_frames;uint32_t right_edt_frames";
 
     /// Message name
     pub const NAME: &'static str = "esc_health";
@@ -835,7 +838,7 @@ impl EscHealthMessage {
         &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
-    pub(crate) const SIZE: usize = 36;
+    pub(crate) const SIZE: usize = 44;
 
     /// Serialize to little-endian bytes
     #[must_use]
@@ -850,12 +853,14 @@ impl EscHealthMessage {
         buf[28..32].copy_from_slice(&self.right_bad_frames.to_le_bytes());
         buf[32..34].copy_from_slice(&self.left_reconfigs.to_le_bytes());
         buf[34..36].copy_from_slice(&self.right_reconfigs.to_le_bytes());
+        buf[36..40].copy_from_slice(&self.left_edt_frames.to_le_bytes());
+        buf[40..44].copy_from_slice(&self.right_edt_frames.to_le_bytes());
         buf
     }
 }
 
 const _: () = assert!(
-    EscHealthMessage::SIZE == 8 + 6 * 4 + 2 * 2,
+    EscHealthMessage::SIZE == 8 + 6 * 4 + 2 * 2 + 2 * 4,
     "EscHealthMessage::SIZE does not match its field widths"
 );
 

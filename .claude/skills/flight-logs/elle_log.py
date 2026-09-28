@@ -188,9 +188,10 @@ def cmd_esc(logs, _args):
             for side in ("left", "right"):
                 r = h[f"{side}_replies"].astype(np.int64)
                 rate = np.diff(r) / np.diff(th) if len(r) > 1 else np.array([0])
+                edt = f", EDT frames {int(h[f'{side}_edt_frames'][-1])}" if f"{side}_edt_frames" in h else ""
                 print(f"  {side:5s}: replies {int(r[-1])} (per s median {pct(rate, 50)}, min {int(rate.min())}), "
                       f"timeouts {int(h[f'{side}_timeouts'][-1])}, corrupt {int(h[f'{side}_bad_frames'][-1])}, "
-                      f"re-configured {int(h[f'{side}_reconfigs'][-1])}")
+                      f"re-configured {int(h[f'{side}_reconfigs'][-1])}{edt}")
         else:
             print("  (no esc_health: older build)")
         e = log.m["engine_data"]

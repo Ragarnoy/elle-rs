@@ -85,7 +85,9 @@ same minutes in each mode) and say which files are which only after checking wit
   request, so eRPM at idle is real (older logs fabricated 0). `replies` counts any
   valid reply; EDT fields (voltage, temperature) only arrive when extended
   telemetry is enabled — a session with thousands of replies and voltage 0 means
-  the EDT enable did not take.
+  the EDT enable did not take. Newer logs count EDT frames directly
+  (`esc_health` `*_edt_frames`), and the firmware re-sends the configuration when
+  they don't arrive (event 162/163, then 164/165 if it gives up).
 - **Sentinels and quirks.** `controller.att_age_us` = 4294967295 means no attitude
   age; `controller.dt_us` accumulates while the kill switch blocks updates; event 45
   is rate-limited to once per second; events 2 and 7 (and 23) are periodic

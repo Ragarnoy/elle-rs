@@ -905,8 +905,10 @@ const fn log_code_text(code: u16) -> &'static str {
         // ESC link (160–169)
         160 => "ESC left: stopped replying (power loss or restart?)",
         161 => "ESC right: stopped replying (power loss or restart?)",
-        162 => "ESC left: replying again, spin direction + EDT re-sent",
-        163 => "ESC right: replying again, spin direction + EDT re-sent",
+        162 => "ESC left: spin direction + EDT re-sent (reappeared, or no EDT)",
+        163 => "ESC right: spin direction + EDT re-sent (reappeared, or no EDT)",
+        164 => "ESC left: still no EDT after retries, spin direction unconfirmed",
+        165 => "ESC right: still no EDT after retries, spin direction unconfirmed",
         _ => "unknown",
     }
 }

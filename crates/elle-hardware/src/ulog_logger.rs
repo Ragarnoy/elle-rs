@@ -562,6 +562,8 @@ impl ULogLogger {
             right_bad_frames: eng.right.bad_frames,
             left_reconfigs: eng.left.reconfigs,
             right_reconfigs: eng.right.reconfigs,
+            left_edt_frames: eng.left.edt_frames,
+            right_edt_frames: eng.right.edt_frames,
         };
 
         self.writer.clear_buffer();
