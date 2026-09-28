@@ -20,6 +20,7 @@ mod writer;
 pub use messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
     Core1LoadMessage, EngineMessage, EscHealthMessage, GnssMessage, GyroRawMessage,
-    LogEventMessage, MagnetometerMessage, MessageType, PidGainsMessage, StatusMessage,
+    LogEventMessage, LoopStagesMessage, MagnetometerMessage, MessageType, PidGainsMessage,
+    StatusMessage,
 };
 pub use writer::{ULogWriter, WriteError};

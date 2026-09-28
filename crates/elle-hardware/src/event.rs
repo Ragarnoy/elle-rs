@@ -167,6 +167,8 @@ pub(crate) const EVT_ESC_LEFT_SILENT: u16 = 160;
 pub(crate) const EVT_ESC_RIGHT_SILENT: u16 = 161;
 pub(crate) const EVT_ESC_LEFT_RECONFIGURED: u16 = 162;
 pub(crate) const EVT_ESC_RIGHT_RECONFIGURED: u16 = 163;
+pub(crate) const EVT_ESC_LEFT_NO_EDT: u16 = 164;
+pub(crate) const EVT_ESC_RIGHT_NO_EDT: u16 = 165;
 
 // ---------------------------------------------------------------------------
 // Macro

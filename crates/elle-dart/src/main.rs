@@ -75,9 +75,11 @@ static EXECUTOR_DSHOT: InterruptExecutor = InterruptExecutor::new();
 
 #[interrupt]
 unsafe fn SWI_IRQ_0() {
+    let started = embassy_time::Instant::now();
     // SAFETY: the SWI_IRQ_0 handler, and EXECUTOR_DSHOT is started in main()
     // before this interrupt is unmasked.
     unsafe { EXECUTOR_DSHOT.on_interrupt() }
+    elle_hardware::timing::DSHOT_EXEC_TIME.record(started.elapsed().as_micros() as u32);
 }
 
 #[embassy_executor::main(executor = "Executor", entry = "cortex_m_rt::entry")]

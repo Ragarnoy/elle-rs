@@ -58,6 +58,13 @@ pub const ESC_SILENT_FRAMES: u32 = 100;
 /// answering before it is sent its configuration: a restarted ESC plays its
 /// startup tones and arms first.
 pub const ESC_RECONFIGURE_SETTLE_FRAMES: u32 = 1_000;
+/// Answered frames (~1 per ms) without any extended-telemetry frame before the
+/// ESC's configuration counts as lost and is re-sent (while stopped). An ESC
+/// answers with eRPM whether or not EDT is on, so EDT frames are the only
+/// evidence the configuration (EDT enable, spin direction) took.
+pub const ESC_EDT_CONFIRM_FRAMES: u32 = 5_000;
+/// Configuration re-sends for missing EDT before giving up (event 164/165).
+pub const ESC_EDT_MAX_RETRIES: u8 = 5;
 
 // RC parameters (protocol-independent, values in 0–2047 range)
 pub const RC_WARNING_MS: u64 = 200;

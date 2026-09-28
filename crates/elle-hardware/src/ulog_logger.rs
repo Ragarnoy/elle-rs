@@ -43,6 +43,7 @@ pub struct ULogLogger {
     pid_gains_msg_id: Option<u16>,
     esc_health_msg_id: Option<u16>,
     core1_load_msg_id: Option<u16>,
+    loop_stages_msg_id: Option<u16>,
     #[cfg(feature = "gyro-raw-log")]
     gyro_raw_msg_id: Option<u16>,
     /// Gains version last written to this file; `None` right after `initialize`.
@@ -75,6 +76,7 @@ impl ULogLogger {
             pid_gains_msg_id: None,
             esc_health_msg_id: None,
             core1_load_msg_id: None,
+            loop_stages_msg_id: None,
             #[cfg(feature = "gyro-raw-log")]
             gyro_raw_msg_id: None,
             logged_gains_version: None,
@@ -189,6 +191,11 @@ impl ULogLogger {
         self.core1_load_msg_id = Some(
             self.writer
                 .add_subscription(elle_ulog::Core1LoadMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
+        self.loop_stages_msg_id = Some(
+            self.writer
+                .add_subscription(elle_ulog::LoopStagesMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
         // Only capture builds write gyro_raw, so only they subscribe to it.
@@ -562,6 +569,8 @@ impl ULogLogger {
             right_bad_frames: eng.right.bad_frames,
             left_reconfigs: eng.left.reconfigs,
             right_reconfigs: eng.right.reconfigs,
+            left_edt_frames: eng.left.edt_frames,
+            right_edt_frames: eng.right.edt_frames,
         };
 
         self.writer.clear_buffer();
@@ -594,6 +603,24 @@ impl ULogLogger {
         self.writer.clear_buffer();
         self.writer
             .write_core1_load(self.core1_load_msg_id.unwrap(), &msg)
+            .map_err(|_| ULogError::BufferFull)?;
+
+        self.buffer_writer_output()
+    }
+
+    /// Log one window of flight-loop stage timing (timestamp is filled in here).
+    pub fn log_loop_stages(
+        &mut self,
+        mut msg: elle_ulog::LoopStagesMessage,
+    ) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+        msg.timestamp = Instant::now().as_micros();
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_loop_stages(self.loop_stages_msg_id.unwrap(), &msg)
             .map_err(|_| ULogError::BufferFull)?;
 
         self.buffer_writer_output()

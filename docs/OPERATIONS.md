@@ -271,6 +271,7 @@ when built with `defmt-logging`.
 | 140 / 141 | GNSS configuration timeout / partially accepted |
 | 150–158 | Level cal started, complete, failed moving (or refused armed), failed tilted, saved, save failed, cleared, loaded, nothing saved |
 | 160 / 161 | Left / right ESC stopped replying to DShot telemetry (power loss or restart) |
-| 162 / 163 | Left / right ESC replying again: spin direction and extended telemetry re-sent |
+| 162 / 163 | Left / right ESC re-sent spin direction and extended telemetry: it reappeared (restart, late power), or it answers but sent no EDT |
+| 164 / 165 | Left / right ESC still sends no EDT after the retries: its spin direction is unconfirmed |
 
 Codes 32, 60 and 82 are retired and never sent.

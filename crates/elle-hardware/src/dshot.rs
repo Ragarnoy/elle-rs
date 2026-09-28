@@ -1,7 +1,7 @@
 use core::cell::Cell;
 
 use elle_control::dshot_pace::next_deadline_us;
-use elle_control::esc_link::{EscLink, EscLinkEvent};
+use elle_control::esc_link::{EdtAction, EdtWatch, EscLink, EscLinkEvent};
 use elle_control::governor::RpmGovernor;
 use embassy_dshot::rp::BidirDshotPio;
 use embassy_dshot::{Command, DshotError, ExtendedTelemetry};
@@ -93,6 +93,13 @@ impl Side {
             Self::Right => event::EVT_ESC_RIGHT_RECONFIGURED,
         }
     }
+
+    const fn no_edt_event(self) -> u16 {
+        match self {
+            Self::Left => event::EVT_ESC_LEFT_NO_EDT,
+            Self::Right => event::EVT_ESC_RIGHT_NO_EDT,
+        }
+    }
 }
 
 /// Per-engine telemetry snapshot.
@@ -114,8 +121,11 @@ pub struct EngineUnitReading {
     pub timeouts: u32,
     /// Replies that failed GCR decoding or CRC since boot: the line-noise indicator.
     pub bad_frames: u32,
-    /// Times the ESC was re-sent its configuration after going silent or
-    /// missing the boot configuration.
+    /// Extended-telemetry frames (temperature, voltage, ...) since boot. Zero
+    /// while replies climb means the EDT enable did not take.
+    pub edt_frames: u32,
+    /// Times the ESC was re-sent its configuration: after going silent, after
+    /// missing the boot configuration, or after delivering no EDT.
     pub reconfigs: u16,
 }
 
@@ -133,6 +143,7 @@ impl EngineUnitReading {
             replies: 0,
             timeouts: 0,
             bad_frames: 0,
+            edt_frames: 0,
             reconfigs: 0,
         }
     }
@@ -191,6 +202,11 @@ impl Reply {
         }
     }
 
+    /// An extended-telemetry frame (anything but eRPM).
+    const fn is_edt(self) -> bool {
+        matches!(self, Self::Telemetry(t) if !matches!(t, ExtendedTelemetry::Erpm { .. }))
+    }
+
     /// `Some(answered)` when telemetry was requested. A corrupt reply still
     /// proves the ESC is alive.
     const fn answered(self) -> Option<bool> {
@@ -212,6 +228,8 @@ struct EngineState {
     /// Set when the ESC (re)appeared: send it the configuration once it has been
     /// answering for `ESC_RECONFIGURE_SETTLE_FRAMES` while stopped.
     reconfigure_in: Option<u32>,
+    /// Whether the last configuration visibly took (EDT frames arriving).
+    edt: EdtWatch,
 }
 
 impl EngineState {
@@ -223,6 +241,10 @@ impl EngineState {
             governor: RpmGovernor::new(),
             link: EscLink::new(elle_config::ESC_SILENT_FRAMES),
             reconfigure_in: None,
+            edt: EdtWatch::new(
+                elle_config::ESC_EDT_CONFIRM_FRAMES,
+                elle_config::ESC_EDT_MAX_RETRIES,
+            ),
         }
     }
 
@@ -257,6 +279,7 @@ impl EngineState {
             }
             Some(EscLinkEvent::Appeared) => {
                 self.reconfigure_in = Some(elle_config::ESC_RECONFIGURE_SETTLE_FRAMES);
+                self.edt.reset();
                 if !self.bidir_enabled {
                     self.bidir_enabled = true;
                     self.fail_count = 0;
@@ -324,7 +347,12 @@ fn update_engine_unit(
         }
     }
     match reply {
-        Reply::Telemetry(_) => unit.replies = unit.replies.wrapping_add(1),
+        Reply::Telemetry(_) => {
+            unit.replies = unit.replies.wrapping_add(1);
+            if reply.is_edt() {
+                unit.edt_frames = unit.edt_frames.wrapping_add(1);
+            }
+        }
         Reply::Corrupt => unit.bad_frames = unit.bad_frames.wrapping_add(1),
         Reply::Missing => unit.timeouts = unit.timeouts.wrapping_add(1),
         Reply::NotRequested => {}
@@ -392,7 +420,7 @@ async fn configure<PIO: Instance, const SM: usize>(
         Timer::after(Duration::from_micros(300)).await;
     }
     defmt::info!(
-        "DShot {}: spin direction set (reversed: {}), extended telemetry enabled",
+        "DShot {}: spin direction (reversed: {}) and EDT enable sent",
         side.name(),
         elle_config::ENGINE_SPIN_REVERSED
     );
@@ -417,7 +445,10 @@ async fn probe_after_boot<PIO: Instance, const SM: usize>(
     );
 }
 
-/// Run the pending configuration for one ESC if it is due.
+/// Run the pending configuration for one ESC if it is due: the ESC reappeared
+/// (restart, or late power), or it answers but has sent no extended telemetry
+/// since it was last configured, so that configuration did not take. An ESC
+/// replies with eRPM whether or not EDT is enabled, so replies alone can't tell.
 async fn reconfigure_if_due<PIO: Instance, const SM: usize>(
     esc: &mut BidirDshotPio<'_, PIO, SM>,
     state: &mut EngineState,
@@ -425,14 +456,31 @@ async fn reconfigure_if_due<PIO: Instance, const SM: usize>(
     reply: Reply,
     stopped: bool,
 ) {
-    if state.reconfigure_due(reply.answered() == Some(true), stopped) {
+    let answered = reply.answered() == Some(true);
+    let appeared = state.reconfigure_due(answered, stopped);
+    let edt = state.edt.update(answered, reply.is_edt(), stopped);
+    if appeared || edt == Some(EdtAction::Reconfigure) {
         configure(esc, state.side).await;
+        state.edt.configured();
         unit.reconfigs = unit.reconfigs.wrapping_add(1);
         elle_event!(
             info,
             state.side.reconfigured_event(),
-            "DShot {}: ESC answering again, configuration re-sent",
-            state.side.name()
+            "DShot {}: configuration re-sent ({})",
+            state.side.name(),
+            if appeared {
+                "ESC answering again"
+            } else {
+                "no EDT"
+            }
+        );
+    } else if edt == Some(EdtAction::GiveUp) {
+        elle_event!(
+            warn,
+            state.side.no_edt_event(),
+            "DShot {}: still no EDT after {} re-sends; spin direction unconfirmed",
+            state.side.name(),
+            elle_config::ESC_EDT_MAX_RETRIES
         );
     }
 }

@@ -44,6 +44,7 @@ or more files and degrades gracefully on older logs that lack newer messages:
 | `timing` | tick period and late ticks (> 24 ms) per 10 s, `loop_time_us` by armed/mode/engines, Core 1 load and FIFO backlogs |
 | `esc` | per-ESC replies / timeouts / corrupt replies / re-configurations, target-while-disarmed check, whether EDT (voltage) ever arrived |
 | `sensors` | mag and baro logged rate vs value-change rate, GNSS sats/fix, attitude ranges |
+| `stages` | flight-loop time per stage (`loop_stages`: intake, update, outputs, switches, autotune, log, tail) by armed/mode/engines, and the DShot executor's share of Core 0 |
 | `window FILE T0 T1` | events, late ticks, loop time, RC age, modes between two times (seconds from the file's first record) |
 
 For anything else, load the file directly — `pyulog.ULog(path).data_list` gives one
@@ -76,7 +77,9 @@ same minutes in each mode) and say which files are which only after checking wit
 - **Late ticks.** A tick gap over 24 ms is what `support::resync_after_stall`
   warns about. Bursts of them mean a thread-mode task stopped yielding (the SD
   busy-wait was one); check `esc` to see whether DShot kept 1000 replies/s through
-  them.
+  them. A gap with a ULog dropout inside it is lost log data, not a stall: the
+  SD writer fell behind and records were discarded while the loop kept running.
+  `timing` and `window` report those separately as logging gaps.
 - **Core 1** (`core1_load`, ~1 Hz windows): the first window covers boot — skip it.
   `busy_*` is per IMU wake-up against a 1 ms deadline; `max_drain` > 1 means samples
   queued. Mag/baro durations come from the separate I2C task and include waiting
@@ -85,7 +88,9 @@ same minutes in each mode) and say which files are which only after checking wit
   request, so eRPM at idle is real (older logs fabricated 0). `replies` counts any
   valid reply; EDT fields (voltage, temperature) only arrive when extended
   telemetry is enabled — a session with thousands of replies and voltage 0 means
-  the EDT enable did not take.
+  the EDT enable did not take. Newer logs count EDT frames directly
+  (`esc_health` `*_edt_frames`), and the firmware re-sends the configuration when
+  they don't arrive (event 162/163, then 164/165 if it gives up).
 - **Sentinels and quirks.** `controller.att_age_us` = 4294967295 means no attitude
   age; `controller.dt_us` accumulates while the kill switch blocks updates; event 45
   is rate-limited to once per second; events 2 and 7 (and 23) are periodic

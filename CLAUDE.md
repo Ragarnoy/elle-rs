@@ -188,7 +188,7 @@ They run in their own task, so bus transfers never hold up a 1 kHz sample, and e
 - All governor clamps use `GOVERNOR_DSHOT_MAX` — the platform's stall/saturation boundary, not `DSHOT_THROTTLE_MAX`. A compile-time assert ties it to the last table entry. Current: eagle 1498 (`MAX_ERPM` 142,100), dart 1998 (107,100; 3-blade prop, ESC reversed).
 - The telemetry spike filter (`GOVERNOR_ERPM_MAX_JUMP`) is bounded by `MAX_CONSECUTIVE_SPIKE_REJECTS` (20) so a stale reading can never latch the output shut. Regression tests: `crates/elle-control/tests/governor_step_response.rs`.
 - The send loop is paced by `elle_control::dshot_pace::next_deadline_us`, not a `Ticker`: after a stall it skips missed ticks instead of replaying them back to back, and frames stay ≥ `DSHOT_MIN_FRAME_GAP_US` apart. A push while the previous frame is still on the wire truncates it (embassy-dshot issue #8), and the ESC may read the splice as a beep or a throttle pulse.
-- A stopped engine gets `MotorStop` **with** a telemetry request (`command_with_extended_telemetry`), so EDT flows at idle. `elle_control::esc_link::EscLink` counts unanswered requests: `ESC_SILENT_FRAMES` in a row → event 160/161; when the ESC answers again (or answers for the first time after missing the boot configuration), it is re-sent spin direction + EDT once it has been stopped and answering for `ESC_RECONFIGURE_SETTLE_FRAMES` (162/163). Reply, timeout, corrupt-reply and re-configuration counts go to ULog `esc_health`.
+- A stopped engine gets `MotorStop` **with** a telemetry request (`command_with_extended_telemetry`), so EDT flows at idle. `elle_control::esc_link::EscLink` counts unanswered requests: `ESC_SILENT_FRAMES` in a row → event 160/161; when the ESC answers again (or answers for the first time after missing the boot configuration), it is re-sent spin direction + EDT once it has been stopped and answering for `ESC_RECONFIGURE_SETTLE_FRAMES` (162/163). An ESC answers with eRPM whether or not EDT is on, so `EdtWatch` also re-sends the configuration (while stopped) when `ESC_EDT_CONFIRM_FRAMES` answered frames bring no EDT frame, up to `ESC_EDT_MAX_RETRIES` times, then reports 164/165: on the eagle the boot configuration failed silently in about half the sessions. Reply, timeout, corrupt-reply, EDT-frame and re-configuration counts go to ULog `esc_health`.
 - Recalibrate with the `governor-calibration` skill. A sweep in the wrong spin direction peaks early and falls off.
 
 ### Watchdog and supervisor
@@ -269,7 +269,10 @@ and sizes in [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md). `comman
 logs the pre-filter setpoint; `controller` logs what the PID used and did each tick
 (dt, attitude age, filtered setpoint, scaled P/I/D per axis, saturation bits, final
 elevon pulses); `pid_gains` is written per file and whenever
-`FlightController::gains_version()` changes.
+`FlightController::gains_version()` changes. `loop_stages` (flight loop only,
+`elle-app/src/stages.rs`) splits the tick into stages with mean/max per ~10 ticks,
+next to the DShot executor's interrupt time (`timing::DSHOT_EXEC_TIME`, recorded in
+the binaries' SWI handler).
 
 ## Conventions
 

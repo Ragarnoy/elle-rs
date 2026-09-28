@@ -805,9 +805,10 @@ impl EngineMessage {
 ///
 /// `bad_frames` (replies failing GCR decoding or CRC) is the line-noise
 /// indicator; `timeouts` climbing while stopped means the ESC is silent;
-/// `reconfigs` counts configurations re-sent after an ESC (re)appeared.
+/// `reconfigs` counts configurations re-sent after an ESC (re)appeared or sent
+/// no EDT; `edt_frames` staying at 0 while `replies` climb means EDT is off.
 ///
-/// Format: "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs"
+/// Format: "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs;uint32_t left_edt_frames;uint32_t right_edt_frames"
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EscHealthMessage {
@@ -821,11 +822,13 @@ pub struct EscHealthMessage {
     pub right_bad_frames: u32,
     pub left_reconfigs: u16,
     pub right_reconfigs: u16,
+    pub left_edt_frames: u32,
+    pub right_edt_frames: u32,
 }
 
 impl EscHealthMessage {
     /// Format definition string for ULog
-    pub(crate) const FORMAT: &'static str = "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs";
+    pub(crate) const FORMAT: &'static str = "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs;uint32_t left_edt_frames;uint32_t right_edt_frames";
 
     /// Message name
     pub const NAME: &'static str = "esc_health";
@@ -835,7 +838,7 @@ impl EscHealthMessage {
         &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
-    pub(crate) const SIZE: usize = 36;
+    pub(crate) const SIZE: usize = 44;
 
     /// Serialize to little-endian bytes
     #[must_use]
@@ -850,12 +853,14 @@ impl EscHealthMessage {
         buf[28..32].copy_from_slice(&self.right_bad_frames.to_le_bytes());
         buf[32..34].copy_from_slice(&self.left_reconfigs.to_le_bytes());
         buf[34..36].copy_from_slice(&self.right_reconfigs.to_le_bytes());
+        buf[36..40].copy_from_slice(&self.left_edt_frames.to_le_bytes());
+        buf[40..44].copy_from_slice(&self.right_edt_frames.to_le_bytes());
         buf
     }
 }
 
 const _: () = assert!(
-    EscHealthMessage::SIZE == 8 + 6 * 4 + 2 * 2,
+    EscHealthMessage::SIZE == 8 + 6 * 4 + 2 * 2 + 2 * 4,
     "EscHealthMessage::SIZE does not match its field widths"
 );
 
@@ -912,6 +917,63 @@ impl Core1LoadMessage {
 const _: () = assert!(
     Core1LoadMessage::SIZE == 8 + 6 * 4,
     "Core1LoadMessage::SIZE does not match its field widths"
+);
+
+/// Flight-loop tick split into stages, over a window of ~10 ticks (8.3 Hz).
+///
+/// Per stage, mean and max µs across the window's ticks (wall time, so
+/// preemption included). Stages in order: intake, update, outputs, switches,
+/// autotune, log, tail. `dshot_busy_us` / `dshot_runs` are the DShot executor
+/// interrupt's total time and run count on Core 0 over the same window.
+///
+/// Format: "loop_stages:uint64_t timestamp;uint16_t ticks;uint16_t[7] avg_us;uint16_t[7] max_us;uint32_t dshot_busy_us;uint32_t dshot_runs"
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LoopStagesMessage {
+    /// Timestamp in microseconds (filled in by the logger)
+    pub timestamp: u64,
+    pub ticks: u16,
+    pub avg_us: [u16; 7],
+    pub max_us: [u16; 7],
+    pub dshot_busy_us: u32,
+    pub dshot_runs: u32,
+}
+
+impl LoopStagesMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str = "loop_stages:uint64_t timestamp;uint16_t ticks;uint16_t[7] avg_us;uint16_t[7] max_us;uint32_t dshot_busy_us;uint32_t dshot_runs";
+
+    /// Message name
+    pub const NAME: &'static str = "loop_stages";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 46;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..10].copy_from_slice(&self.ticks.to_le_bytes());
+        for (i, v) in self.avg_us.iter().enumerate() {
+            buf[10 + 2 * i..12 + 2 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        for (i, v) in self.max_us.iter().enumerate() {
+            buf[24 + 2 * i..26 + 2 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf[38..42].copy_from_slice(&self.dshot_busy_us.to_le_bytes());
+        buf[42..46].copy_from_slice(&self.dshot_runs.to_le_bytes());
+        buf
+    }
+}
+
+const _: () = assert!(
+    LoopStagesMessage::SIZE == 8 + 2 + 7 * 2 + 7 * 2 + 4 + 4,
+    "LoopStagesMessage::SIZE does not match its field widths"
 );
 
 /// Log event message — compact discrete event for ULog flash
