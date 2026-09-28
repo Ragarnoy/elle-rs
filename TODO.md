@@ -25,6 +25,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Per-entry flash clear**: `clearpid`, `mag cal clear`, `level cal clear` each remove only their own entry (TEST_PLAN 6.3).
 - [ ] **DShot ESC re-configuration** (TEST_PLAN 6.8 rows 1, 2, 4, 5): scope the DShot lines across a stall; FC on USB then battery → events 162/163; ESC power cut → 160/161 then 162/163. Already confirmed (LOG_0043, 13 min armed idle): no twitches or beeps, 1000 frames/s per ESC, 0 timeouts / corrupt replies.
 - [ ] **Mag rate** (branch `mag-odr-fix`): `magnetometer_data` changes on every ~10 Hz read (it changed once a second before: `CMM_FREQ_EN` was the wrong bit); log shows `MMC5616WA: ... continuous mode at 50 Hz`; mag cal still completes. The async I2C task itself is verified (LOG_0047: mag/baro at their rates, no event 48).
+- [ ] **GNSS after `cargo run`** (branch `gnss-baud-probe`): run twice without a power cycle; the second boot should log `GNSS: 115200 baud, 200 ms solution`, with no steady `Framing error` stream and no unanswered config keys.
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term
