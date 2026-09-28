@@ -142,8 +142,7 @@ cal from flash, builds the `FlightController`, then hands it by `&mut` to the lo
 200 Hz: `CONTROL_LOOP_PERIOD_MS = 5` (matching the 5 ms servo frame) is the source of
 truth; `CONTROL_LOOP_FREQUENCY_HZ` and `CONTROL_LOOP_DT` derive from it, and so must
 anything time-based (ULog divisors, debounces, filter weights: write them in seconds or
-Hz, not ticks). The tick counter resets every `LED_UPDATE_INTERVAL`; every divisor on it
-is asserted to divide that interval. After a stall (flash write) the ticker resyncs
+Hz, not ticks). The tick counter runs free (wrapping), so any divisor keeps a steady cadence. After a stall (flash write) the ticker resyncs
 instead of bursting (`support::resync_after_stall`).
 
 Each tick: read commands (CRSF in flight mode, `RPC_CMD_CHANNEL` + accumulated RPC state

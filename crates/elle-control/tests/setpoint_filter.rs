@@ -1,43 +1,31 @@
-//! Host tests for the stick-to-setpoint smoothing time constant.
+//! Host tests for the stick-to-setpoint smoothing.
 //!
 //!   cargo test -p elle-control --target x86_64-unknown-linux-gnu --test setpoint_filter
 //!
-//! The filter is a per-tick EMA in `FlightController` (elle-system); its weight is
-//! derived from `SETPOINT_FILTER_TAU_S` and the loop period in `elle-config`. These
-//! tests pin that the response is set in seconds, not ticks, so a loop-rate change
-//! doesn't change how the sticks feel.
+//! `FlightController` runs `smooth_setpoint` once per tick with a weight derived
+//! from `SETPOINT_FILTER_TAU_S` and the loop period. These tests pin that the
+//! response is set in seconds, not ticks, so a loop-rate change doesn't change how
+//! the sticks feel, and that the rate cap bounds each step.
 
-use elle_config::{CONTROL_LOOP_DT, SETPOINT_FILTER_ALPHA, SETPOINT_FILTER_TAU_S};
+use elle_config::{MAX_SETPOINT_RATE_DEG_S, SETPOINT_FILTER_TAU_S, setpoint_filter_alpha};
+use elle_control::filter::smooth_setpoint;
 
-/// The config's formula, for an arbitrary loop period.
-fn alpha(dt: f32) -> f32 {
-    dt / (SETPOINT_FILTER_TAU_S + dt)
-}
-
-/// Seconds for a unit step to reach 1 - 1/e through the EMA at period `dt`.
+/// Seconds for a unit step to reach 1 - 1/e at loop period `dt`, rate cap off.
 fn time_to_63(dt: f32) -> f32 {
-    let a = alpha(dt);
+    let a = setpoint_filter_alpha(dt);
     let (mut y, mut t) = (0.0f32, 0.0f32);
     while y < 1.0 - (-1.0f32).exp() {
-        y += a * (1.0 - y);
+        y = smooth_setpoint(y, 1.0, a, f32::INFINITY);
         t += dt;
     }
     t
 }
 
 #[test]
-fn config_uses_the_formula() {
-    assert!((SETPOINT_FILTER_ALPHA - alpha(CONTROL_LOOP_DT)).abs() < 1e-6);
-}
-
-#[test]
 fn old_rate_keeps_the_old_weight() {
     // 0.068 s was chosen as what alpha 0.15 meant at the old 12 ms loop.
-    assert!(
-        (alpha(0.012) - 0.15).abs() < 1e-3,
-        "alpha at 12 ms = {}",
-        alpha(0.012)
-    );
+    let a = setpoint_filter_alpha(0.012);
+    assert!((a - 0.15).abs() < 1e-3, "alpha at 12 ms = {a}");
 }
 
 #[test]
@@ -55,4 +43,20 @@ fn step_response_is_set_in_seconds() {
     }
     let (old, new) = (time_to_63(0.012), time_to_63(0.005));
     assert!((old - new).abs() <= 0.012, "12 ms: {old} s, 5 ms: {new} s");
+}
+
+#[test]
+fn rate_cap_bounds_a_full_stick_step() {
+    // A full-bank step (45 deg) moves at most MAX_SETPOINT_RATE_DEG_S, in either
+    // direction.
+    let dt = 0.005;
+    let max_step = MAX_SETPOINT_RATE_DEG_S * dt;
+    let a = setpoint_filter_alpha(dt);
+    let up = smooth_setpoint(0.0, 45.0, a, max_step);
+    let down = smooth_setpoint(0.0, -45.0, a, max_step);
+    assert!((up - max_step).abs() < 1e-6, "up step {up}");
+    assert!((down + max_step).abs() < 1e-6, "down step {down}");
+    // A small error is below the cap and takes the plain EMA step.
+    let small = smooth_setpoint(0.0, 0.1, a, max_step);
+    assert!((small - a * 0.1).abs() < 1e-7, "small step {small}");
 }

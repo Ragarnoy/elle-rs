@@ -104,22 +104,8 @@ pub const STALE_EVENT_DRAIN_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 // LED update interval (iterations at CONTROL_LOOP_FREQUENCY_HZ)
 pub const LED_UPDATE_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 4; // ~4s
 
-// The flight loop resets its tick counter every LED_UPDATE_INTERVAL, so every
-// divisor used on that counter must divide it, or its cadence jumps every 4 s.
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_STATUS_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_MAG_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_BARO_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_COMMANDS_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_ENGINE_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_GNSS_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR));
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR));
-
-// Performance log interval. It has to divide LED_UPDATE_INTERVAL like the
-// divisors above: at 10 s the counter reset every 4 s and it never fired.
-pub const PERF_LOG_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 4; // ~4s
-const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(PERF_LOG_INTERVAL));
+// Performance log interval
+pub const PERF_LOG_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 10; // ~10s
 
 // GNSS error log throttling
 pub const GNSS_ERROR_LOG_INITIAL: u32 = 3; // Log first N errors
@@ -337,9 +323,13 @@ pub const GYRO_BIAS_TIMEOUT_SAMPLES: u32 = 10_000;
 /// doesn't change with the loop rate: 0.068 s is what the old per-tick alpha of
 /// 0.15 gave at 12 ms (tau = dt (1 - alpha) / alpha).
 pub const SETPOINT_FILTER_TAU_S: f32 = 0.068;
-/// Per-tick EMA weight for `SETPOINT_FILTER_TAU_S` at the current loop rate
-/// (0.15 at 12 ms, ~0.068 at 5 ms).
-pub const SETPOINT_FILTER_ALPHA: f32 = CONTROL_LOOP_DT / (SETPOINT_FILTER_TAU_S + CONTROL_LOOP_DT);
+/// Per-tick EMA weight for `SETPOINT_FILTER_TAU_S` at loop period `dt` seconds.
+#[must_use]
+pub const fn setpoint_filter_alpha(dt: f32) -> f32 {
+    dt / (SETPOINT_FILTER_TAU_S + dt)
+}
+/// `setpoint_filter_alpha` at the current loop rate (0.15 at 12 ms, ~0.068 at 5 ms).
+pub const SETPOINT_FILTER_ALPHA: f32 = setpoint_filter_alpha(CONTROL_LOOP_DT);
 /// Max rate the smoothed attitude setpoint may move (°/s). Caps the EMA's
 /// initial jump on a stick step (several hundred °/s otherwise): full bank in 0.5 s.
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;

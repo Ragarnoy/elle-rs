@@ -572,7 +572,9 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
         fc.check_failsafe();
 
         update_control_loop_timing(loop_timer.elapsed_us());
-        loop_counter = loop_counter.saturating_add(1);
+        // Free-running: every periodic action is `is_multiple_of` a divisor, so
+        // nothing needs it reset (it wraps after ~248 days at 200 Hz).
+        loop_counter = loop_counter.wrapping_add(1);
 
         // Periodic status updates
         if loop_counter.is_multiple_of(PERF_LOG_INTERVAL) {
@@ -580,8 +582,6 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
         }
 
         if loop_counter.is_multiple_of(LED_UPDATE_INTERVAL) {
-            loop_counter = 0;
-
             let imu_status = IMU_STATUS.read().await;
 
             let led_pattern = if fc.is_failsafe() {

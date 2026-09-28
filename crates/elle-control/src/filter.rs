@@ -8,6 +8,13 @@
 
 use nalgebra::{ComplexField, Vector3};
 
+/// One tick of the stick-to-setpoint smoothing: an EMA step of weight `alpha`
+/// toward `target`, capped at `max_step` either way.
+#[must_use]
+pub fn smooth_setpoint(filtered: f32, target: f32, alpha: f32, max_step: f32) -> f32 {
+    filtered + (alpha * (target - filtered)).clamp(-max_step, max_step)
+}
+
 /// Second-order Butterworth low-pass (bilinear transform, prewarped), direct
 /// form II transposed.
 #[derive(Clone, Copy, Debug)]

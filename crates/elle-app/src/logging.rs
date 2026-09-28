@@ -111,12 +111,14 @@ pub(crate) fn log_flight_data(
     }
 
     // Log engine data at ULOG_ENGINE_DIVISOR (100 Hz), ESC link health at ~1 Hz
-    {
+    let log_engine = loop_counter.is_multiple_of(ULOG_ENGINE_DIVISOR);
+    let log_esc_health = loop_counter.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR);
+    if log_engine || log_esc_health {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
-        if loop_counter.is_multiple_of(ULOG_ENGINE_DIVISOR) {
+        if log_engine {
             let _ = logger.log_engine(&eng);
         }
-        if loop_counter.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR) {
+        if log_esc_health {
             let _ = logger.log_esc_health(&eng);
         }
     }

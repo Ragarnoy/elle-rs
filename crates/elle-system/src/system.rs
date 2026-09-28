@@ -3,6 +3,7 @@ use elle_config::lut::apply_differential_thrust_lut;
 use elle_config::*;
 use elle_control::SavedGains;
 use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
+use elle_control::filter::smooth_setpoint;
 use elle_control::mixing::{
     elevons::{ControlInputs, MixSaturation, mix_elevons, mix_elevons_direct_lut},
     yaw::throttle_with_differential_lut,
@@ -470,12 +471,18 @@ impl<'a> FlightController<'a> {
                 // EMA smoothing, with each step capped so the target never moves
                 // faster than MAX_SETPOINT_RATE_DEG_S.
                 let max_step = MAX_SETPOINT_RATE_DEG_S.to_radians() * CONTROL_LOOP_DT;
-                self.filtered_pitch_setpoint_rad += (SETPOINT_FILTER_ALPHA
-                    * (pitch_setpoint_rad - self.filtered_pitch_setpoint_rad))
-                    .clamp(-max_step, max_step);
-                self.filtered_roll_setpoint_rad += (SETPOINT_FILTER_ALPHA
-                    * (roll_setpoint_rad - self.filtered_roll_setpoint_rad))
-                    .clamp(-max_step, max_step);
+                self.filtered_pitch_setpoint_rad = smooth_setpoint(
+                    self.filtered_pitch_setpoint_rad,
+                    pitch_setpoint_rad,
+                    SETPOINT_FILTER_ALPHA,
+                    max_step,
+                );
+                self.filtered_roll_setpoint_rad = smooth_setpoint(
+                    self.filtered_roll_setpoint_rad,
+                    roll_setpoint_rad,
+                    SETPOINT_FILTER_ALPHA,
+                    max_step,
+                );
             }
         }
 

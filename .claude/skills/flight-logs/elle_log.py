@@ -31,6 +31,8 @@ from pyulog import ULog  # noqa: E402
 REPO = Path(__file__).resolve().parents[3]
 UI_RS = REPO / "tools/elle-rpc-host/src/tui/ui.rs"
 MODES = {0: "Manual", 1: "Stabilized", 2: "AltitudeHold"}
+
+
 def late_threshold_ms(dt_ms):
     """Two control periods, what support::resync_after_stall warns on. Taken from the
     log's own median tick period, so 12 ms (83 Hz) and 5 ms (200 Hz) logs are both
@@ -168,7 +170,7 @@ def cmd_timing(logs, _args):
         limit = late_threshold_ms(dt)
         late, lost = split_gaps(log, ts, np.nonzero(dt > limit)[0])
         tt = log.t(ts)
-        print(f"  ticks {len(ts)}, median period {np.median(dt):.2f} ms, late (> {limit:.0f} ms): {len(late)}"
+        print(f"  ticks {len(ts)}, median period {limit / 2:.2f} ms, late (> {limit:.0f} ms): {len(late)}"
               + (f", max {max(dt[i] for i in late):.0f} ms" if late else "")
               + (f"; logging gaps (ULog dropouts, loop kept running): {len(lost)}" if lost else ""))
         if late:

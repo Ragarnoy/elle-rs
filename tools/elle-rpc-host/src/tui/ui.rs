@@ -32,10 +32,10 @@ fn kv(label: &str, value: String, color: Color) -> Line<'static> {
     ])
 }
 
-/// Green below `warn`, yellow below `crit`, red at or above `crit`.
 /// Control loop period the firmware runs at, in µs.
 const LOOP_PERIOD_US: f64 = elle_config::CONTROL_LOOP_PERIOD_MS as f64 * 1000.0;
 
+/// Green below `warn`, yellow below `crit`, red at or above `crit`.
 fn scale(value: f64, warn: f64, crit: f64) -> Color {
     if value >= crit {
         CRIT
