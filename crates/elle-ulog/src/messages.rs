@@ -859,6 +859,60 @@ const _: () = assert!(
     "EscHealthMessage::SIZE does not match its field widths"
 );
 
+/// Core 1 (IMU task) load over the last logging window (~1 s).
+///
+/// Busy time is wall time per IMU DATA_RDY wake-up (deadline 1 ms). `mag_max_us`
+/// and `baro_max_us` are the longest blocking I2C reads in the window;
+/// `max_drain` > 1 means a wake-up ran long enough for samples to queue.
+///
+/// Format: "core1_load:uint64_t timestamp;uint32_t wakes;uint32_t busy_avg_us;uint32_t busy_max_us;uint32_t mag_max_us;uint32_t baro_max_us;uint32_t max_drain"
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Core1LoadMessage {
+    /// Timestamp in microseconds (filled in by the logger)
+    pub timestamp: u64,
+    pub wakes: u32,
+    pub busy_avg_us: u32,
+    pub busy_max_us: u32,
+    pub mag_max_us: u32,
+    pub baro_max_us: u32,
+    pub max_drain: u32,
+}
+
+impl Core1LoadMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str = "core1_load:uint64_t timestamp;uint32_t wakes;uint32_t busy_avg_us;uint32_t busy_max_us;uint32_t mag_max_us;uint32_t baro_max_us;uint32_t max_drain";
+
+    /// Message name
+    pub const NAME: &'static str = "core1_load";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 32;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.wakes.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.busy_avg_us.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.busy_max_us.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.mag_max_us.to_le_bytes());
+        buf[24..28].copy_from_slice(&self.baro_max_us.to_le_bytes());
+        buf[28..32].copy_from_slice(&self.max_drain.to_le_bytes());
+        buf
+    }
+}
+
+const _: () = assert!(
+    Core1LoadMessage::SIZE == 8 + 6 * 4,
+    "Core1LoadMessage::SIZE does not match its field widths"
+);
+
 /// Log event message — compact discrete event for ULog flash
 ///
 /// Format: "log_event:uint64_t timestamp;uint8_t level;uint16_t code"

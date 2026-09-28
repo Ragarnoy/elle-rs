@@ -1,5 +1,6 @@
 //! Execution-time statistics for tasks that live in this crate (the Core 1 IMU
-//! loop, the flash manager). `elle-system`'s performance monitor cannot be called
+//! loop, the flash manager). `CORE1_LOAD` is always on and goes to ULog; the
+//! `AtomicTiming` instances feed `performance-monitoring` builds only. `elle-system`'s performance monitor cannot be called
 //! from here — it depends on this crate, not the other way round — so these are
 //! lock-free atomics it reads instead. One writer per instance; `reset` from
 //! another core may race a concurrent `record`, which is fine for diagnostics.
@@ -83,3 +84,99 @@ pub static IMU_TIMING: AtomicTiming = AtomicTiming::new();
 
 /// Duration of each flash manager request (profile load/save, ULog peek/pop/erase).
 pub static FLASH_TIMING: AtomicTiming = AtomicTiming::new();
+
+/// Core 1 load over one logging window, accumulated by the IMU task and taken
+/// (and reset) by the ULog writer on Core 0 about once a second.
+///
+/// Busy time is wall time per DATA_RDY wake-up, from the wake to the next wait:
+/// FIFO drain, fusion, publish, and the mag / baro / tap housekeeping. The
+/// deadline is one sample period (1 ms); a wake that runs past it leaves samples
+/// queued, which shows up as `max_drain` > 1.
+pub struct Core1Load {
+    wakes: AtomicU32,
+    busy_sum_us: AtomicU32,
+    busy_max_us: AtomicU32,
+    mag_max_us: AtomicU32,
+    baro_max_us: AtomicU32,
+    max_drain: AtomicU32,
+}
+
+/// One window of [`Core1Load`].
+#[derive(Clone, Copy, Default, defmt::Format)]
+pub struct Core1LoadSnapshot {
+    pub wakes: u32,
+    pub busy_sum_us: u32,
+    pub busy_max_us: u32,
+    /// Longest blocking MMC5616WA read (I2C0).
+    pub mag_max_us: u32,
+    /// Longest blocking BMP390 read (I2C0).
+    pub baro_max_us: u32,
+    /// Most FIFO samples drained in one wake-up.
+    pub max_drain: u32,
+}
+
+impl Core1LoadSnapshot {
+    /// Mean busy time per wake-up in the window.
+    #[must_use]
+    pub const fn busy_avg_us(&self) -> u32 {
+        match self.busy_sum_us.checked_div(self.wakes) {
+            Some(avg) => avg,
+            None => 0,
+        }
+    }
+}
+
+impl Core1Load {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            wakes: AtomicU32::new(0),
+            busy_sum_us: AtomicU32::new(0),
+            busy_max_us: AtomicU32::new(0),
+            mag_max_us: AtomicU32::new(0),
+            baro_max_us: AtomicU32::new(0),
+            max_drain: AtomicU32::new(0),
+        }
+    }
+
+    /// One DATA_RDY wake-up took `busy_us`.
+    pub fn record_wake(&self, busy_us: u32) {
+        self.wakes.fetch_add(1, Ordering::Relaxed);
+        self.busy_sum_us.fetch_add(busy_us, Ordering::Relaxed);
+        self.busy_max_us.fetch_max(busy_us, Ordering::Relaxed);
+    }
+
+    pub fn record_mag(&self, us: u32) {
+        self.mag_max_us.fetch_max(us, Ordering::Relaxed);
+    }
+
+    pub fn record_baro(&self, us: u32) {
+        self.baro_max_us.fetch_max(us, Ordering::Relaxed);
+    }
+
+    pub fn record_drain(&self, samples: u32) {
+        self.max_drain.fetch_max(samples, Ordering::Relaxed);
+    }
+
+    /// Read the window and start a new one. A wake-up recorded between the
+    /// individual swaps lands half in each window, which is fine for diagnostics.
+    pub fn take(&self) -> Core1LoadSnapshot {
+        Core1LoadSnapshot {
+            wakes: self.wakes.swap(0, Ordering::Relaxed),
+            busy_sum_us: self.busy_sum_us.swap(0, Ordering::Relaxed),
+            busy_max_us: self.busy_max_us.swap(0, Ordering::Relaxed),
+            mag_max_us: self.mag_max_us.swap(0, Ordering::Relaxed),
+            baro_max_us: self.baro_max_us.swap(0, Ordering::Relaxed),
+            max_drain: self.max_drain.swap(0, Ordering::Relaxed),
+        }
+    }
+}
+
+impl Default for Core1Load {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Core 1 IMU task load, logged to ULog as `core1_load`.
+pub static CORE1_LOAD: Core1Load = Core1Load::new();

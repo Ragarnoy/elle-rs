@@ -397,22 +397,20 @@ impl<'a> Imu<'a> {
         let mut last_catchup_event: Option<Instant> = None;
 
         // Busy time of the previous wake-up, recorded just before the next wait.
-        #[cfg(feature = "performance-monitoring")]
         let mut wake_started: Option<Instant> = None;
 
         loop {
             // Wait for DATA_RDY: INT1 goes high when new sample is ready
             // (active-high, latched — cleared on INT_STATUS read inside read_sample).
             // Uses true async GPIO (embassy-rp multicore executor enables cross-core IRQ wakeup).
-            #[cfg(feature = "performance-monitoring")]
             if let Some(started) = wake_started.take() {
-                crate::timing::IMU_TIMING.record(started.elapsed().as_micros() as u32);
+                let busy_us = started.elapsed().as_micros() as u32;
+                crate::timing::CORE1_LOAD.record_wake(busy_us);
+                #[cfg(feature = "performance-monitoring")]
+                crate::timing::IMU_TIMING.record(busy_us);
             }
             self.int1.wait_for_high().await;
-            #[cfg(feature = "performance-monitoring")]
-            {
-                wake_started = Some(Instant::now());
-            }
+            wake_started = Some(Instant::now());
 
             // 1. Drain the ICM-42686 FIFO. Every queued sample goes through the
             // AHRS in order (it integrates at a fixed 1 kHz step, so none may be
@@ -524,6 +522,7 @@ impl<'a> Imu<'a> {
                 None => {}
             }
 
+            crate::timing::CORE1_LOAD.record_drain(drained);
             if drained > 1 {
                 let now = Instant::now();
                 if last_catchup_event.is_none_or(|t| now - t >= Duration::from_secs(1)) {
@@ -605,7 +604,10 @@ impl<'a> Imu<'a> {
             mag_counter += ticks;
             if self.mag_ok && mag_counter >= elle_config::MAG_READ_INTERVAL_TICKS {
                 mag_counter = 0;
-                match self.mag.read_magnetic() {
+                let read_started = Instant::now();
+                let read = self.mag.read_magnetic();
+                crate::timing::CORE1_LOAD.record_mag(read_started.elapsed().as_micros() as u32);
+                match read {
                     Ok(data) => {
                         let raw = [data.x as f32, data.y as f32, data.z as f32];
 
@@ -684,7 +686,11 @@ impl<'a> Imu<'a> {
             if baro_counter >= elle_config::BARO_READ_INTERVAL_TICKS {
                 baro_counter = 0;
                 if let Some(baro) = &mut self.baro {
-                    match baro.measure() {
+                    let read_started = Instant::now();
+                    let read = baro.measure();
+                    crate::timing::CORE1_LOAD
+                        .record_baro(read_started.elapsed().as_micros() as u32);
+                    match read {
                         Ok(m) => {
                             use uom::si::length::meter;
                             use uom::si::pressure::hectopascal;

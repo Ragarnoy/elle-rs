@@ -42,6 +42,7 @@ pub struct ULogLogger {
     controller_msg_id: Option<u16>,
     pid_gains_msg_id: Option<u16>,
     esc_health_msg_id: Option<u16>,
+    core1_load_msg_id: Option<u16>,
     #[cfg(feature = "gyro-raw-log")]
     gyro_raw_msg_id: Option<u16>,
     /// Gains version last written to this file; `None` right after `initialize`.
@@ -73,6 +74,7 @@ impl ULogLogger {
             controller_msg_id: None,
             pid_gains_msg_id: None,
             esc_health_msg_id: None,
+            core1_load_msg_id: None,
             #[cfg(feature = "gyro-raw-log")]
             gyro_raw_msg_id: None,
             logged_gains_version: None,
@@ -184,6 +186,11 @@ impl ULogLogger {
                 .add_subscription(elle_ulog::EscHealthMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
+        self.core1_load_msg_id = Some(
+            self.writer
+                .add_subscription(elle_ulog::Core1LoadMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
         // Only capture builds write gyro_raw, so only they subscribe to it.
         #[cfg(feature = "gyro-raw-log")]
         {
@@ -195,7 +202,7 @@ impl ULogLogger {
         }
 
         info!(
-            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}, autotune={}, controller={}, pid_gains={}, esc_health={}",
+            "ULog subscriptions: attitude={}, commands={}, status={}, baro={}, mag={}, gnss={}, engine={}, event={}, autotune={}, controller={}, pid_gains={}, esc_health={}, core1_load={}",
             self.attitude_msg_id.unwrap(),
             self.commands_msg_id.unwrap(),
             self.status_msg_id.unwrap(),
@@ -207,7 +214,8 @@ impl ULogLogger {
             self.autotune_msg_id.unwrap(),
             self.controller_msg_id.unwrap(),
             self.pid_gains_msg_id.unwrap(),
-            self.esc_health_msg_id.unwrap()
+            self.esc_health_msg_id.unwrap(),
+            self.core1_load_msg_id.unwrap()
         );
         #[cfg(feature = "gyro-raw-log")]
         info!(
@@ -559,6 +567,33 @@ impl ULogLogger {
         self.writer.clear_buffer();
         self.writer
             .write_esc_health(self.esc_health_msg_id.unwrap(), &msg)
+            .map_err(|_| ULogError::BufferFull)?;
+
+        self.buffer_writer_output()
+    }
+
+    /// Log one window of Core 1 load.
+    pub fn log_core1_load(
+        &mut self,
+        load: &crate::timing::Core1LoadSnapshot,
+    ) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+
+        let msg = elle_ulog::Core1LoadMessage {
+            timestamp: Instant::now().as_micros(),
+            wakes: load.wakes,
+            busy_avg_us: load.busy_avg_us(),
+            busy_max_us: load.busy_max_us,
+            mag_max_us: load.mag_max_us,
+            baro_max_us: load.baro_max_us,
+            max_drain: load.max_drain,
+        };
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_core1_load(self.core1_load_msg_id.unwrap(), &msg)
             .map_err(|_| ULogError::BufferFull)?;
 
         self.buffer_writer_output()

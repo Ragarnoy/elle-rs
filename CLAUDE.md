@@ -178,6 +178,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 
 Any I2C error on mag or baro takes **both** off the bus (`i2c_bus_failed`, event 48).
 Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` at 1 kHz).
+Both are blocking I2C reads inside the 1 ms IMU slot. `elle_hardware::timing::CORE1_LOAD` accumulates busy time per wake, the longest mag and baro reads and the largest FIFO drain; the control loop logs and resets it about once a second as ULog `core1_load`.
 
 ### DShot and RPM governor (`elle-hardware/src/dshot.rs`, `elle-control/src/governor.rs`)
 
