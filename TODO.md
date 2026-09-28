@@ -23,7 +23,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Autotune hysteresis and gain cap** in flight: a normal run still completes with ±0.5° hysteresis (not timing out), and the 3× Kp/Kd cap doesn't reject reasonable results (check `autotune_status` and event 94 in ULog).
 - [ ] **Autotune ownership aborts**: Manual, kill, failsafe, CH7 pitch→roll and a 20° off-axis excursion each abort the run and restore gains (TEST_PLAN 3.4.4, 3.4.4b, 3.4.6).
 - [ ] **Per-entry flash clear**: `clearpid`, `mag cal clear`, `level cal clear` each remove only their own entry (TEST_PLAN 6.3).
-- [ ] **DShot timing** (branch `dshot-timing`): eagle idle twitches / odd beeps gone; late-powered or restarted ESCs get re-configured (events 160–163); `esc_health` shows no corrupt replies (TEST_PLAN 6.8).
+- [ ] **DShot ESC re-configuration** (TEST_PLAN 6.8 rows 1, 2, 4, 5): scope the DShot lines across a stall; FC on USB then battery → events 162/163; ESC power cut → 160/161 then 162/163. Already confirmed (LOG_0043, 13 min armed idle): no twitches or beeps, 1000 frames/s per ESC, 0 timeouts / corrupt replies.
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term
