@@ -2,7 +2,7 @@
 
 ## Current State
 
-- Inner attitude PID (pitch/roll to elevons) at 83 Hz (12 ms)
+- Inner attitude PID (pitch/roll to elevons) at 200 Hz (5 ms)
 - AHRS heading (Madgwick, magnetometer + gyro), hard-iron and level calibration
 - GNSS: SAM-M10Q, UBX-NAV-PVT at 5 Hz over 115200 baud (position, velocity NED, ground
   speed, course, accuracy estimates); NMEA GGA fallback

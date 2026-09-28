@@ -70,7 +70,7 @@ same minutes in each mode) and say which files are which only after checking wit
 
 - **Time.** Timestamps are µs since boot; the tool reports seconds from the file's
   first record, which is 0.1–5 s after boot (the SD card has to mount first).
-- **`loop_time_us`** (`system_status`, 8.3 Hz) is wall time from tick start to the
+- **`loop_time_us`** (`system_status`, 8 Hz; 8.3 Hz in logs before the 200 Hz loop) is wall time from tick start to the
   ULog write. It includes interrupt and DShot-executor preemption. While armed the
   flight loop has no `await` before that point, so other thread tasks are not in
   it; while disarmed, the level-cal poll can be.

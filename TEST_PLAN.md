@@ -179,7 +179,7 @@ ULog auto-starts only in flight firmware.
 | # | Check                    | Expected                             | Pass |
 |---|--------------------------|--------------------------------------|------|
 | 1 | `ulog_info LOG_NNNN.ULG` | All message types present, no errors | [x]  |
-| 2 | attitude_data rate       | ~83 Hz                               | [ ]  |
+| 2 | attitude_data rate       | ~200 Hz                              | [ ]  |
 | 3 | File has real timestamp  | Correct date/time (not 1970/1980)    | [x]  |
 
 ### 3.3 Autotune ULog + Performance (RPC+RC mode)
@@ -191,8 +191,8 @@ ULog auto-starts only in flight firmware.
 | 3 | Let it run for ~10s                | No "attitude data lost" abort event                      | [x]  |
 | 4 | TUI: `autotune abort`              | Autotune aborts normally, `AT PITCH` disappears          | [ ]  |
 | 5 | Pull SD, check ULog                | `autotune_status` message present with phase transitions | [x]  |
-| 6 | Check `system_status.loop_time_us` | All values < 12000µs (12ms budget)                       | [ ]  |
-| 7 | Check attitude_data rate           | Still ~83 Hz during autotune (no drops)                  | [ ]  |
+| 6 | Check `system_status.loop_time_us` | All values < 5000µs (5ms budget)                         | [ ]  |
+| 7 | Check attitude_data rate           | Still ~200 Hz during autotune (no drops)                 | [ ]  |
 
 ### 3.4 Autotune Oscillation Verification (RPC+RC mode, props off)
 
@@ -341,12 +341,12 @@ Each test leaves a signature in the data that can be checked after the fact.
 
 | # | Check                                | Expected                         | Pass |
 |---|--------------------------------------|----------------------------------|------|
-| 1 | `attitude_data` messages present     | Yes, ~83 Hz rate                 | [ ]  |
-| 2 | `commands` messages present          | Yes, ~83 Hz rate                 | [ ]  |
-| 3 | `controller` messages present        | Yes, ~83 Hz rate                 | [ ]  |
-| 4 | `engine_data` messages present       | Yes, ~83 Hz rate                 | [ ]  |
-| 5 | `system_status` messages present     | Yes, ~8.3 Hz rate                | [ ]  |
-| 6 | `barometer_data` messages present    | Yes, ~4.4 Hz rate                | [ ]  |
+| 1 | `attitude_data` messages present     | Yes, ~200 Hz rate                | [ ]  |
+| 2 | `commands` messages present          | Yes, ~200 Hz rate                | [ ]  |
+| 3 | `controller` messages present        | Yes, ~200 Hz rate                | [ ]  |
+| 4 | `engine_data` messages present       | Yes, ~200 Hz rate                | [ ]  |
+| 5 | `system_status` messages present     | Yes, ~8 Hz rate                  | [ ]  |
+| 6 | `barometer_data` messages present    | Yes, ~5 Hz rate                  | [ ]  |
 | 7 | `magnetometer_data` messages present | Yes, ~10 Hz rate                 | [ ]  |
 | 8 | `gnss_data` messages present         | Yes, ~1 Hz rate                  | [ ]  |
 | 9 | `pid_gains` messages present         | Once at file start, then on change | [ ]  |
@@ -414,7 +414,7 @@ Plot `autotune_status` fields:
 
 | # | Check                                      | Expected                               | Pass |
 |---|--------------------------------------------|----------------------------------------|------|
-| 1 | system_status.loop_time_us: max            | < 12000 µs (12ms budget)               | [ ]  |
+| 1 | system_status.loop_time_us: max            | < 5000 µs (5ms budget)                 | [ ]  |
 | 2 | system_status.loop_time_us: average        | < 5000 µs (comfortable margin)         | [ ]  |
 | 3 | controller.dt_us                           | ~12000, no gaps > 24000                | [ ]  |
 | 4 | controller.att_age_us                      | < 2000 (fresh attitude every tick)     | [ ]  |

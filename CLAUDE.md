@@ -139,8 +139,11 @@ cal from flash, builds the `FlightController`, then hands it by `&mut` to the lo
 
 ### Control loop
 
-83 Hz: `CONTROL_LOOP_PERIOD_MS = 12` is the source of truth; `CONTROL_LOOP_FREQUENCY_HZ`
-and `CONTROL_LOOP_DT` derive from it. After a stall (flash write) the ticker resyncs
+200 Hz: `CONTROL_LOOP_PERIOD_MS = 5` (matching the 5 ms servo frame) is the source of
+truth; `CONTROL_LOOP_FREQUENCY_HZ` and `CONTROL_LOOP_DT` derive from it, and so must
+anything time-based (ULog divisors, debounces, filter weights: write them in seconds or
+Hz, not ticks). The tick counter resets every `LED_UPDATE_INTERVAL`; every divisor on it
+is asserted to divide that interval. After a stall (flash write) the ticker resyncs
 instead of bursting (`support::resync_after_stall`).
 
 Each tick: read commands (CRSF in flight mode, `RPC_CMD_CHANNEL` + accumulated RPC state
@@ -160,7 +163,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 
 ### Controller (`elle-system/src/system.rs`, `elle-control`)
 
-- Stabilized: stick → attitude setpoint (±25° pitch, ±45° roll), EMA (`SETPOINT_FILTER_ALPHA`) with each step capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). The autotune override bypasses both.
+- Stabilized: stick → attitude setpoint (±25° pitch, ±45° roll), EMA with time constant `SETPOINT_FILTER_TAU_S` (68 ms; `SETPOINT_FILTER_ALPHA` is derived per tick) with each step capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). The autotune override bypasses both.
 - AltitudeHold is a 0°/0° level hold for now.
 - Heading hold (`elle-control/src/heading.rs`) replaces the roll setpoint in Stabilized.
 - PID outputs are scaled by `PID_SCALE` (5.0). `mix_elevons` reports `MixSaturation`; the PID freezes an axis's integral when its error would push further into a saturated direction (previous tick's flags) and always lets it unwind.

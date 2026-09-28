@@ -1,6 +1,6 @@
 //! Low-pass filtering for the gyro rates the attitude PID damps with.
 //!
-//! The PID samples the latest gyro rate at the control-loop rate (~83 Hz). Engine
+//! The PID samples the latest gyro rate at the control-loop rate (200 Hz). Engine
 //! vibration sits far above that, so unfiltered it folds down into the loop band
 //! and drives the elevons (seen on the eagle: 20-30 deg/s of roll-rate noise with
 //! the EDFs running, against 0.1 deg/s with them stopped). Filtering at the IMU's

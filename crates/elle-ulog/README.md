@@ -8,7 +8,7 @@ This crate only **encodes**. Buffering, timing and storage live in `elle-hardwar
 
 ```
 elle-app control loop ──log_*()──► elle_hardware::ULogLogger ──512 B chunks──► ULOG_WRITE_CHANNEL
-      (83 Hz)                        (2 kB buffer, flush at 75 %)  64 slots, ~1.8 s  │
+      (200 Hz)                       (2 kB buffer, flush at 75 %)  64 slots, ~1.8 s  │
                                                                                      ▼
                                                                    sd_writer_task → LOG_NNNN.ulg
                                                                    (FAT32 on the SD card, SPI1)
@@ -21,20 +21,20 @@ still target it, but new recordings go to the SD card.
 
 | Name | Size (B) | Rate | Content |
 |------|---------:|------|---------|
-| `attitude_data` | 32 | 83 Hz | pitch/roll/yaw (rad), rates (rad/s, filtered as the PID sees them) |
-| `commands` | 49 | 83 Hz | pilot inputs, mode, **pre-filter** setpoints, PID corrections, elevon µs |
-| `controller` | 53 | 83 Hz | loop `dt_us`, attitude age, filtered setpoints, scaled P/I/D per axis, `saturation` bits (pitch_up, pitch_down, roll_right, roll_left, LSB first), final elevon pulses |
-| `engine_data` | 46 | 83 Hz | per engine: eRPM, DShot throttle, target eRPM, EDT temperature/voltage/current |
-| `system_status` | 24 | 8.3 Hz | loop time, IMU errors, calibrated, armed, CPU load, RC age |
+| `attitude_data` | 32 | 200 Hz | pitch/roll/yaw (rad), rates (rad/s, filtered as the PID sees them) |
+| `commands` | 49 | 200 Hz | pilot inputs, mode, **pre-filter** setpoints, PID corrections, elevon µs |
+| `controller` | 53 | 200 Hz | loop `dt_us`, attitude age, filtered setpoints, scaled P/I/D per axis, `saturation` bits (pitch_up, pitch_down, roll_right, roll_left, LSB first), final elevon pulses |
+| `engine_data` | 46 | 200 Hz | per engine: eRPM, DShot throttle, target eRPM, EDT temperature/voltage/current |
+| `system_status` | 24 | 8 Hz | loop time, IMU errors, calibrated, armed, CPU load, RC age |
 | `magnetometer_data` | 20 | ~10 Hz | raw counts |
-| `barometer_data` | 24 | ~4.4 Hz | pressure, temperature, altitude, vario |
+| `barometer_data` | 24 | 5 Hz | pressure, temperature, altitude, vario |
 | `gnss_data` | 58 | ~1 Hz | fix, position, velocity NED, ground speed, course, accuracies, sats |
 | `pid_gains` | 40 | per file + on change | Kp/Ki/Kd per axis, I limit, scale |
 | `log_event` | 11 | on event | level + event code (see [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#event-codes)) |
 | `autotune_status` | 24 | while tuning | phase, axis, relay state, setpoint, measurement, cycles, amplitude |
 | `esc_health` | 44 | ~1 Hz | per ESC, cumulative: telemetry replies, timeouts, corrupt replies (GCR/CRC), re-configurations, extended-telemetry frames |
 | `core1_load` | 32 | ~1 Hz | Core 1 IMU task over the window: wake-ups, mean and max busy µs per wake (deadline 1 ms), longest mag and baro read (own task, not part of the busy time), largest FIFO drain |
-| `loop_stages` | 46 | 8.3 Hz | flight loop only: mean and max µs per stage over ~10 ticks (intake, update, outputs, switches, autotune, log, tail), DShot executor interrupt time and runs on Core 0 |
+| `loop_stages` | 46 | 8 Hz | flight loop only: mean and max µs per stage over 25 ticks (intake, update, outputs, switches, autotune, log, tail), DShot executor interrupt time and runs on Core 0 |
 | `gyro_raw` | 20 | 1 kHz | unfiltered gyro, `gyro-raw-log` builds only |
 
 Sizes are the payload after the 3-byte message header. Rates are set in `elle-app`
