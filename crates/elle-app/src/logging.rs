@@ -1,8 +1,8 @@
 //! Per-tick ULog recording, shared by the flight and RPC loops.
 
 use elle_config::{
-    ULOG_BARO_DIVISOR, ULOG_CORE1_LOAD_DIVISOR, ULOG_ESC_HEALTH_DIVISOR, ULOG_MAG_DIVISOR,
-    ULOG_STATUS_DIVISOR,
+    ULOG_BARO_DIVISOR, ULOG_COMMANDS_DIVISOR, ULOG_CORE1_LOAD_DIVISOR, ULOG_ENGINE_DIVISOR,
+    ULOG_ESC_HEALTH_DIVISOR, ULOG_MAG_DIVISOR, ULOG_STATUS_DIVISOR,
 };
 use elle_hardware::ULogLogger;
 use elle_hardware::imu::{AttitudeData, BARO, IMU_STATUS, MAG};
@@ -10,11 +10,11 @@ use elle_system::{FlightController, TimingMeasurement, update_ulog_timing};
 
 /// Log flight data to ULog flash storage
 ///
-/// Logs attitude, commands, and periodic status updates at appropriate rates:
-/// - Attitude: control-loop rate (every call)
-/// - Commands: control-loop rate (every call)
-/// - Controller cycle: control-loop rate; PID gains on change
-/// - Status: ~8Hz (every 10th call)
+/// Rates (see the `ULOG_*_DIVISOR`s in elle-config):
+/// - Attitude, controller cycle: every tick (control-loop rate)
+/// - Commands, engine telemetry: 100 Hz
+/// - PID gains: on change (and once per file)
+/// - Status, loop stages: 8 Hz; mag 10 Hz; baro 5 Hz; GNSS, ESC health, Core 1 load: ~1 Hz
 pub(crate) fn log_flight_data(
     logger: &mut ULogLogger,
     attitude: Option<&AttitudeData>,
@@ -40,7 +40,7 @@ pub(crate) fn log_flight_data(
         );
     }
 
-    // Log commands at control-loop rate
+    // Log commands at ULOG_COMMANDS_DIVISOR (100 Hz)
     // Convert to normalized for consistent logging
     let last_out = fc.last_output();
     let log_cmd = |logger: &mut ULogLogger, norm: &elle_control::commands::NormalizedCommands| {
@@ -58,9 +58,11 @@ pub(crate) fn log_flight_data(
             last_out.elevon_right_us,
         );
     };
-    match commands {
-        PilotCommands::Normalized(norm) => log_cmd(logger, norm),
-        PilotCommands::Raw(raw) => log_cmd(logger, &raw.to_normalized()),
+    if loop_counter.is_multiple_of(ULOG_COMMANDS_DIVISOR) {
+        match commands {
+            PilotCommands::Normalized(norm) => log_cmd(logger, norm),
+            PilotCommands::Raw(raw) => log_cmd(logger, &raw.to_normalized()),
+        }
     }
 
     // Log what the controller actually did this tick, and the gains it used
@@ -108,10 +110,12 @@ pub(crate) fn log_flight_data(
         });
     }
 
-    // Log engine data at control-loop rate, ESC link health at ~1 Hz
+    // Log engine data at ULOG_ENGINE_DIVISOR (100 Hz), ESC link health at ~1 Hz
     {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
-        let _ = logger.log_engine(&eng);
+        if loop_counter.is_multiple_of(ULOG_ENGINE_DIVISOR) {
+            let _ = logger.log_engine(&eng);
+        }
         if loop_counter.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR) {
             let _ = logger.log_esc_health(&eng);
         }

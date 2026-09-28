@@ -8,7 +8,7 @@ This crate only **encodes**. Buffering, timing and storage live in `elle-hardwar
 
 ```
 elle-app control loop ──log_*()──► elle_hardware::ULogLogger ──512 B chunks──► ULOG_WRITE_CHANNEL
-      (200 Hz)                       (2 kB buffer, flush at 75 %)  64 slots, ~1.8 s  │
+      (200 Hz)                       (2 kB buffer, flush at 75 %)  64 slots, ~1.1 s  │
                                                                                      ▼
                                                                    sd_writer_task → LOG_NNNN.ulg
                                                                    (FAT32 on the SD card, SPI1)
@@ -22,9 +22,9 @@ still target it, but new recordings go to the SD card.
 | Name | Size (B) | Rate | Content |
 |------|---------:|------|---------|
 | `attitude_data` | 32 | 200 Hz | pitch/roll/yaw (rad), rates (rad/s, filtered as the PID sees them) |
-| `commands` | 49 | 200 Hz | pilot inputs, mode, **pre-filter** setpoints, PID corrections, elevon µs |
+| `commands` | 49 | 100 Hz | pilot inputs, mode, **pre-filter** setpoints, PID corrections, elevon µs |
 | `controller` | 53 | 200 Hz | loop `dt_us`, attitude age, filtered setpoints, scaled P/I/D per axis, `saturation` bits (pitch_up, pitch_down, roll_right, roll_left, LSB first), final elevon pulses |
-| `engine_data` | 46 | 200 Hz | per engine: eRPM, DShot throttle, target eRPM, EDT temperature/voltage/current |
+| `engine_data` | 46 | 100 Hz | per engine: eRPM, DShot throttle, target eRPM, EDT temperature/voltage/current |
 | `system_status` | 24 | 8 Hz | loop time, IMU errors, calibrated, armed, CPU load, RC age |
 | `magnetometer_data` | 20 | ~10 Hz | raw counts |
 | `barometer_data` | 24 | 5 Hz | pressure, temperature, altitude, vario |

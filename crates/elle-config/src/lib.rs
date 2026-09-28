@@ -89,6 +89,13 @@ pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
 pub const ULOG_STATUS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 8; // 8 Hz (also the loop_stages window)
 pub const ULOG_MAG_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 10; // 10 Hz
 pub const ULOG_BARO_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 5; // 5 Hz
+// Pilot commands and engine telemetry change slowly, so they log at 100 Hz while
+// attitude and controller stay at the full loop rate. At 200 Hz everything
+// full-rate came to ~40 kB/s and the SD card fell behind in a slow phase
+// (LOG_0065: 37 dropouts, 1.4 s lost); this brings it to ~30 kB/s.
+pub const ULOG_COMMANDS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 100; // 100 Hz
+pub const ULOG_ENGINE_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 100; // 100 Hz
+const _: () = assert!(ULOG_COMMANDS_DIVISOR >= 1 && ULOG_ENGINE_DIVISOR >= 1);
 pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_ESC_HEALTH_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_CORE1_LOAD_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz window
@@ -102,6 +109,8 @@ pub const LED_UPDATE_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 4; // ~4s
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_STATUS_DIVISOR));
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_MAG_DIVISOR));
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_BARO_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_COMMANDS_DIVISOR));
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_ENGINE_DIVISOR));
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_GNSS_DIVISOR));
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR));
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR));

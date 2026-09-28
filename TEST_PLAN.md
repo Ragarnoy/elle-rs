@@ -342,9 +342,9 @@ Each test leaves a signature in the data that can be checked after the fact.
 | # | Check                                | Expected                         | Pass |
 |---|--------------------------------------|----------------------------------|------|
 | 1 | `attitude_data` messages present     | Yes, ~200 Hz rate                | [ ]  |
-| 2 | `commands` messages present          | Yes, ~200 Hz rate                | [ ]  |
+| 2 | `commands` messages present          | Yes, ~100 Hz rate                | [ ]  |
 | 3 | `controller` messages present        | Yes, ~200 Hz rate                | [ ]  |
-| 4 | `engine_data` messages present       | Yes, ~200 Hz rate                | [ ]  |
+| 4 | `engine_data` messages present       | Yes, ~100 Hz rate                | [ ]  |
 | 5 | `system_status` messages present     | Yes, ~8 Hz rate                  | [ ]  |
 | 6 | `barometer_data` messages present    | Yes, ~5 Hz rate                  | [ ]  |
 | 7 | `magnetometer_data` messages present | Yes, ~10 Hz rate                 | [ ]  |
