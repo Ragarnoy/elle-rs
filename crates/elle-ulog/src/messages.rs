@@ -919,7 +919,7 @@ const _: () = assert!(
     "Core1LoadMessage::SIZE does not match its field widths"
 );
 
-/// Flight-loop tick split into stages, over a window of ~10 ticks (8.3 Hz).
+/// Flight-loop tick split into stages, over a window of `ULOG_STATUS_DIVISOR` ticks (8 Hz).
 ///
 /// Per stage, mean and max µs across the window's ticks (wall time, so
 /// preemption included). Stages in order: intake, update, outputs, switches,

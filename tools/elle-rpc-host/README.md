@@ -51,7 +51,7 @@ above zero (event 18).
 ```
 
 Values are health-coloured where a threshold is meaningful (satellites, HDOP, ESC
-temperature, control-loop time against the 12 ms budget at 83 Hz, RC age against the
+temperature, control-loop time against the loop period (5 ms at 200 Hz, read from `elle-config`), RC age against the
 firmware's warning/timeout staging). Missing data is dimmed rather than shown at full
 brightness.
 

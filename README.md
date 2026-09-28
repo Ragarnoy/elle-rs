@@ -8,7 +8,7 @@ Flight controller firmware for two small flying wings, in Rust on the RP2350 wit
 - **Eagle** — twin EDF, differential thrust
 - **Dart** — single engine
 
-Both run the same application: ICM-42686 IMU with Madgwick AHRS on core 1, 83 Hz
+Both run the same application: ICM-42686 IMU with Madgwick AHRS on core 1, 200 Hz
 attitude control on core 0, elevons on hardware PWM, bidirectional DShot with a closed-loop
 RPM governor, CRSF/ELRS receiver and telemetry, SAM-M10Q GNSS, BMP390 baro, MMC5616WA
 magnetometer, and ULog flight recording to an SD card. A host tool drives and monitors

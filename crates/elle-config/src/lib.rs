@@ -75,15 +75,27 @@ const RC_CENTER: u16 = 1024; // CRSF center 992 scaled to 0–2047
 /// Control loop period: the single source of truth for loop timing. The rate
 /// and the PID/autotune dt are derived from it so they cannot disagree (they
 /// once did: a "77 Hz" rate gave a 12 ms ticker while dt stayed 0.013).
-pub const CONTROL_LOOP_PERIOD_MS: u64 = 12;
-pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = (1000 / CONTROL_LOOP_PERIOD_MS) as u32; // 83
+/// 5 ms: matches the 200 Hz elevon PWM frame (`REFRESH_INTERVAL_US`), so every
+/// command reaches the servos.
+pub const CONTROL_LOOP_PERIOD_MS: u64 = 5;
+pub const CONTROL_LOOP_FREQUENCY_HZ: u32 = (1000 / CONTROL_LOOP_PERIOD_MS) as u32; // 200
 pub const CONTROL_LOOP_DT: f32 = CONTROL_LOOP_PERIOD_MS as f32 / 1000.0;
+// The integer frequency (tick counts, divisors) must be exact.
+const _: () = assert!(1000 % CONTROL_LOOP_PERIOD_MS == 0);
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
 
-// ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ)
-pub const ULOG_STATUS_DIVISOR: u32 = 10; // 83/10 ≈ 8.3 Hz
-pub const ULOG_MAG_DIVISOR: u32 = 8; // 83/8 ≈ 10 Hz
-pub const ULOG_BARO_DIVISOR: u32 = 19; // 83/19 ≈ 4.4 Hz
+// ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ), derived so
+// the recorded rates don't change with the loop rate.
+pub const ULOG_STATUS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 8; // 8 Hz (also the loop_stages window)
+pub const ULOG_MAG_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 10; // 10 Hz
+pub const ULOG_BARO_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 5; // 5 Hz
+// Pilot commands and engine telemetry change slowly, so they log at 100 Hz while
+// attitude and controller stay at the full loop rate. At 200 Hz everything
+// full-rate came to ~40 kB/s and the SD card fell behind in a slow phase
+// (LOG_0065: 37 dropouts, 1.4 s lost); this brings it to ~30 kB/s.
+pub const ULOG_COMMANDS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 100; // 100 Hz
+pub const ULOG_ENGINE_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 100; // 100 Hz
+const _: () = assert!(ULOG_COMMANDS_DIVISOR >= 1 && ULOG_ENGINE_DIVISOR >= 1);
 pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_ESC_HEALTH_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_CORE1_LOAD_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz window
@@ -132,7 +144,7 @@ pub const AHRS_BETA: f32 = 0.033;
 /// Corner of the 2nd-order Butterworth low-pass on the gyro rates handed to the
 /// attitude PID, run at the 1 kHz IMU rate. Engine vibration (eagle EDFs:
 /// 20-30 deg/s of roll-rate noise at 7-9k rpm) otherwise aliases into the
-/// 83 Hz loop and moves the elevons. 30 Hz keeps the 5-8 Hz control band
+/// 200 Hz loop and moves the elevons. 30 Hz keeps the 5-8 Hz control band
 /// within ~4 % and costs ~7 ms of group delay. Size it from a `gyro-raw-log`
 /// capture.
 pub const GYRO_RATE_LPF_HZ: f32 = 30.0;
@@ -307,9 +319,19 @@ pub const GYRO_BIAS_MAX_RAD_S: f32 = 0.1;
 pub const GYRO_BIAS_TIMEOUT_SAMPLES: u32 = 10_000;
 
 // Setpoint smoothing parameters
-pub const SETPOINT_FILTER_ALPHA: f32 = 0.15; // Low-pass filter for setpoint smoothing (0.1-0.3)
+/// Time constant of the stick-to-setpoint low-pass. Set in seconds so the feel
+/// doesn't change with the loop rate: 0.068 s is what the old per-tick alpha of
+/// 0.15 gave at 12 ms (tau = dt (1 - alpha) / alpha).
+pub const SETPOINT_FILTER_TAU_S: f32 = 0.068;
+/// Per-tick EMA weight for `SETPOINT_FILTER_TAU_S` at loop period `dt` seconds.
+#[must_use]
+pub const fn setpoint_filter_alpha(dt: f32) -> f32 {
+    dt / (SETPOINT_FILTER_TAU_S + dt)
+}
+/// `setpoint_filter_alpha` at the current loop rate (0.15 at 12 ms, ~0.068 at 5 ms).
+pub const SETPOINT_FILTER_ALPHA: f32 = setpoint_filter_alpha(CONTROL_LOOP_DT);
 /// Max rate the smoothed attitude setpoint may move (°/s). Caps the EMA's
-/// initial jump on a stick step (~500°/s at alpha 0.15, 83 Hz): full bank in 0.5 s.
+/// initial jump on a stick step (several hundred °/s otherwise): full bank in 0.5 s.
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;
 
 // Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)

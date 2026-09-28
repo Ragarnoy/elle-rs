@@ -1163,6 +1163,7 @@ dependencies = [
  "clap",
  "cobs 0.5.1",
  "crossterm",
+ "elle-config",
  "elle-rpc-icd",
  "futures",
  "postcard-rpc",

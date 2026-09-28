@@ -206,9 +206,9 @@ Flight Review).
   and runs until power-off. Insert the card before power-up.
 - **RPC mode:** `ulog start` / `ulog stop` in the TUI.
 
-Logged at the 83 Hz control rate: attitude, pilot commands, controller internals (PID
-terms, setpoints, saturation, elevon pulses, loop dt) and engine telemetry; status at
-8.3 Hz; baro, mag and GNSS at their sensor rates; PID gains once per file and on every
+Logged at the 200 Hz control rate: attitude and controller internals (PID terms,
+setpoints, saturation, elevon pulses, loop dt); pilot commands and engine telemetry at
+100 Hz; status at 8 Hz; baro, mag and GNSS at their sensor rates; PID gains once per file and on every
 change. ESC link health (`esc_health`, ~1 Hz) counts DShot telemetry replies, timeouts,
 corrupt replies and re-configurations per ESC: corrupt replies point at wiring noise, and
 timeouts climbing at idle mean an ESC is silent. Core 1 load (`core1_load`, ~1 Hz) gives

@@ -1,12 +1,19 @@
 //! Low-pass filtering for the gyro rates the attitude PID damps with.
 //!
-//! The PID samples the latest gyro rate at the control-loop rate (~83 Hz). Engine
+//! The PID samples the latest gyro rate at the control-loop rate (200 Hz). Engine
 //! vibration sits far above that, so unfiltered it folds down into the loop band
 //! and drives the elevons (seen on the eagle: 20-30 deg/s of roll-rate noise with
 //! the EDFs running, against 0.1 deg/s with them stopped). Filtering at the IMU's
 //! 1 kHz, before the controller downsamples, removes it instead of aliasing it.
 
 use nalgebra::{ComplexField, Vector3};
+
+/// One tick of the stick-to-setpoint smoothing: an EMA step of weight `alpha`
+/// toward `target`, capped at `max_step` either way.
+#[must_use]
+pub fn smooth_setpoint(filtered: f32, target: f32, alpha: f32, max_step: f32) -> f32 {
+    filtered + (alpha * (target - filtered)).clamp(-max_step, max_step)
+}
 
 /// Second-order Butterworth low-pass (bilinear transform, prewarped), direct
 /// form II transposed.

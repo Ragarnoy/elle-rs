@@ -28,6 +28,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **GNSS after `cargo run`** (branch `gnss-baud-probe`): run twice without a power cycle; the second boot should log `GNSS: 115200 baud, 200 ms solution`, with no steady `Framing error` stream and no unanswered config keys.
 - [ ] **EDT retry** (branch `esc-edt-retry`): across several boots, `esc_health` `*_edt_frames` climbs on both ESCs every time, and voltage/temperature appear in `engine_data`; a session where the boot configuration missed shows event 162/163 about 5 s after boot. On the dart, confirm the spin direction on each boot.
 - [ ] **ULog buffering** (branch `ulog-buffering`): a long armed log shows no ULog dropouts after boot (`elle_log.py timing` reports no logging gaps; LOG_0058 had four of 95–180 ms with 8 channel slots).
+- [ ] **200 Hz control loop** (branch `loop-200hz`): bench log shows a 5.00 ms median tick, no late ticks after boot, no ULog dropouts at ~30 kB/s over a session long enough to reach the card's slow phase (LOG_0065 dropped 1.4 s ~3.3 MB in at ~40 kB/s, before `commands`/`engine_data` went to 100 Hz); Stabilized on the stand feels unchanged and doesn't oscillate; elevon pulse within one 5 ms frame of a stick step (TEST_PLAN 6.7). Then a cautious first flight and an autotune pass.
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term
@@ -75,8 +76,6 @@ Implemented, but not yet confirmed on hardware:
 **Expo curves (~1.5 h)** — per-axis expo on pitch/roll/yaw via compile-time LUTs.
 
 **EdgeTX Lua telemetry script (~2–3 h)** — mode, RPM, battery, ULog state, link quality on the LiteRadio 3 Pro from the CRSF frames already sent.
-
-**Control loop rate increase (~1 h)** — 83 Hz (12 ms) today with a large CPU margin; 150–200 Hz would freshen the D term. Measure with `performance-monitoring` first. Ki/Kd scale with dt, so retune (or rescale) afterwards; `CONTROL_LOOP_PERIOD_MS` drives everything else.
 
 ## Waypoint navigation
 

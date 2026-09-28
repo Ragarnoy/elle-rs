@@ -32,6 +32,9 @@ fn kv(label: &str, value: String, color: Color) -> Line<'static> {
     ])
 }
 
+/// Control loop period the firmware runs at, in µs.
+const LOOP_PERIOD_US: f64 = elle_config::CONTROL_LOOP_PERIOD_MS as f64 * 1000.0;
+
 /// Green below `warn`, yellow below `crit`, red at or above `crit`.
 fn scale(value: f64, warn: f64, crit: f64) -> Color {
     if value >= crit {
@@ -269,8 +272,12 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                     "{}us avg / {}us max",
                     p.control_loop_avg_us, p.control_loop_max_us
                 ),
-                // 12 ms control loop period (elle-config CONTROL_LOOP_PERIOD_MS).
-                scale(f64::from(p.control_loop_max_us), 9_000.0, 12_000.0),
+                // Against the control loop period: warn at 75 %, critical at 100 %.
+                scale(
+                    f64::from(p.control_loop_max_us),
+                    0.75 * LOOP_PERIOD_US,
+                    LOOP_PERIOD_US,
+                ),
             )
         },
     );
