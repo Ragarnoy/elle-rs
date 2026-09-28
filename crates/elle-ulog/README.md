@@ -32,6 +32,7 @@ still target it, but new recordings go to the SD card.
 | `pid_gains` | 40 | per file + on change | Kp/Ki/Kd per axis, I limit, scale |
 | `log_event` | 11 | on event | level + event code (see [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#event-codes)) |
 | `autotune_status` | 24 | while tuning | phase, axis, relay state, setpoint, measurement, cycles, amplitude |
+| `esc_health` | 36 | ~1 Hz | per ESC, cumulative: telemetry replies, timeouts, corrupt replies (GCR/CRC), re-configurations |
 | `gyro_raw` | 20 | 1 kHz | unfiltered gyro, `gyro-raw-log` builds only |
 
 Sizes are the payload after the 3-byte message header. Rates are set in `elle-app`

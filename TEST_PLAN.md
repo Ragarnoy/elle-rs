@@ -494,6 +494,17 @@ does nothing there):
 | 1 | Scope PIN_12 and PIN_13, Manual mode, stick step | New pulse width within one 20 ms frame of the step (compare with `commands` in ULog) | [ ]  |
 | 2 | TUI log during engines-on bench run              | Event 45 rare (catch-up drains), no event 41    | [ ]  |
 
+### 6.8 DShot Timing and ESC Link (props off, eagle first)
+
+| # | Action | Expected | Pass |
+|---|--------|----------|------|
+| 1 | Scope PIN_14 and PIN_11 at idle, disarmed | One complete MotorStop frame + ESC reply per ms; no frame cut short | [ ]  |
+| 2 | Same, across a loop stall (boot, SD init) | After the stall: one frame ≥ 200 µs later, then 1 ms spacing — never back-to-back frames | [ ]  |
+| 3 | Disarmed, check ULog | `engine_data` voltage/temperature update at idle; `esc_health` replies ≈ 1000/s per ESC, `bad_frames` 0 | [ ]  |
+| 4 | FC on USB first, then plug the battery | Events 162 and 163 about 1 s after the ESCs finish their tones; EDT present; correct spin direction on first spool-up | [ ]  |
+| 5 | Briefly cut one ESC's power at idle | 160 (or 161) for that side only, then 162 (or 163) once it is back | [ ]  |
+| 6 | Idle soak 15–30 min | No twitches or odd beeps; `bad_frames` stays 0 (a steady rate points at wiring) | [ ]  |
+
 ---
 
 ## Abort Criteria

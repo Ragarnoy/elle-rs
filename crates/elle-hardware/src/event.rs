@@ -161,6 +161,13 @@ pub(crate) const EVT_LEVEL_CAL_CLEARED: u16 = 156;
 pub(crate) const EVT_LEVEL_CAL_LOADED: u16 = 157;
 pub(crate) const EVT_LEVEL_CAL_LOAD_EMPTY: u16 = 158;
 
+// ESC link (160–169) — bidirectional DShot replies. The side is in the code,
+// since an event carries nothing else.
+pub(crate) const EVT_ESC_LEFT_SILENT: u16 = 160;
+pub(crate) const EVT_ESC_RIGHT_SILENT: u16 = 161;
+pub(crate) const EVT_ESC_LEFT_RECONFIGURED: u16 = 162;
+pub(crate) const EVT_ESC_RIGHT_RECONFIGURED: u16 = 163;
+
 // ---------------------------------------------------------------------------
 // Macro
 // ---------------------------------------------------------------------------

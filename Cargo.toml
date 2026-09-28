@@ -78,6 +78,9 @@ embassy-dshot = { version = "0.5.0", default-features = false, features = ["rp23
 embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "340bf1de" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "340bf1de" }
 bmp390 = { path = "drivers/bmp390" }
+# Idle telemetry (command_with_extended_telemetry) and the frame-gap fix for
+# issue #8; drop once embassy-dshot 0.5.1 is on crates.io.
+embassy-dshot = { git = "https://github.com/Ragarnoy/embassy-dshot", branch = "idle-telemetry-frame-gap" }
 
 [profile.release]
 debug = 2

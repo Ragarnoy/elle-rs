@@ -6,7 +6,7 @@ Open work only — finished work is in git history. Current behaviour is documen
 
 When proposing new event codes, take a free range: `event.rs` uses 1–9, 10–18, 20–23,
 30–34, 40–48, 50–51, 60–63, 70–71, 80–82, 90–94, 100–103, 110–116, 120, 130–132,
-140–141 and 150–158; **160 and up is free**. Flash MapStorage keys 1–3 are taken (PID,
+140–141, 150–158 and 160–163; **170 and up is free**. Flash MapStorage keys 1–3 are taken (PID,
 mag cal, level cal) and `MAP_KEY_SLOTS = 4`, so a new key means raising it.
 
 ## Pending verification
@@ -23,6 +23,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Autotune hysteresis and gain cap** in flight: a normal run still completes with ±0.5° hysteresis (not timing out), and the 3× Kp/Kd cap doesn't reject reasonable results (check `autotune_status` and event 94 in ULog).
 - [ ] **Autotune ownership aborts**: Manual, kill, failsafe, CH7 pitch→roll and a 20° off-axis excursion each abort the run and restore gains (TEST_PLAN 3.4.4, 3.4.4b, 3.4.6).
 - [ ] **Per-entry flash clear**: `clearpid`, `mag cal clear`, `level cal clear` each remove only their own entry (TEST_PLAN 6.3).
+- [ ] **DShot timing** (branch `dshot-timing`): eagle idle twitches / odd beeps gone; late-powered or restarted ESCs get re-configured (events 160–163); `esc_health` shows no corrupt replies (TEST_PLAN 6.8).
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term

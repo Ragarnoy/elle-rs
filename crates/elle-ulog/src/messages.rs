@@ -801,6 +801,64 @@ impl EngineMessage {
     }
 }
 
+/// ESC link health: cumulative bidirectional DShot reply counters per engine.
+///
+/// `bad_frames` (replies failing GCR decoding or CRC) is the line-noise
+/// indicator; `timeouts` climbing while stopped means the ESC is silent;
+/// `reconfigs` counts configurations re-sent after an ESC (re)appeared.
+///
+/// Format: "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs"
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EscHealthMessage {
+    /// Timestamp in microseconds (filled in by the logger)
+    pub timestamp: u64,
+    pub left_replies: u32,
+    pub right_replies: u32,
+    pub left_timeouts: u32,
+    pub right_timeouts: u32,
+    pub left_bad_frames: u32,
+    pub right_bad_frames: u32,
+    pub left_reconfigs: u16,
+    pub right_reconfigs: u16,
+}
+
+impl EscHealthMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str = "esc_health:uint64_t timestamp;uint32_t left_replies;uint32_t right_replies;uint32_t left_timeouts;uint32_t right_timeouts;uint32_t left_bad_frames;uint32_t right_bad_frames;uint16_t left_reconfigs;uint16_t right_reconfigs";
+
+    /// Message name
+    pub const NAME: &'static str = "esc_health";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 36;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.left_replies.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.right_replies.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.left_timeouts.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.right_timeouts.to_le_bytes());
+        buf[24..28].copy_from_slice(&self.left_bad_frames.to_le_bytes());
+        buf[28..32].copy_from_slice(&self.right_bad_frames.to_le_bytes());
+        buf[32..34].copy_from_slice(&self.left_reconfigs.to_le_bytes());
+        buf[34..36].copy_from_slice(&self.right_reconfigs.to_le_bytes());
+        buf
+    }
+}
+
+const _: () = assert!(
+    EscHealthMessage::SIZE == 8 + 6 * 4 + 2 * 2,
+    "EscHealthMessage::SIZE does not match its field widths"
+);
+
 /// Log event message — compact discrete event for ULog flash
 ///
 /// Format: "log_event:uint64_t timestamp;uint8_t level;uint16_t code"

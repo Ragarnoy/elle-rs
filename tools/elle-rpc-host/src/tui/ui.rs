@@ -902,6 +902,11 @@ const fn log_code_text(code: u16) -> &'static str {
         156 => "Level cal: cleared",
         157 => "Level cal: loaded from flash",
         158 => "Level cal: no saved cal",
+        // ESC link (160–169)
+        160 => "ESC left: stopped replying (power loss or restart?)",
+        161 => "ESC right: stopped replying (power loss or restart?)",
+        162 => "ESC left: replying again, spin direction + EDT re-sent",
+        163 => "ESC right: replying again, spin direction + EDT re-sent",
         _ => "unknown",
     }
 }
