@@ -1,6 +1,8 @@
 //! Per-tick ULog recording, shared by the flight and RPC loops.
 
-use elle_config::{ULOG_BARO_DIVISOR, ULOG_MAG_DIVISOR, ULOG_STATUS_DIVISOR};
+use elle_config::{
+    ULOG_BARO_DIVISOR, ULOG_ESC_HEALTH_DIVISOR, ULOG_MAG_DIVISOR, ULOG_STATUS_DIVISOR,
+};
 use elle_hardware::ULogLogger;
 use elle_hardware::imu::{AttitudeData, BARO, IMU_STATUS, MAG};
 use elle_system::{FlightController, TimingMeasurement, update_ulog_timing};
@@ -105,10 +107,13 @@ pub(crate) fn log_flight_data(
         });
     }
 
-    // Log engine data at control-loop rate
+    // Log engine data at control-loop rate, ESC link health at ~1 Hz
     {
         let eng = elle_hardware::dshot::ENGINE_CACHE.lock(|c| c.get());
         let _ = logger.log_engine(&eng);
+        if loop_counter.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR) {
+            let _ = logger.log_esc_health(&eng);
+        }
     }
 
     // Log status at reduced rate (~8Hz)

@@ -72,7 +72,7 @@ bytemuck = { version = "1", default-features = false, features = ["derive"] }
 cobs = { version = "0.5", default-features = false }
 crc = { version = "3.4", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-embassy-dshot = { version = "0.5.0", default-features = false, features = ["rp235xa", "defmt"] }
+embassy-dshot = { version = "0.5.1", default-features = false, features = ["rp235xa", "defmt"] }
 
 [patch.crates-io]
 embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "340bf1de" }

@@ -24,7 +24,9 @@ use elle_system::{SUP_LED_READY, TimingMeasurement, supervisor_task, update_led_
 use embassy_executor::Spawner;
 use embassy_rp::aon_timer::{AlarmWakeMode, AonTimer, ClockSource, Config as AonConfig};
 use embassy_rp::clocks::{ClockConfig, CoreVoltage};
-use embassy_rp::executor::Executor;
+use embassy_rp::executor::{Executor, InterruptExecutor};
+use embassy_rp::interrupt;
+use embassy_rp::interrupt::{InterruptExt, Priority};
 use embassy_rp::mode::Async;
 use embassy_rp::multicore::{Stack, spawn_core1};
 use embassy_rp::peripherals::{DMA_CH2, PIN_10, PIO0, PIO1, UART0, UART1};
@@ -62,6 +64,21 @@ bind_interrupts!(
 static mut CORE1_STACK: Stack<16384> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 static AON_TIMER: StaticCell<AonTimer<'static>> = StaticCell::new();
+
+/// DShot runs on its own interrupt-mode executor (SWI_IRQ_0, priority P2), so a
+/// long poll on the thread executor (control loop, SD, GNSS, RPC) can't hold up
+/// its 1 kHz frames. Everything it shares with Core 0 tasks is behind a
+/// `CriticalSectionRawMutex` (`DSHOT_THROTTLE`, `BEEP_SIGNAL`, `ENGINE_CACHE`),
+/// and it only waits on Core 0 wakers (PIO, timer). Flash operations run with
+/// interrupts off, so DShot still pauses during them — they only happen disarmed.
+static EXECUTOR_DSHOT: InterruptExecutor = InterruptExecutor::new();
+
+#[interrupt]
+unsafe fn SWI_IRQ_0() {
+    // SAFETY: the SWI_IRQ_0 handler, and EXECUTOR_DSHOT is started in main()
+    // before this interrupt is unmasked.
+    unsafe { EXECUTOR_DSHOT.on_interrupt() }
+}
 
 #[embassy_executor::main(executor = "Executor", entry = "cortex_m_rt::entry")]
 async fn main(spawner: Spawner) {
@@ -147,7 +164,10 @@ async fn main(spawner: Spawner) {
         &prog,
         embassy_dshot::rp::DshotSpeed::DShot300,
     );
-    spawner.spawn(dshot_single_task(engine).unwrap());
+    // Priority must be set before start(), which unmasks the interrupt.
+    interrupt::SWI_IRQ_0.set_priority(Priority::P2);
+    let dshot_spawner = EXECUTOR_DSHOT.start(interrupt::SWI_IRQ_0);
+    dshot_spawner.spawn(dshot_single_task(engine).unwrap());
 
     #[cfg(feature = "rpc-control")]
     {

@@ -39,6 +39,22 @@ pub const ARM_DURATION_MS: u32 = 2_000; // Hold at min for 2 seconds during init
 
 // DShot configuration
 pub const DSHOT_THROTTLE_MAX: u16 = 1999;
+/// DShot send loop period (1 kHz).
+pub const DSHOT_LOOP_PERIOD_US: u64 = 1_000;
+/// Shortest gap between two DShot frames on one line. A bidirectional DShot300
+/// frame takes ~140 µs (TX, turnaround, reply); pushing the next one earlier cuts
+/// the first off on the wire (embassy-dshot issue #8), and the ESC can read the
+/// splice as a beep command or a throttle pulse.
+pub const DSHOT_MIN_FRAME_GAP_US: u64 = 200;
+const _: () = assert!(DSHOT_MIN_FRAME_GAP_US < DSHOT_LOOP_PERIOD_US);
+/// Consecutive unanswered telemetry requests (~1 per ms) before an ESC counts as
+/// silent (lost power or restarted). When it answers again it is sent the boot
+/// configuration (spin direction, extended telemetry) again.
+pub const ESC_SILENT_FRAMES: u32 = 100;
+/// Answered frames (~1 per ms) an ESC that (re)appeared must stay stopped and
+/// answering before it is sent its configuration: a restarted ESC plays its
+/// startup tones and arms first.
+pub const ESC_RECONFIGURE_SETTLE_FRAMES: u32 = 1_000;
 
 // RC parameters (protocol-independent, values in 0–2047 range)
 pub const RC_WARNING_MS: u64 = 200;
@@ -59,6 +75,7 @@ pub const ULOG_STATUS_DIVISOR: u32 = 10; // 83/10 ≈ 8.3 Hz
 pub const ULOG_MAG_DIVISOR: u32 = 8; // 83/8 ≈ 10 Hz
 pub const ULOG_BARO_DIVISOR: u32 = 19; // 83/19 ≈ 4.4 Hz
 pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
+pub const ULOG_ESC_HEALTH_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const STALE_EVENT_DRAIN_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 
 // LED update interval (iterations at CONTROL_LOOP_FREQUENCY_HZ)

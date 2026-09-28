@@ -209,7 +209,10 @@ Flight Review).
 Logged at the 83 Hz control rate: attitude, pilot commands, controller internals (PID
 terms, setpoints, saturation, elevon pulses, loop dt) and engine telemetry; status at
 8.3 Hz; baro, mag and GNSS at their sensor rates; PID gains once per file and on every
-change. The `gyro-raw-log` build adds every 1 kHz gyro sample for vibration analysis.
+change. ESC link health (`esc_health`, ~1 Hz) counts DShot telemetry replies, timeouts,
+corrupt replies and re-configurations per ESC: corrupt replies point at wiring noise, and
+timeouts climbing at idle mean an ESC is silent. The `gyro-raw-log` build adds every
+1 kHz gyro sample for vibration analysis.
 See [`crates/elle-ulog/README.md`](../crates/elle-ulog/README.md).
 
 `ulog extract [file]` and `ulog erase` operate on the legacy on-board flash store only.
@@ -265,5 +268,7 @@ when built with `defmt-logging`.
 | 130 / 131 / 132 | Heading hold engaged / disengaged / target set |
 | 140 / 141 | GNSS configuration timeout / partially accepted |
 | 150–158 | Level cal started, complete, failed moving (or refused armed), failed tilted, saved, save failed, cleared, loaded, nothing saved |
+| 160 / 161 | Left / right ESC stopped replying to DShot telemetry (power loss or restart) |
+| 162 / 163 | Left / right ESC replying again: spin direction and extended telemetry re-sent |
 
 Codes 32, 60 and 82 are retired and never sent.

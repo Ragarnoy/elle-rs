@@ -67,6 +67,8 @@ embedded-fatfs = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "91
     "lfn",
 ] }
 embassy-embedded-hal = { workspace = true }
+# `SpiDevice`, for the yielding SD SPI wrapper in `sd_writer`.
+embedded-hal-async = "1.0"
 aligned = { version = "0.4", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
 block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.2.0", default-features = false }

@@ -129,7 +129,8 @@ are free — the GNSS UART is interrupt-buffered because only `BufferedUart` imp
 
 ### Cores and tasks
 
-- **Core 0:** control loop (`elle_app::boot::run` → `flight::run_flight` or `rpc::run_rpc`), DShot task, flash manager, SD writer, LED, CRSF RX/TX, GNSS, supervisor, RPC server.
+- **Core 0, thread executor:** control loop (`elle_app::boot::run` → `flight::run_flight` or `rpc::run_rpc`), flash manager, SD writer, LED, CRSF RX/TX, GNSS, supervisor, RPC server.
+- **Core 0, interrupt executor** (`EXECUTOR_DSHOT` on SWI_IRQ_0, priority P2, set up in each binary): the DShot task alone, so thread-executor stalls can't delay its frames. Flash operations still pause it (interrupts off), which is fine because they only happen disarmed. This makes `executor-interrupt` and the SIO FIFO masking load-bearing ([embassy-rp bug note](docs/embassy-rp-sio-irq-fifo-flash-bug.md)).
 - **Core 1:** `imu_task` — ICM-42686 over **blocking** SPI0 (DMA IRQs are bound on Core 0's NVIC), MMC5616WA + BMP390 sharing I2C0 through `RefCell` + `embedded-hal-bus::RefCellDevice`, Madgwick AHRS, calibrations.
 
 `boot::run` waits for the IMU and the supervisor barrier, loads PID / mag cal / level
@@ -180,10 +181,12 @@ Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` 
 
 ### DShot and RPM governor (`elle-hardware/src/dshot.rs`, `elle-control/src/governor.rs`)
 
-- `dshot_task` (eagle, PIO1 + PIO2) / `dshot_single_task` (dart, PIO1) owns the engines: 2 s MotorStop burst to arm the ESCs (`ARM_DURATION_MS`), spin direction asserted every boot from `ENGINE_SPIN_REVERSED` (6 commands, **no** `SettingsSave` — no ESC EEPROM wear), then a 1 kHz loop that takes eRPM targets from `DSHOT_THROTTLE` and sends via `throttle_with_telemetry()`, falling back per engine to fire-and-forget after 100 telemetry failures. Arm/disarm beeps come in via `BEEP_SIGNAL`.
+- `dshot_task` (eagle, PIO1 + PIO2) / `dshot_single_task` (dart, PIO1) owns the engines: 2 s MotorStop burst to arm the ESCs (`ARM_DURATION_MS`), spin direction asserted every boot from `ENGINE_SPIN_REVERSED` (6 commands, **no** `SettingsSave` — no ESC EEPROM wear), then a 1 kHz loop that takes eRPM targets from `DSHOT_THROTTLE` and sends via `read_extended_telemetry()` (both engines joined), falling back per engine to fire-and-forget while running after 100 telemetry failures (re-enabled when the ESC answers at idle). If an ESC doesn't answer right after the boot configuration, it is configured when it first does. Arm/disarm beeps come in via `BEEP_SIGNAL`.
 - The governor converts target eRPM to DShot with a feed-forward table (`GOVERNOR_FF_TABLE` in `elle-config/src/lut.rs`) plus PI. **Governor output 0 is DShot 48 = minimum spin, not a stop**: `MotorStop` and the fabricated zero reading are gated on `target_erpm == 0` only.
 - All governor clamps use `GOVERNOR_DSHOT_MAX` — the platform's stall/saturation boundary, not `DSHOT_THROTTLE_MAX`. A compile-time assert ties it to the last table entry. Current: eagle 1498 (`MAX_ERPM` 142,100), dart 1998 (107,100; 3-blade prop, ESC reversed).
 - The telemetry spike filter (`GOVERNOR_ERPM_MAX_JUMP`) is bounded by `MAX_CONSECUTIVE_SPIKE_REJECTS` (20) so a stale reading can never latch the output shut. Regression tests: `crates/elle-control/tests/governor_step_response.rs`.
+- The send loop is paced by `elle_control::dshot_pace::next_deadline_us`, not a `Ticker`: after a stall it skips missed ticks instead of replaying them back to back, and frames stay ≥ `DSHOT_MIN_FRAME_GAP_US` apart. A push while the previous frame is still on the wire truncates it (embassy-dshot issue #8), and the ESC may read the splice as a beep or a throttle pulse.
+- A stopped engine gets `MotorStop` **with** a telemetry request (`command_with_extended_telemetry`), so EDT flows at idle. `elle_control::esc_link::EscLink` counts unanswered requests: `ESC_SILENT_FRAMES` in a row → event 160/161; when the ESC answers again (or answers for the first time after missing the boot configuration), it is re-sent spin direction + EDT once it has been stopped and answering for `ESC_RECONFIGURE_SETTLE_FRAMES` (162/163). Reply, timeout, corrupt-reply and re-configuration counts go to ULog `esc_health`.
 - Recalibrate with the `governor-calibration` skill. A sweep in the wrong spin direction peaks early and falls off.
 
 ### Watchdog and supervisor
@@ -258,7 +261,7 @@ engine 5 Hz, RC 20 Hz, controller output 10 Hz.
 
 Event codes are listed in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#event-codes); the
 constants and their ranges are in `elle-hardware/src/event.rs`. ULog goes
-`ULogLogger` (`elle-hardware`) → `ULOG_WRITE_CHANNEL` → `sd_writer_task`; message set
+`ULogLogger` (`elle-hardware`) → `ULOG_WRITE_CHANNEL` → `sd_writer_task` (its SPI device is wrapped in `YieldingSpi`: sdspi's busy-card poll otherwise never yields and stalls every thread-mode task for tens of ms); message set
 and sizes in [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md). `commands`
 logs the pre-filter setpoint; `controller` logs what the PID used and did each tick
 (dt, attitude age, filtered setpoint, scaled P/I/D per axis, saturation bits, final
@@ -287,7 +290,7 @@ elevon pulses); `pid_gains` is written per file and whenever
 | ratatui 0.30 | - | yes | TUI |
 | icm426xx (git `ProfFan/icm426xx` rev `7e22a5a`) | yes | - | ICM-42686-P driver. The 42686-P support postdates the 0.4.0 release; switch to crates.io once upstream releases again. |
 | ahrs 0.8 · nalgebra 0.34 | yes | - | Madgwick AHRS, linear algebra (`libm`) |
-| embassy-dshot 0.5 | yes | - | DShot over PIO (own crate). One `BidirDshotProgram` per PIO block; every send is fallible. |
+| embassy-dshot 0.5.1 | yes | - | DShot over PIO (own crate). One `BidirDshotProgram` per PIO block; every send is fallible. 0.5.1 adds `command_with_extended_telemetry` (EDT from a stopped motor) and fixes issue #8: every push waits out the previous frame's cycle. |
 | ublox 0.10 (`ubx_proto33`) | yes | - | UBX parsing and CFG-VALSET building |
 | sequential-storage 8.0 | yes | - | Flash MapStorage (profile) and queue (legacy ULog) |
 | embedded-fatfs / sdspi (git `MabezDev/embedded-fatfs` rev `919e569f`) | yes | - | FAT32 on the SD card |
