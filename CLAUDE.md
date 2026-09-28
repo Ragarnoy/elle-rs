@@ -290,7 +290,7 @@ elevon pulses); `pid_gains` is written per file and whenever
 | ratatui 0.30 | - | yes | TUI |
 | icm426xx (git `ProfFan/icm426xx` rev `7e22a5a`) | yes | - | ICM-42686-P driver. The 42686-P support postdates the 0.4.0 release; switch to crates.io once upstream releases again. |
 | ahrs 0.8 · nalgebra 0.34 | yes | - | Madgwick AHRS, linear algebra (`libm`) |
-| embassy-dshot 0.5 | yes | - | DShot over PIO (own crate). One `BidirDshotProgram` per PIO block; every send is fallible. Temporarily patched to the `idle-telemetry-frame-gap` git branch (`command_with_extended_telemetry`, and the fix for issue #8: every push waits out the previous frame's cycle) until 0.5.1 is released. |
+| embassy-dshot 0.5.1 | yes | - | DShot over PIO (own crate). One `BidirDshotProgram` per PIO block; every send is fallible. 0.5.1 adds `command_with_extended_telemetry` (EDT from a stopped motor) and fixes issue #8: every push waits out the previous frame's cycle. |
 | ublox 0.10 (`ubx_proto33`) | yes | - | UBX parsing and CFG-VALSET building |
 | sequential-storage 8.0 | yes | - | Flash MapStorage (profile) and queue (legacy ULog) |
 | embedded-fatfs / sdspi (git `MabezDev/embedded-fatfs` rev `919e569f`) | yes | - | FAT32 on the SD card |
