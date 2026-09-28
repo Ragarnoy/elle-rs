@@ -862,7 +862,8 @@ const _: () = assert!(
 /// Core 1 (IMU task) load over the last logging window (~1 s).
 ///
 /// Busy time is wall time per IMU DATA_RDY wake-up (deadline 1 ms). `mag_max_us`
-/// and `baro_max_us` are the longest blocking I2C reads in the window;
+/// and `baro_max_us` are the longest mag and baro reads (their own task since
+/// they left the IMU wake-up, so they no longer add to `busy_*`);
 /// `max_drain` > 1 means a wake-up ran long enough for samples to queue.
 ///
 /// Format: "core1_load:uint64_t timestamp;uint32_t wakes;uint32_t busy_avg_us;uint32_t busy_max_us;uint32_t mag_max_us;uint32_t baro_max_us;uint32_t max_drain"

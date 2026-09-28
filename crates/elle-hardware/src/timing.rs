@@ -85,13 +85,14 @@ pub static IMU_TIMING: AtomicTiming = AtomicTiming::new();
 /// Duration of each flash manager request (profile load/save, ULog peek/pop/erase).
 pub static FLASH_TIMING: AtomicTiming = AtomicTiming::new();
 
-/// Core 1 load over one logging window, accumulated by the IMU task and taken
-/// (and reset) by the ULog writer on Core 0 about once a second.
+/// Core 1 load over one logging window, accumulated by the IMU and I2C sensor
+/// tasks and taken (and reset) by the ULog writer on Core 0 about once a second.
 ///
-/// Busy time is wall time per DATA_RDY wake-up, from the wake to the next wait:
-/// FIFO drain, fusion, publish, and the mag / baro / tap housekeeping. The
-/// deadline is one sample period (1 ms); a wake that runs past it leaves samples
-/// queued, which shows up as `max_drain` > 1.
+/// Busy time is wall time per IMU DATA_RDY wake-up, from the wake to the next
+/// wait: FIFO drain, fusion, publish, tap polling. The deadline is one sample
+/// period (1 ms); a wake that runs past it leaves samples queued, which shows up
+/// as `max_drain` > 1. The mag and baro read durations come from the separate
+/// I2C task and are not part of the busy time.
 pub struct Core1Load {
     wakes: AtomicU32,
     busy_sum_us: AtomicU32,
@@ -107,9 +108,9 @@ pub struct Core1LoadSnapshot {
     pub wakes: u32,
     pub busy_sum_us: u32,
     pub busy_max_us: u32,
-    /// Longest blocking MMC5616WA read (I2C0).
+    /// Longest MMC5616WA read (I2C0, in `i2c_sensors`, not the IMU wake).
     pub mag_max_us: u32,
-    /// Longest blocking BMP390 read (I2C0).
+    /// Longest BMP390 read (I2C0, in `i2c_sensors`, not the IMU wake).
     pub baro_max_us: u32,
     /// Most FIFO samples drained in one wake-up.
     pub max_drain: u32,

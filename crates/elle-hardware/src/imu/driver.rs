@@ -1,15 +1,12 @@
 use super::*;
 use crate::led::{LedPattern, colors};
 use ahrs::Ahrs;
-use core::cell::RefCell;
 use elle_error::ImuError;
 use embassy_rp::gpio::{Input, Output};
-use embassy_rp::i2c;
 use embassy_rp::mode::Blocking;
 use embassy_rp::spi;
 use embassy_sync::channel::{Sender, TrySendError};
 use embassy_time::{Duration, Timer};
-use embedded_hal_bus::i2c::RefCellDevice as I2cRefCellDevice;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
 /// Running sums for a level calibration (raw sensor frame).
@@ -118,46 +115,15 @@ fn fuse_sample(
 /// the loop backs off for a second.
 const IMU_ERROR_THRESHOLD: u32 = 10;
 
-/// Magnetometer samples collected per hard-iron calibration (~30 s at 10 Hz).
-const MAG_CAL_SAMPLES: u32 = 300;
-// The live count is published through an `AtomicU16`.
-const _: () = core::assert!(MAG_CAL_SAMPLES <= u16::MAX as u32);
-
-/// An I2C error leaves the shared I2C0 bus stuck on this hardware: the next
-/// transaction on it — from *either* device — would block Core 1 indefinitely.
-/// So one failure takes both the magnetometer and the barometer off the bus.
-/// The AHRS falls back to 6-DOF (dropping `has_mag` stops it fusing a frozen
-/// `last_mag`, which would drag yaw to a stale heading) and baro data stops.
-fn i2c_bus_failed<B>(mag_ok: &mut bool, has_mag: &mut bool, baro: &mut Option<B>, who: &str) {
-    *mag_ok = false;
-    *has_mag = false;
-    *baro = None;
-    crate::elle_event!(
-        error,
-        crate::event::EVT_I2C_BUS_FAILED,
-        "I2C0 error on {}: mag and baro disabled, AHRS on 6-DOF",
-        who
-    );
-}
-
-type I2cBus<'a> = i2c::I2c<'a, Blocking>;
-type SharedI2c<'a> = I2cRefCellDevice<'a, I2cBus<'a>>;
 type SpiDev<'a> = ExclusiveDevice<spi::Spi<'a, Blocking>, Output<'a>, embassy_time::Delay>;
 
 pub struct Imu<'a> {
     icm: Option<icm426xx::ICM42686<SpiDev<'a>, icm426xx::Ready>>,
     spi_dev: Option<SpiDev<'a>>,
     ahrs: ahrs::Madgwick<f32>,
-    mag: mmc5616wa::Mmc5616wa<SharedI2c<'a>>,
-    baro: Option<bmp390::sync::Bmp390<SharedI2c<'a>>>,
-    i2c_bus: &'a RefCell<I2cBus<'a>>,
     led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
     int1: Input<'a>,
     last_attitude: AttitudeData,
-    last_mag: nalgebra::Vector3<f32>,
-    has_mag: bool,
-    mag_ok: bool,
-    mag_offset: nalgebra::Vector3<f32>,
     /// Level calibration: rotation from the IMU frame to the airframe frame,
     /// applied to every sensor vector before the AHRS. Identity = uncorrected.
     mount: nalgebra::UnitQuaternion<f32>,
@@ -170,23 +136,14 @@ pub struct Imu<'a> {
     bias_est: Option<elle_control::gyro_bias::GyroBiasEstimator>,
     /// Low-pass on the rates handed to the PID (`GYRO_RATE_LPF_HZ` at the IMU rate).
     rate_filter: elle_control::filter::GyroFilter,
-    mag_cal_active: bool,
-    mag_cal_min: [f32; 3],
-    mag_cal_max: [f32; 3],
-    mag_cal_samples: u32,
-    prev_baro_alt: f32,
-    prev_baro_time: Option<Instant>,
-    vario_filtered: f32,
 }
 
 impl<'a> Imu<'a> {
     pub fn new(
         spi_dev: SpiDev<'a>,
-        i2c_bus: &'a RefCell<I2cBus<'a>>,
         led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
         int1: Input<'a>,
     ) -> Self {
-        let mag_i2c = I2cRefCellDevice::new(i2c_bus);
         Self {
             icm: None,
             spi_dev: Some(spi_dev),
@@ -194,16 +151,9 @@ impl<'a> Imu<'a> {
                 elle_config::AHRS_SAMPLE_PERIOD_US as f32 / 1_000_000.0, // sample period in seconds
                 elle_config::AHRS_BETA,
             ),
-            mag: mmc5616wa::Mmc5616wa::new_default(mag_i2c),
-            baro: None,
-            i2c_bus,
             led_sender,
             int1,
             last_attitude: AttitudeData::zero(),
-            last_mag: nalgebra::Vector3::zeros(),
-            has_mag: false,
-            mag_ok: false,
-            mag_offset: nalgebra::Vector3::zeros(),
             mount: nalgebra::UnitQuaternion::identity(),
             level_cal: None,
             gyro_bias: nalgebra::Vector3::zeros(),
@@ -212,13 +162,6 @@ impl<'a> Imu<'a> {
                 elle_config::GYRO_RATE_LPF_HZ,
                 elle_config::IMU_UPDATE_FREQUENCY_HZ as f32,
             ),
-            mag_cal_active: false,
-            mag_cal_min: [f32::MAX; 3],
-            mag_cal_max: [f32::MIN; 3],
-            mag_cal_samples: 0,
-            prev_baro_alt: 0.0,
-            prev_baro_time: None,
-            vario_filtered: 0.0,
         }
     }
 
@@ -230,7 +173,8 @@ impl<'a> Imu<'a> {
         }
     }
 
-    /// Initialize ICM-42686-P, MMC5616WA magnetometer, and BMP390 barometer
+    /// Initialize the ICM-42686-P. The magnetometer and barometer start in their
+    /// own task (`i2c_sensors`).
     pub async fn initialize(&mut self) -> ElleResult<()> {
         info!("Core1: Initializing ICM-42686-P IMU...");
         self.set_led_pattern(LedPattern::SlowBlink(colors::BLUE))
@@ -285,86 +229,10 @@ impl<'a> Imu<'a> {
 
         // Mark IMU as initialized. `calibrated` stays false until the gyro bias
         // has been measured at the start of `run()`.
-        // Do this before I2C sensors so a hanging mag/baro doesn't block Core0
         {
             let mut status = IMU_STATUS.write().await;
             status.initialized = true;
             status.last_update = Instant::now();
-        }
-
-        // 2. Initialize MMC5616WA magnetometer on I2C0
-        let mut delay = embassy_time::Delay;
-        let mag_init_ok = if let Err(e) = self.mag.soft_reset(&mut delay) {
-            crate::elle_event!(
-                warn,
-                crate::event::EVT_MAG_INIT_FAILED,
-                "MMC5616WA: soft reset failed: {}",
-                e
-            );
-            false
-        } else if let Err(e) = self.mag.init(&mut delay) {
-            crate::elle_event!(
-                warn,
-                crate::event::EVT_MAG_INIT_FAILED,
-                "MMC5616WA: init failed: {}",
-                e
-            );
-            false
-        } else if let Err(e) = self.mag.validate() {
-            crate::elle_event!(
-                warn,
-                crate::event::EVT_MAG_INIT_FAILED,
-                "MMC5616WA: chip ID validation failed: {}",
-                e
-            );
-            false
-        } else if let Err(e) = self.mag.start_continuous(255) {
-            crate::elle_event!(
-                warn,
-                crate::event::EVT_MAG_INIT_FAILED,
-                "MMC5616WA: start continuous failed: {}",
-                e
-            );
-            false
-        } else {
-            info!("MMC5616WA: initialized, continuous mode (chip ID OK)");
-            true
-        };
-        self.mag_ok = mag_init_ok;
-
-        // 3. Initialize BMP390/BMP384 barometer on I2C0 — try 0x77 then 0x76
-        // Standard resolution config (datasheet Section 3.5): osrs_p=x8, osrs_t=x1, IIR=coef_3, ODR=50Hz
-        let baro_config = bmp390::Configuration {
-            iir_filter: bmp390::Config {
-                iir_filter: bmp390::IirFilter::coef_3,
-            },
-            ..bmp390::Configuration::default()
-        };
-        let addresses = [
-            (bmp390::Address::Up, "0x77"),
-            (bmp390::Address::Down, "0x76"),
-        ];
-        for (addr, addr_str) in addresses {
-            let baro_i2c = I2cRefCellDevice::new(self.i2c_bus);
-            match bmp390::sync::Bmp390::try_new(baro_i2c, addr, embassy_time::Delay, &baro_config) {
-                Ok(baro) => {
-                    self.baro = Some(baro);
-                    info!(
-                        "BMP390: initialized at {} (pressure + temperature)",
-                        addr_str
-                    );
-                    break;
-                }
-                Err(e) => {
-                    crate::elle_event!(
-                        warn,
-                        crate::event::EVT_BARO_INIT_FAILED,
-                        "BMP390: init failed at {}: {}",
-                        addr_str,
-                        e
-                    );
-                }
-            }
         }
 
         self.set_led_pattern(LedPattern::Solid(colors::GREEN)).await;
@@ -391,8 +259,6 @@ impl<'a> Imu<'a> {
         }
 
         let mut consecutive_errors: u32 = 0;
-        let mut mag_counter: u32 = 0;
-        let mut baro_counter: u32 = 0;
         let mut tap_counter: u32 = 0;
         let mut last_catchup_event: Option<Instant> = None;
 
@@ -415,9 +281,14 @@ impl<'a> Imu<'a> {
             // 1. Drain the ICM-42686 FIFO. Every queued sample goes through the
             // AHRS in order (it integrates at a fixed 1 kHz step, so none may be
             // skipped); only the newest attitude is published. Reading one sample
-            // per DATA_RDY would leave any backlog from a slow iteration (mag/baro
-            // I2C) queued for good, and the published attitude that much older
-            // than its timestamp.
+            // per DATA_RDY would leave any backlog from a slow iteration (Core 1
+            // paused for a flash operation, say) queued for good, and the
+            // published attitude that much older than its timestamp.
+            //
+            // Latest mag field from the I2C task, into the airframe frame.
+            let mag = i2c_sensors::MAG_FIELD
+                .lock(|c| c.get())
+                .map(|m| self.mount * nalgebra::Vector3::new(m[0], m[1], m[2]));
             let mut drained: u32 = 0;
             let mut latest: Option<AttitudeData> = None;
             let mut bias_result = None;
@@ -440,7 +311,7 @@ impl<'a> Imu<'a> {
                             &mut self.ahrs,
                             &mut self.level_cal,
                             &mut self.mount,
-                            self.has_mag.then_some(&self.last_mag),
+                            mag.as_ref(),
                             &self.gyro_bias,
                             &mut self.rate_filter,
                             &sample,
@@ -538,15 +409,6 @@ impl<'a> Imu<'a> {
             // Housekeeping below runs on sensor time: advance by samples consumed.
             let ticks = drained.max(1);
 
-            // Check for loaded mag cal offsets from Core0
-            if let Some((ox, oy, oz)) = MAG_CALIBRATION_SIGNAL.try_take() {
-                self.mag_offset = nalgebra::Vector3::new(ox, oy, oz);
-                info!(
-                    "Core1: Mag cal offsets applied: ({}, {}, {})",
-                    ox as i32, oy as i32, oz as i32
-                );
-            }
-
             // Level calibration: loaded/cleared mount from Core0, or a start request
             if let Some(mount) = level_cal::LEVEL_CALIBRATION_SIGNAL.try_take() {
                 self.mount = mount;
@@ -585,152 +447,6 @@ impl<'a> Imu<'a> {
                         info!("ICM-42686: single tap (num={})", num);
                     }
                 }
-            }
-
-            // Check for calibration start request
-            if MAG_CAL_START_SIGNAL.try_take().is_some() {
-                self.mag_cal_active = true;
-                self.mag_cal_min = [f32::MAX; 3];
-                self.mag_cal_max = [f32::MIN; 3];
-                self.mag_cal_samples = 0;
-                crate::imu::MAG_CAL_PROGRESS.store(0, core::sync::atomic::Ordering::Relaxed);
-                info!("Core1: Mag calibration started — rotate board in all orientations");
-            }
-
-            // Set by a mag or baro I2C error; both go off the bus (see i2c_bus_failed).
-            let mut i2c_failed: Option<&str> = None;
-
-            // 4. Read MMC5616WA at ~10 Hz
-            mag_counter += ticks;
-            if self.mag_ok && mag_counter >= elle_config::MAG_READ_INTERVAL_TICKS {
-                mag_counter = 0;
-                let read_started = Instant::now();
-                let read = self.mag.read_magnetic();
-                crate::timing::CORE1_LOAD.record_mag(read_started.elapsed().as_micros() as u32);
-                match read {
-                    Ok(data) => {
-                        let raw = [data.x as f32, data.y as f32, data.z as f32];
-
-                        // Publish raw counts for diagnostics
-                        let reading = MagReading {
-                            x: data.x,
-                            y: data.y,
-                            z: data.z,
-                        };
-                        MAG.publish(reading);
-
-                        // Calibration min/max tracking
-                        if self.mag_cal_active {
-                            for (i, &val) in raw.iter().enumerate() {
-                                if val < self.mag_cal_min[i] {
-                                    self.mag_cal_min[i] = val;
-                                }
-                                if val > self.mag_cal_max[i] {
-                                    self.mag_cal_max[i] = val;
-                                }
-                            }
-                            self.mag_cal_samples += 1;
-                            crate::imu::MAG_CAL_PROGRESS.store(
-                                self.mag_cal_samples as u16,
-                                core::sync::atomic::Ordering::Relaxed,
-                            );
-
-                            // After MAG_CAL_SAMPLES (~30s at 10Hz): compute and validate
-                            if self.mag_cal_samples >= MAG_CAL_SAMPLES {
-                                const MIN_RANGE: f32 = 5000.0;
-                                let ranges_ok = (0..3).all(|i| {
-                                    (self.mag_cal_max[i] - self.mag_cal_min[i]) >= MIN_RANGE
-                                });
-
-                                if ranges_ok {
-                                    let ox = (self.mag_cal_min[0] + self.mag_cal_max[0]) / 2.0;
-                                    let oy = (self.mag_cal_min[1] + self.mag_cal_max[1]) / 2.0;
-                                    let oz = (self.mag_cal_min[2] + self.mag_cal_max[2]) / 2.0;
-                                    self.mag_offset = nalgebra::Vector3::new(ox, oy, oz);
-                                    info!(
-                                        "Core1: Mag cal complete: offsets ({}, {}, {})",
-                                        ox as i32, oy as i32, oz as i32
-                                    );
-                                    MAG_CAL_RESULT_SIGNAL.signal(Some((ox, oy, oz)));
-                                } else {
-                                    warn!("Core1: Mag cal FAILED — insufficient rotation");
-                                    MAG_CAL_RESULT_SIGNAL.signal(None);
-                                }
-                                self.mag_cal_active = false;
-                            }
-                        }
-
-                        // Apply offsets before feeding AHRS
-                        // (hard-iron offsets are sensor-frame), then into the airframe frame.
-                        self.last_mag = self.mount
-                            * nalgebra::Vector3::new(
-                                raw[0] - self.mag_offset[0],
-                                raw[1] - self.mag_offset[1],
-                                raw[2] - self.mag_offset[2],
-                            );
-                        self.has_mag = true;
-                    }
-                    Err(e) => {
-                        warn!("MMC5616WA: read error: {}", e);
-                        i2c_failed = Some("MMC5616WA");
-                    }
-                }
-            }
-
-            if let Some(who) = i2c_failed.take() {
-                i2c_bus_failed(&mut self.mag_ok, &mut self.has_mag, &mut self.baro, who);
-            }
-
-            // 5. Read BMP390 at ~20 Hz
-            baro_counter += ticks;
-            if baro_counter >= elle_config::BARO_READ_INTERVAL_TICKS {
-                baro_counter = 0;
-                if let Some(baro) = &mut self.baro {
-                    let read_started = Instant::now();
-                    let read = baro.measure();
-                    crate::timing::CORE1_LOAD
-                        .record_baro(read_started.elapsed().as_micros() as u32);
-                    match read {
-                        Ok(m) => {
-                            use uom::si::length::meter;
-                            use uom::si::pressure::hectopascal;
-                            use uom::si::thermodynamic_temperature::degree_celsius;
-                            let alt = m.altitude.get::<meter>();
-
-                            // Compute vario from altitude differentiation + EMA filter
-                            let now = Instant::now();
-                            let raw_vario = if let Some(prev_time) = self.prev_baro_time {
-                                let dt_s = (now - prev_time).as_micros() as f32 / 1_000_000.0;
-                                if dt_s > 0.001 {
-                                    (alt - self.prev_baro_alt) / dt_s
-                                } else {
-                                    0.0
-                                }
-                            } else {
-                                0.0
-                            };
-                            // EMA: alpha=0.3 gives ~150ms effective time constant at 20Hz
-                            self.vario_filtered = self.vario_filtered * 0.7 + raw_vario * 0.3;
-                            self.prev_baro_alt = alt;
-                            self.prev_baro_time = Some(now);
-
-                            let reading = BaroReading {
-                                pressure_hpa: m.pressure.get::<hectopascal>(),
-                                temperature_c: m.temperature.get::<degree_celsius>(),
-                                altitude_m: alt,
-                                vario_ms: self.vario_filtered,
-                            };
-                            BARO.publish(reading);
-                        }
-                        Err(e) => {
-                            warn!("BMP390: measure error: {}", e);
-                            i2c_failed = Some("BMP390");
-                        }
-                    }
-                }
-            }
-            if let Some(who) = i2c_failed {
-                i2c_bus_failed(&mut self.mag_ok, &mut self.has_mag, &mut self.baro, who);
             }
         }
     }

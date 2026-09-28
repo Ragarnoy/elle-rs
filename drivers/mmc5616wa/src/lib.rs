@@ -1,5 +1,7 @@
 #![no_std]
 
+#[cfg(feature = "async")]
+pub mod asynch;
 pub mod error;
 pub mod registers;
 pub mod types;

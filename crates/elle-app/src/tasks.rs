@@ -11,16 +11,25 @@ use elle_system::rpc::init_rtt_rpc;
 use elle_system::{SUP_IMU_READY, SUP_START_IMU};
 use embassy_executor::Spawner;
 use embassy_rp::Peri;
+use embassy_rp::bind_interrupts;
 use embassy_rp::flash::Flash;
-use embassy_rp::i2c::{Config, I2c};
+use embassy_rp::i2c::{Config, I2c, InterruptHandler as I2cIrqHandler};
 use embassy_rp::mode::Async;
 use embassy_rp::peripherals::{I2C0, PIN_0, PIN_1, PIN_2, PIN_3, PIN_5, PIN_8, PIN_9, SPI0};
+#[cfg(feature = "rpc-control")]
 use static_cell::StaticCell;
+
+// I2C0 (mag + baro) is interrupt-driven. Bound here rather than in the binaries,
+// which don't use I2C0: the bus is created on Core 1 below, so its interrupt is
+// enabled on Core 1's NVIC and wakes the Core 1 executor directly.
+bind_interrupts!(struct I2cIrqs {
+    I2C0_IRQ => I2cIrqHandler<I2C0>;
+});
 
 #[allow(clippy::too_many_arguments)]
 #[embassy_executor::task]
 pub async fn imu_task(
-    _spawner: Spawner,
+    spawner: Spawner,
     // I2C (mag + baro)
     i2c: Peri<'static, I2C0>,
     sda: Peri<'static, PIN_8>,
@@ -36,15 +45,10 @@ pub async fn imu_task(
 ) {
     info!("Core1: IMU task starting");
 
-    // I2C bus — always wrapped in RefCell (both cfg paths use shared I2C)
+    // I2C0 for mag + baro, interrupt-driven, run by its own task (see below).
     let mut i2c_config = Config::default();
     i2c_config.frequency = embassy_rp::time::Hertz(IMU_I2C_FREQ);
-    let i2c_bus = I2c::new_blocking(i2c, scl, sda, i2c_config);
-
-    use core::cell::RefCell;
-    static I2C_BUS: StaticCell<RefCell<I2c<'static, embassy_rp::mode::Blocking>>> =
-        StaticCell::new();
-    let i2c_ref = I2C_BUS.init(RefCell::new(i2c_bus));
+    let i2c_bus = I2c::new(i2c, scl, sda, I2cIrqs, i2c_config);
 
     let led_sender = LED_COMMAND_CHANNEL.sender();
 
@@ -65,7 +69,7 @@ pub async fn imu_task(
         let spi_dev = ExclusiveDevice::new(spi_bus, cs, embassy_time::Delay).unwrap();
         let int1 = Input::new(int1_pin, Pull::None);
 
-        Imu::new(spi_dev, i2c_ref, led_sender, int1)
+        Imu::new(spi_dev, led_sender, int1)
     };
 
     // Initialize sensors
@@ -75,6 +79,10 @@ pub async fn imu_task(
             defmt::panic!("Core1: IMU init failed: {}", e);
         }
     }
+
+    // Mag and baro run beside the IMU on this core, so their I2C transfers never
+    // hold up a 1 kHz sample.
+    spawner.spawn(i2c_sensors_task(i2c_bus).unwrap());
 
     // Notify supervisor that IMU is initialized
     SUP_IMU_READY.signal(());
@@ -90,6 +98,12 @@ pub async fn imu_task(
 
     // Run continuous IMU reading
     imu.run().await;
+}
+
+/// Core 1: magnetometer and barometer on I2C0 (`elle_hardware::imu::i2c_sensors`).
+#[embassy_executor::task]
+async fn i2c_sensors_task(i2c: I2c<'static, Async>) {
+    elle_hardware::imu::i2c_sensors::run(i2c).await
 }
 
 #[embassy_executor::task]
