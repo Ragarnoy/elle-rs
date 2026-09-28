@@ -53,10 +53,10 @@ pub(crate) struct ULogWriteRequest {
     pub(crate) len: usize,
 }
 
-/// Slots in [`ULOG_WRITE_CHANNEL`].
-pub(crate) const ULOG_WRITE_CHANNEL_DEPTH: usize = 8;
+/// Slots in [`ULOG_WRITE_CHANNEL`] (sized in `elle-config`).
+pub(crate) const ULOG_WRITE_CHANNEL_DEPTH: usize = elle_config::profile::ULOG_WRITE_CHANNEL_DEPTH;
 
-/// Buffered channel for fire-and-forget ULog writes (8 slots × 512B = 4KB)
+/// Buffered channel for fire-and-forget ULog writes (`ULOG_WRITE_CHANNEL_DEPTH` × 512 B)
 pub(crate) static ULOG_WRITE_CHANNEL: Channel<
     CriticalSectionRawMutex,
     ULogWriteRequest,

@@ -8,7 +8,7 @@ This crate only **encodes**. Buffering, timing and storage live in `elle-hardwar
 
 ```
 elle-app control loop ──log_*()──► elle_hardware::ULogLogger ──512 B chunks──► ULOG_WRITE_CHANNEL
-      (83 Hz)                        (2 kB buffer, flush at 75 %)                    │
+      (83 Hz)                        (2 kB buffer, flush at 75 %)  64 slots, ~1.8 s  │
                                                                                      ▼
                                                                    sd_writer_task → LOG_NNNN.ulg
                                                                    (FAT32 on the SD card, SPI1)
