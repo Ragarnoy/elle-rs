@@ -8,6 +8,7 @@ Subcommands (all take one or more .ulg paths unless noted):
   timing    control-loop busy time by mode/engine state, late ticks, Core 1 load
   esc       ESC link health and engine telemetry sanity
   sensors   mag / baro / GNSS / attitude rates and ranges
+  stages    flight-loop time per stage (loop_stages) by armed/mode, DShot executor share
   window    events and key numbers between two times: window FILE T0 T1
 
 Needs pyulog and numpy (see SKILL.md for the venv). Older logs lack some
@@ -224,6 +225,45 @@ def cmd_sensors(logs, _args):
               f"yaw {np.degrees(a['yaw']).min():.1f}..{np.degrees(a['yaw']).max():.1f}°")
 
 
+STAGE_NAMES = ["intake", "update", "outputs", "switches", "autotune", "log", "tail"]
+
+
+def cmd_stages(logs, _args):
+    for log in logs:
+        print(f"== {log.name}")
+        if not log.has("loop_stages"):
+            print("  (no loop_stages: older build)")
+            continue
+        st = log.m["loop_stages"]
+        ts = st["timestamp"]
+        s = log.m["system_status"]
+        armed = np.interp(ts, s["timestamp"], s["armed"].astype(float)) > 0.5
+        c = log.m["commands"]
+        mode = np.rint(np.interp(ts, c["timestamp"], c["attitude_mode"])).astype(int)
+        e = log.m["engine_data"]
+        running = np.interp(ts, e["timestamp"], e["left_target_erpm"]) > 0
+        avg = np.stack([st[f"avg_us[{i}]"] for i in range(7)], axis=1).astype(float)
+        mx = np.stack([st[f"max_us[{i}]"] for i in range(7)], axis=1).astype(float)
+        # DShot executor share of the window's wall time.
+        win_us = np.diff(ts, prepend=ts[0]).astype(float)
+        share = np.where(win_us > 0, st["dshot_busy_us"] / np.maximum(win_us, 1), 0)
+        groups = [("disarmed", ~armed)]
+        for m in sorted(set(mode[armed])):
+            groups += [(f"armed {MODES.get(m, m)}, stopped", armed & (mode == m) & ~running),
+                       (f"armed {MODES.get(m, m)}, running", armed & (mode == m) & running)]
+        print("  mean µs per tick (median over windows); max = p90 of per-window max")
+        print("  " + " " * 30 + "".join(f"{n:>9s}" for n in STAGE_NAMES) + "    total   dshot%")
+        for lab, mk in groups:
+            mk = mk.copy()
+            mk[0] = False  # the first window covers boot
+            if mk.sum() < 3:
+                continue
+            med = np.median(avg[mk], axis=0)
+            p90 = np.percentile(mx[mk], 90, axis=0)
+            print(f"  {lab:28s}  " + "".join(f"{v:9.0f}" for v in med) + f"  {med.sum():7.0f}  {100 * np.median(share[mk]):6.1f}")
+            print(f"  {'   max':28s}  " + "".join(f"{v:9.0f}" for v in p90))
+
+
 def cmd_window(logs, args):
     labels = event_labels()
     log = logs[0]
@@ -255,7 +295,7 @@ def cmd_window(logs, args):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("list", "summary", "timing", "esc", "sensors"):
+    for name in ("list", "summary", "timing", "esc", "sensors", "stages"):
         sp = sub.add_parser(name)
         sp.add_argument("files", nargs="+")
     w = sub.add_parser("window")
@@ -271,7 +311,7 @@ def main():
         except Exception as e:  # truncated or empty files are common after a power cut
             print(f"{Path(f).name}: unreadable ({e})", file=sys.stderr)
     {"list": cmd_list, "summary": cmd_summary, "timing": cmd_timing, "esc": cmd_esc,
-     "sensors": cmd_sensors, "window": cmd_window}[args.cmd](logs, args)
+     "sensors": cmd_sensors, "stages": cmd_stages, "window": cmd_window}[args.cmd](logs, args)
 
 
 if __name__ == "__main__":

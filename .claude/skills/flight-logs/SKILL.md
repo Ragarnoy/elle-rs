@@ -44,6 +44,7 @@ or more files and degrades gracefully on older logs that lack newer messages:
 | `timing` | tick period and late ticks (> 24 ms) per 10 s, `loop_time_us` by armed/mode/engines, Core 1 load and FIFO backlogs |
 | `esc` | per-ESC replies / timeouts / corrupt replies / re-configurations, target-while-disarmed check, whether EDT (voltage) ever arrived |
 | `sensors` | mag and baro logged rate vs value-change rate, GNSS sats/fix, attitude ranges |
+| `stages` | flight-loop time per stage (`loop_stages`: intake, update, outputs, switches, autotune, log, tail) by armed/mode/engines, and the DShot executor's share of Core 0 |
 | `window FILE T0 T1` | events, late ticks, loop time, RC age, modes between two times (seconds from the file's first record) |
 
 For anything else, load the file directly — `pyulog.ULog(path).data_list` gives one

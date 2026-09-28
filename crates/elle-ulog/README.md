@@ -34,6 +34,7 @@ still target it, but new recordings go to the SD card.
 | `autotune_status` | 24 | while tuning | phase, axis, relay state, setpoint, measurement, cycles, amplitude |
 | `esc_health` | 44 | ~1 Hz | per ESC, cumulative: telemetry replies, timeouts, corrupt replies (GCR/CRC), re-configurations, extended-telemetry frames |
 | `core1_load` | 32 | ~1 Hz | Core 1 IMU task over the window: wake-ups, mean and max busy µs per wake (deadline 1 ms), longest mag and baro read (own task, not part of the busy time), largest FIFO drain |
+| `loop_stages` | 46 | 8.3 Hz | flight loop only: mean and max µs per stage over ~10 ticks (intake, update, outputs, switches, autotune, log, tail), DShot executor interrupt time and runs on Core 0 |
 | `gyro_raw` | 20 | 1 kHz | unfiltered gyro, `gyro-raw-log` builds only |
 
 Sizes are the payload after the 3-byte message header. Rates are set in `elle-app`

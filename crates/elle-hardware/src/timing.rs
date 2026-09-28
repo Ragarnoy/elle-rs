@@ -181,3 +181,45 @@ impl Default for Core1Load {
 
 /// Core 1 IMU task load, logged to ULog as `core1_load`.
 pub static CORE1_LOAD: Core1Load = Core1Load::new();
+
+/// Time Core 0 spends in the DShot executor's interrupt (SWI_IRQ_0), which
+/// preempts the control loop. Recorded by the binaries' handler, taken with the
+/// loop's stage timing. Each poll is only a few µs, so the 1 µs timer rounds
+/// each one; treat the sum as ±1 µs per poll.
+pub struct IrqTime {
+    busy_us: AtomicU32,
+    runs: AtomicU32,
+}
+
+impl IrqTime {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            busy_us: AtomicU32::new(0),
+            runs: AtomicU32::new(0),
+        }
+    }
+
+    /// One run of the handler took `us`.
+    pub fn record(&self, us: u32) {
+        self.busy_us.fetch_add(us, Ordering::Relaxed);
+        self.runs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// (µs busy, handler runs) since the last take.
+    pub fn take(&self) -> (u32, u32) {
+        (
+            self.busy_us.swap(0, Ordering::Relaxed),
+            self.runs.swap(0, Ordering::Relaxed),
+        )
+    }
+}
+
+impl Default for IrqTime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// DShot executor (SWI_IRQ_0) time on Core 0.
+pub static DSHOT_EXEC_TIME: IrqTime = IrqTime::new();

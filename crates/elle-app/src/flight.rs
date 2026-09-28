@@ -2,6 +2,7 @@
 
 use crate::engines::publish_engine_output;
 use crate::logging::log_flight_data;
+use crate::stages::{Stage, StageClock, StageWindow};
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, RC_DEBUG_LOG_DIVISOR,
     guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
@@ -65,6 +66,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
     // Create ticker for the control loop period (CONTROL_LOOP_PERIOD_MS)
     let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
     let mut previous_tick = None;
+    // Per-stage tick timing, logged as `loop_stages` every ULOG_STATUS_DIVISOR ticks.
+    let mut stages = StageWindow::new();
 
     // Track last commands for consistent update rate
     let mut last_commands: Option<PilotCommands> = None;
@@ -76,6 +79,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
         let loop_start = Instant::now();
         resync_after_stall(&mut ticker, &mut previous_tick, loop_start);
         let loop_timer = TimingMeasurement::start();
+        let mut clock = StageClock::start(loop_start);
 
         // Supervisor check - monitor core health and kick watchdog
         let _supervisor_healthy = fc.supervisor_check();
@@ -222,6 +226,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
             }
         }
 
+        stages.record(Stage::Intake, clock.lap());
+
         if let Some(commands) = &last_commands {
             // Update with validated attitude (warns if stale)
             let valid_attitude = validate_attitude(attitude);
@@ -235,6 +241,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
             if !kill_active {
                 fc.update(commands, valid_attitude.as_ref());
             }
+            stages.record(Stage::Update, clock.lap());
 
             // Detect arm/disarm transitions → beep + event
             let now_armed = fc.is_armed();
@@ -292,6 +299,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                 autotune: autotune_display,
                 heading_hold: fc.is_heading_hold_active(),
             });
+
+            stages.record(Stage::Outputs, clock.lap());
 
             // --- Autotune RC switch logic (CH9, 3-position with debounce) ---
             if let PilotCommands::Raw(raw) = commands {
@@ -408,6 +417,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                 heading_hold_effective_prev = heading_hold_effective;
             }
 
+            stages.record(Stage::Switches, clock.lap());
+
             // Autotune state machine tick. The run stops the moment it no
             // longer owns the aircraft (kill, disarm, failsafe, Manual, no attitude).
             if guard_autotune(&mut autotuner, fc, kill_active, valid_attitude.is_some()) {
@@ -509,6 +520,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                 save_pid_to_flash(data, "autotune").await;
             }
 
+            stages.record(Stage::Autotune, clock.lap());
+
             // Auto-start ULog on SD card ready (runs until power off)
             if !ulog_recording
                 && elle_hardware::sd_writer::SD_READY.load(core::sync::atomic::Ordering::Acquire)
@@ -550,6 +563,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                     .is_ok()
                 {}
             }
+            stages.record(Stage::Log, clock.lap());
         }
 
         // Check for failsafe (triggers after 300ms of no valid packets).
@@ -596,6 +610,24 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
             let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
             drop(imu_status);
+        }
+
+        stages.record(Stage::Tail, clock.lap());
+        stages.end_tick();
+        if stages.ticks() >= ULOG_STATUS_DIVISOR {
+            let s = stages.take();
+            let (dshot_busy_us, dshot_runs) = elle_hardware::timing::DSHOT_EXEC_TIME.take();
+            if ulog_recording {
+                let us = |v: u32| v.min(u32::from(u16::MAX)) as u16;
+                let _ = ulog_logger.log_loop_stages(elle_ulog::LoopStagesMessage {
+                    timestamp: 0,
+                    ticks: us(s.ticks),
+                    avg_us: s.avg.map(us),
+                    max_us: s.max.map(us),
+                    dshot_busy_us,
+                    dshot_runs,
+                });
+            }
         }
     }
 }

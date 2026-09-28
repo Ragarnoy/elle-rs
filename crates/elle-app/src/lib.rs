@@ -21,6 +21,8 @@ pub mod tasks;
 mod flight;
 #[cfg(feature = "rpc-control")]
 mod rpc;
+#[cfg(not(feature = "rpc-control"))]
+mod stages;
 
 #[cfg(feature = "rpc-control")]
 mod flight_state;
