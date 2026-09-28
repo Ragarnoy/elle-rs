@@ -248,13 +248,22 @@ async fn init_mag(mag: &mut Mmc5616waAsync<Dev>) -> bool {
         mag.validate()
             .await
             .map_err(|e| ("chip ID validation", e))?;
-        mag.start_continuous(255)
+        mag.start_continuous(elle_config::MAG_ODR_HZ)
             .await
-            .map_err(|e| ("start continuous", e))
+            .map_err(|e| ("start continuous", e))?;
+        // ODR is readable; confirm the rate took rather than trusting the write.
+        let odr = mag.odr().await.map_err(|e| ("ODR readback", e))?;
+        if odr != elle_config::MAG_ODR_HZ {
+            return Err(("ODR readback", mmc5616wa::error::Error::BadParam));
+        }
+        Ok(())
     };
     match with_timeout(Duration::from_millis(200), step).await {
         Ok(Ok(())) => {
-            info!("MMC5616WA: initialized, continuous mode (chip ID OK)");
+            info!(
+                "MMC5616WA: initialized, continuous mode at {} Hz (chip ID OK)",
+                elle_config::MAG_ODR_HZ
+            );
             true
         }
         Ok(Err((what, e))) => {

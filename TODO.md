@@ -17,14 +17,14 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Host-link failsafe**: kill the TUI / unplug the probe while armed in RPC mode → disarm within ~300 ms. `direct throttle` holds the link until Ctrl-C.
 - [ ] **Arming gesture** on both airframes: boot with stick low does not arm; up-then-down arms at zero thrust; kill and failsafe need a new gesture.
 - [ ] **GNSS UBX path**: 115200 baud switch, 5 Hz NAV-PVT, velocity/accuracy fields, GGA fallback.
-- [ ] **Elevon latency**: scope PIN_12/13 against a stick step — expect ≤ one 5 ms frame (200 Hz servo PWM); check the servos run cool and without jitter at 200 Hz.
+- [ ] **Elevon latency**: scope PIN_12/13 against a stick step — expect ≤ one 5 ms frame (200 Hz servo PWM). Servos confirmed fine at 200 Hz (no jitter, cool).
 - [ ] **Pitch autotune** since the measurement-invert fix, and autotune in general since the latency fixes (gains derived before them were compensating for delay). Check the save lands after disarm and that a bad run is rejected (event 94).
 - [ ] **Governor** at sustained full throttle on the dart's re-swept table (2026-09-26): RPM should hold flat.
 - [ ] **Autotune hysteresis and gain cap** in flight: a normal run still completes with ±0.5° hysteresis (not timing out), and the 3× Kp/Kd cap doesn't reject reasonable results (check `autotune_status` and event 94 in ULog).
 - [ ] **Autotune ownership aborts**: Manual, kill, failsafe, CH7 pitch→roll and a 20° off-axis excursion each abort the run and restore gains (TEST_PLAN 3.4.4, 3.4.4b, 3.4.6).
 - [ ] **Per-entry flash clear**: `clearpid`, `mag cal clear`, `level cal clear` each remove only their own entry (TEST_PLAN 6.3).
 - [ ] **DShot ESC re-configuration** (TEST_PLAN 6.8 rows 1, 2, 4, 5): scope the DShot lines across a stall; FC on USB then battery → events 162/163; ESC power cut → 160/161 then 162/163. Already confirmed (LOG_0043, 13 min armed idle): no twitches or beeps, 1000 frames/s per ESC, 0 timeouts / corrupt replies.
-- [ ] **Async I2C sensors on Core 1** (branch `core1-load-log`): mag and baro still read at ~10 / ~20 Hz (ULog `magnetometer_data`, `barometer_data`), heading still fuses (9-DOF), mag cal still completes, and `core1_load` busy max drops versus a pre-change log.
+- [ ] **Mag rate** (branch `mag-odr-fix`): `magnetometer_data` changes on every ~10 Hz read (it changed once a second before: `CMM_FREQ_EN` was the wrong bit); log shows `MMC5616WA: ... continuous mode at 50 Hz`; mag cal still completes. The async I2C task itself is verified (LOG_0047: mag/baro at their rates, no event 48).
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term

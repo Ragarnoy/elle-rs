@@ -203,7 +203,12 @@ impl<I: I2c> Mmc5616wa<I> {
     /// Start continuous measurement mode.
     ///
     /// Writes the ODR value, enables CMM_FREQ_EN in Ctrl0, and sets CMM_EN in Ctrl2.
+    /// Returns `BadParam` for an ODR of 0 or above what the current bandwidth
+    /// sustains with automatic SET/RESET ([`Bandwidth::max_odr_auto_sr`]).
     pub fn start_continuous(&mut self, odr: u8) -> Result<(), Error<I::Error>> {
+        if odr == 0 || odr > Bandwidth::from_bits(self.cache.ctrl1).max_odr_auto_sr() {
+            return Err(Error::BadParam);
+        }
         self.set_odr(odr)?;
         interface::modify_ctrl0(
             &mut self.i2c,

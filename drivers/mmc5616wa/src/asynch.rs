@@ -70,8 +70,13 @@ impl<I: I2c> Mmc5616waAsync<I> {
     }
 
     /// Start continuous measurement mode: write the ODR, enable CMM_FREQ_EN and
-    /// AUTO_SR_EN in Ctrl0, then CMM_EN in Ctrl2.
+    /// AUTO_SR_EN in Ctrl0, then CMM_EN in Ctrl2. Returns `BadParam` for an ODR
+    /// of 0 or above what the current bandwidth sustains with automatic
+    /// SET/RESET ([`Bandwidth::max_odr_auto_sr`]).
     pub async fn start_continuous(&mut self, odr: u8) -> Result<(), Error<I::Error>> {
+        if odr == 0 || odr > Bandwidth::from_bits(self.cache.ctrl1).max_odr_auto_sr() {
+            return Err(Error::BadParam);
+        }
         self.cache.odr = odr;
         self.write_reg(ODR, odr).await?;
         self.cache.ctrl0 |= CMM_FREQ_EN | AUTO_SR_EN;
@@ -81,6 +86,13 @@ impl<I: I2c> Mmc5616waAsync<I> {
         self.cache.ctrl2 |= CMM_EN;
         self.write_reg(CTRL2, self.cache.ctrl2).await?;
         Ok(())
+    }
+
+    /// Read back the ODR register.
+    pub async fn odr(&mut self) -> Result<u8, Error<I::Error>> {
+        let mut v = [0u8];
+        self.read_regs(ODR, &mut v).await?;
+        Ok(v[0])
     }
 
     /// Read the latest magnetic output registers (continuous mode) as signed counts.

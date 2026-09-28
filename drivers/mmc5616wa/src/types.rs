@@ -44,6 +44,28 @@ impl Bandwidth {
         }
     }
 
+    /// Highest continuous-mode ODR in Hz for this bandwidth with automatic
+    /// SET/RESET enabled and hpower off (datasheet v1.7, ODR register table).
+    #[must_use]
+    pub fn max_odr_auto_sr(self) -> u8 {
+        match self {
+            Self::Bw00 => 75,
+            Self::Bw01 => 125,
+            Self::Bw10 | Self::Bw11 => 255,
+        }
+    }
+
+    /// The bandwidth encoded in Ctrl1's BW1:BW0 bits.
+    #[must_use]
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0b11 {
+            0b00 => Self::Bw00,
+            0b01 => Self::Bw01,
+            0b10 => Self::Bw10,
+            _ => Self::Bw11,
+        }
+    }
+
     /// Returns the typical measurement time in microseconds for this bandwidth.
     #[must_use]
     pub fn measurement_time_us(self) -> u32 {

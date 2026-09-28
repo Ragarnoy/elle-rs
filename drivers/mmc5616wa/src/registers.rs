@@ -33,16 +33,22 @@ pub const MEAS_M_DONE: u8 = 0x01;
 pub const MEAS_T_DONE: u8 = 0x02;
 
 // --- Ctrl0 (Internal Control 0) bit masks ---
+// Datasheet v1.7 (2025-12-22), p. 13. Bit 2 (Start_MDT) is factory use only.
 pub const TM_M: u8 = 1 << 0;
 pub const TM_T: u8 = 1 << 1;
 pub const DO_SET: u8 = 1 << 3;
 pub const DO_RESET: u8 = 1 << 4;
 pub const AUTO_SR_EN: u8 = 1 << 5;
-pub const CMM_FREQ_EN: u8 = 1 << 6;
+/// Automatic self-test (thresholds in 0x1E..0x20 must be set first).
+pub const AUTO_ST_EN: u8 = 1 << 6;
+/// Start computing the continuous-mode measurement period from ODR. Must be
+/// set before continuous mode starts. (Was defined as bit 6, which is
+/// `AUTO_ST_EN`: continuous mode never picked up the ODR and ran at ~1 Hz.)
+pub const CMM_FREQ_EN: u8 = 1 << 7;
 
 /// Mask for self-clearing bits in Ctrl0 that must be cleared from the shadow
 /// after a write to prevent accidental re-triggering on subsequent RMW.
-pub const CTRL0_SELF_CLEARING: u8 = TM_M | TM_T | DO_SET | DO_RESET;
+pub const CTRL0_SELF_CLEARING: u8 = TM_M | TM_T | DO_SET | DO_RESET | AUTO_ST_EN | CMM_FREQ_EN;
 
 // --- Ctrl1 (Internal Control 1) bit masks ---
 pub const BW0: u8 = 1 << 0;
