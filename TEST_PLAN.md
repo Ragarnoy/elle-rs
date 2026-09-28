@@ -491,7 +491,7 @@ does nothing there):
 
 | # | Action                                          | Expected                                        | Pass |
 |---|-------------------------------------------------|-------------------------------------------------|------|
-| 1 | Scope PIN_12 and PIN_13, Manual mode, stick step | New pulse width within one 20 ms frame of the step (compare with `commands` in ULog) | [ ]  |
+| 1 | Scope PIN_12 and PIN_13, Manual mode, stick step | Frames every 5 ms (200 Hz); new pulse width within one frame of the step (compare with `commands` in ULog) | [ ]  |
 | 2 | TUI log during engines-on bench run              | Event 45 rare (catch-up drains), no event 41    | [ ]  |
 
 ### 6.8 DShot Timing and ESC Link (props off, eagle first)

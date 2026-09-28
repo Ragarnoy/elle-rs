@@ -17,7 +17,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Host-link failsafe**: kill the TUI / unplug the probe while armed in RPC mode → disarm within ~300 ms. `direct throttle` holds the link until Ctrl-C.
 - [ ] **Arming gesture** on both airframes: boot with stick low does not arm; up-then-down arms at zero thrust; kill and failsafe need a new gesture.
 - [ ] **GNSS UBX path**: 115200 baud switch, 5 Hz NAV-PVT, velocity/accuracy fields, GGA fallback.
-- [ ] **Elevon latency**: scope PIN_12/13 against a stick step — expect ≤ one 20 ms frame.
+- [ ] **Elevon latency**: scope PIN_12/13 against a stick step — expect ≤ one 5 ms frame (200 Hz servo PWM); check the servos run cool and without jitter at 200 Hz.
 - [ ] **Pitch autotune** since the measurement-invert fix, and autotune in general since the latency fixes (gains derived before them were compensating for delay). Check the save lands after disarm and that a bad run is rejected (event 94).
 - [ ] **Governor** at sustained full throttle on the dart's re-swept table (2026-09-26): RPM should hold flat.
 - [ ] **Autotune hysteresis and gain cap** in flight: a normal run still completes with ±0.5° hysteresis (not timing out), and the 3× Kp/Kd cap doesn't reject reasonable results (check `autotune_status` and event 94 in ULog).

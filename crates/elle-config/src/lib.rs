@@ -13,7 +13,10 @@ pub const PLATFORM_NAME: &str = "RP2350-XFly-Eagle";
 pub const PLATFORM_NAME: &str = "RP2350-Elle-Dart";
 
 // PWM timing parameters
-pub const REFRESH_INTERVAL_US: u32 = 20_000; // 50Hz servo refresh rate
+/// Elevon PWM frame: 200 Hz. Both airframes use digital servos; analog servos
+/// need 20_000 (50 Hz) and can jitter or overheat above it. The frame bounds
+/// output latency: a new command reaches the servo at the next frame boundary.
+pub const REFRESH_INTERVAL_US: u32 = 5_000;
 
 // Servo range (standard 1000-2000μs)
 pub const SERVO_MIN_PULSE_US: u32 = 1_000;
