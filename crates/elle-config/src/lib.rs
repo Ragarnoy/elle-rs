@@ -116,8 +116,10 @@ const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_ESC_HEALTH_DIVISOR
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR));
 const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR));
 
-// Performance log interval
-pub const PERF_LOG_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 10; // ~10s
+// Performance log interval. It has to divide LED_UPDATE_INTERVAL like the
+// divisors above: at 10 s the counter reset every 4 s and it never fired.
+pub const PERF_LOG_INTERVAL: u32 = CONTROL_LOOP_FREQUENCY_HZ * 4; // ~4s
+const _: () = assert!(LED_UPDATE_INTERVAL.is_multiple_of(PERF_LOG_INTERVAL));
 
 // GNSS error log throttling
 pub const GNSS_ERROR_LOG_INITIAL: u32 = 3; // Log first N errors
