@@ -39,6 +39,14 @@ pub const ARM_DURATION_MS: u32 = 2_000; // Hold at min for 2 seconds during init
 
 // DShot configuration
 pub const DSHOT_THROTTLE_MAX: u16 = 1999;
+/// DShot send loop period (1 kHz).
+pub const DSHOT_LOOP_PERIOD_US: u64 = 1_000;
+/// Shortest gap between two DShot frames on one line. A bidirectional DShot300
+/// frame takes ~140 µs (TX, turnaround, reply); pushing the next one earlier cuts
+/// the first off on the wire (embassy-dshot issue #8), and the ESC can read the
+/// splice as a beep command or a throttle pulse.
+pub const DSHOT_MIN_FRAME_GAP_US: u64 = 200;
+const _: () = assert!(DSHOT_MIN_FRAME_GAP_US < DSHOT_LOOP_PERIOD_US);
 
 // RC parameters (protocol-independent, values in 0–2047 range)
 pub const RC_WARNING_MS: u64 = 200;

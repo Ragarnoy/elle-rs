@@ -3,6 +3,7 @@
 pub mod arming;
 pub mod autotune;
 pub mod commands;
+pub mod dshot_pace;
 pub mod filter;
 pub mod governor;
 pub mod gyro_bias;

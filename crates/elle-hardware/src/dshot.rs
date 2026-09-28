@@ -1,5 +1,6 @@
 use core::cell::Cell;
 
+use elle_control::dshot_pace::next_deadline_us;
 use elle_control::governor::RpmGovernor;
 use embassy_dshot::ExtendedTelemetry;
 use embassy_dshot::rp::BidirDshotPio;
@@ -7,7 +8,7 @@ use embassy_rp::peripherals::{PIO1, PIO2};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Instant, Timer};
 
 /// Target eRPM per engine (left, right). Governor PI converts to DShot at 1kHz.
 pub static DSHOT_THROTTLE: Signal<CriticalSectionRawMutex, (u32, u32)> = Signal::new();
@@ -345,7 +346,20 @@ impl<'a> DshotEngines<'a> {
 /// MotorStop burst sent at startup so the ESCs arm (`elle_config::ARM_DURATION_MS`).
 const ARM_DURATION: Duration = Duration::from_millis(elle_config::ARM_DURATION_MS as u64);
 
-/// Single-engine variant: arms ESC on startup, then resends latest `DSHOT_THROTTLE` at ~1kHz.
+/// Wait for the next frame slot (`DSHOT_LOOP_PERIOD_US`). Never replays ticks
+/// missed during a stall — a `Ticker` replays them back to back, truncating
+/// frames on the wire — and keeps frames `DSHOT_MIN_FRAME_GAP_US` apart.
+async fn pace(deadline: &mut Instant) {
+    *deadline = Instant::from_micros(next_deadline_us(
+        deadline.as_micros(),
+        Instant::now().as_micros(),
+        elle_config::DSHOT_LOOP_PERIOD_US,
+        elle_config::DSHOT_MIN_FRAME_GAP_US,
+    ));
+    Timer::at(*deadline).await;
+}
+
+/// Single-engine variant: arms ESC on startup, then resends latest `DSHOT_THROTTLE` at ~1kHz (paced, see `pace`).
 /// Only the left/primary eRPM value from `DSHOT_THROTTLE` is used; right stays zero.
 #[cfg(feature = "single-engine")]
 #[embassy_executor::task]
@@ -385,7 +399,7 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1, 0>) {
     defmt::info!("DShot single-engine task: armed, entering 1kHz loop");
 
     let mut target_erpm = 0u32;
-    let mut ticker = Ticker::every(Duration::from_millis(1));
+    let mut deadline = Instant::now();
     let mut state = EngineState::new();
     let mut reading = EngineReading::default();
 
@@ -452,7 +466,7 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1, 0>) {
         update_engine_unit(&mut reading.left, &mut state, edt, dshot_val, target_erpm);
         // right stays zeroed (single engine)
         ENGINE_CACHE.lock(|c| c.set(reading));
-        ticker.next().await;
+        pace(&mut deadline).await;
     }
 }
 
@@ -468,7 +482,7 @@ pub async fn dshot_task(
     defmt::info!("DShot task: armed, entering 1kHz send loop");
 
     let mut target = (0u32, 0u32);
-    let mut ticker = Ticker::every(Duration::from_millis(1));
+    let mut deadline = Instant::now();
     let mut left_state = EngineState::new();
     let mut right_state = EngineState::new();
     let mut reading = EngineReading::default();
@@ -548,6 +562,6 @@ pub async fn dshot_task(
         );
 
         ENGINE_CACHE.lock(|c| c.set(reading));
-        ticker.next().await;
+        pace(&mut deadline).await;
     }
 }
