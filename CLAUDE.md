@@ -247,7 +247,8 @@ engine 5 Hz, RC 20 Hz, controller output 10 Hz.
 ### GNSS (`elle-hardware/src/gnss.rs`)
 
 - Primary source UBX-NAV-PVT at 5 Hz (parsed by the `ublox` crate); NMEA GGA is the fallback if configuration fails or PVT is stale for 3 s.
-- Boot: cold start → CFG-VALSET groups (Airborne <4g, 5 Hz, NAV-PVT on, GLL/GSA/GSV/VTG/RMC off) → ACK → 115200 baud → probe; no answer falls back to 9600 + NMEA. The accepted groups are reported as `cfg_mask`.
+- The module keeps its RAM configuration (115200 baud included) across an MCU-only reset such as `cargo run`, and the boot's GNSS-only CFG-RST doesn't change that. The baud probe after the switch therefore skips UART errors (stale data and latched flags from the 9600 period) and waits for a checksum-valid frame, so it finds a module that is already at 115200.
+- Boot: GNSS-only hot reset (CFG-RST, config kept) → baud switch to 115200 → probe; no frame falls back to 9600 → CFG-VALSET groups (Airborne <4g, 5 Hz, NAV-PVT on, GLL/GSA/GSV/VTG/RMC off), each ACKed. The accepted groups are reported as `cfg_mask`.
 - **RAM layer only**: reapplied every boot, no config-write wear. `DYNMODEL` and `FIXMODE` constrain each other and must go in one VALSET (UBX-21035062 §3.10.5.1).
 - `gnss-gsv` requests GSV only on the 115200 link (it would eat 69 % of 9600).
 - `hdop` is only meaningful on the GGA path; `h_acc_m` is the real quality gate.

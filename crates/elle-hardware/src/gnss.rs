@@ -344,11 +344,22 @@ async fn drain_tx(uart: &mut BufferedUart<'_>) {
 }
 
 /// Wait for any decodable frame, to prove the link works at the current baud.
+///
+/// UART errors inside the window are skipped, not taken as a dead link. The RX
+/// ring still holds whatever arrived at the previous baud, and the UART latches
+/// its framing / break / overrun flags until that data has been read. After an
+/// MCU-only reset (`cargo run`) the module is still at 115200 from the last
+/// session, so the 9600 settle before the switch fills the ring with garbage and
+/// the first read at 115200 returns that stale error; giving up there fell back
+/// to 9600 against a module sending at 115200, and GNSS stayed dead for the
+/// session. UBX and NMEA checksums keep misread bytes from passing as a frame.
 async fn link_alive(gnss: &mut Gnss<'_>) -> bool {
-    matches!(
-        with_timeout(BAUD_PROBE_TIMEOUT, gnss.next_frame()).await,
-        Ok(Ok(_))
-    )
+    let probe = async {
+        // Each error is reported once and then cleared, so this waits for new
+        // data between attempts rather than spinning.
+        while gnss.next_frame().await.is_err() {}
+    };
+    with_timeout(BAUD_PROBE_TIMEOUT, probe).await.is_ok()
 }
 
 #[embassy_executor::task]
