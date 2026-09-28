@@ -261,7 +261,7 @@ engine 5 Hz, RC 20 Hz, controller output 10 Hz.
 
 Event codes are listed in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#event-codes); the
 constants and their ranges are in `elle-hardware/src/event.rs`. ULog goes
-`ULogLogger` (`elle-hardware`) → `ULOG_WRITE_CHANNEL` → `sd_writer_task`; message set
+`ULogLogger` (`elle-hardware`) → `ULOG_WRITE_CHANNEL` → `sd_writer_task` (its SPI device is wrapped in `YieldingSpi`: sdspi's busy-card poll otherwise never yields and stalls every thread-mode task for tens of ms); message set
 and sizes in [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md). `commands`
 logs the pre-filter setpoint; `controller` logs what the PID used and did each tick
 (dt, attitude age, filtered setpoint, scaled P/I/D per axis, saturation bits, final

@@ -24,6 +24,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **Autotune ownership aborts**: Manual, kill, failsafe, CH7 pitch→roll and a 20° off-axis excursion each abort the run and restore gains (TEST_PLAN 3.4.4, 3.4.4b, 3.4.6).
 - [ ] **Per-entry flash clear**: `clearpid`, `mag cal clear`, `level cal clear` each remove only their own entry (TEST_PLAN 6.3).
 - [ ] **DShot timing** (branch `dshot-timing`): eagle idle twitches / odd beeps gone; late-powered or restarted ESCs get re-configured (events 160–163); `esc_health` shows no corrupt replies (TEST_PLAN 6.8).
+- [ ] **SD busy-wait stall** (`dshot-timing`, 4th commit): a long armed-idle log has no controller ticks > 24 ms and no RC warnings from SD writes (LOG_0041 had 136, up to 64 ms).
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term

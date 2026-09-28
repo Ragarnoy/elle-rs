@@ -20,6 +20,7 @@ use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Instant;
 use embedded_fatfs::{Date, DateTime, FsOptions, Time, TimeProvider};
+use embedded_hal_async::spi::{ErrorType, Operation, SpiDevice};
 use embedded_io_async::Write;
 use static_cell::StaticCell;
 
@@ -47,6 +48,38 @@ pub static SD_CMD_SIGNAL: Signal<CriticalSectionRawMutex, SdCommand> = Signal::n
 pub static SD_READY: AtomicBool = AtomicBool::new(false);
 
 static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, Spi<'static, Async>>> = StaticCell::new();
+
+/// SPI device that yields to the executor after every transaction.
+///
+/// While the card is busy after a write, `sdspi` polls it one byte at a time
+/// (`while read_byte().await != 0xFF`). At 25 MHz a 1-byte DMA transfer is done
+/// before its future is first polled, so that loop never suspends and holds the
+/// thread executor for as long as the card stays busy — tens of ms during its
+/// internal housekeeping. The control loop and the CRSF receiver wait with it
+/// (LOG_0041: 136 ticks late by 12–52 ms, an RC link warning). One yield per
+/// transaction lets them run between polls.
+struct YieldingSpi<D>(D);
+
+impl<D> YieldingSpi<D> {
+    fn inner(&mut self) -> &mut D {
+        &mut self.0
+    }
+}
+
+impl<D: ErrorType> ErrorType for YieldingSpi<D> {
+    type Error = D::Error;
+}
+
+impl<D: SpiDevice> SpiDevice for YieldingSpi<D> {
+    async fn transaction(
+        &mut self,
+        operations: &mut [Operation<'_, u8>],
+    ) -> Result<(), Self::Error> {
+        let result = self.0.transaction(operations).await;
+        embassy_futures::yield_now().await;
+        result
+    }
+}
 
 /// AON-backed time provider for FAT32 file timestamps.
 /// Stores boot epoch; derives wall-clock from Embassy monotonic clock.
@@ -182,7 +215,7 @@ pub async fn sd_writer_task(
     let mut init_config = Config::default();
     init_config.frequency = Hertz::khz(400);
     let spi_bus = SPI_BUS.init(Mutex::new(spi));
-    let spid = SpiDeviceWithConfig::new(spi_bus, cs, init_config);
+    let spid = YieldingSpi(SpiDeviceWithConfig::new(spi_bus, cs, init_config));
     let mut sd = SdSpi::<_, _, aligned::A1>::new(spid, embassy_time::Delay);
 
     // Initialize the SD card protocol
@@ -199,7 +232,7 @@ pub async fn sd_writer_task(
     // Increase SPI clock to 25MHz after successful init
     let mut fast_config = Config::default();
     fast_config.frequency = Hertz::mhz(25);
-    sd.spi().set_config(fast_config);
+    sd.spi().inner().set_config(fast_config);
     info!("SD: card initialized at 25MHz");
 
     // Wrap in buffered block stream for embedded-fatfs
