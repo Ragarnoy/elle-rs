@@ -20,6 +20,7 @@ behaviour changes.
 | [`tools/elle-rpc-host/README.md`](tools/elle-rpc-host/README.md) | Host TUI and `direct` commands |
 | [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md) | ULog writer and message set |
 | [`.claude/skills/governor-calibration/SKILL.md`](.claude/skills/governor-calibration/SKILL.md) | Re-sweeping the RPM governor table |
+| [`.claude/skills/flight-logs/SKILL.md`](.claude/skills/flight-logs/SKILL.md) | Reading ULog flight logs: finding files, timing, ESC health, sensor rates, build comparisons (`elle_log.py`) |
 | [`docs/archive/`](docs/archive/) | Superseded design specs (sensor drivers), kept for reference |
 
 ## Project Structure
