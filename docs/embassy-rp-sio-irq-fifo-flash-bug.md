@@ -3,9 +3,11 @@
 ## Summary
 
 > **Status (2026-09):** worked around in Elle by `mask_sio_fifo()` / `unmask_sio_fifo()`
-> in `crates/elle-hardware/src/flash/manager.rs`. Elle does not use an
-> `InterruptExecutor`, so dropping the `executor-interrupt` feature from the workspace
-> `embassy-rp` dependency should remove the trigger altogether — not yet tried.
+> in `crates/elle-hardware/src/flash/manager.rs`. Elle now runs the DShot task on an
+> `embassy_rp::executor::InterruptExecutor` (SWI_IRQ_0 on Core 0), so
+> `executor-interrupt` is required and the workaround is load-bearing — do not remove
+> either. The DShot task only waits on Core 0 wakers (PIO, timer), so it never needs
+> the cross-core `PEND_IRQ_TOKEN` path that the masking briefly disables.
 
 When both `executor-thread` and `executor-interrupt` features are enabled on RP2350, flash write/erase operations cause a **deadlock followed by HardFault**. The `SIO_IRQ_FIFO` interrupt handler on Core0 consumes the `PAUSE_TOKEN` acknowledgment from the inter-core FIFO before `pause_core1()`'s polling loop can read it, causing Core0's handler to enter the pause/wait path meant for Core1.
 

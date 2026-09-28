@@ -129,7 +129,8 @@ are free — the GNSS UART is interrupt-buffered because only `BufferedUart` imp
 
 ### Cores and tasks
 
-- **Core 0:** control loop (`elle_app::boot::run` → `flight::run_flight` or `rpc::run_rpc`), DShot task, flash manager, SD writer, LED, CRSF RX/TX, GNSS, supervisor, RPC server.
+- **Core 0, thread executor:** control loop (`elle_app::boot::run` → `flight::run_flight` or `rpc::run_rpc`), flash manager, SD writer, LED, CRSF RX/TX, GNSS, supervisor, RPC server.
+- **Core 0, interrupt executor** (`EXECUTOR_DSHOT` on SWI_IRQ_0, priority P2, set up in each binary): the DShot task alone, so thread-executor stalls can't delay its frames. Flash operations still pause it (interrupts off), which is fine because they only happen disarmed. This makes `executor-interrupt` and the SIO FIFO masking load-bearing ([embassy-rp bug note](docs/embassy-rp-sio-irq-fifo-flash-bug.md)).
 - **Core 1:** `imu_task` — ICM-42686 over **blocking** SPI0 (DMA IRQs are bound on Core 0's NVIC), MMC5616WA + BMP390 sharing I2C0 through `RefCell` + `embedded-hal-bus::RefCellDevice`, Madgwick AHRS, calibrations.
 
 `boot::run` waits for the IMU and the supervisor barrier, loads PID / mag cal / level
@@ -289,7 +290,7 @@ elevon pulses); `pid_gains` is written per file and whenever
 | ratatui 0.30 | - | yes | TUI |
 | icm426xx (git `ProfFan/icm426xx` rev `7e22a5a`) | yes | - | ICM-42686-P driver. The 42686-P support postdates the 0.4.0 release; switch to crates.io once upstream releases again. |
 | ahrs 0.8 · nalgebra 0.34 | yes | - | Madgwick AHRS, linear algebra (`libm`) |
-| embassy-dshot 0.5 | yes | - | DShot over PIO (own crate). One `BidirDshotProgram` per PIO block; every send is fallible. Temporarily patched to the `idle-telemetry-frame-gap` git branch (`command_with_extended_telemetry`) until 0.5.1 is released. |
+| embassy-dshot 0.5 | yes | - | DShot over PIO (own crate). One `BidirDshotProgram` per PIO block; every send is fallible. Temporarily patched to the `idle-telemetry-frame-gap` git branch (`command_with_extended_telemetry`, and the fix for issue #8: every push waits out the previous frame's cycle) until 0.5.1 is released. |
 | ublox 0.10 (`ubx_proto33`) | yes | - | UBX parsing and CFG-VALSET building |
 | sequential-storage 8.0 | yes | - | Flash MapStorage (profile) and queue (legacy ULog) |
 | embedded-fatfs / sdspi (git `MabezDev/embedded-fatfs` rev `919e569f`) | yes | - | FAT32 on the SD card |

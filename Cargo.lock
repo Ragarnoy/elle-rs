@@ -1225,7 +1225,7 @@ dependencies = [
 [[package]]
 name = "embassy-dshot"
 version = "0.5.0"
-source = "git+https://github.com/Ragarnoy/embassy-dshot?branch=idle-telemetry-frame-gap#1c27712ad5d6dd6d073d301fea20b9fe281ba9d3"
+source = "git+https://github.com/Ragarnoy/embassy-dshot?branch=idle-telemetry-frame-gap#3a9572b6cf9e243de567d72b7784e854d91b4800"
 dependencies = [
  "defmt 1.1.1",
  "dshot-frame",
@@ -1545,7 +1545,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3470,7 +3470,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4608,7 +4608,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

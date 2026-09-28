@@ -499,7 +499,7 @@ does nothing there):
 | # | Action | Expected | Pass |
 |---|--------|----------|------|
 | 1 | Scope PIN_14 and PIN_11 at idle, disarmed | One complete MotorStop frame + ESC reply per ms; no frame cut short | [ ]  |
-| 2 | Same, across a loop stall (boot, SD init) | After the stall: one frame ≥ 200 µs later, then 1 ms spacing — never back-to-back frames | [ ]  |
+| 2 | Same, across a thread-executor stall (boot, SD init) | Frames keep their 1 ms cadence through it (DShot's own executor); never back-to-back or cut-off frames | [ ]  |
 | 3 | Disarmed, check ULog | `engine_data` voltage/temperature update at idle; `esc_health` replies ≈ 1000/s per ESC, `bad_frames` 0 | [ ]  |
 | 4 | FC on USB first, then plug the battery | Events 162 and 163 about 1 s after the ESCs finish their tones; EDT present; correct spin direction on first spool-up | [ ]  |
 | 5 | Briefly cut one ESC's power at idle | 160 (or 161) for that side only, then 162 (or 163) once it is back | [ ]  |
