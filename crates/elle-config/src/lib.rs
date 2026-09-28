@@ -181,9 +181,10 @@ pub const PITCH_KD: f32 = 0.16;
 pub const PID_SCALE: f32 = 5.0;
 pub const PID_I_LIMIT: f32 = 0.5;
 
-// Skip flash PID load/save/erase. Firmware defaults always apply.
-// `clearpid` erases the whole 64KB profile region (mag cal is in the same
-// map) and has crashed the MCU — leave this on until that path is fixed.
+// Skip flash PID load/save/clear. Firmware defaults always apply.
+// Set on the dart since `clearpid` erased the whole profile region (and once
+// crashed the MCU); it now removes only the PID entry. Drop this once the
+// per-entry clear passes TEST_PLAN 6.3 on the dart.
 #[cfg(feature = "platform-dart")]
 pub const IGNORE_PID_FLASH: bool = true;
 #[cfg(not(feature = "platform-dart"))]

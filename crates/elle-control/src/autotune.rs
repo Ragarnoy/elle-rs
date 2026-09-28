@@ -174,6 +174,9 @@ pub enum AutotuneReject {
     PeriodOutOfRange,
     /// Computed gains are non-finite or outside what the flash loader accepts.
     GainsOutOfRange,
+    /// Kp or Kd on the tuned axis moved by more than [`AUTOTUNE_MAX_GAIN_RATIO`]
+    /// from the gains flown before the run.
+    GainChangeTooLarge,
 }
 
 /// Smallest usable oscillation amplitude, in degrees, whatever the relay size.
@@ -184,18 +187,40 @@ pub const AUTOTUNE_MIN_AMPLITUDE_DEG: f32 = 0.5;
 pub const AUTOTUNE_MIN_AMPLITUDE_RELAY_FRACTION: f32 = 0.2;
 /// Plausible oscillation period range for these airframes, in seconds.
 pub const AUTOTUNE_PERIOD_RANGE_S: core::ops::RangeInclusive<f32> = 0.1..=5.0;
+/// Largest factor, up or down, a run may change the tuned axis's Kp or Kd by.
+/// A result further out is more likely a bad measurement than a better tune.
+/// Ki is not ratio-checked: the flown Ki is deliberately far below what the
+/// tuning rules produce (docs/DART_PID.md), so a ratio would reject every run;
+/// it stays bounded by the range check and `i_limit`.
+pub const AUTOTUNE_MAX_GAIN_RATIO: f32 = 3.0;
+/// Relay and zero-crossing hysteresis, in degrees: the measurement must pass
+/// ±this before a crossing counts and the relay flips, so attitude noise near
+/// zero neither chatters the relay nor fakes half-cycles. It leaves the
+/// describing-function magnitude (4h/πa) unchanged and shifts the identified
+/// phase by asin(ε/a), about 7° at a 4° swing.
+pub const AUTOTUNE_HYSTERESIS_DEG: f32 = 0.5;
+
+// An oscillation that clears the minimum amplitude always clears the hysteresis.
+const _: () = assert!(AUTOTUNE_HYSTERESIS_DEG <= AUTOTUNE_MIN_AMPLITUDE_DEG);
 
 /// Check a finished relay measurement and the gains it produced before they
 /// are applied in flight or saved.
 ///
+/// `previous` is what flew before the run; `axis` is the tuned axis, whose Kp
+/// and Kd may change by at most [`AUTOTUNE_MAX_GAIN_RATIO`] either way. A
+/// previous gain of zero has no ratio and is not limited.
+///
 /// # Errors
 ///
-/// The first check that fails, in the order amplitude, period, gains.
+/// The first check that fails, in the order amplitude, period, gain range,
+/// gain change.
 pub fn validate_result(
     amplitude_deg: f32,
     relay_deg: f32,
     tu_s: f32,
     gains: &SavedGains,
+    previous: &SavedGains,
+    axis: AutotuneAxis,
 ) -> Result<(), AutotuneReject> {
     let min_amplitude =
         AUTOTUNE_MIN_AMPLITUDE_DEG.max(AUTOTUNE_MIN_AMPLITUDE_RELAY_FRACTION * relay_deg);
@@ -207,6 +232,22 @@ pub fn validate_result(
     }
     if !gains.is_valid() {
         return Err(AutotuneReject::GainsOutOfRange);
+    }
+    let within_ratio = |new: f32, old: f32| {
+        old <= 0.0 || (old / AUTOTUNE_MAX_GAIN_RATIO..=old * AUTOTUNE_MAX_GAIN_RATIO).contains(&new)
+    };
+    let ((kp, old_kp), (kd, old_kd)) = match axis {
+        AutotuneAxis::Pitch => (
+            (gains.pitch_kp, previous.pitch_kp),
+            (gains.pitch_kd, previous.pitch_kd),
+        ),
+        AutotuneAxis::Roll => (
+            (gains.roll_kp, previous.roll_kp),
+            (gains.roll_kd, previous.roll_kd),
+        ),
+    };
+    if !within_ratio(kp, old_kp) || !within_ratio(kd, old_kd) {
+        return Err(AutotuneReject::GainChangeTooLarge);
     }
     Ok(())
 }
@@ -300,8 +341,15 @@ impl OscillationDetector {
     }
 
     /// Feed a measurement sample. Returns the number of full cycles completed so far.
+    ///
+    /// The sign is latched with [`AUTOTUNE_HYSTERESIS_DEG`]: it only flips once
+    /// the value passes the far side of the band.
     fn feed(&mut self, value: f32, tick: u32) -> usize {
-        let sign = value >= 0.0;
+        let sign = match self.last_sign {
+            None => value >= 0.0,
+            Some(true) => value >= -AUTOTUNE_HYSTERESIS_DEG,
+            Some(false) => value > AUTOTUNE_HYSTERESIS_DEG,
+        };
         let abs_val = if value < 0.0 { -value } else { value };
 
         if abs_val > self.current_peak {
@@ -340,6 +388,11 @@ impl OscillationDetector {
     /// Number of measurable full cycles (after discarding transient).
     const fn measurable_cycles(&self) -> usize {
         self.full_cycle_count.saturating_sub(DISCARD_CYCLES)
+    }
+
+    /// The latched measurement sign (true = positive), once fed.
+    const fn latched_positive(&self) -> Option<bool> {
+        self.last_sign
     }
 
     /// Whether at least one zero crossing has been detected.
@@ -668,10 +721,10 @@ impl Autotuner {
                     return AutotuneAction::RestoreGains(self.saved_gains);
                 }
 
-                // Relay logic: flip setpoint when measurement crosses zero
-                let should_be_positive = measurement_deg < 0.0;
-                if should_be_positive != self.relay_positive {
-                    self.relay_positive = should_be_positive;
+                // Relay logic: push against the latched sign, so the relay flips
+                // on the same hysteresis crossings the detector counts.
+                if let Some(positive) = self.detector.latched_positive() {
+                    self.relay_positive = !positive;
                 }
 
                 let sp = if self.relay_positive {
@@ -743,7 +796,7 @@ impl Autotuner {
         self.result = Some(result);
         let gains = self.computed_gains();
         let check = match gains {
-            Some(g) => validate_result(a_deg, self.relay_deg, tu, &g),
+            Some(g) => validate_result(a_deg, self.relay_deg, tu, &g, &self.saved_gains, self.axis),
             None => Err(AutotuneReject::GainsOutOfRange),
         };
         if let Err(reason) = check {
