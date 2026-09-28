@@ -177,7 +177,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 6. Rates published for the PID pass through a 2nd-order Butterworth low-pass (`GYRO_RATE_LPF_HZ` = 30); the AHRS integrates unfiltered gyro.
 
 Any I2C error on mag or baro takes **both** off the bus (`i2c_bus_failed`, event 48).
-Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` at 1 kHz).
+Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` at 1 kHz). The MMC5616WA runs in continuous mode at `MAG_ODR_HZ` (50; datasheet maximum 75 Hz at the default bandwidth with auto SET/RESET), checked by reading ODR back at init.
 They run in their own task, so bus transfers never hold up a 1 kHz sample, and every I2C operation has a 20 ms timeout (a stuck bus disables both instead of hanging Core 1). `elle_hardware::timing::CORE1_LOAD` accumulates IMU busy time per wake, the longest mag and baro read durations and the largest FIFO drain; the control loop logs and resets it about once a second as ULog `core1_load`.
 
 ### DShot and RPM governor (`elle-hardware/src/dshot.rs`, `elle-control/src/governor.rs`)

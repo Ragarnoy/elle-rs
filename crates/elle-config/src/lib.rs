@@ -131,6 +131,15 @@ pub const AHRS_BETA: f32 = 0.033;
 pub const GYRO_RATE_LPF_HZ: f32 = 30.0;
 /// Magnetometer read interval in IMU ticks (100 = 10Hz at 1kHz IMU rate)
 pub const MAG_READ_INTERVAL_TICKS: u32 = 100;
+/// MMC5616WA continuous-mode rate. At the default bandwidth (BW=00, 6.6 ms)
+/// with automatic SET/RESET the datasheet maximum is 75 Hz. Kept well above the
+/// read rate so every read gets a fresh sample (≤ 20 ms old).
+pub const MAG_ODR_HZ: u8 = 50;
+const _: () = assert!(MAG_ODR_HZ >= 1 && MAG_ODR_HZ <= 75);
+const _: () = assert!(
+    MAG_ODR_HZ as u32 * MAG_READ_INTERVAL_TICKS >= 2 * IMU_UPDATE_FREQUENCY_HZ,
+    "MAG_ODR_HZ must be at least twice the mag read rate"
+);
 /// Barometer read interval in IMU ticks (50 = 20Hz at 1kHz IMU rate)
 pub const BARO_READ_INTERVAL_TICKS: u32 = 50;
 /// Most IMU FIFO samples fused per DATA_RDY wake-up (~250 µs each). Bounds how
