@@ -64,6 +64,8 @@ pub struct CrsfFlightMode {
     pub autotune: AutotuneDisplay,
     /// True while the heading-hold modifier is engaged (only meaningful when `mode == Stabilized`).
     pub heading_hold: bool,
+    /// Whether the navigator has a home: `None` in builds without GNSS.
+    pub home_set: Option<bool>,
 }
 
 /// Lightweight GPS data for telemetry (avoids dependency on elle-rpc-icd).
@@ -110,7 +112,13 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
     let mode_str: &[u8] = if mode.failsafe {
         b"!FS!\0"
     } else if !mode.armed {
-        b"WAIT\0"
+        // Disarmed: say whether arming would lock a home (the navigator's,
+        // not the radio's own GPS home).
+        match mode.home_set {
+            Some(true) => b"WAIT H\0",
+            Some(false) => b"NOHOME\0",
+            None => b"WAIT\0",
+        }
     } else {
         match mode.autotune {
             AutotuneDisplay::Pitch => b"AT P\0",
@@ -258,6 +266,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         mode: CrsfControlMode::Manual,
         autotune: AutotuneDisplay::Off,
         heading_hold: false,
+        home_set: None,
     };
 
     #[cfg(feature = "gnss")]

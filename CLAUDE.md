@@ -267,7 +267,8 @@ around home as ULog `nav`. Nothing reaches `FlightController`. Home follows good
 (`NAV_HOME_*`) while disarmed, locks on arming, releases on disarm. sguaba converts a
 fix into the typed `HomeNed` frame (`f64`, software float: once per fix, never per
 tick); guidance works on `f32` `Ne`. Bank demand is positive right, like the
-heading-hold roll setpoint. Plan and next steps: [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md).
+heading-hold roll setpoint. While disarmed the CRSF flight-mode text shows `WAIT H` /
+`NOHOME` (`CrsfFlightMode::home_set`; `WAIT` without GNSS). Plan and next steps: [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md).
 
 ### Logging
 

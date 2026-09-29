@@ -301,6 +301,10 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                 },
                 autotune: autotune_display,
                 heading_hold: fc.is_heading_hold_active(),
+                #[cfg(feature = "gnss")]
+                home_set: Some(nav.home_set()),
+                #[cfg(not(feature = "gnss"))]
+                home_set: None,
             });
 
             stages.record(Stage::Outputs, clock.lap());

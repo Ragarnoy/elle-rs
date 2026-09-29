@@ -35,6 +35,11 @@ impl NavObserver {
         }
     }
 
+    /// Whether a home exists (for the radio's flight-mode text while disarmed).
+    pub(crate) fn home_set(&self) -> bool {
+        self.nav.home().is_some()
+    }
+
     pub(crate) fn tick(
         &mut self,
         armed: bool,
