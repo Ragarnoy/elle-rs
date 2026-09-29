@@ -27,6 +27,7 @@ the board over a debug probe.
 | `crates/elle-rpc-icd`, `crates/elle-ulog`, `crates/elle-error`, `crates/elle-nav` | RPC contract, ULog encoder, errors, navigation (observation mode: computed and logged, not applied) |
 | `drivers/` | Vendored sensor drivers |
 | `tools/elle-rpc-host` | Host TUI and command-line tool |
+| `tools/elle-replay` | Replays raw IMU logs through the attitude pipeline on the host |
 
 ## Quick start
 

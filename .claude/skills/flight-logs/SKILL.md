@@ -51,6 +51,15 @@ or more files and degrades gracefully on older logs that lack newer messages:
 For anything else, load the file directly — `pyulog.ULog(path).data_list` gives one
 numpy dict per message — and keep the ad-hoc script in the scratchpad.
 
+**Raw IMU logs** (`imu-raw-log` builds, `imu_raw` present in `list`): replay the
+attitude pipeline on the host with the Rust tool, which first checks the replay
+reproduces the logged attitude exactly (exit code 1 if not), then writes every
+sample at 1 kHz for plotting:
+
+```sh
+cargo run -q -p elle-replay --target x86_64-unknown-linux-gnu -- logs/LOG_NNNN.ulg --csv /tmp/replay.csv
+```
+
 ## 3. Identify the build
 
 Messages were added over time, so their presence dates a log:

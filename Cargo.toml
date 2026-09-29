@@ -13,6 +13,7 @@ members = [
     "crates/elle-dart",
     "crates/elle-nav",
     "tools/elle-rpc-host",
+    "tools/elle-replay",
     "drivers/mmc5616wa",
     "drivers/sam-m10q",
     "drivers/bmp390",

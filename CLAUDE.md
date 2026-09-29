@@ -40,6 +40,7 @@ Cargo workspace:
 - **`crates/elle-nav/`** — navigation, hardware-independent and host-tested: home frame (sguaba NED), estimator, L1 guidance. Runs in **observation mode** only (logged, never applied); see [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md)
 - **`drivers/`** — vendored sensor drivers: `mmc5616wa` (mag), `sam-m10q` (GNSS), `bmp390` (baro, local fork patched over crates.io)
 - **`tools/elle-rpc-host/`** — host CLI (TUI dashboard + `direct` commands)
+- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv]`)
 
 ## Building
 
@@ -88,6 +89,8 @@ cargo test  -p elle-control  --target x86_64-unknown-linux-gnu                  
 cargo test  -p elle-control  --target x86_64-unknown-linux-gnu --features platform-dart  # dart config
 cargo test  -p elle-nav      --target x86_64-unknown-linux-gnu
 cargo test  -p elle-ulog     --target x86_64-unknown-linux-gnu   # header fits the 4 KB buffer
+cargo test  -p elle-replay   --target x86_64-unknown-linux-gnu   # synthetic log, end to end
+cargo run   -p elle-replay   --target x86_64-unknown-linux-gnu -- logs/LOG_NNNN.ulg
 ```
 
 ### CI
@@ -96,7 +99,9 @@ cargo test  -p elle-ulog     --target x86_64-unknown-linux-gnu   # header fits t
 `rpc-control,gnss` / `rpc-control,rpc-rc,gnss`; `cargo fmt --check`; both powerset
 checks; clippy `-D warnings` on both airframes (flight and RPC+RC) and the host tool;
 `elle-control` tests for both platforms (governor step response, level cal, autotune,
-arming, …); `elle-nav` tests (geodesy, estimator, closed-loop L1 line and loiter with wind).
+arming, …, the attitude pipeline and raw IMU capture); `elle-nav` tests (geodesy, estimator,
+closed-loop L1 line and loiter with wind); `elle-ulog` (header size); `elle-replay` (clippy,
+and a synthetic log written by the firmware encoder, replayed end to end).
 
 ## Pin Map
 

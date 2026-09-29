@@ -83,6 +83,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - name: Host tool
         run: cargo clippy -p elle-rpc-host --target x86_64-unknown-linux-gnu -- -D warnings
+      - name: Replay tool
+        run: |
+          cargo clippy -p elle-replay --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
+          cargo test -p elle-replay --target x86_64-unknown-linux-gnu
       - name: elle-control tests (eagle)
         run: cargo test -p elle-control --target x86_64-unknown-linux-gnu
       - name: elle-control tests (dart)

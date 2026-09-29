@@ -1155,6 +1155,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "elle-replay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "elle-config",
+ "elle-control",
+ "elle-ulog",
+ "embassy-time",
+ "nalgebra 0.34.2",
+]
+
+[[package]]
 name = "elle-rpc-host"
 version = "0.1.0"
 dependencies = [

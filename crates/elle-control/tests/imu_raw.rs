@@ -4,10 +4,10 @@
 
 use elle_control::attitude::{Attitude, AttitudePipeline};
 use elle_control::imu_raw::{
-    ACCEL_SCALE, BATCH_SAMPLES, CTX_INTERVAL, GYRO_SCALE, Record, Recorder, SAMPLE_BYTES, decode,
-    encode, pack, unpack,
+    ACCEL_SCALE, BATCH_SAMPLES, CTX_INTERVAL, GYRO_SCALE, Record, Recorder, Replayer, SAMPLE_BYTES,
+    decode, encode, pack, unpack,
 };
-use nalgebra::{Quaternion, UnitQuaternion, Vector3};
+use nalgebra::{UnitQuaternion, Vector3};
 
 const RANGE: i32 = 1 << 19;
 
@@ -155,46 +155,35 @@ fn a_float_the_driver_cannot_produce_is_counted() {
     assert_eq!(errors, 1);
 }
 
-/// Replay from the records alone; attitudes from sample `start` on.
-///
-/// A context is applied at its own sample; the mag in force is the latest
-/// record at or before the sample, which after a gap may be one whose own
-/// sample was lost.
+/// Replay from the records alone through `Replayer`; attitudes from `start` on.
 fn replay(records: &[Record], start: u32) -> Vec<(u32, Attitude)> {
-    let mut samples = Vec::new();
-    let mut ctxs = Vec::new();
-    let mut mags = Vec::new();
+    // Order by sample index, context and mag before the sample they apply to.
+    let mut events: Vec<(u32, u8, Record)> = Vec::new();
     for r in records {
         match r {
-            Record::Batch(b) => {
-                for k in 0..usize::from(b.count) {
-                    let (g, a) = unpack(&b.data[k * SAMPLE_BYTES..]);
-                    samples.push((b.first_index + k as u32, g, a));
-                }
-            }
-            Record::Ctx(c) => ctxs.push(*c),
-            Record::Mag(m) => mags.push(*m),
+            Record::Ctx(c) => events.push((c.index, 0, *r)),
+            Record::Mag(m) => events.push((m.index, 1, *r)),
+            Record::Batch(b) => events.push((b.first_index, 2, *r)),
         }
     }
-    let q = |v: [f32; 4]| UnitQuaternion::new_unchecked(Quaternion::new(v[0], v[1], v[2], v[3]));
-    let mut p = AttitudePipeline::new();
+    events.sort_by_key(|(i, k, _)| (*i, *k));
+    let mut rp = Replayer::new();
     let mut out = Vec::new();
-    for (index, g, a) in samples {
-        if let Some(c) = ctxs.iter().find(|c| c.index == index) {
-            p.set_quat(q(c.quat));
-            p.gyro_bias = Vector3::from(c.gyro_bias);
-            p.mount = q(c.mount);
-        }
-        let mag = mags
-            .iter()
-            .rev()
-            .find(|m| m.index <= index)
-            .and_then(|m| m.mag.map(Vector3::from));
-        let gyro = Vector3::from(g.map(|r| decode(r, GYRO_SCALE)));
-        let accel = Vector3::from(a.map(|r| decode(r, ACCEL_SCALE)));
-        let att = p.fuse(p.debias(gyro), accel, mag.as_ref()).unwrap();
-        if index >= start {
-            out.push((index, att));
+    for (_, _, r) in events {
+        match r {
+            Record::Ctx(c) => rp.ctx(&c),
+            Record::Mag(m) => rp.mag(&m),
+            Record::Batch(b) => {
+                for k in 0..usize::from(b.count) {
+                    let index = b.first_index + k as u32;
+                    let (g, a) = unpack(&b.data[k * SAMPLE_BYTES..]);
+                    if let Some(att) = rp.sample(index, g, a)
+                        && index >= start
+                    {
+                        out.push((index, att));
+                    }
+                }
+            }
         }
     }
     out

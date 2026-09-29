@@ -233,3 +233,77 @@ impl Recorder {
         }
     }
 }
+
+/// Replays records through an [`AttitudePipeline`](crate::attitude::AttitudePipeline).
+///
+/// Feed everything in sample-index order, a context or mag record before the
+/// sample with its index. Output starts at the first [`Ctx`]; a gap in the
+/// sample indices stops it until the next one. From a context on, the angles
+/// equal the firmware's exactly; the filtered rates converge within tens of ms
+/// (their filter history is not recorded).
+pub struct Replayer {
+    pipeline: crate::attitude::AttitudePipeline,
+    mag: Option<Vector3<f32>>,
+    next: Option<u32>,
+    synced: bool,
+}
+
+impl Default for Replayer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Replayer {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pipeline: crate::attitude::AttitudePipeline::new(),
+            mag: None,
+            next: None,
+            synced: false,
+        }
+    }
+
+    /// Whether the last sample produced firmware-exact angles.
+    #[must_use]
+    pub const fn synced(&self) -> bool {
+        self.synced
+    }
+
+    pub fn ctx(&mut self, c: &Ctx) {
+        let q = |v: [f32; 4]| {
+            UnitQuaternion::new_unchecked(nalgebra::Quaternion::new(v[0], v[1], v[2], v[3]))
+        };
+        self.pipeline.set_quat(q(c.quat));
+        self.pipeline.gyro_bias = Vector3::from(c.gyro_bias);
+        self.pipeline.mount = q(c.mount);
+        self.next = Some(c.index);
+        self.synced = true;
+    }
+
+    /// A mag change. After a gap this may be one whose own sample was lost: it
+    /// still holds for every later sample.
+    pub fn mag(&mut self, m: &Mag) {
+        self.mag = m.mag.map(Vector3::from);
+    }
+
+    /// Fuse one sample (raw integers); the attitude while synced.
+    pub fn sample(
+        &mut self,
+        index: u32,
+        gyro: [i32; 3],
+        accel: [i32; 3],
+    ) -> Option<crate::attitude::Attitude> {
+        if self.next != Some(index) {
+            self.synced = false;
+        }
+        self.next = Some(index.wrapping_add(1));
+        let gyro = Vector3::from(gyro.map(|r| decode(r, GYRO_SCALE)));
+        let accel = Vector3::from(accel.map(|r| decode(r, ACCEL_SCALE)));
+        let att = self
+            .pipeline
+            .fuse(self.pipeline.debias(gyro), accel, self.mag.as_ref());
+        att.filter(|_| self.synced)
+    }
+}
