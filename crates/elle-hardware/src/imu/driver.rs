@@ -1,6 +1,6 @@
 use super::*;
 use crate::led::{LedPattern, colors};
-use ahrs::Ahrs;
+use elle_control::attitude::AttitudePipeline;
 use elle_error::ImuError;
 use embassy_rp::gpio::{Input, Output};
 use embassy_rp::mode::Blocking;
@@ -56,57 +56,39 @@ fn level_cal_step(
 }
 
 /// Fuse one raw FIFO sample: remove the gyro bias, feed any running level
-/// calibration, rotate into the airframe frame, and step the AHRS (9-DOF when
-/// `mag` is given, else 6-DOF). The published rates go through `rate_filter`,
-/// which must see every sample; the AHRS integrates the unfiltered gyro.
+/// calibration, then step the shared pipeline (`elle_control::attitude`:
+/// mount rotation, AHRS, rate filter). `mag` is already in the airframe frame.
 /// `None` when the AHRS rejects the sample (normalisation failure).
-#[allow(clippy::too_many_arguments)]
 fn fuse_sample(
-    ahrs: &mut ahrs::Madgwick<f32>,
+    pipeline: &mut AttitudePipeline,
     level_cal: &mut Option<LevelCalAccum>,
-    mount: &mut nalgebra::UnitQuaternion<f32>,
     mag: Option<&nalgebra::Vector3<f32>>,
-    gyro_bias: &nalgebra::Vector3<f32>,
-    rate_filter: &mut elle_control::filter::GyroFilter,
     sample: &icm426xx::Sample,
 ) -> Option<AttitudeData> {
     let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
     let (gx, gy, gz) = sample.gyro.unwrap_or((0.0, 0.0, 0.0));
 
-    let raw_gyro = nalgebra::Vector3::new(gx, gy, gz) - gyro_bias;
+    let raw_gyro = pipeline.debias(nalgebra::Vector3::new(gx, gy, gz));
     let raw_accel = nalgebra::Vector3::new(ax, ay, az);
-    level_cal_step(level_cal, mount, &raw_accel, &raw_gyro);
-
-    // Into the airframe frame; everything downstream (AHRS, rates)
-    // then sees a level-mounted IMU.
-    let gyro = *mount * raw_gyro;
-    let accel = *mount * raw_accel;
-    let rates = rate_filter.apply(&gyro);
+    level_cal_step(level_cal, &mut pipeline.mount, &raw_accel, &raw_gyro);
 
     #[cfg(feature = "gyro-raw-log")]
     let _ = super::GYRO_RAW_CHANNEL.try_send(super::GyroRawSample {
         timestamp: Instant::now(),
-        gyro: [gyro.x, gyro.y, gyro.z],
+        gyro: {
+            let g = pipeline.mount * raw_gyro;
+            [g.x, g.y, g.z]
+        },
     });
 
-    let q = match mag {
-        Some(mag) => ahrs.update(&gyro, &accel, mag),
-        None => ahrs.update_imu(&gyro, &accel),
-    }
-    .ok()?;
-
-    let (roll, pitch, yaw) = q.euler_angles();
-
-    // Board flat → pitch≈0, roll≈0; nose up → pitch>0; right wing down → roll>0.
-    // Roll sign is inverted relative to the ICM-42686's raw frame on this PCB
-    // orientation — field-confirmed rolling the wrong way with identity mapping.
+    let a = pipeline.fuse(raw_gyro, raw_accel, mag)?;
     Some(AttitudeData {
-        pitch,
-        roll: -roll,
-        yaw,
-        pitch_rate: rates.y,
-        roll_rate: -rates.x,
-        yaw_rate: rates.z,
+        pitch: a.pitch,
+        roll: a.roll,
+        yaw: a.yaw,
+        pitch_rate: a.pitch_rate,
+        roll_rate: a.roll_rate,
+        yaw_rate: a.yaw_rate,
         timestamp: Instant::now(),
     })
 }
@@ -120,22 +102,15 @@ type SpiDev<'a> = ExclusiveDevice<spi::Spi<'a, Blocking>, Output<'a>, embassy_ti
 pub struct Imu<'a> {
     icm: Option<icm426xx::ICM42686<SpiDev<'a>, icm426xx::Ready>>,
     spi_dev: Option<SpiDev<'a>>,
-    ahrs: ahrs::Madgwick<f32>,
+    /// Bias, mount, AHRS and rate filter (`elle_control::attitude`).
+    pipeline: AttitudePipeline,
     led_sender: Sender<'a, CriticalSectionRawMutex, LedPattern, 8>,
     int1: Input<'a>,
     last_attitude: AttitudeData,
-    /// Level calibration: rotation from the IMU frame to the airframe frame,
-    /// applied to every sensor vector before the AHRS. Identity = uncorrected.
-    mount: nalgebra::UnitQuaternion<f32>,
     /// In-progress level calibration, if one is collecting.
     level_cal: Option<LevelCalAccum>,
-    /// Gyro zero-rate offset (sensor frame), subtracted before everything else.
-    /// Zero until the boot-time estimate completes.
-    gyro_bias: nalgebra::Vector3<f32>,
     /// Boot-time gyro bias estimate, while it is still collecting.
     bias_est: Option<elle_control::gyro_bias::GyroBiasEstimator>,
-    /// Low-pass on the rates handed to the PID (`GYRO_RATE_LPF_HZ` at the IMU rate).
-    rate_filter: elle_control::filter::GyroFilter,
 }
 
 impl<'a> Imu<'a> {
@@ -147,21 +122,12 @@ impl<'a> Imu<'a> {
         Self {
             icm: None,
             spi_dev: Some(spi_dev),
-            ahrs: ahrs::Madgwick::new(
-                elle_config::AHRS_SAMPLE_PERIOD_US as f32 / 1_000_000.0, // sample period in seconds
-                elle_config::AHRS_BETA,
-            ),
+            pipeline: AttitudePipeline::new(),
             led_sender,
             int1,
             last_attitude: AttitudeData::zero(),
-            mount: nalgebra::UnitQuaternion::identity(),
             level_cal: None,
-            gyro_bias: nalgebra::Vector3::zeros(),
             bias_est: Some(elle_control::gyro_bias::GyroBiasEstimator::new()),
-            rate_filter: elle_control::filter::GyroFilter::new(
-                elle_config::GYRO_RATE_LPF_HZ,
-                elle_config::IMU_UPDATE_FREQUENCY_HZ as f32,
-            ),
         }
     }
 
@@ -286,9 +252,10 @@ impl<'a> Imu<'a> {
             // published attitude that much older than its timestamp.
             //
             // Latest mag field from the I2C task, into the airframe frame.
-            let mag = i2c_sensors::MAG_FIELD
-                .lock(|c| c.get())
-                .map(|m| self.mount * nalgebra::Vector3::new(m[0], m[1], m[2]));
+            let mag = i2c_sensors::MAG_FIELD.lock(|c| c.get()).map(|m| {
+                self.pipeline
+                    .mag_to_airframe(nalgebra::Vector3::new(m[0], m[1], m[2]))
+            });
             let mut drained: u32 = 0;
             let mut latest: Option<AttitudeData> = None;
             let mut bias_result = None;
@@ -304,16 +271,13 @@ impl<'a> Imu<'a> {
                             self.bias_est = None;
                             bias_result = Some(result);
                             if let Ok(bias) = result {
-                                self.gyro_bias = bias;
+                                self.pipeline.gyro_bias = bias;
                             }
                         }
                         let fused = fuse_sample(
-                            &mut self.ahrs,
+                            &mut self.pipeline,
                             &mut self.level_cal,
-                            &mut self.mount,
                             mag.as_ref(),
-                            &self.gyro_bias,
-                            &mut self.rate_filter,
                             &sample,
                         );
                         if fused.is_some() {
@@ -411,7 +375,7 @@ impl<'a> Imu<'a> {
 
             // Level calibration: loaded/cleared mount from Core0, or a start request
             if let Some(mount) = level_cal::LEVEL_CALIBRATION_SIGNAL.try_take() {
-                self.mount = mount;
+                self.pipeline.mount = mount;
                 info!("Core1: Level cal mount applied");
             }
             if level_cal::LEVEL_CAL_START_SIGNAL.try_take().is_some() {

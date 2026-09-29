@@ -35,7 +35,6 @@ crc = { workspace = true }
 cortex-m = "0.7"
 defmt = { workspace = true }
 libm = { workspace = true }
-ahrs = { workspace = true }
 nalgebra = { workspace = true }
 heapless = { workspace = true }
 static_cell = { workspace = true }

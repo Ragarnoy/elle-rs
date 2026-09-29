@@ -32,7 +32,7 @@ Cargo workspace:
 - **`crates/elle-app/`** — the application both binaries run: boot sequence, flight and RPC control loops, RPC dispatch, ULog per-tick logging, shared tasks. The binaries keep only pins, engine setup, `bind_interrupts!`, `led_task` and `main()` — **make behaviour changes here, once**, not in a binary.
 - **`crates/elle-system/`** — `FlightController` (arming, failsafe, modes, PID, mixing, heading hold) and the RPC transport
 - **`crates/elle-hardware/`** — drivers and tasks: `crsf`, `dshot`, `event`, `flash`, `gnss`, `imu`, `led`, `pwm`, `sd_writer`, `timing`, `watchdog`, the ULog logger
-- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `autotune`, `commands`, `filter`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`
+- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `attitude`, `autotune`, `commands`, `filter`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`
 - **`crates/elle-config/`** — every tunable constant and per-platform value (`lib.rs`, `lut.rs`, `profile.rs`)
 - **`crates/elle-rpc-icd/`** — shared RPC Interface Control Document
 - **`crates/elle-ulog/`** — `no_std` ULog encoder
@@ -171,7 +171,11 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 - Autotune (`elle-control/src/autotune.rs`): `update(pitch_deg, roll_deg, tick)` measures its own axis and enforces the ±20° envelope on both from settling on. Both loops call `support::guard_autotune` before it every tick; it aborts and restores gains once the run loses the aircraft (`check_run_conditions`: kill, disarm/failsafe, attitude controller off, no attitude). A run never changes axis. Crossings and relay flips use `AUTOTUNE_HYSTERESIS_DEG`; `validate_result` also caps the tuned axis's Kp/Kd change at `AUTOTUNE_MAX_GAIN_RATIO` (Ki is exempt, see its doc).
 - Elevons are on hardware PWM slice 6 at a 1 MHz count (`elle-hardware/src/pwm.rs`), 200 Hz frames (`REFRESH_INTERVAL_US` = 5 000; digital servos on both airframes); the compare latches at wrap, so output is always the latest command, ≤ 1 frame (5 ms) old.
 
-### IMU pipeline (`elle-hardware/src/imu/driver.rs`)
+### IMU pipeline (`elle-hardware/src/imu/driver.rs`, `elle-control/src/attitude.rs`)
+
+Steps 2–6 per sample are `elle_control::attitude::AttitudePipeline` (host-testable,
+the code a log replay runs); the driver keeps the FIFO, bias estimation, level-cal
+collection and publishing.
 
 1. INT1 DATA_RDY wakes the task; it drains the FIFO, fusing every sample in order, up to `IMU_MAX_DRAIN` (32) per wake-up, publishing only the newest attitude (event 45 on multi-sample drains, rate-limited).
 2. Gyro bias (`elle_control::gyro_bias`) is measured over the first still second and subtracted from every sample. `IMU_STATUS.calibrated` means "bias measured".

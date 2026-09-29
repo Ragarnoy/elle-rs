@@ -1043,6 +1043,7 @@ dependencies = [
 name = "elle-control"
 version = "0.1.0"
 dependencies = [
+ "ahrs",
  "bytemuck",
  "defmt 1.1.1",
  "elle-config",
@@ -1104,7 +1105,6 @@ dependencies = [
 name = "elle-hardware"
 version = "0.1.0"
 dependencies = [
- "ahrs",
  "aligned",
  "block-device-adapters",
  "bmp390",

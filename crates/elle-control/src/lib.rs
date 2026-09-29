@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod arming;
+pub mod attitude;
 pub mod autotune;
 pub mod commands;
 pub mod dshot_pace;
