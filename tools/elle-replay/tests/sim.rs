@@ -126,3 +126,79 @@ fn current_filter_levels_itself_in_a_sustained_turn() {
         15.0 + late
     );
 }
+
+/// Roll RMS error (firmware − truth) in steady turns, degrees.
+fn turn_roll_rms(f: &sim::Flight, rep: &elle_replay::Replay) -> f64 {
+    let (mut sq, mut n) = (0.0, 0.0);
+    for (s, t) in rep.samples.iter().zip(&f.truth) {
+        if t.roll.abs() < 10f64.to_radians() {
+            continue;
+        }
+        let d = f64::from(s.att.unwrap().roll) - t.roll;
+        sq += d * d;
+        n += 1.0;
+    }
+    deg((sq / n).sqrt())
+}
+
+#[test]
+fn firmware_turn_compensation_modes_fly_and_replay_exactly() {
+    use elle_control::attitude::AhrsTurnComp;
+    let profile = [
+        Segment::Straight { secs: 5.0 },
+        Segment::Turn {
+            bank_deg: 30.0,
+            secs: 15.0,
+        },
+        Segment::Straight { secs: 5.0 },
+        Segment::Turn {
+            bank_deg: -30.0,
+            secs: 15.0,
+        },
+        Segment::Straight { secs: 5.0 },
+    ];
+    let wind = nalgebra::Vector3::new(0.0, 6.0, 0.0);
+    let mut rms = Vec::new();
+    for (mode, wind) in [
+        (AhrsTurnComp::Off, nalgebra::Vector3::zeros()),
+        (AhrsTurnComp::Centripetal, nalgebra::Vector3::zeros()),
+        (AhrsTurnComp::GnssAccel, nalgebra::Vector3::zeros()),
+        (AhrsTurnComp::Centripetal, wind),
+        (AhrsTurnComp::GnssAccel, wind),
+    ] {
+        let cfg = Config {
+            turn_comp: mode,
+            wind_ned: wind,
+            ..Config::default()
+        };
+        let f = sim::fly(&cfg, &profile).unwrap();
+        let log = ULog::parse(&f.ulog).unwrap();
+        let rep = elle_replay::replay(&log).unwrap();
+        let fa = elle_replay::faithfulness(&log, &rep);
+        assert!(fa.ok(), "{mode:?}: replay not exact: {fa:?}");
+        if mode != AhrsTurnComp::Off {
+            assert!(
+                log.get("imu_raw_fix")
+                    .is_some_and(|s| s.records.len() > 100)
+            );
+        }
+        rms.push((mode, wind.norm(), turn_roll_rms(&f, &rep)));
+    }
+    let get = |m, w: f64| {
+        rms.iter()
+            .find(|(mm, ww, _)| *mm == m && (*ww - w).abs() < 1e-9)
+            .unwrap()
+            .2
+    };
+    let off = get(AhrsTurnComp::Off, 0.0);
+    assert!(off > 5.0, "no compensation: {off:.1}°");
+    assert!(get(AhrsTurnComp::Centripetal, 0.0) < 0.5, "{rms:?}");
+    assert!(get(AhrsTurnComp::GnssAccel, 0.0) < 3.0, "{rms:?}");
+    assert!(get(AhrsTurnComp::GnssAccel, 6.0) < 3.0, "{rms:?}");
+    // Ground speed is not airspeed: in wind the centripetal mode loses most
+    // of its gain (documented; the flight data decides between the modes).
+    assert!(
+        get(AhrsTurnComp::Centripetal, 6.0) > get(AhrsTurnComp::GnssAccel, 6.0),
+        "{rms:?}"
+    );
+}

@@ -14,6 +14,8 @@ use uf_ahrs::{Ahrs, Madgwick, MadgwickParams};
 
 use crate::filter::GyroFilter;
 
+pub use elle_config::AhrsTurnComp;
+
 /// Attitude and rates after one sample, in the airframe frame.
 ///
 /// Board flat: pitch ≈ 0, roll ≈ 0; nose up: pitch > 0; right wing down: roll > 0.
@@ -29,6 +31,12 @@ pub struct Attitude {
     pub yaw_rate: f32,
 }
 
+/// Turn compensation state that is not in the AHRS quaternion: the fades
+/// (`TurnComp` weight and speed for both modes) and the accel gate's
+/// low-passed magnitude (NaN before the first sample). A replay context
+/// carries it so a resumed replay matches exactly.
+pub type AidState = [f32; 5];
+
 pub struct AttitudePipeline {
     ahrs: Madgwick,
     rate_filter: GyroFilter,
@@ -38,6 +46,14 @@ pub struct AttitudePipeline {
     /// Gyro zero-rate offset (sensor frame), subtracted before everything else.
     /// Zero until the boot-time estimate completes.
     pub gyro_bias: Vector3<f32>,
+    mode: AhrsTurnComp,
+    gate_g: Option<f32>,
+    aid: GnssAid,
+    turn: TurnComp,
+    earth: TurnComp,
+    gate: AccelGate,
+    /// Samples fused so far (the raw capture's sample index).
+    index: u32,
 }
 
 impl Default for AttitudePipeline {
@@ -48,9 +64,17 @@ impl Default for AttitudePipeline {
 
 impl AttitudePipeline {
     /// The firmware configuration: `AHRS_BETA` at `AHRS_SAMPLE_PERIOD_US`, rates
-    /// filtered at `GYRO_RATE_LPF_HZ`, no mount, no bias.
+    /// filtered at `GYRO_RATE_LPF_HZ`, `AHRS_TURN_COMP` and `AHRS_ACCEL_GATE_G`,
+    /// no mount, no bias.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_modes(elle_config::AHRS_TURN_COMP, elle_config::AHRS_ACCEL_GATE_G)
+    }
+
+    /// As [`Self::new`] with another turn compensation mode and accel gate
+    /// (for a replay of a build configured differently, or a simulation).
+    #[must_use]
+    pub fn with_modes(mode: AhrsTurnComp, gate_g: Option<f32>) -> Self {
         Self {
             ahrs: Madgwick::new(
                 Duration::from_micros(elle_config::AHRS_SAMPLE_PERIOD_US),
@@ -64,7 +88,30 @@ impl AttitudePipeline {
             ),
             mount: UnitQuaternion::identity(),
             gyro_bias: Vector3::zeros(),
+            mode,
+            gate_g,
+            aid: GnssAid::default(),
+            turn: TurnComp::new(),
+            earth: TurnComp::new(),
+            gate: AccelGate::new(gate_g),
+            index: 0,
         }
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> AhrsTurnComp {
+        self.mode
+    }
+
+    #[must_use]
+    pub const fn gate_g(&self) -> Option<f32> {
+        self.gate_g
+    }
+
+    /// Whether the pipeline uses GNSS at all (so the driver can skip feeding it).
+    #[must_use]
+    pub fn wants_gnss(&self) -> bool {
+        self.mode != AhrsTurnComp::Off
     }
 
     /// The AHRS state (its whole state: seeding it reproduces the filter exactly).
@@ -76,6 +123,66 @@ impl AttitudePipeline {
     /// Replace the AHRS state, e.g. to start a replay where a log starts.
     pub fn set_quat(&mut self, q: UnitQuaternion<f32>) {
         self.ahrs.set_orientation(q);
+    }
+
+    /// The index the next fused sample gets.
+    #[must_use]
+    pub const fn index(&self) -> u32 {
+        self.index
+    }
+
+    /// Continue counting from `index` (a replay resuming at a context).
+    pub fn set_index(&mut self, index: u32) {
+        self.index = index;
+    }
+
+    /// Turn compensation state beyond the quaternion ([`AidState`]).
+    #[must_use]
+    pub fn aid_state(&self) -> AidState {
+        [
+            self.turn.weight,
+            self.turn.speed,
+            self.earth.weight,
+            self.earth.speed,
+            self.gate.norm_lp.unwrap_or(f32::NAN),
+        ]
+    }
+
+    pub fn set_aid_state(&mut self, s: AidState) {
+        self.turn.weight = s[0];
+        self.turn.speed = s[1];
+        self.earth.weight = s[2];
+        self.earth.speed = s[3];
+        self.gate.norm_lp = (!s[4].is_nan()).then_some(s[4]);
+    }
+
+    /// A new GNSS solution (receive time, NED velocity, whether from NAV-PVT).
+    /// It applies from the next fused sample; the returned fix, with that
+    /// sample's index, is what a raw capture records.
+    pub fn on_gnss_fix(&mut self, t_us: u64, vel_ned: [f32; 3], pvt: bool) -> GnssFix {
+        let fix = GnssFix {
+            index: self.index,
+            t_us,
+            vel_ned,
+            pvt,
+        };
+        self.aid.on_fix(fix);
+        fix
+    }
+
+    /// Apply a recorded fix (a replay; its index is where the firmware got it).
+    pub fn apply_fix(&mut self, fix: GnssFix) {
+        self.aid.on_fix(fix);
+    }
+
+    /// The GNSS fixes held (to carry over when a replay rebuilds the pipeline).
+    #[must_use]
+    pub const fn gnss_aid(&self) -> GnssAid {
+        self.aid
+    }
+
+    pub fn set_gnss_aid(&mut self, aid: GnssAid) {
+        self.aid = aid;
     }
 
     /// Gyro with the bias removed, still in the sensor frame.
@@ -94,6 +201,9 @@ impl AttitudePipeline {
     /// raw accel, both in the sensor frame; `mag` already in the airframe frame
     /// (9-DOF when given, else 6-DOF). A zero accel or mag vector falls back to
     /// fewer sensors (gyro only at worst), so every sample is integrated.
+    ///
+    /// With turn compensation off and no accel gate this is the plain
+    /// Madgwick update, bit for bit.
     pub fn fuse(
         &mut self,
         gyro: Vector3<f32>,
@@ -103,12 +213,33 @@ impl AttitudePipeline {
         // Into the airframe frame; everything downstream (AHRS, rates)
         // then sees a level-mounted IMU.
         let gyro = self.mount * gyro;
-        let accel = self.mount * accel;
+        let mut accel = self.mount * accel;
         let rates = self.rate_filter.apply(&gyro);
 
-        let q = match mag {
-            Some(mag) => self.ahrs.update(gyro, accel, *mag),
-            None => self.ahrs.update_imu(gyro, accel),
+        match self.mode {
+            AhrsTurnComp::Off => {}
+            AhrsTurnComp::Centripetal => {
+                self.turn.update(self.aid.at(self.index).speed);
+                accel = self.turn.correct(&gyro, &accel);
+            }
+            AhrsTurnComp::GnssAccel => {
+                let a = self.aid.at(self.index).accel_earth;
+                // The fade only; its "speed" is unused here.
+                self.earth.update(a.map(|_| 1.0));
+                if let Some(a) = a
+                    && self.earth.weight > 0.0
+                {
+                    accel -= self.ahrs.orientation().inverse() * a * self.earth.weight;
+                }
+            }
+        }
+        let skip_accel = self.gate_g.is_some() && self.gate.skip(&accel);
+        self.index = self.index.wrapping_add(1);
+
+        let q = match (skip_accel, mag) {
+            (true, _) => self.ahrs.update_gyro(gyro),
+            (false, Some(mag)) => self.ahrs.update(gyro, accel, *mag),
+            (false, None) => self.ahrs.update_imu(gyro, accel),
         };
         let (roll, pitch, yaw) = q.euler_angles();
 
@@ -122,6 +253,76 @@ impl AttitudePipeline {
             roll_rate: -rates.x,
             yaw_rate: rates.z,
         }
+    }
+}
+
+/// A GNSS solution as the pipeline received it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GnssFix {
+    /// The first sample it applied to.
+    pub index: u32,
+    /// Receive time, µs since boot.
+    pub t_us: u64,
+    /// North, east, down, m/s.
+    pub vel_ned: [f32; 3],
+    /// From NAV-PVT (the GGA fallback has no velocity).
+    pub pvt: bool,
+}
+
+/// What GNSS offers the attitude filter at one sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Aid {
+    /// Ground speed usable for turn compensation (fresh, PVT, fast enough).
+    pub speed: Option<f32>,
+    /// Kinematic acceleration from the last two fixes, in the filter's earth
+    /// frame (north, west, up), while fresh.
+    pub accel_earth: Option<Vector3<f32>>,
+}
+
+/// The acceleration from two fixes stays usable this many samples (ms).
+const ACCEL_FRESH_SAMPLES: u32 = 300;
+/// Two fixes further apart than this give no acceleration, µs.
+const ACCEL_MAX_SPAN_US: u64 = 500_000;
+
+/// The last two GNSS fixes, turned into an [`Aid`] at any later sample. Ages
+/// are counted in samples (1 ms each), so a replay decides freshness exactly
+/// as the aircraft did.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GnssAid {
+    prev: Option<GnssFix>,
+    last: Option<GnssFix>,
+}
+
+impl GnssAid {
+    pub fn on_fix(&mut self, fix: GnssFix) {
+        self.prev = self.last;
+        self.last = Some(fix);
+    }
+
+    #[must_use]
+    pub fn at(&self, index: u32) -> Aid {
+        let Some(last) = self.last else {
+            return Aid::default();
+        };
+        let age = index.wrapping_sub(last.index);
+        let v = Vector3::from(last.vel_ned);
+        let speed = usable_ground_speed(v.norm(), age, last.pvt);
+        let accel_earth = self
+            .prev
+            .filter(|prev| {
+                prev.pvt
+                    && last.pvt
+                    && last.t_us > prev.t_us
+                    && last.t_us - prev.t_us <= ACCEL_MAX_SPAN_US
+                    && age <= ACCEL_FRESH_SAMPLES
+            })
+            .map(|prev| {
+                let dt = (last.t_us - prev.t_us) as f32 * 1e-6;
+                let a = (v - Vector3::from(prev.vel_ned)) / dt;
+                // NED -> the filter's north-west-up.
+                Vector3::new(a.x, -a.y, -a.z)
+            });
+        Aid { speed, accel_earth }
     }
 }
 

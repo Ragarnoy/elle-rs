@@ -2,10 +2,10 @@
 //!
 //!   cargo test -p elle-control --target x86_64-unknown-linux-gnu --test imu_raw
 
-use elle_control::attitude::{Attitude, AttitudePipeline};
+use elle_control::attitude::{AhrsTurnComp, Attitude, AttitudePipeline};
 use elle_control::imu_raw::{
-    ACCEL_SCALE, BATCH_SAMPLES, CTX_INTERVAL, GYRO_SCALE, Record, Recorder, Replayer, SAMPLE_BYTES,
-    decode, encode, pack, unpack,
+    ACCEL_SCALE, BATCH_SAMPLES, Before, CTX_INTERVAL, GYRO_SCALE, Record, Recorder, Replayer,
+    SAMPLE_BYTES, decode, encode, pack, unpack,
 };
 use nalgebra::{UnitQuaternion, Vector3};
 
@@ -56,11 +56,24 @@ fn v3((x, y, z): (f32, f32, f32)) -> Vector3<f32> {
 /// Fly the firmware path for `n` samples: fuse, then record. Bias arrives at
 /// sample 700, a new mount at 1500, the mag appears at 300 and drops at 2600.
 fn fly(n: u32) -> (Vec<Attitude>, Vec<Record>) {
-    let mut p = AttitudePipeline::new();
+    fly_with(n, AhrsTurnComp::Off, None)
+}
+
+/// As [`fly`] with turn compensation and an accel gate. GNSS fixes arrive
+/// every 200 samples as the driver hands them over (before the next sample),
+/// with a changing velocity; the one at 1600 comes from the NMEA fallback.
+fn fly_with(n: u32, mode: AhrsTurnComp, gate_g: Option<f32>) -> (Vec<Attitude>, Vec<Record>) {
+    let mut p = AttitudePipeline::with_modes(mode, gate_g);
     let mut rec = Recorder::new();
     let mut out = Vec::new();
     let mut records = Vec::new();
     for i in 0..n {
+        if p.wants_gnss() && i % 200 == 50 {
+            let t = i as f32 * 1e-3;
+            let vel = [12.0 + 3.0 * t.sin(), 6.0 * (0.7 * t).cos(), 0.5];
+            let fix = p.on_gnss_fix(u64::from(i) * 1000, vel, i != 1650);
+            rec.fix(fix, |r| records.push(r));
+        }
         if i == 700 {
             p.gyro_bias = Vector3::new(0.002, -0.001, 0.0005);
         }
@@ -71,7 +84,7 @@ fn fly(n: u32) -> (Vec<Attitude>, Vec<Record>) {
             .contains(&i)
             .then(|| p.mag_to_airframe(Vector3::new(0.2, 0.05, -0.4)));
         let (g, a) = sample(i);
-        let q = p.quat();
+        let before = Before::of(&p);
         out.push(p.fuse(p.debias(v3(g)), v3(a), mag.as_ref()));
         rec.sample(
             u64::from(i) * 1000,
@@ -79,9 +92,8 @@ fn fly(n: u32) -> (Vec<Attitude>, Vec<Record>) {
             a,
             25.0,
             mag.as_ref(),
-            &q,
-            &p.gyro_bias,
-            &p.mount,
+            &before,
+            &p,
             |r| records.push(r),
         );
     }
@@ -143,9 +155,8 @@ fn a_float_the_driver_cannot_produce_is_counted() {
         (0.0, 0.0, 9.81),
         25.0,
         None,
-        &UnitQuaternion::identity(),
-        &Vector3::zeros(),
-        &UnitQuaternion::identity(),
+        &Before::of(&AttitudePipeline::new()),
+        &AttitudePipeline::new(),
         |r| {
             if let Record::Ctx(c) = r {
                 errors = c.roundtrip_errors;
@@ -163,6 +174,7 @@ fn replay(records: &[Record], start: u32) -> Vec<(u32, Attitude)> {
         match r {
             Record::Ctx(c) => events.push((c.index, 0, *r)),
             Record::Mag(m) => events.push((m.index, 1, *r)),
+            Record::Fix(f) => events.push((f.index, 1, *r)),
             Record::Batch(b) => events.push((b.first_index, 2, *r)),
         }
     }
@@ -173,6 +185,7 @@ fn replay(records: &[Record], start: u32) -> Vec<(u32, Attitude)> {
         match r {
             Record::Ctx(c) => rp.ctx(&c),
             Record::Mag(m) => rp.mag(&m),
+            Record::Fix(f) => rp.fix(&f),
             Record::Batch(b) => {
                 for k in 0..usize::from(b.count) {
                     let index = b.first_index + k as u32;
@@ -215,4 +228,46 @@ fn replay_resumes_exactly_after_a_gap() {
             "sample {index}"
         );
     }
+}
+
+#[test]
+fn replay_with_turn_compensation_is_exact_including_after_a_gap() {
+    for (mode, gate) in [
+        (AhrsTurnComp::Centripetal, None),
+        (AhrsTurnComp::GnssAccel, None),
+        (AhrsTurnComp::Centripetal, Some(0.05)),
+    ] {
+        let (flown, records) = fly_with(3000, mode, gate);
+        // The contexts carry the mode, so a replay built with Off reproduces it.
+        let Some(Record::Ctx(c)) = records.iter().find(|r| matches!(r, Record::Ctx(_))) else {
+            unreachable!()
+        };
+        assert_eq!(c.turn_comp, mode as u8);
+        for (index, att) in replay(&records, 0) {
+            assert_eq!(
+                att, flown[index as usize],
+                "{mode:?} {gate:?}: sample {index}"
+            );
+        }
+        // Lose batches (not fixes): exact angles again from the next context.
+        let mut gappy = records.clone();
+        gappy.retain(|r| !matches!(r, Record::Batch(b) if (1020..1990).contains(&b.first_index)));
+        for (index, att) in replay(&gappy, 2000) {
+            let f = flown[index as usize];
+            assert_eq!(
+                (att.pitch, att.roll, att.yaw),
+                (f.pitch, f.roll, f.yaw),
+                "{mode:?}: sample {index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn turn_compensation_changes_the_attitude_only_when_on() {
+    let (off, _) = fly_with(3000, AhrsTurnComp::Off, None);
+    let (plain, _) = fly(3000);
+    assert_eq!(off, plain);
+    let (cc, _) = fly_with(3000, AhrsTurnComp::Centripetal, None);
+    assert_ne!(cc[2999], plain[2999]);
 }

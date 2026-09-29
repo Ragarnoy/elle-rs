@@ -8,8 +8,8 @@ use crate::format::{
 use crate::messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
     Core1LoadMessage, EngineMessage, EscHealthMessage, GnssMessage, ImuRawCtxMessage,
-    ImuRawMagMessage, ImuRawMessage, LogEventMessage, LoopStagesMessage, MagnetometerMessage,
-    MessageType, NavMessage, PidGainsMessage, StatusMessage,
+    ImuRawFixMessage, ImuRawMagMessage, ImuRawMessage, LogEventMessage, LoopStagesMessage,
+    MagnetometerMessage, MessageType, NavMessage, PidGainsMessage, StatusMessage,
 };
 use embassy_time::Instant;
 use heapless::Vec;
@@ -134,6 +134,9 @@ impl ULogWriter {
             .map_err(|_| WriteError::BufferFull)?;
         self.buffer
             .extend_from_slice(ImuRawCtxMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(ImuRawFixMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
         self.buffer
             .extend_from_slice(EscHealthMessage::FORMAT_MSG)
@@ -295,6 +298,15 @@ impl ULogWriter {
         &mut self,
         msg_id: u16,
         data: &ImuRawMagMessage,
+    ) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a raw IMU GNSS fix message
+    pub fn write_imu_raw_fix(
+        &mut self,
+        msg_id: u16,
+        data: &ImuRawFixMessage,
     ) -> Result<(), WriteError> {
         self.write_data_payload(msg_id, &data.to_bytes())
     }

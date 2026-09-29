@@ -46,7 +46,7 @@ pub struct ULogLogger {
     loop_stages_msg_id: Option<u16>,
     nav_msg_id: Option<u16>,
     #[cfg(feature = "imu-raw-log")]
-    imu_raw_msg_ids: Option<[u16; 3]>,
+    imu_raw_msg_ids: Option<[u16; 4]>,
     /// Gains version last written to this file; `None` right after `initialize`.
     logged_gains_version: Option<u32>,
     /// Log start time
@@ -217,6 +217,7 @@ impl ULogLogger {
                 sub(elle_ulog::ImuRawMessage::NAME)?,
                 sub(elle_ulog::ImuRawMagMessage::NAME)?,
                 sub(elle_ulog::ImuRawCtxMessage::NAME)?,
+                sub(elle_ulog::ImuRawFixMessage::NAME)?,
             ]);
         }
 
@@ -338,7 +339,7 @@ impl ULogLogger {
         if !self.initialized {
             return Err(ULogError::NotInitialized);
         }
-        let [batch_id, mag_id, ctx_id] = self.imu_raw_msg_ids.unwrap();
+        let [batch_id, mag_id, ctx_id, fix_id] = self.imu_raw_msg_ids.unwrap();
         self.writer.clear_buffer();
         let written = match rec {
             Record::Batch(b) => self.writer.write_imu_raw(
@@ -369,6 +370,18 @@ impl ULogLogger {
                     gyro_bias: c.gyro_bias,
                     mount: c.mount,
                     roundtrip_errors: c.roundtrip_errors,
+                    aid_state: c.aid_state,
+                    turn_comp: c.turn_comp,
+                    gate_g: c.gate_g,
+                },
+            ),
+            Record::Fix(f) => self.writer.write_imu_raw_fix(
+                fix_id,
+                &elle_ulog::ImuRawFixMessage {
+                    timestamp: f.t_us,
+                    index: f.index,
+                    vel_ned: f.vel_ned,
+                    pvt: f.pvt.into(),
                 },
             ),
         };

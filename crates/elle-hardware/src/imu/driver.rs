@@ -99,6 +99,9 @@ pub struct Imu<'a> {
     last_attitude: AttitudeData,
     /// In-progress level calibration, if one is collecting.
     level_cal: Option<LevelCalAccum>,
+    /// Receive time of the last GNSS solution handed to the pipeline.
+    #[cfg(feature = "gnss")]
+    last_gnss_us: u64,
     /// Raw IMU capture for host replay (`imu-raw-log` builds).
     #[cfg(feature = "imu-raw-log")]
     raw_recorder: elle_control::imu_raw::Recorder,
@@ -116,6 +119,8 @@ impl<'a> Imu<'a> {
             icm: None,
             spi_dev: Some(spi_dev),
             pipeline: AttitudePipeline::new(),
+            #[cfg(feature = "gnss")]
+            last_gnss_us: 0,
             #[cfg(feature = "imu-raw-log")]
             raw_recorder: elle_control::imu_raw::Recorder::new(),
             led_sender,
@@ -246,6 +251,28 @@ impl<'a> Imu<'a> {
             // paused for a flash operation, say) queued for good, and the
             // published attitude that much older than its timestamp.
             //
+            // Turn compensation (AHRS_TURN_COMP): hand the pipeline each new
+            // GNSS solution from Core 0's cache (a copy under a critical
+            // section); it applies from the next sample fused.
+            #[cfg(feature = "gnss")]
+            if self.pipeline.wants_gnss() {
+                let g = crate::gnss::GNSS.read_cached();
+                if g.sample_us != self.last_gnss_us {
+                    self.last_gnss_us = g.sample_us;
+                    let fix = self.pipeline.on_gnss_fix(
+                        g.sample_us,
+                        [g.vel_n_ms, g.vel_e_ms, g.vel_d_ms],
+                        g.pvt_active,
+                    );
+                    #[cfg(feature = "imu-raw-log")]
+                    self.raw_recorder.fix(fix, |r| {
+                        let _ = super::IMU_RAW_CHANNEL.try_send(r);
+                    });
+                    #[cfg(not(feature = "imu-raw-log"))]
+                    let _ = fix;
+                }
+            }
+
             // Latest mag field from the I2C task, into the airframe frame.
             let mag = i2c_sensors::MAG_FIELD.lock(|c| c.get()).map(|m| {
                 self.pipeline
@@ -270,7 +297,7 @@ impl<'a> Imu<'a> {
                             }
                         }
                         #[cfg(feature = "imu-raw-log")]
-                        let quat_before = self.pipeline.quat();
+                        let before = elle_control::imu_raw::Before::of(&self.pipeline);
                         let fused = fuse_sample(
                             &mut self.pipeline,
                             &mut self.level_cal,
@@ -284,9 +311,8 @@ impl<'a> Imu<'a> {
                             sample.accel.unwrap_or((0.0, 0.0, 0.0)),
                             sample.temperature_celsius,
                             mag.as_ref(),
-                            &quat_before,
-                            &self.pipeline.gyro_bias,
-                            &self.pipeline.mount,
+                            &before,
+                            &self.pipeline,
                             |r| {
                                 let _ = super::IMU_RAW_CHANNEL.try_send(r);
                             },

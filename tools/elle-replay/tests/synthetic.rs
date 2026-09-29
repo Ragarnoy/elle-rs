@@ -5,7 +5,7 @@
 //!   cargo test -p elle-replay --target x86_64-unknown-linux-gnu
 
 use elle_control::attitude::AttitudePipeline;
-use elle_control::imu_raw::{ACCEL_SCALE, GYRO_SCALE, Record, Recorder, decode, encode};
+use elle_control::imu_raw::{ACCEL_SCALE, Before, GYRO_SCALE, Record, Recorder, decode, encode};
 use elle_replay::ulog::ULog;
 use elle_ulog::{AttitudeMessage, ImuRawCtxMessage, ImuRawMagMessage, ImuRawMessage, ULogWriter};
 use embassy_time::Instant;
@@ -72,7 +72,7 @@ fn fly(corrupt_one: bool) -> Flown {
         let mag =
             (!(2500..3500).contains(&i)).then(|| p.mag_to_airframe(Vector3::new(0.2, 0.05, -0.4)));
         let (g, a) = imu(i);
-        let q = p.quat();
+        let before = Before::of(&p);
         let att = p.fuse(
             p.debias(Vector3::new(g.0, g.1, g.2)),
             Vector3::new(a.0, a.1, a.2),
@@ -80,19 +80,9 @@ fn fly(corrupt_one: bool) -> Flown {
         );
         let t_us = 100_000 + u64::from(i) * 1000;
         let mut records = Vec::new();
-        rec.sample(
-            t_us,
-            g,
-            a,
-            30.0,
-            mag.as_ref(),
-            &q,
-            &p.gyro_bias,
-            &p.mount,
-            |r| {
-                records.push(r);
-            },
-        );
+        rec.sample(t_us, g, a, 30.0, mag.as_ref(), &before, &p, |r| {
+            records.push(r);
+        });
         for r in records {
             match r {
                 Record::Batch(b) if !GAP.contains(&b.first_index) => w
@@ -107,7 +97,7 @@ fn fly(corrupt_one: bool) -> Flown {
                         },
                     )
                     .unwrap(),
-                Record::Batch(_) => {}
+                Record::Batch(_) | Record::Fix(_) => {}
                 Record::Mag(m) => w
                     .write_imu_raw_mag(
                         mag_id,
@@ -129,6 +119,9 @@ fn fly(corrupt_one: bool) -> Flown {
                             gyro_bias: c.gyro_bias,
                             mount: c.mount,
                             roundtrip_errors: c.roundtrip_errors,
+                            aid_state: c.aid_state,
+                            turn_comp: c.turn_comp,
+                            gate_g: c.gate_g,
                         },
                     )
                     .unwrap(),

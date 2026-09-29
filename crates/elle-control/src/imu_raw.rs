@@ -15,6 +15,8 @@
 
 use nalgebra::{UnitQuaternion, Vector3};
 
+use crate::attitude::{AhrsTurnComp, AidState, AttitudePipeline, GnssFix};
+
 /// Full-scale integer magnitude of a 20-bit FIFO sample (2¹⁹).
 const FULL_1SIDE_RANGE: f32 = (1 << 19) as f32;
 /// Gyro scale, rad/s per LSB: the driver's own expression (icm426xx
@@ -106,6 +108,12 @@ pub struct Ctx {
     /// Samples whose floats did not survive encode → decode unchanged. Nonzero
     /// means the scale here disagrees with the driver's; the replay is not exact.
     pub roundtrip_errors: u32,
+    /// Turn compensation state before sample `index` ([`AidState`]).
+    pub aid_state: AidState,
+    /// The build's turn compensation mode (`AhrsTurnComp as u8`).
+    pub turn_comp: u8,
+    /// The build's accel gate, g (NaN: none).
+    pub gate_g: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +121,35 @@ pub enum Record {
     Batch(Batch),
     Mag(Mag),
     Ctx(Ctx),
+    /// A GNSS fix handed to the pipeline (turn compensation builds only).
+    Fix(GnssFix),
+}
+
+/// The pipeline state a context needs, taken just before a sample is fused.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Before {
+    pub quat: UnitQuaternion<f32>,
+    pub aid_state: AidState,
+}
+
+impl Before {
+    #[must_use]
+    pub fn of(p: &AttitudePipeline) -> Self {
+        Self {
+            quat: p.quat(),
+            aid_state: p.aid_state(),
+        }
+    }
+}
+
+/// `AhrsTurnComp` from its logged byte (unknown values read as `Off`).
+#[must_use]
+pub const fn turn_comp_from_u8(v: u8) -> AhrsTurnComp {
+    match v {
+        1 => AhrsTurnComp::Centripetal,
+        2 => AhrsTurnComp::GnssAccel,
+        _ => AhrsTurnComp::Off,
+    }
 }
 
 /// Counts samples and turns them into [`Record`]s.
@@ -165,14 +202,19 @@ impl Recorder {
         }
     }
 
+    /// A GNSS fix the pipeline was given ([`AttitudePipeline::on_gnss_fix`]).
+    pub fn fix(&mut self, fix: GnssFix, mut emit: impl FnMut(Record)) {
+        emit(Record::Fix(fix));
+    }
+
     /// Record one sample, after it was fused.
     ///
     /// `gyro`/`accel`: the driver's floats for this sample (before bias and
     /// mount, zeros where the FIFO packet had none); `mag`: the vector fed to
-    /// the AHRS; `quat_before`: the AHRS state before this sample; `bias` and
-    /// `mount`: what this sample was fused with. Records go to `emit` in the
-    /// order a replay needs them (mag and context before the batch holding the
-    /// sample).
+    /// the AHRS; `before`: the pipeline state before this sample
+    /// ([`Before::of`]); `pipeline`: after it (its bias and mount are what the
+    /// sample was fused with). Records go to `emit` in the order a replay
+    /// needs them (mag and context before the batch holding the sample).
     #[allow(clippy::too_many_arguments)]
     pub fn sample(
         &mut self,
@@ -181,11 +223,11 @@ impl Recorder {
         accel: (f32, f32, f32),
         temp_c: f32,
         mag: Option<&Vector3<f32>>,
-        quat_before: &UnitQuaternion<f32>,
-        bias: &Vector3<f32>,
-        mount: &UnitQuaternion<f32>,
+        before: &Before,
+        pipeline: &AttitudePipeline,
         mut emit: impl FnMut(Record),
     ) {
+        let (bias, mount) = (&pipeline.gyro_bias, &pipeline.mount);
         let index = self.index;
         self.index = self.index.wrapping_add(1);
 
@@ -212,10 +254,13 @@ impl Recorder {
             emit(Record::Ctx(Ctx {
                 index,
                 t_us,
-                quat: quat4(quat_before),
+                quat: quat4(&before.quat),
                 gyro_bias: bias,
                 mount,
                 roundtrip_errors: self.roundtrip_errors,
+                aid_state: before.aid_state,
+                turn_comp: pipeline.mode() as u8,
+                gate_g: pipeline.gate_g().unwrap_or(f32::NAN),
             }));
         }
 
@@ -258,7 +303,7 @@ impl Replayer {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            pipeline: crate::attitude::AttitudePipeline::new(),
+            pipeline: AttitudePipeline::new(),
             mag: None,
             next: None,
             synced: false,
@@ -271,15 +316,33 @@ impl Replayer {
         self.synced
     }
 
+    /// A context: the pipeline state entering sample `c.index`, and the modes
+    /// the recording build ran (which may differ from this build's).
     pub fn ctx(&mut self, c: &Ctx) {
         let q = |v: [f32; 4]| {
             UnitQuaternion::new_unchecked(nalgebra::Quaternion::new(v[0], v[1], v[2], v[3]))
         };
+        let mode = turn_comp_from_u8(c.turn_comp);
+        let gate = (!c.gate_g.is_nan()).then_some(c.gate_g);
+        if self.pipeline.mode() != mode || self.pipeline.gate_g() != gate {
+            // Keep the GNSS fixes seen so far; they are not in the context.
+            let aid = self.pipeline.gnss_aid();
+            self.pipeline = AttitudePipeline::with_modes(mode, gate);
+            self.pipeline.set_gnss_aid(aid);
+        }
         self.pipeline.set_quat(q(c.quat));
         self.pipeline.gyro_bias = Vector3::from(c.gyro_bias);
         self.pipeline.mount = q(c.mount);
+        self.pipeline.set_aid_state(c.aid_state);
+        self.pipeline.set_index(c.index);
         self.next = Some(c.index);
         self.synced = true;
+    }
+
+    /// A GNSS fix the recording pipeline was given. Applied whether or not the
+    /// replay is synced, so the aid is right when it resumes.
+    pub fn fix(&mut self, f: &GnssFix) {
+        self.pipeline.apply_fix(*f);
     }
 
     /// A mag change. After a gap this may be one whose own sample was lost: it

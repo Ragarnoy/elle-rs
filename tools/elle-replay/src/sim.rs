@@ -18,10 +18,11 @@
 use std::f64::consts::PI;
 
 use anyhow::Result;
-use elle_control::attitude::AttitudePipeline;
-use elle_control::imu_raw::{ACCEL_SCALE, GYRO_SCALE, Record, Recorder, decode, encode};
+use elle_control::attitude::{AhrsTurnComp, AttitudePipeline};
+use elle_control::imu_raw::{ACCEL_SCALE, Before, GYRO_SCALE, Record, Recorder, decode, encode};
 use elle_ulog::{
-    AttitudeMessage, GnssMessage, ImuRawCtxMessage, ImuRawMagMessage, ImuRawMessage, ULogWriter,
+    AttitudeMessage, GnssMessage, ImuRawCtxMessage, ImuRawFixMessage, ImuRawMagMessage,
+    ImuRawMessage, ULogWriter,
 };
 use embassy_time::Instant;
 use nalgebra::{Matrix3, Rotation3, UnitQuaternion, Vector3};
@@ -74,6 +75,9 @@ pub struct Config {
     /// Earth field, NED, arbitrary units (magnetic north, dip down).
     pub mag_ned: Vector3<f64>,
     pub seed: u64,
+    /// The simulated firmware's turn compensation and accel gate.
+    pub turn_comp: AhrsTurnComp,
+    pub gate_g: Option<f32>,
 }
 
 impl Default for Config {
@@ -91,6 +95,8 @@ impl Default for Config {
             gnss_vel_noise: 0.05,
             mag_ned: Vector3::new(0.21, 0.0, 0.43),
             seed: 1,
+            turn_comp: AhrsTurnComp::Off,
+            gate_g: None,
         }
     }
 }
@@ -177,6 +183,7 @@ struct Log {
     raw: u16,
     mag: u16,
     ctx: u16,
+    fix: u16,
     gnss: u16,
 }
 
@@ -187,11 +194,12 @@ impl Log {
         w.initialize(Instant::from_micros(0)).map_err(e)?;
         w.write_definitions("ELLE-SIM", "sim", "0", 0).map_err(e)?;
         let mut sub = |n| w.add_subscription(n).map_err(e);
-        let (att, raw, mag, ctx, gnss) = (
+        let (att, raw, mag, ctx, fix, gnss) = (
             sub(AttitudeMessage::NAME)?,
             sub(ImuRawMessage::NAME)?,
             sub(ImuRawMagMessage::NAME)?,
             sub(ImuRawCtxMessage::NAME)?,
+            sub(ImuRawFixMessage::NAME)?,
             sub(GnssMessage::NAME)?,
         );
         let mut log = Self {
@@ -201,6 +209,7 @@ impl Log {
             raw,
             mag,
             ctx,
+            fix,
             gnss,
         };
         log.flush();
@@ -242,6 +251,18 @@ impl Log {
                     gyro_bias: c.gyro_bias,
                     mount: c.mount,
                     roundtrip_errors: c.roundtrip_errors,
+                    aid_state: c.aid_state,
+                    turn_comp: c.turn_comp,
+                    gate_g: c.gate_g,
+                },
+            ),
+            Record::Fix(f) => self.w.write_imu_raw_fix(
+                self.fix,
+                &ImuRawFixMessage {
+                    timestamp: f.t_us,
+                    index: f.index,
+                    vel_ned: f.vel_ned,
+                    pvt: f.pvt.into(),
                 },
             ),
         };
@@ -269,7 +290,7 @@ pub fn fly(cfg: &Config, profile: &[Segment]) -> Result<Flight> {
         bank: 0.0,
         pos_ned: Vector3::zeros(),
     };
-    let mut pipeline = AttitudePipeline::new();
+    let mut pipeline = AttitudePipeline::with_modes(cfg.turn_comp, cfg.gate_g);
     let q0 = filter_quat(&s.rotation()).cast::<f32>();
     pipeline.set_quat(q0);
     let mut rec = Recorder::new();
@@ -350,7 +371,7 @@ pub fn fly(cfg: &Config, profile: &[Segment]) -> Result<Flight> {
             }
 
             // The firmware path: fuse, then record.
-            let q_before = pipeline.quat();
+            let before = Before::of(&pipeline);
             let att = pipeline.fuse(
                 pipeline.debias(Vector3::new(g3.0, g3.1, g3.2)),
                 Vector3::new(a3.0, a3.1, a3.2),
@@ -363,9 +384,8 @@ pub fn fly(cfg: &Config, profile: &[Segment]) -> Result<Flight> {
                 a3,
                 30.0,
                 mag_fed.as_ref(),
-                &q_before,
-                &pipeline.gyro_bias,
-                &pipeline.mount,
+                &before,
+                &pipeline,
                 |x| records.push(x),
             );
             records.into_iter().for_each(|x| log.record(x));
@@ -395,6 +415,11 @@ pub fn fly(cfg: &Config, profile: &[Segment]) -> Result<Flight> {
                 && at <= t_us
             {
                 gnss_queue.remove(0);
+                // As the driver does: the next samples fused see this fix.
+                if pipeline.wants_gnss() {
+                    let fix = pipeline.on_gnss_fix(at, [v.x as f32, v.y as f32, v.z as f32], true);
+                    rec.fix(fix, |x| log.record(x));
+                }
                 let gs = v.xy().norm();
                 let _ = log.w.write_gnss(
                     log.gnss,

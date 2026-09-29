@@ -152,11 +152,25 @@ pub const IMU_SPI_FREQ: u32 = 8_000_000; // 8 MHz SPI clock (ICM-42686-P rated t
 pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
 /// Madgwick AHRS filter gain (higher = faster convergence, more noise)
 pub const AHRS_BETA: f32 = 0.033;
-/// Turn compensation (`elle_control::attitude::TurnComp`): remove the
-/// centripetal acceleration (gyro rate × GNSS ground speed along the nose)
-/// from the accel before the AHRS, so a sustained turn is not levelled. Off
-/// until replayed flight data shows it helps (`elle-replay --compare`).
-pub const AHRS_TURN_COMP: bool = false;
+/// How the AHRS removes the aircraft's own acceleration from the accel before
+/// fusing it (`elle_control::attitude`). Without it a sustained coordinated
+/// turn is slowly "levelled": the accel points through the belly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AhrsTurnComp {
+    /// Not at all (every build so far).
+    Off = 0,
+    /// Centripetal term: gyro rate × GNSS ground speed along the nose. Good in
+    /// calm air; off by ω × wind in wind (ground speed is not airspeed).
+    Centripetal = 1,
+    /// Kinematic acceleration from the GNSS velocity change between fixes,
+    /// rotated into the body. Wind-proof; 5 Hz and delayed by the receiver.
+    GnssAccel = 2,
+}
+
+/// Turn compensation mode. `Off` until replayed flight data (`elle-replay
+/// --compare`, TEST_PLAN Part 7) shows which mode helps on this aircraft.
+pub const AHRS_TURN_COMP: AhrsTurnComp = AhrsTurnComp::Off;
 /// Below this GNSS ground speed there is no turn compensation, m/s.
 pub const AHRS_TURN_COMP_MIN_SPEED_MS: f32 = 6.0;
 /// A GNSS solution older than this is not used for turn compensation, ms.

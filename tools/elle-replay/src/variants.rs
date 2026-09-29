@@ -9,7 +9,7 @@
 
 use core::time::Duration;
 
-use elle_control::attitude::{AccelGate, TurnComp};
+use elle_control::attitude::{AccelGate, Aid, TurnComp};
 use nalgebra::{UnitQuaternion, Vector3};
 use uf_ahrs::{Ahrs, Madgwick, MadgwickParams, Mahony, MahonyParams, Vqf, VqfParams};
 
@@ -79,16 +79,6 @@ pub fn default_specs() -> Vec<Spec> {
         spec("vqf-cc", Kind::Vqf, Turn::Centripetal, None),
         spec("vqf-ce", Kind::Vqf, Turn::Earth, None),
     ]
-}
-
-/// What GNSS offers at one sample.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Aid {
-    /// Ground speed usable for turn compensation (fresh, PVT, fast enough).
-    pub speed: Option<f32>,
-    /// Kinematic acceleration from the last two fixes, filter earth frame
-    /// (north, west, up), while fresh.
-    pub accel_earth: Option<Vector3<f32>>,
 }
 
 enum Filter {

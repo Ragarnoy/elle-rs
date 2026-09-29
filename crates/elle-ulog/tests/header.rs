@@ -38,6 +38,7 @@ fn header_with_every_subscription_fits() {
         ImuRawMessage::NAME,
         ImuRawMagMessage::NAME,
         ImuRawCtxMessage::NAME,
+        ImuRawFixMessage::NAME,
     ];
     for name in names {
         w.add_subscription(name).unwrap();

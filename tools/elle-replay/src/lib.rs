@@ -14,6 +14,7 @@ pub mod variants;
 
 use anyhow::{Result, bail};
 use elle_control::attitude::Attitude;
+use elle_control::attitude::{Aid, GnssAid, GnssFix};
 use elle_control::imu_raw::{
     ACCEL_SCALE, BATCH_SAMPLES, Ctx, GYRO_SCALE, Mag, Replayer, SAMPLE_BYTES, decode, unpack,
 };
@@ -72,7 +73,7 @@ pub struct Input {
     /// Accel, mounted, m/s².
     pub accel: Vector3<f32>,
     /// The GNSS aid available at this sample.
-    pub aid: variants::Aid,
+    pub aid: Aid,
 }
 
 /// Every recorded sample (synced or not) plus coverage.
@@ -83,71 +84,6 @@ pub struct Replay {
     pub inputs: Vec<Input>,
     pub coverage: Coverage,
     pub tracks: Vec<Track>,
-}
-
-/// One GNSS solution as logged (receive time, NED velocity).
-#[derive(Clone, Copy, Debug)]
-struct Fix {
-    t_us: u64,
-    vel_ned: Vector3<f32>,
-    pvt: bool,
-}
-
-fn fixes(log: &ULog) -> Vec<Fix> {
-    let Some(g) = log.get("gnss_data") else {
-        return Vec::new();
-    };
-    let mut out: Vec<Fix> = g
-        .records
-        .iter()
-        .map(|r| Fix {
-            t_us: g.u64(r, "timestamp"),
-            vel_ned: Vector3::new(
-                g.f32(r, "vel_n_ms"),
-                g.f32(r, "vel_e_ms"),
-                g.f32(r, "vel_d_ms"),
-            ),
-            // Older logs have no flag: take a finite velocity as NAV-PVT.
-            pvt: if g.has("pvt_active") {
-                g.u8(r, "pvt_active") != 0
-            } else {
-                g.f32(r, "vel_n_ms").is_finite()
-            },
-        })
-        .collect();
-    out.sort_by_key(|f| f.t_us);
-    out
-}
-
-/// The earth-frame acceleration from two consecutive fixes stays usable this
-/// long after the second one arrives, µs.
-const ACCEL_FRESH_US: u64 = 300_000;
-/// Two fixes further apart than this give no acceleration, µs.
-const ACCEL_MAX_SPAN_US: u64 = 500_000;
-
-/// The GNSS aid at `t_us`, given the fixes received up to then.
-fn aid_at(fixes: &[Fix], t_us: u64) -> variants::Aid {
-    let n = fixes.partition_point(|f| f.t_us <= t_us);
-    let Some(last) = n.checked_sub(1).map(|i| fixes[i]) else {
-        return variants::Aid::default();
-    };
-    let age_ms = ((t_us - last.t_us) / 1000) as u32;
-    let speed = elle_control::attitude::usable_ground_speed(last.vel_ned.norm(), age_ms, last.pvt);
-    let accel_earth = n
-        .checked_sub(2)
-        .map(|i| fixes[i])
-        .filter(|prev| {
-            prev.pvt
-                && last.pvt
-                && last.t_us - prev.t_us <= ACCEL_MAX_SPAN_US
-                && t_us - last.t_us <= ACCEL_FRESH_US
-        })
-        .map(|prev| {
-            let a = (last.vel_ned - prev.vel_ned) / ((last.t_us - prev.t_us) as f32 * 1e-6);
-            // NED -> the filter's north-west-up.
-            Vector3::new(a.x, -a.y, -a.z)
-        });
-    variants::Aid { speed, accel_earth }
 }
 
 /// How the replay compares with the attitude the firmware logged.
@@ -176,6 +112,7 @@ impl Faithfulness {
 enum Event {
     Ctx(Ctx),
     Mag(Mag),
+    Fix(GnssFix),
     Sample {
         t_us: u64,
         gyro: [i32; 3],
@@ -215,6 +152,9 @@ fn events(log: &ULog) -> Result<(Vec<Keyed>, Coverage)> {
         cov.samples += count as u64;
     }
     if let Some(c) = log.get("imu_raw_ctx") {
+        // Captures from before turn compensation lack its state: they ran
+        // without it (mode Off, no gate).
+        let has_aid = c.has("aid_state");
         for r in &c.records {
             let ctx = Ctx {
                 index: c.u32(r, "index"),
@@ -223,6 +163,17 @@ fn events(log: &ULog) -> Result<(Vec<Keyed>, Coverage)> {
                 gyro_bias: c.f32s(r, "gyro_bias"),
                 mount: c.f32s(r, "mount"),
                 roundtrip_errors: c.u32(r, "roundtrip_errors"),
+                aid_state: if has_aid {
+                    c.f32s(r, "aid_state")
+                } else {
+                    [0.0, 0.0, 0.0, 0.0, f32::NAN]
+                },
+                turn_comp: if has_aid { c.u8(r, "turn_comp") } else { 0 },
+                gate_g: if has_aid {
+                    c.f32(r, "gate_g")
+                } else {
+                    f32::NAN
+                },
             };
             cov.roundtrip_errors = cov.roundtrip_errors.max(ctx.roundtrip_errors);
             cov.contexts += 1;
@@ -240,7 +191,58 @@ fn events(log: &ULog) -> Result<(Vec<Keyed>, Coverage)> {
             ev.push((mag.index, 1, Event::Mag(mag)));
         }
     }
-    // Sample order; a context or mag change before the sample it applies to.
+    // GNSS fixes: as the pipeline received them (turn compensation builds),
+    // else from gnss_data by receive time, applied from the first sample read
+    // after it (for the variants; the firmware did not use them).
+    // (Builds with compensation off subscribe to imu_raw_fix but write none.)
+    if let Some(fx) = log.get("imu_raw_fix").filter(|fx| !fx.records.is_empty()) {
+        for r in &fx.records {
+            let f = GnssFix {
+                index: fx.u32(r, "index"),
+                t_us: fx.u64(r, "timestamp"),
+                vel_ned: fx.f32s(r, "vel_ned"),
+                pvt: fx.u8(r, "pvt") != 0,
+            };
+            ev.push((f.index, 1, Event::Fix(f)));
+        }
+    } else if let Some(g) = log.get("gnss_data") {
+        let mut times: Vec<(u64, u32)> = ev
+            .iter()
+            .filter_map(|(i, _, e)| match e {
+                Event::Sample { t_us, .. } => Some((*t_us, *i)),
+                _ => None,
+            })
+            .collect();
+        times.sort_unstable();
+        let has_pvt = g.has("pvt_active");
+        for r in &g.records {
+            let t_us = g.u64(r, "timestamp");
+            let vel_ned = [
+                g.f32(r, "vel_n_ms"),
+                g.f32(r, "vel_e_ms"),
+                g.f32(r, "vel_d_ms"),
+            ];
+            let Some(&(_, index)) = times.get(times.partition_point(|(t, _)| *t < t_us)) else {
+                continue;
+            };
+            let pvt = if has_pvt {
+                g.u8(r, "pvt_active") != 0
+            } else {
+                vel_ned[0].is_finite()
+            };
+            ev.push((
+                index,
+                1,
+                Event::Fix(GnssFix {
+                    index,
+                    t_us,
+                    vel_ned,
+                    pvt,
+                }),
+            ));
+        }
+    }
+    // Sample order; a context, mag change or fix before the sample it applies to.
     ev.sort_by_key(|(i, k, _)| (*i, *k));
     Ok((ev, cov))
 }
@@ -269,7 +271,7 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
         .collect();
     let mut samples = Vec::new();
     let mut inputs = Vec::new();
-    let fixes = fixes(log);
+    let mut aid_src = GnssAid::default();
     let mut last: Option<u32> = None;
     // The variants' inputs, kept the way the Replayer keeps its own.
     let mut bias = Vector3::zeros();
@@ -290,6 +292,10 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                 rp.mag(&m);
                 mag = m.mag.map(Vector3::from);
                 mag_new = true;
+            }
+            Event::Fix(f) => {
+                rp.fix(&f);
+                aid_src.on_fix(f);
             }
             Event::Sample { t_us, gyro, accel } => {
                 if let Some(prev) = last
@@ -313,7 +319,7 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                 was_synced = synced;
                 let g = mount * (Vector3::from(gyro.map(|r| decode(r, GYRO_SCALE))) - bias);
                 let a = mount * Vector3::from(accel.map(|r| decode(r, ACCEL_SCALE)));
-                let aid = aid_at(&fixes, t_us);
+                let aid = aid_src.at(index);
                 inputs.push(Input {
                     gyro: g,
                     accel: a,

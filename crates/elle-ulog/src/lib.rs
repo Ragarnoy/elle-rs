@@ -20,7 +20,7 @@ mod writer;
 pub use messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
     Core1LoadMessage, EngineMessage, EscHealthMessage, GnssMessage, ImuRawCtxMessage,
-    ImuRawMagMessage, ImuRawMessage, LogEventMessage, LoopStagesMessage, MagnetometerMessage,
-    MessageType, NavMessage, PidGainsMessage, StatusMessage,
+    ImuRawFixMessage, ImuRawMagMessage, ImuRawMessage, LogEventMessage, LoopStagesMessage,
+    MagnetometerMessage, MessageType, NavMessage, PidGainsMessage, StatusMessage,
 };
 pub use writer::{ULogWriter, WriteError};

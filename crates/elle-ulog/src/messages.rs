@@ -442,7 +442,11 @@ impl ImuRawMagMessage {
 /// `roundtrip_errors` > 0 means the logged integers do not reproduce the
 /// driver's floats, and the replay cannot be exact.
 ///
-/// Format: "imu_raw_ctx:uint64_t timestamp;uint32_t index;float[4] quat;float[3] gyro_bias;float[4] mount;uint32_t roundtrip_errors"
+/// `aid_state` is the turn compensation state beyond the quaternion
+/// (`elle_control::attitude::AidState`); `turn_comp` and `gate_g` are the
+/// recording build's modes (`AhrsTurnComp as u8`; gate in g, NaN for none).
+///
+/// Format: "imu_raw_ctx:uint64_t timestamp;uint32_t index;float[4] quat;float[3] gyro_bias;float[4] mount;uint32_t roundtrip_errors;float[5] aid_state;uint8_t turn_comp;float gate_g"
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ImuRawCtxMessage {
@@ -454,11 +458,14 @@ pub struct ImuRawCtxMessage {
     /// w, x, y, z
     pub mount: [f32; 4],
     pub roundtrip_errors: u32,
+    pub aid_state: [f32; 5],
+    pub turn_comp: u8,
+    pub gate_g: f32,
 }
 
 impl ImuRawCtxMessage {
     /// Format definition string for ULog
-    pub(crate) const FORMAT: &'static str = "imu_raw_ctx:uint64_t timestamp;uint32_t index;float[4] quat;float[3] gyro_bias;float[4] mount;uint32_t roundtrip_errors";
+    pub(crate) const FORMAT: &'static str = "imu_raw_ctx:uint64_t timestamp;uint32_t index;float[4] quat;float[3] gyro_bias;float[4] mount;uint32_t roundtrip_errors;float[5] aid_state;uint8_t turn_comp;float gate_g";
 
     /// Message name
     pub const NAME: &'static str = "imu_raw_ctx";
@@ -468,7 +475,7 @@ impl ImuRawCtxMessage {
         &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
-    pub(crate) const SIZE: usize = 8 + 4 + 16 + 12 + 16 + 4;
+    pub(crate) const SIZE: usize = 8 + 4 + 16 + 12 + 16 + 4 + 20 + 1 + 4;
 
     /// Serialize to little-endian bytes
     #[must_use]
@@ -485,6 +492,54 @@ impl ImuRawCtxMessage {
             buf[12 + 4 * i..16 + 4 * i].copy_from_slice(&v.to_le_bytes());
         }
         buf[56..60].copy_from_slice(&self.roundtrip_errors.to_le_bytes());
+        for (i, v) in self.aid_state.iter().enumerate() {
+            buf[60 + 4 * i..64 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf[80] = self.turn_comp;
+        buf[81..85].copy_from_slice(&self.gate_g.to_le_bytes());
+        buf
+    }
+}
+
+/// A GNSS fix handed to the attitude pipeline (`imu-raw-log` builds with turn
+/// compensation): receive time, the first sample `index` it applied to, NED
+/// velocity, whether from NAV-PVT. A replay applies it at that index.
+///
+/// Format: "imu_raw_fix:uint64_t timestamp;uint32_t index;float[3] vel_ned;uint8_t pvt"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ImuRawFixMessage {
+    pub timestamp: u64,
+    pub index: u32,
+    pub vel_ned: [f32; 3],
+    pub pvt: u8,
+}
+
+impl ImuRawFixMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str =
+        "imu_raw_fix:uint64_t timestamp;uint32_t index;float[3] vel_ned;uint8_t pvt";
+
+    /// Message name
+    pub const NAME: &'static str = "imu_raw_fix";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 8 + 4 + 12 + 1;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.index.to_le_bytes());
+        for (i, v) in self.vel_ned.iter().enumerate() {
+            buf[12 + 4 * i..16 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf[24] = self.pvt;
         buf
     }
 }
