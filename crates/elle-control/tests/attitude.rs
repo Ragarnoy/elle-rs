@@ -23,7 +23,7 @@ fn settle(
 ) -> elle_control::attitude::Attitude {
     let mut last = None;
     for _ in 0..n {
-        last = p.fuse(p.debias(Vector3::zeros()), accel, None).or(last);
+        last = Some(p.fuse(p.debias(Vector3::zeros()), accel, None));
     }
     last.expect("AHRS accepted the samples")
 }
@@ -65,11 +65,11 @@ fn rates_are_filtered_and_signed_like_attitude() {
     let mut last = None;
     for _ in 0..500 {
         // Sensor +x rate: roll rate reads negative, like roll; +y is pitch rate.
-        last = p.fuse(
+        last = Some(p.fuse(
             p.debias(Vector3::new(0.2, 0.1, 0.05)),
             accel_for(0.0, 0.0),
             None,
-        );
+        ));
     }
     let a = last.unwrap();
     assert!((a.roll_rate + 0.2).abs() < 1e-3, "{a:?}");
@@ -80,9 +80,7 @@ fn rates_are_filtered_and_signed_like_attitude() {
     // The filter lags: from rest, the first sample of a step is far below it.
     let mut p = AttitudePipeline::new();
     let _ = p.fuse(Vector3::zeros(), accel_for(0.0, 0.0), None);
-    let first = p
-        .fuse(Vector3::new(0.0, 0.1, 0.0), accel_for(0.0, 0.0), None)
-        .unwrap();
+    let first = p.fuse(Vector3::new(0.0, 0.1, 0.0), accel_for(0.0, 0.0), None);
     assert!(first.pitch_rate < 0.05, "{first:?}");
 }
 
@@ -95,11 +93,11 @@ fn bias_is_subtracted_before_the_mount() {
     p.mount = UnitQuaternion::from_euler_angles(0.0, 0.0, core::f32::consts::FRAC_PI_2);
     let mut last = None;
     for _ in 0..500 {
-        last = p.fuse(
+        last = Some(p.fuse(
             p.debias(Vector3::new(0.11, -0.02, 0.03)),
             Vector3::new(0.0, 0.0, G),
             None,
-        );
+        ));
     }
     let a = last.unwrap();
     assert!(

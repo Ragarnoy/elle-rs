@@ -304,6 +304,6 @@ impl Replayer {
         let att = self
             .pipeline
             .fuse(self.pipeline.debias(gyro), accel, self.mag.as_ref());
-        att.filter(|_| self.synced)
+        self.synced.then_some(att)
     }
 }

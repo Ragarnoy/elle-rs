@@ -10,7 +10,7 @@ embassy-time = { workspace = true }
 defmt = { workspace = true }
 bytemuck = { workspace = true }
 nalgebra = { workspace = true }
-ahrs = { workspace = true }
+uf-ahrs = { workspace = true }
 libm = { workspace = true }
 
 [features]

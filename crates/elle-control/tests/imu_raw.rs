@@ -72,7 +72,7 @@ fn fly(n: u32) -> (Vec<Attitude>, Vec<Record>) {
             .then(|| p.mag_to_airframe(Vector3::new(0.2, 0.05, -0.4)));
         let (g, a) = sample(i);
         let q = p.quat();
-        out.push(p.fuse(p.debias(v3(g)), v3(a), mag.as_ref()).unwrap());
+        out.push(p.fuse(p.debias(v3(g)), v3(a), mag.as_ref()));
         rec.sample(
             u64::from(i) * 1000,
             g,

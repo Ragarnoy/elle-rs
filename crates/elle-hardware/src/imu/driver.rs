@@ -58,13 +58,12 @@ fn level_cal_step(
 /// Fuse one raw FIFO sample: remove the gyro bias, feed any running level
 /// calibration, then step the shared pipeline (`elle_control::attitude`:
 /// mount rotation, AHRS, rate filter). `mag` is already in the airframe frame.
-/// `None` when the AHRS rejects the sample (normalisation failure).
 fn fuse_sample(
     pipeline: &mut AttitudePipeline,
     level_cal: &mut Option<LevelCalAccum>,
     mag: Option<&nalgebra::Vector3<f32>>,
     sample: &icm426xx::Sample,
-) -> Option<AttitudeData> {
+) -> AttitudeData {
     let (ax, ay, az) = sample.accel.unwrap_or((0.0, 0.0, 0.0));
     let (gx, gy, gz) = sample.gyro.unwrap_or((0.0, 0.0, 0.0));
 
@@ -72,8 +71,8 @@ fn fuse_sample(
     let raw_accel = nalgebra::Vector3::new(ax, ay, az);
     level_cal_step(level_cal, &mut pipeline.mount, &raw_accel, &raw_gyro);
 
-    let a = pipeline.fuse(raw_gyro, raw_accel, mag)?;
-    Some(AttitudeData {
+    let a = pipeline.fuse(raw_gyro, raw_accel, mag);
+    AttitudeData {
         pitch: a.pitch,
         roll: a.roll,
         yaw: a.yaw,
@@ -81,7 +80,7 @@ fn fuse_sample(
         roll_rate: a.roll_rate,
         yaw_rate: a.yaw_rate,
         timestamp: Instant::now(),
-    })
+    }
 }
 
 /// Consecutive FIFO read errors before the attitude is published as stale and
@@ -292,9 +291,7 @@ impl<'a> Imu<'a> {
                                 let _ = super::IMU_RAW_CHANNEL.try_send(r);
                             },
                         );
-                        if fused.is_some() {
-                            latest = fused;
-                        }
+                        latest = Some(fused);
                         if !more {
                             break;
                         }

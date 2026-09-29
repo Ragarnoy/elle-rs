@@ -7,8 +7,10 @@
 //! calibration itself (collection, signals) stays in the driver, which runs it
 //! between [`AttitudePipeline::debias`] and [`AttitudePipeline::fuse`].
 
-use ahrs::Ahrs;
+use core::time::Duration;
+
 use nalgebra::{UnitQuaternion, Vector3};
+use uf_ahrs::{Ahrs, Madgwick, MadgwickParams};
 
 use crate::filter::GyroFilter;
 
@@ -28,7 +30,7 @@ pub struct Attitude {
 }
 
 pub struct AttitudePipeline {
-    ahrs: ahrs::Madgwick<f32>,
+    ahrs: Madgwick,
     rate_filter: GyroFilter,
     /// Level calibration: rotation from the IMU frame to the airframe frame,
     /// applied to every sensor vector before the AHRS. Identity = uncorrected.
@@ -50,9 +52,11 @@ impl AttitudePipeline {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            ahrs: ahrs::Madgwick::new(
-                elle_config::AHRS_SAMPLE_PERIOD_US as f32 / 1_000_000.0,
-                elle_config::AHRS_BETA,
+            ahrs: Madgwick::new(
+                Duration::from_micros(elle_config::AHRS_SAMPLE_PERIOD_US),
+                MadgwickParams {
+                    beta: elle_config::AHRS_BETA,
+                },
             ),
             rate_filter: GyroFilter::new(
                 elle_config::GYRO_RATE_LPF_HZ,
@@ -66,12 +70,12 @@ impl AttitudePipeline {
     /// The AHRS state (its whole state: seeding it reproduces the filter exactly).
     #[must_use]
     pub fn quat(&self) -> UnitQuaternion<f32> {
-        self.ahrs.quat
+        self.ahrs.orientation()
     }
 
     /// Replace the AHRS state, e.g. to start a replay where a log starts.
     pub fn set_quat(&mut self, q: UnitQuaternion<f32>) {
-        self.ahrs.quat = q;
+        self.ahrs.set_orientation(q);
     }
 
     /// Gyro with the bias removed, still in the sensor frame.
@@ -88,14 +92,14 @@ impl AttitudePipeline {
 
     /// Step the filters with one sample: `gyro` from [`Self::debias`] and the
     /// raw accel, both in the sensor frame; `mag` already in the airframe frame
-    /// (9-DOF when given, else 6-DOF). The rate filter sees every sample even
-    /// when the AHRS rejects one (normalisation failure), which gives `None`.
+    /// (9-DOF when given, else 6-DOF). A zero accel or mag vector falls back to
+    /// fewer sensors (gyro only at worst), so every sample is integrated.
     pub fn fuse(
         &mut self,
         gyro: Vector3<f32>,
         accel: Vector3<f32>,
         mag: Option<&Vector3<f32>>,
-    ) -> Option<Attitude> {
+    ) -> Attitude {
         // Into the airframe frame; everything downstream (AHRS, rates)
         // then sees a level-mounted IMU.
         let gyro = self.mount * gyro;
@@ -103,21 +107,20 @@ impl AttitudePipeline {
         let rates = self.rate_filter.apply(&gyro);
 
         let q = match mag {
-            Some(mag) => self.ahrs.update(&gyro, &accel, mag),
-            None => self.ahrs.update_imu(&gyro, &accel),
-        }
-        .ok()?;
+            Some(mag) => self.ahrs.update(gyro, accel, *mag),
+            None => self.ahrs.update_imu(gyro, accel),
+        };
         let (roll, pitch, yaw) = q.euler_angles();
 
         // Roll sign is inverted relative to the ICM-42686's raw frame on this PCB
         // orientation — field-confirmed rolling the wrong way with identity mapping.
-        Some(Attitude {
+        Attitude {
             pitch,
             roll: -roll,
             yaw,
             pitch_rate: rates.y,
             roll_rate: -rates.x,
             yaw_rate: rates.z,
-        })
+        }
     }
 }

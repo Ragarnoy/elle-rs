@@ -73,13 +73,11 @@ fn fly(corrupt_one: bool) -> Flown {
             (!(2500..3500).contains(&i)).then(|| p.mag_to_airframe(Vector3::new(0.2, 0.05, -0.4)));
         let (g, a) = imu(i);
         let q = p.quat();
-        let att = p
-            .fuse(
-                p.debias(Vector3::new(g.0, g.1, g.2)),
-                Vector3::new(a.0, a.1, a.2),
-                mag.as_ref(),
-            )
-            .unwrap();
+        let att = p.fuse(
+            p.debias(Vector3::new(g.0, g.1, g.2)),
+            Vector3::new(a.0, a.1, a.2),
+            mag.as_ref(),
+        );
         let t_us = 100_000 + u64::from(i) * 1000;
         let mut records = Vec::new();
         rec.sample(
