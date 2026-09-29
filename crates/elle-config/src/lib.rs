@@ -83,10 +83,22 @@ pub const CONTROL_LOOP_DT: f32 = CONTROL_LOOP_PERIOD_MS as f32 / 1000.0;
 // The integer frequency (tick counts, divisors) must be exact.
 const _: () = assert!(1000 % CONTROL_LOOP_PERIOD_MS == 0);
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
+/// ICM-42686 full-scale ranges as its driver configures them (icm426xx
+/// `ICM42686`): they fix the scale from 20-bit FIFO integers to physical units,
+/// which the raw IMU capture (`elle_control::imu_raw`) reproduces.
+pub const IMU_GYRO_FULL_SCALE_DPS: f32 = 4000.0;
+pub const IMU_ACCEL_FULL_SCALE_G: f32 = 32.0;
 
 // ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ), derived so
 // the recorded rates don't change with the loop rate.
 pub const ULOG_STATUS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 8; // 8 Hz (also the loop_stages window)
+/// `attitude_data` at the full loop rate, except in `imu-raw-log` builds, where
+/// a replay regenerates it from the raw samples and 50 Hz is enough to check
+/// that the replay matches.
+#[cfg(not(feature = "imu-raw-log"))]
+pub const ULOG_ATTITUDE_DIVISOR: u32 = 1;
+#[cfg(feature = "imu-raw-log")]
+pub const ULOG_ATTITUDE_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 50; // 50 Hz
 pub const ULOG_MAG_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 10; // 10 Hz
 pub const ULOG_BARO_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 5; // 5 Hz
 // Pilot commands and engine telemetry change slowly, so they log at 100 Hz while
@@ -144,7 +156,7 @@ pub const AHRS_BETA: f32 = 0.033;
 /// attitude PID, run at the 1 kHz IMU rate. Engine vibration (eagle EDFs:
 /// 20-30 deg/s of roll-rate noise at 7-9k rpm) otherwise aliases into the
 /// 200 Hz loop and moves the elevons. 30 Hz keeps the 5-8 Hz control band
-/// within ~4 % and costs ~7 ms of group delay. Size it from a `gyro-raw-log`
+/// within ~4 % and costs ~7 ms of group delay. Size it from an `imu-raw-log`
 /// capture.
 pub const GYRO_RATE_LPF_HZ: f32 = 30.0;
 /// Magnetometer read interval in IMU ticks (100 = 10Hz at 1kHz IMU rate)

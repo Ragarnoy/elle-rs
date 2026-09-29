@@ -15,7 +15,13 @@ pub const ULOG_LOGGER_BUFFER_SIZE: usize = 2048;
 /// card's internal busy periods (garbage collection, FAT updates), which run to a
 /// few hundred ms: with 8 slots (4 KB, ~230 ms) LOG_0058 lost 95–180 ms of records
 /// four times in two seconds while the loop kept running. Static RAM, ~33 KB.
+#[cfg(not(feature = "imu-raw-log"))]
 pub const ULOG_WRITE_CHANNEL_DEPTH: usize = 64;
+/// `imu-raw-log` builds add ~20 kB/s of raw IMU records on top of the ~30 kB/s
+/// every build logs: twice the queue (~64 KB, ~1.3 s at ~50 kB/s) to ride out
+/// the card's slow phase.
+#[cfg(feature = "imu-raw-log")]
+pub const ULOG_WRITE_CHANNEL_DEPTH: usize = 128;
 
 /// An entry in the flash profile map (sequential-storage `MapStorage`). Each
 /// setting lives under its own key; clearing one removes only that key, and the

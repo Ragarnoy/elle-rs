@@ -36,9 +36,16 @@ still target it, but new recordings go to the SD card.
 | `core1_load` | 32 | ~1 Hz | Core 1 IMU task over the window: wake-ups, mean and max busy µs per wake (deadline 1 ms), longest mag and baro read (own task, not part of the busy time), largest FIFO drain |
 | `loop_stages` | 46 | 8 Hz | flight loop only: mean and max µs per stage over 25 ticks (intake, update, outputs, switches, autotune, log, tail), DShot executor interrupt time and runs on Core 0 |
 | `nav` | 64 | 25 Hz | navigator, observation mode (`gnss` builds): `status` bits (`elle_nav::status`), fix age, position/velocity north-east of home, baro and GNSS height above home, distance/bearing to home, track error, lateral acceleration and bank demand for a loiter around home (not applied), measured roll; invalid fields NaN |
-| `gyro_raw` | 20 | 1 kHz | unfiltered gyro, `gyro-raw-log` builds only |
+| `imu_raw` | 195 | 100 Hz (10 samples each) | `imu-raw-log` builds: first sample index, 10 × gyro + accel as the 20-bit FIFO integers (24-bit LE), IMU temperature; timestamp = when the first sample was read |
+| `imu_raw_mag` | 25 | on change (~10 Hz) | `imu-raw-log` builds: mag vector as fed to the AHRS (airframe frame), from sample `index` on |
+| `imu_raw_ctx` | 60 | 1 Hz + on change | `imu-raw-log` builds: AHRS quaternion entering sample `index`, gyro bias and mount it was fused with, encode round-trip errors |
 
-Sizes are the payload after the 3-byte message header. Rates are set in `elle-app`
+Sizes are the payload after the 3-byte message header. In `imu-raw-log` builds
+`attitude_data` is logged at 50 Hz (a replay regenerates every sample).
+
+The whole header (definitions, info, one subscription per message) is written into
+the writer's 4 KB buffer before the first flush; `tests/header.rs` fails when less
+than 256 B would be left (3.5 KB used today). Rates are set in `elle-app`
 (`ULOG_*_DIVISOR` in `elle-config`).
 
 Each message struct carries its ULog format string as `FORMAT`; the `'F'` definition

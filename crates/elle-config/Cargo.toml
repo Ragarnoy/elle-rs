@@ -9,6 +9,8 @@ heapless = { workspace = true }
 
 [features]
 platform-dart = []
+# Raw IMU capture builds: slower attitude_data, deeper ULog queue.
+imu-raw-log = []
 
 [lib]
 test = false

@@ -11,6 +11,7 @@ defmt = { workspace = true }
 bytemuck = { workspace = true }
 nalgebra = { workspace = true }
 ahrs = { workspace = true }
+libm = { workspace = true }
 
 [features]
 # Passthrough so host tests can select the dart tables:

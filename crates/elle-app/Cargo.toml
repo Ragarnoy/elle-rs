@@ -37,7 +37,7 @@ rpc-rc = []
 # GNSS task, and the navigator that runs on it (observation mode).
 gnss = ["elle-hardware/gnss", "elle-nav"]
 performance-monitoring = ["elle-system/performance-monitoring"]
-gyro-raw-log = ["elle-hardware/gyro-raw-log"]
+imu-raw-log = ["elle-hardware/imu-raw-log"]
 
 [lib]
 test = false

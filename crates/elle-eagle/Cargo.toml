@@ -32,8 +32,8 @@ performance-monitoring = ["elle-system/performance-monitoring", "elle-app/perfor
 defmt-logging = ["defmt-rtt", "elle-system/defmt-logging"]
 rpc-control = ["elle-system/rpc-control", "elle-app/rpc-control"]
 gnss = ["elle-hardware/gnss", "elle-app/gnss"]
-# Bench vibration capture: every 1 kHz gyro sample to ULog (see elle-hardware).
-gyro-raw-log = ["elle-hardware/gyro-raw-log", "elle-app/gyro-raw-log"]
+# Raw IMU capture for host replay and vibration analysis (see elle-hardware).
+imu-raw-log = ["elle-hardware/imu-raw-log", "elle-app/imu-raw-log"]
 
 [[bin]]
 name = "eagle"

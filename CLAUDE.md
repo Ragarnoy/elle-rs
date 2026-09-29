@@ -67,7 +67,7 @@ Feature flags (both binaries; they forward to `elle-app`):
 - `defmt-logging` — defmt over RTT (default). The macros are always compiled; without this feature they are no-ops.
 - `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss` and the navigator (`elle-nav`, observation mode). `rpc-control` also enables `gnss-gsv` (satellites in view).
 - `performance-monitoring` — timing instrumentation (`TimingMeasurement` is a no-op stub without it).
-- `gyro-raw-log` — every 1 kHz gyro sample to ULog as `gyro_raw` (~25 kB/s), for sizing `GYRO_RATE_LPF_HZ`. Bench only.
+- `imu-raw-log` — every 1 kHz IMU sample as the raw 20-bit FIFO integers (`imu_raw`, batches of 10) plus the mag as fed (`imu_raw_mag`) and the AHRS/bias/mount state (`imu_raw_ctx`, every 1000 samples and on change), ~20 kB/s: enough for a host replay to reproduce the attitude angles exactly (`elle_control::imu_raw`), and for sizing `GYRO_RATE_LPF_HZ`. `attitude_data` drops to 50 Hz and the ULog queue doubles to 128 slots (+~37 kB RAM). Bench and test flights.
 
 CRSF telemetry TX and ULog are always compiled in.
 
@@ -87,6 +87,7 @@ cargo build -p elle-rpc-host --target x86_64-unknown-linux-gnu
 cargo test  -p elle-control  --target x86_64-unknown-linux-gnu                          # eagle config
 cargo test  -p elle-control  --target x86_64-unknown-linux-gnu --features platform-dart  # dart config
 cargo test  -p elle-nav      --target x86_64-unknown-linux-gnu
+cargo test  -p elle-ulog     --target x86_64-unknown-linux-gnu   # header fits the 4 KB buffer
 ```
 
 ### CI

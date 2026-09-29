@@ -45,8 +45,8 @@ pub struct ULogLogger {
     core1_load_msg_id: Option<u16>,
     loop_stages_msg_id: Option<u16>,
     nav_msg_id: Option<u16>,
-    #[cfg(feature = "gyro-raw-log")]
-    gyro_raw_msg_id: Option<u16>,
+    #[cfg(feature = "imu-raw-log")]
+    imu_raw_msg_ids: Option<[u16; 3]>,
     /// Gains version last written to this file; `None` right after `initialize`.
     logged_gains_version: Option<u32>,
     /// Log start time
@@ -79,8 +79,8 @@ impl ULogLogger {
             core1_load_msg_id: None,
             loop_stages_msg_id: None,
             nav_msg_id: None,
-            #[cfg(feature = "gyro-raw-log")]
-            gyro_raw_msg_id: None,
+            #[cfg(feature = "imu-raw-log")]
+            imu_raw_msg_ids: None,
             logged_gains_version: None,
             start_time: None,
             dropout_start: None,
@@ -205,14 +205,19 @@ impl ULogLogger {
                 .add_subscription(elle_ulog::NavMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
-        // Only capture builds write gyro_raw, so only they subscribe to it.
-        #[cfg(feature = "gyro-raw-log")]
+        // Only capture builds write the raw IMU records, so only they subscribe.
+        #[cfg(feature = "imu-raw-log")]
         {
-            self.gyro_raw_msg_id = Some(
+            let mut sub = |name| {
                 self.writer
-                    .add_subscription(elle_ulog::GyroRawMessage::NAME)
-                    .map_err(|_| ULogError::InitFailed)?,
-            );
+                    .add_subscription(name)
+                    .map_err(|_| ULogError::InitFailed)
+            };
+            self.imu_raw_msg_ids = Some([
+                sub(elle_ulog::ImuRawMessage::NAME)?,
+                sub(elle_ulog::ImuRawMagMessage::NAME)?,
+                sub(elle_ulog::ImuRawCtxMessage::NAME)?,
+            ]);
         }
 
         info!(
@@ -231,12 +236,6 @@ impl ULogLogger {
             self.esc_health_msg_id.unwrap(),
             self.core1_load_msg_id.unwrap()
         );
-        #[cfg(feature = "gyro-raw-log")]
-        info!(
-            "ULog subscription: gyro_raw={}",
-            self.gyro_raw_msg_id.unwrap()
-        );
-
         // Flush header and definitions to flash
         let data = self.writer.buffer();
         if !data.is_empty() {
@@ -331,16 +330,49 @@ impl ULogLogger {
         self.buffer_writer_output()
     }
 
-    /// Log one raw gyro sample (`gyro-raw-log` builds). Keeps its own timestamp.
-    #[cfg(feature = "gyro-raw-log")]
-    pub fn log_gyro_raw(&mut self, msg: &elle_ulog::GyroRawMessage) -> Result<(), ULogError> {
+    /// Log one raw IMU record (`imu-raw-log` builds). Timestamps are the
+    /// sample times Core 1 recorded, not the time of logging.
+    #[cfg(feature = "imu-raw-log")]
+    pub fn log_imu_raw(&mut self, rec: &elle_control::imu_raw::Record) -> Result<(), ULogError> {
+        use elle_control::imu_raw::Record;
         if !self.initialized {
             return Err(ULogError::NotInitialized);
         }
+        let [batch_id, mag_id, ctx_id] = self.imu_raw_msg_ids.unwrap();
         self.writer.clear_buffer();
-        self.writer
-            .write_gyro_raw(self.gyro_raw_msg_id.unwrap(), msg)
-            .map_err(|_| ULogError::BufferFull)?;
+        let written = match rec {
+            Record::Batch(b) => self.writer.write_imu_raw(
+                batch_id,
+                &elle_ulog::ImuRawMessage {
+                    timestamp: b.t_us,
+                    first_index: b.first_index,
+                    count: b.count,
+                    temp_centi_c: b.temp_centi_c,
+                    data: b.data,
+                },
+            ),
+            Record::Mag(m) => self.writer.write_imu_raw_mag(
+                mag_id,
+                &elle_ulog::ImuRawMagMessage {
+                    timestamp: m.t_us,
+                    index: m.index,
+                    valid: m.mag.is_some().into(),
+                    mag: m.mag.unwrap_or([0.0; 3]),
+                },
+            ),
+            Record::Ctx(c) => self.writer.write_imu_raw_ctx(
+                ctx_id,
+                &elle_ulog::ImuRawCtxMessage {
+                    timestamp: c.t_us,
+                    index: c.index,
+                    quat: c.quat,
+                    gyro_bias: c.gyro_bias,
+                    mount: c.mount,
+                    roundtrip_errors: c.roundtrip_errors,
+                },
+            ),
+        };
+        written.map_err(|_| ULogError::BufferFull)?;
         self.buffer_writer_output()
     }
 

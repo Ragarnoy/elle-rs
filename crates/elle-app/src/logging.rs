@@ -11,7 +11,8 @@ use elle_system::{FlightController, TimingMeasurement, update_ulog_timing};
 /// Log flight data to ULog flash storage
 ///
 /// Rates (see the `ULOG_*_DIVISOR`s in elle-config):
-/// - Attitude, controller cycle: every tick (control-loop rate)
+/// - Attitude, controller cycle: every tick (control-loop rate; attitude 50 Hz in
+///   `imu-raw-log` builds, which log every IMU sample as `imu_raw` instead)
 /// - Commands, engine telemetry: 100 Hz
 /// - PID gains: on change (and once per file)
 /// - Status, loop stages: 8 Hz; mag 10 Hz; baro 5 Hz; ESC health, Core 1 load: ~1 Hz
@@ -28,8 +29,10 @@ pub(crate) fn log_flight_data(
     // Measure ULog logging performance
     let ulog_timer = TimingMeasurement::start();
 
-    // Log attitude data at control-loop rate
-    if let Some(att) = attitude {
+    // Attitude at the loop rate (50 Hz in imu-raw-log builds: ULOG_ATTITUDE_DIVISOR)
+    if let Some(att) = attitude
+        && loop_counter.is_multiple_of(elle_config::ULOG_ATTITUDE_DIVISOR)
+    {
         let _ = logger.log_attitude(
             att.pitch,
             att.roll,
@@ -99,15 +102,10 @@ pub(crate) fn log_flight_data(
         },
     );
 
-    // Bench vibration capture: every 1 kHz gyro sample queued by Core1.
-    #[cfg(feature = "gyro-raw-log")]
-    while let Ok(s) = elle_hardware::imu::GYRO_RAW_CHANNEL.try_receive() {
-        let _ = logger.log_gyro_raw(&elle_ulog::GyroRawMessage {
-            timestamp: s.timestamp.as_micros(),
-            gyro_x: s.gyro[0],
-            gyro_y: s.gyro[1],
-            gyro_z: s.gyro[2],
-        });
+    // Raw IMU capture: every record Core 1 queued since the last tick.
+    #[cfg(feature = "imu-raw-log")]
+    while let Ok(rec) = elle_hardware::imu::IMU_RAW_CHANNEL.try_receive() {
+        let _ = logger.log_imu_raw(&rec);
     }
 
     // Log engine data at ULOG_ENGINE_DIVISOR (100 Hz), ESC link health at ~1 Hz

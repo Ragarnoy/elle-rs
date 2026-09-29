@@ -72,15 +72,6 @@ fn fuse_sample(
     let raw_accel = nalgebra::Vector3::new(ax, ay, az);
     level_cal_step(level_cal, &mut pipeline.mount, &raw_accel, &raw_gyro);
 
-    #[cfg(feature = "gyro-raw-log")]
-    let _ = super::GYRO_RAW_CHANNEL.try_send(super::GyroRawSample {
-        timestamp: Instant::now(),
-        gyro: {
-            let g = pipeline.mount * raw_gyro;
-            [g.x, g.y, g.z]
-        },
-    });
-
     let a = pipeline.fuse(raw_gyro, raw_accel, mag)?;
     Some(AttitudeData {
         pitch: a.pitch,
@@ -109,6 +100,9 @@ pub struct Imu<'a> {
     last_attitude: AttitudeData,
     /// In-progress level calibration, if one is collecting.
     level_cal: Option<LevelCalAccum>,
+    /// Raw IMU capture for host replay (`imu-raw-log` builds).
+    #[cfg(feature = "imu-raw-log")]
+    raw_recorder: elle_control::imu_raw::Recorder,
     /// Boot-time gyro bias estimate, while it is still collecting.
     bias_est: Option<elle_control::gyro_bias::GyroBiasEstimator>,
 }
@@ -123,6 +117,8 @@ impl<'a> Imu<'a> {
             icm: None,
             spi_dev: Some(spi_dev),
             pipeline: AttitudePipeline::new(),
+            #[cfg(feature = "imu-raw-log")]
+            raw_recorder: elle_control::imu_raw::Recorder::new(),
             led_sender,
             int1,
             last_attitude: AttitudeData::zero(),
@@ -274,11 +270,27 @@ impl<'a> Imu<'a> {
                                 self.pipeline.gyro_bias = bias;
                             }
                         }
+                        #[cfg(feature = "imu-raw-log")]
+                        let quat_before = self.pipeline.quat();
                         let fused = fuse_sample(
                             &mut self.pipeline,
                             &mut self.level_cal,
                             mag.as_ref(),
                             &sample,
+                        );
+                        #[cfg(feature = "imu-raw-log")]
+                        self.raw_recorder.sample(
+                            Instant::now().as_micros(),
+                            sample.gyro.unwrap_or((0.0, 0.0, 0.0)),
+                            sample.accel.unwrap_or((0.0, 0.0, 0.0)),
+                            sample.temperature_celsius,
+                            mag.as_ref(),
+                            &quat_before,
+                            &self.pipeline.gyro_bias,
+                            &self.pipeline.mount,
+                            |r| {
+                                let _ = super::IMU_RAW_CHANNEL.try_send(r);
+                            },
                         );
                         if fused.is_some() {
                             latest = fused;
