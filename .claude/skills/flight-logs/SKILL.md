@@ -60,6 +60,11 @@ sample at 1 kHz for plotting:
 cargo run -q -p elle-replay --target x86_64-unknown-linux-gnu -- logs/LOG_NNNN.ulg --csv /tmp/replay.csv
 ```
 
+`--compare` adds the alternative filters (uf-ahrs Madgwick, Mahony, VQF, each also
+with accel gating, `--gate-g`) seeded from the firmware's state, as differences to the
+firmware. A difference is not an error: judge filters against a reference (the
+gyro-only propagation through turns, still to come).
+
 ## 3. Identify the build
 
 Messages were added over time, so their presence dates a log:

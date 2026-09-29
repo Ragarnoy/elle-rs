@@ -15,9 +15,17 @@ use elle_replay::ulog::ULog;
 struct Args {
     /// ULog file from an imu-raw-log build.
     log: PathBuf,
-    /// Write every replayed sample to this CSV (for PlotJuggler).
+    /// Write every replayed sample to this CSV (for PlotJuggler), with the
+    /// variants' angles when --compare is given.
     #[arg(long)]
     csv: Option<PathBuf>,
+    /// Also run the alternative filters (Madgwick, Mahony, VQF, each with and
+    /// without accel gating) and compare them with the firmware.
+    #[arg(long)]
+    compare: bool,
+    /// Accel gate threshold for the gated variants, g from 1 g.
+    #[arg(long, default_value_t = elle_replay::variants::DEFAULT_GATE_G)]
+    gate_g: f32,
 }
 
 fn main() -> Result<()> {
@@ -25,7 +33,18 @@ fn main() -> Result<()> {
     let data =
         std::fs::read(&args.log).with_context(|| format!("reading {}", args.log.display()))?;
     let log = ULog::parse(&data)?;
-    let replay = elle_replay::replay(&log)?;
+    let specs: Vec<_> = if args.compare {
+        elle_replay::variants::default_specs()
+            .into_iter()
+            .map(|mut s| {
+                s.gate_g = s.gate_g.map(|_| args.gate_g);
+                s
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let replay = elle_replay::replay_with(&log, &specs)?;
     let c = &replay.coverage;
 
     println!("{}", args.log.display());
@@ -49,9 +68,34 @@ fn main() -> Result<()> {
 
     let f = elle_replay::faithfulness(&log, &replay);
     println!(
-        "  attitude_data: {} exact, {} mismatched, {} not checked (no synced replay nearby)",
+        "  attitude_data: {} exact, {} mismatched, {} not checked (source sample may be unsynced or lost)",
         f.exact, f.mismatched, f.unchecked
     );
+
+    if args.compare {
+        println!(
+            "\n  variant vs firmware (deg)      pitch mean/rms/max       roll mean/rms/max        yaw mean/rms/max    gated"
+        );
+        for c in elle_replay::compare(&replay) {
+            let f = |k: usize| {
+                format!(
+                    "{:+7.3} {:6.3} {:6.3}",
+                    c.mean_deg[k], c.rms_deg[k], c.max_deg[k]
+                )
+            };
+            println!(
+                "  {:<22} {}  {}  {}  {:5.1}%",
+                c.name,
+                f(0),
+                f(1),
+                f(2),
+                100.0 * c.gated_share
+            );
+        }
+        println!(
+            "  (differences, not errors: which one is right needs a reference, e.g. gyro-only through turns)"
+        );
+    }
 
     if let Some(path) = &args.csv {
         let file =

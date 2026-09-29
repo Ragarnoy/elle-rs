@@ -7,10 +7,11 @@ description = "Replay Elle raw IMU logs (imu-raw-log builds) through the attitud
 [dependencies]
 elle-control = { workspace = true }
 elle-config = { workspace = true }
+nalgebra = { workspace = true }
+uf-ahrs = { workspace = true }
 anyhow = "1.0"
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 elle-ulog = { workspace = true }
 embassy-time = { workspace = true }
-nalgebra = { workspace = true }

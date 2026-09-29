@@ -203,3 +203,38 @@ fn csv_has_a_row_per_synced_sample() {
     let rows = String::from_utf8(buf).unwrap().lines().count() as u64;
     assert_eq!(rows, 1 + replay.coverage.synced);
 }
+
+#[test]
+fn firmware_filter_as_a_variant_equals_the_exact_replay() {
+    let log = ULog::parse(&fly(false).ulog).unwrap();
+    let replay = elle_replay::replay_with(&log, &elle_replay::variants::default_specs()).unwrap();
+    let cmp = elle_replay::compare(&replay);
+    let fw = cmp.iter().find(|c| c.name == "madgwick").unwrap();
+    // Same filter, same inputs, seeded at each resync: identical, so the
+    // variants are fed exactly what the firmware fused.
+    assert_eq!(fw.samples, replay.coverage.synced);
+    assert_eq!((fw.max_deg, fw.gated_share), ([0.0; 3], 0.0), "{fw:?}");
+    // The others run everywhere the replay is synced. How far they sit from
+    // the firmware says nothing here: this stream's gyro and accel are
+    // independent sine waves, not a physically consistent motion, so a filter
+    // that trusts the accel more (Mahony) follows it further. Accuracy is
+    // judged on simulated flights and against the gyro-only reference.
+    for c in &cmp {
+        assert_eq!(c.samples, replay.coverage.synced, "{c:?}");
+        assert!(c.max_deg.iter().all(|d| d.is_finite()), "{c:?}");
+    }
+}
+
+#[test]
+fn a_tight_gate_skips_the_accelerometer() {
+    let log = ULog::parse(&fly(false).ulog).unwrap();
+    let mut specs = elle_replay::variants::default_specs();
+    specs.retain(|s| s.gate_g.is_some());
+    for s in &mut specs {
+        s.gate_g = Some(0.001);
+    }
+    let replay = elle_replay::replay_with(&log, &specs).unwrap();
+    for c in elle_replay::compare(&replay) {
+        assert!(c.gated_share > 0.1, "{c:?}");
+    }
+}

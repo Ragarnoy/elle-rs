@@ -8,10 +8,14 @@
 //! firmware, and nothing it says about other filters can be trusted.
 
 pub mod ulog;
+pub mod variants;
 
 use anyhow::{Result, bail};
 use elle_control::attitude::Attitude;
-use elle_control::imu_raw::{BATCH_SAMPLES, Ctx, Mag, Replayer, SAMPLE_BYTES, unpack};
+use elle_control::imu_raw::{
+    ACCEL_SCALE, BATCH_SAMPLES, Ctx, GYRO_SCALE, Mag, Replayer, SAMPLE_BYTES, decode, unpack,
+};
+use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::ulog::ULog;
 
@@ -46,11 +50,24 @@ pub struct Coverage {
     pub dropouts: usize,
 }
 
+/// One alternative filter's output, aligned with [`Replay::samples`].
+#[derive(Clone, Debug, Default)]
+pub struct Track {
+    pub name: String,
+    /// (pitch, roll, yaw), radians, firmware convention; `None` where the
+    /// replay is not synced (the variant restarts from the firmware's state at
+    /// each resynchronisation).
+    pub angles: Vec<Option<[f32; 3]>>,
+    /// Samples it fused without the accelerometer.
+    pub gated: u64,
+}
+
 /// Every recorded sample (synced or not) plus coverage.
 #[derive(Clone, Debug, Default)]
 pub struct Replay {
     pub samples: Vec<Sample>,
     pub coverage: Coverage,
+    pub tracks: Vec<Track>,
 }
 
 /// How the replay compares with the attitude the firmware logged.
@@ -150,14 +167,48 @@ fn events(log: &ULog) -> Result<(Vec<Keyed>, Coverage)> {
 
 /// Replay every raw sample in the log.
 pub fn replay(log: &ULog) -> Result<Replay> {
+    replay_with(log, &[])
+}
+
+fn quat(v: [f32; 4]) -> UnitQuaternion<f32> {
+    UnitQuaternion::new_unchecked(Quaternion::new(v[0], v[1], v[2], v[3]))
+}
+
+/// Replay every raw sample, and run each variant in `specs` alongside.
+pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
     let (ev, mut coverage) = events(log)?;
     let mut rp = Replayer::new();
+    let mut runs: Vec<variants::Running> =
+        specs.iter().cloned().map(variants::Running::new).collect();
+    let mut tracks: Vec<Track> = specs
+        .iter()
+        .map(|s| Track {
+            name: s.name.clone(),
+            ..Track::default()
+        })
+        .collect();
     let mut samples = Vec::new();
     let mut last: Option<u32> = None;
+    // The variants' inputs, kept the way the Replayer keeps its own.
+    let mut bias = Vector3::zeros();
+    let mut mount = UnitQuaternion::identity();
+    let mut mag: Option<Vector3<f32>> = None;
+    let mut mag_new = false;
+    let mut seed: Option<UnitQuaternion<f32>> = None;
+    let mut was_synced = false;
     for (index, _, e) in ev {
         match e {
-            Event::Ctx(c) => rp.ctx(&c),
-            Event::Mag(m) => rp.mag(&m),
+            Event::Ctx(c) => {
+                rp.ctx(&c);
+                bias = Vector3::from(c.gyro_bias);
+                mount = quat(c.mount);
+                seed = Some(quat(c.quat));
+            }
+            Event::Mag(m) => {
+                rp.mag(&m);
+                mag = m.mag.map(Vector3::from);
+                mag_new = true;
+            }
             Event::Sample { t_us, gyro, accel } => {
                 if let Some(prev) = last
                     && index != prev.wrapping_add(1)
@@ -169,10 +220,88 @@ pub fn replay(log: &ULog) -> Result<Replay> {
                 let att = rp.sample(index, gyro, accel);
                 coverage.synced += u64::from(att.is_some());
                 samples.push(Sample { index, t_us, att });
+
+                let synced = att.is_some();
+                if synced
+                    && !was_synced
+                    && let Some(q) = seed
+                {
+                    runs.iter_mut().for_each(|r| r.seed(q));
+                }
+                was_synced = synced;
+                let g = mount * (Vector3::from(gyro.map(|r| decode(r, GYRO_SCALE))) - bias);
+                let a = mount * Vector3::from(accel.map(|r| decode(r, ACCEL_SCALE)));
+                for (run, track) in runs.iter_mut().zip(&mut tracks) {
+                    let out = run.step(g, a, mag.as_ref(), mag_new);
+                    track.angles.push(synced.then_some(out));
+                    track.gated = run.gated;
+                }
+                mag_new = false;
             }
         }
     }
-    Ok(Replay { samples, coverage })
+    Ok(Replay {
+        samples,
+        coverage,
+        tracks,
+    })
+}
+
+/// A variant against the exact replay, over the samples both have.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Comparison {
+    pub name: String,
+    pub samples: u64,
+    /// Mean, RMS and largest difference (variant − firmware), degrees, for
+    /// pitch, roll and yaw.
+    pub mean_deg: [f32; 3],
+    pub rms_deg: [f32; 3],
+    pub max_deg: [f32; 3],
+    /// Share of samples fused without the accelerometer.
+    pub gated_share: f32,
+}
+
+/// Compare every variant track with the firmware replay.
+#[must_use]
+pub fn compare(replay: &Replay) -> Vec<Comparison> {
+    replay
+        .tracks
+        .iter()
+        .map(|t| {
+            let mut sum = [0f64; 3];
+            let mut sq = [0f64; 3];
+            let mut max = [0f32; 3];
+            let mut n = 0u64;
+            for (s, v) in replay.samples.iter().zip(&t.angles) {
+                let (Some(a), Some(v)) = (s.att, v) else {
+                    continue;
+                };
+                let fw = [a.pitch, a.roll, a.yaw];
+                for k in 0..3 {
+                    let mut d = v[k] - fw[k];
+                    // Yaw wraps at ±180°.
+                    if k == 2 {
+                        d = (d + core::f32::consts::PI).rem_euclid(2.0 * core::f32::consts::PI)
+                            - core::f32::consts::PI;
+                    }
+                    let d = d.to_degrees();
+                    sum[k] += f64::from(d);
+                    sq[k] += f64::from(d) * f64::from(d);
+                    max[k] = max[k].max(d.abs());
+                }
+                n += 1;
+            }
+            let nf = n.max(1) as f64;
+            Comparison {
+                name: t.name.clone(),
+                samples: n,
+                mean_deg: sum.map(|x| (x / nf) as f32),
+                rms_deg: sq.map(|x| (x / nf).sqrt() as f32),
+                max_deg: max,
+                gated_share: t.gated as f32 / replay.samples.len().max(1) as f32,
+            }
+        })
+        .collect()
 }
 
 /// How far before its log time a logged attitude can have been sampled, µs:
@@ -239,15 +368,20 @@ pub fn faithfulness(log: &ULog, replay: &Replay) -> Faithfulness {
     out
 }
 
-/// The replay as CSV: sample index, time (s), angles (deg), rates (deg/s).
+/// The replay as CSV: sample index, time (s), angles (deg), rates (deg/s),
+/// then pitch/roll/yaw (deg) for each variant track.
 pub fn write_csv(replay: &Replay, mut w: impl std::io::Write) -> Result<()> {
-    writeln!(
+    write!(
         w,
         "index,t_s,pitch_deg,roll_deg,yaw_deg,pitch_rate_dps,roll_rate_dps,yaw_rate_dps"
     )?;
-    for s in &replay.samples {
+    for t in &replay.tracks {
+        write!(w, ",{0}_pitch_deg,{0}_roll_deg,{0}_yaw_deg", t.name)?;
+    }
+    writeln!(w)?;
+    for (i, s) in replay.samples.iter().enumerate() {
         let Some(a) = &s.att else { continue };
-        writeln!(
+        write!(
             w,
             "{},{:.6},{},{},{},{},{},{}",
             s.index,
@@ -259,6 +393,19 @@ pub fn write_csv(replay: &Replay, mut w: impl std::io::Write) -> Result<()> {
             a.roll_rate.to_degrees(),
             a.yaw_rate.to_degrees()
         )?;
+        for t in &replay.tracks {
+            match t.angles[i] {
+                Some(v) => write!(
+                    w,
+                    ",{},{},{}",
+                    v[0].to_degrees(),
+                    v[1].to_degrees(),
+                    v[2].to_degrees()
+                )?,
+                None => write!(w, ",,,")?,
+            }
+        }
+        writeln!(w)?;
     }
     Ok(())
 }

@@ -40,7 +40,7 @@ Cargo workspace:
 - **`crates/elle-nav/`** — navigation, hardware-independent and host-tested: home frame (sguaba NED), estimator, L1 guidance. Runs in **observation mode** only (logged, never applied); see [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md)
 - **`drivers/`** — vendored sensor drivers: `mmc5616wa` (mag), `sam-m10q` (GNSS), `bmp390` (baro, local fork patched over crates.io)
 - **`tools/elle-rpc-host/`** — host CLI (TUI dashboard + `direct` commands)
-- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv]`)
+- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv] [--compare]`; `--compare` also runs Madgwick, Mahony and VQF from uf-ahrs, each with and without accel gating, on the same inputs)
 
 ## Building
 
