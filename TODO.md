@@ -11,7 +11,10 @@ mag cal, level cal) and `MAP_KEY_SLOTS = 4`, so a new key means raising it.
 
 ## Pending verification
 
-Implemented, but not yet confirmed on hardware:
+Implemented, but not yet confirmed on hardware. **Nothing since the 200 Hz loop (#33)
+has run on the aircraft**, including the attitude fusion move and filter swap on
+`imu-replay`: [TEST_PLAN Part 0](TEST_PLAN.md#part-0-untested-changes-bench-session-before-the-next-flight)
+is the ordered bench session that covers them before the next flight.
 
 - [ ] **RC failsafe, TX off** (dart): expect event 14 within ~300 ms, disarm, orange rapid flash; then re-arm needs the gesture.
 - [ ] **Host-link failsafe**: kill the TUI / unplug the probe while armed in RPC mode → disarm within ~300 ms. `direct throttle` holds the link until Ctrl-C.
@@ -30,7 +33,7 @@ Implemented, but not yet confirmed on hardware:
 - [ ] **ULog buffering** (branch `ulog-buffering`): a long armed log shows no ULog dropouts after boot (`elle_log.py timing` reports no logging gaps; LOG_0058 had four of 95–180 ms with 8 channel slots).
 - [ ] **200 Hz control loop** (branch `loop-200hz`): bench log shows a 5.00 ms median tick, no late ticks after boot, no ULog dropouts at ~30 kB/s over a session long enough to reach the card's slow phase (LOG_0065 dropped 1.4 s ~3.3 MB in at ~40 kB/s, before `commands`/`engine_data` went to 100 Hz); Stabilized on the stand feels unchanged and doesn't oscillate; elevon pulse within one 5 ms frame of a stick step (TEST_PLAN 6.7). Then a cautious first flight and an autotune pass.
 - [ ] **Navigation observation** (branch `nav-observe`, TEST_PLAN 6.9): home captured before arming and locked in flight; `nav` at 25 Hz with fix age < 250 ms; `gnss_data` at ~5 Hz; bank demand agrees with measured roll when circling clockwise at ~80 m. Check the `log` stage in `loop_stages` did not grow noticeably (sguaba's f64 conversion runs in software, once per fix).
-- [ ] **Raw IMU capture** (branch `imu-replay`, `imu-raw-log` build, TEST_PLAN 6.10): a bench log over ~4 MB has no ULog dropouts; `imu_raw` first indices run without gaps; `imu_raw_ctx.roundtrip_errors` stays 0 (the logged integers reproduce the driver's floats); `core1_load` busy time close to a normal build's; attitude and PID behave as before (the fusion moved to `elle_control::attitude`, bit-identical on the host).
+- [ ] **Raw IMU capture** (branch `imu-replay`, `imu-raw-log` build, TEST_PLAN 6.10): a bench log over ~4 MB has no ULog dropouts; `imu_raw` first indices run without gaps; `imu_raw_ctx.roundtrip_errors` stays 0 (the logged integers reproduce the driver's floats); `core1_load` busy time close to a normal build's; attitude and PID behave as before (the fusion moved to `elle_control::attitude`, bit-identical on the host, and the Madgwick filter now comes from uf-ahrs instead of `ahrs`, within 3e-5° on the host).
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
 
 ## Near term

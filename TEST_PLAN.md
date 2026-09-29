@@ -41,6 +41,77 @@ cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 
 ---
 
+## Part 0: Untested Changes (bench session before the next flight)
+
+**Nothing merged since the 200 Hz loop (#33) has run on the aircraft.** That covers the
+200 Hz control loop and the 100 Hz logging it now uses (#33), navigation observation and
+the reworked GNSS data (#34), and the `imu-replay` branch, which moved the attitude
+fusion into `elle-control` and swapped the filter library (`ahrs` → uf-ahrs). The last
+one changes the code Stabilized flies on. Host tests show the fusion is unchanged
+(bit-identical after the move, within 3e-5° after the swap), but only the aircraft can
+confirm it.
+
+Run this session in order on the **eagle**, props off, then 0.1–0.4 on the dart. Stop at
+the first failure. **No flight until 0.1–0.4 pass.** Copy the logs into `logs/` and
+note the file numbers in each row. Baselines are from LOG_0065 (200 Hz loop, before
+these changes): armed loop time p50 237 µs / p99 949 µs, Core 1 busy mean 373 µs /
+max 869 µs.
+
+```sh
+PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
+```
+
+### 0.1 Attitude (normal flight build, SD card in)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Power up flat and still, leave it 10 min disarmed | Pitch and roll within ±0.5° of the pre-change reading on the same surface, drift < 0.5° over the 10 min (`$PY $LOG sensors`) | | [ ] |
+| 2 | Tilt nose up, nose down, right wing down, left wing down, ~20° each | Pitch positive nose up, roll positive right wing down (CRSF attitude on the radio, then `attitude_data`) | | [ ] |
+| 3 | Part 1.3 in full (Stabilized, armed, in hand) | All seven rows as before: corrects against the tilt, D damps quick rotations | | [ ] |
+| 4 | Rotate 360° in yaw on the bench, slowly | Yaw follows and returns to within ~5° of the start; no jump when the mag reading updates | | [ ] |
+
+### 0.2 Timing and logging (normal flight build)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Armed 15+ min: idle, throttle steps, Manual and Stabilized, until the log passes ~4 MB | `$PY $LOG timing`: median tick 5.00 ms, no late ticks after boot, **no ULog dropouts** | | [ ] |
+| 2 | Same log | Loop time p50/p99 within ~10 % of the baseline; `$PY $LOG stages`: `log` stage not noticeably larger (the navigator runs there, 25 Hz) | | [ ] |
+| 3 | Same log | `core1_load` busy mean/max within ~10 % of the baseline | | [ ] |
+| 4 | Same log | `commands` and `engine_data` at ~100 Hz, `attitude_data` and `controller` at ~200 Hz, `gnss_data` at ~5 Hz (`$PY $LOG list`) | | [ ] |
+| 5 | Scope PIN_12/13 against a stick step (6.7 row 1) | New pulse within one 5 ms frame | | [ ] |
+
+### 0.3 GNSS and navigation observation (outdoors, normal flight build)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Power up outdoors, wait for the fix | Radio FM text `NOHOME` → `WAIT H` once hAcc ≤ 5 m and ≥ 6 satellites | | [ ] |
+| 2 | 6.9 rows 1–3 (home, lock while armed, GNSS covered 5 s) | As in 6.9 | | [ ] |
+| 3 | TUI (RPC build) GNSS panel | Lat/lon as before (now from integer degrees × 10⁷); Spd/Trk `---` if it falls back to NMEA | | [ ] |
+
+### 0.4 Raw IMU capture and replay (`--features imu-raw-log`)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Repeat 0.2 row 1 with this build | No ULog dropouts at ~50 kB/s over 4+ MB; Core 1 busy within a few µs of 0.2 row 3 | | [ ] |
+| 2 | Same log: 6.10 rows 2 and 4 | `imu_raw` indices without gaps, `roundtrip_errors` 0; `elle-replay LOG` prints `OK` (exact) | | [ ] |
+| 3 | Same log, `elle-replay LOG --compare` | Runs; keep the table (differences only, no verdict yet) | | [ ] |
+
+### 0.5 First flight after this session
+
+Only after 0.1–0.4 pass. If 0.4 passed, fly the `imu-raw-log` build (it flies the same
+code, only logs more); otherwise the normal build. Manual take-off, then Stabilized with
+Manual ready. Collect, in this order, stopping at anything unusual:
+
+1. Straight legs both ways, 20 s each.
+2. Steady turns at ~15°, ~30°, ~45°, each direction, 20 s each.
+3. 80 m circles around home, clockwise then anticlockwise (6.9 rows 4–5).
+
+Then the flight rows of TODO's pending list: the 200 Hz loop's autotune pass, and the
+autotune checks. That log also feeds the attitude-filter comparison (`elle-replay
+--compare`, and the turn-correction work).
+
+---
+
 ## Part 1: Axis Verification (props off, Manual mode)
 
 **Firmware: RPC+RC** (`--features rpc-control,rpc-rc,gnss`) + TUI for monitoring.
@@ -86,8 +157,8 @@ Hold board in hand. Verify PID corrects **against** the tilt, not with it.
 | 7 | Quick roll rotation  | D-term damps the motion (opposes rate)      | [x]  |
 
 If P-term is inverted (corrects wrong way at steady angle): the attitude sign for that axis is
-wrong. Roll and roll rate are already negated for this PCB in `Imu::run()`
-(`crates/elle-hardware/src/imu/driver.rs`); fix the sign there, for angle **and** rate.
+wrong. Roll and roll rate are already negated for this PCB in `AttitudePipeline::fuse`
+(`crates/elle-control/src/attitude.rs`); fix the sign there, for angle **and** rate.
 `PITCH_INVERT`/`ROLL_INVERT` only flip the sticks (`elle-control/src/commands.rs`) and
 cannot fix a PID sign.
 If D-term is inverted (accelerates rotation): the rate sign is wrong at the same place.
