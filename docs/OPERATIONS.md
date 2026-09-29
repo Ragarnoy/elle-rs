@@ -208,8 +208,11 @@ Flight Review).
 
 Logged at the 200 Hz control rate: attitude and controller internals (PID terms,
 setpoints, saturation, elevon pulses, loop dt); pilot commands and engine telemetry at
-100 Hz; status at 8 Hz; baro, mag and GNSS at their sensor rates; PID gains once per file and on every
-change. ESC link health (`esc_health`, ~1 Hz) counts DShot telemetry replies, timeouts,
+100 Hz; status at 8 Hz; baro and mag at their sensor rates; every GNSS solution (5 Hz); PID gains
+once per file and on every change. The navigator (`nav`, 25 Hz, GNSS builds) runs in
+observation mode: it logs what it would bank for a loiter around home and never moves
+a surface. Home is the last good fix (h_acc ≤ 5 m, ≥ 6 satellites) before arming, and
+stays put until disarm; power up where the aircraft can see the sky if you want it. ESC link health (`esc_health`, ~1 Hz) counts DShot telemetry replies, timeouts,
 corrupt replies and re-configurations per ESC: corrupt replies point at wiring noise, and
 timeouts climbing at idle mean an ESC is silent. Core 1 load (`core1_load`, ~1 Hz) gives
 the IMU task's mean and max busy time per 1 ms sample and its longest mag and baro reads.

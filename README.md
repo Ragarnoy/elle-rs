@@ -24,7 +24,7 @@ the board over a debug probe.
 | `crates/elle-hardware` | Drivers and hardware tasks |
 | `crates/elle-control` | Control algorithms (PID, governor, autotune, calibration), host-tested |
 | `crates/elle-config` | Every tunable constant, per platform |
-| `crates/elle-rpc-icd`, `crates/elle-ulog`, `crates/elle-error`, `crates/elle-nav` | RPC contract, ULog encoder, errors, navigation (future) |
+| `crates/elle-rpc-icd`, `crates/elle-ulog`, `crates/elle-error`, `crates/elle-nav` | RPC contract, ULog encoder, errors, navigation (observation mode: computed and logged, not applied) |
 | `drivers/` | Vendored sensor drivers |
 | `tools/elle-rpc-host` | Host TUI and command-line tool |
 

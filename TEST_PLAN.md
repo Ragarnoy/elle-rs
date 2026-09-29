@@ -348,7 +348,8 @@ Each test leaves a signature in the data that can be checked after the fact.
 | 5 | `system_status` messages present     | Yes, ~8 Hz rate                  | [ ]  |
 | 6 | `barometer_data` messages present    | Yes, ~5 Hz rate                  | [ ]  |
 | 7 | `magnetometer_data` messages present | Yes, ~10 Hz rate                 | [ ]  |
-| 8 | `gnss_data` messages present         | Yes, ~1 Hz rate                  | [ ]  |
+| 8 | `gnss_data` messages present         | Yes, ~5 Hz (one per solution)    | [ ]  |
+| 8b | `nav` messages present (GNSS builds) | Yes, ~25 Hz                     | [ ]  |
 | 9 | `pid_gains` messages present         | Once at file start, then on change | [ ]  |
 | 10 | `log_event` messages present        | Yes (arm/disarm/kill events)     | [ ]  |
 | 11 | `autotune_status` messages present  | Yes (if autotune was run in 3.4) | [ ]  |
@@ -506,6 +507,19 @@ does nothing there):
 | 6 | Idle soak 15–30 min | No twitches or odd beeps; `bad_frames` stays 0 (a steady rate points at wiring) | [ ]  |
 
 ---
+
+### 6.9 Navigation Observation (outdoors, GNSS fix)
+
+The navigator only logs; nothing it computes reaches the elevons. Read the results
+with `elle_log.py nav` and `elle_log.py sensors`.
+
+| # | Test | Expected | Pass |
+|---|------|----------|------|
+| 1 | Power up outdoors, wait for a 3D fix, disarmed | `nav.status` has home (bit 0) and position (bit 2); `fix_age_ms` < 250 | [ ] |
+| 2 | Arm, carry the aircraft ~50 m, disarm | Home locked (bit 1) while armed; `home_dist_m` grows to ~50 m and bearing points back; after disarm home follows the aircraft again | [ ] |
+| 3 | Cover the antenna (or unplug GNSS) for 5 s while armed | Position drops (bit 2 clear) ~1 s after the last fix; extrapolated (bit 5) only for the first 400 ms; `bank_demand_deg` NaN | [ ] |
+| 4 | Flight in Stabilized: circle the field clockwise at ~80 m, then anticlockwise | Clockwise: `bank_demand_deg` and `roll_deg` both positive and close; anticlockwise: they disagree in sign (demand still asks for a right turn). Confirms the sign conventions | [ ] |
+| 5 | Same flight | `gnss_data` ~5/s with `pvt_active` = 1; baro and GNSS height above home within a few metres | [ ] |
 
 ## Abort Criteria
 

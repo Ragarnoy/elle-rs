@@ -44,6 +44,7 @@ or more files and degrades gracefully on older logs that lack newer messages:
 | `timing` | tick period and late ticks (> two periods) per 10 s, `loop_time_us` by armed/mode/engines, Core 1 load and FIFO backlogs |
 | `esc` | per-ESC replies / timeouts / corrupt replies / re-configurations, target-while-disarmed check, whether EDT (voltage) ever arrived |
 | `sensors` | mag and baro logged rate vs value-change rate, GNSS sats/fix, attitude ranges |
+| `nav` | navigator in observation mode: home/position/velocity/guidance validity shares, fix age, distance and height, bank demand vs measured roll |
 | `stages` | flight-loop time per stage (`loop_stages`: intake, update, outputs, switches, autotune, log, tail) by armed/mode/engines, and the DShot executor's share of Core 0 |
 | `window FILE T0 T1` | events, late ticks, loop time, RC age, modes between two times (seconds from the file's first record) |
 
@@ -59,6 +60,7 @@ Messages were added over time, so their presence dates a log:
 | `controller` | per-tick controller internals (before it, use `commands` timestamps for tick timing) |
 | `esc_health` | DShot timing work: idle telemetry, ESC re-configuration |
 | `core1_load` | Core 1 load logging (and the async mag/baro task) |
+| `nav` | navigation observation mode; `gnss_data` then comes once per solution (~5/s) with integer `lat_e7`/`lon_e7` and `pvt_active` (older logs: ~1/s, float `latitude`/`longitude`) |
 | mag value changes ≈ 10/s | the MMC5616WA `Cmm_freq_en` fix; ≈ 1/s means before it |
 
 When comparing two builds, ask the user to run both under the same procedure
