@@ -38,14 +38,15 @@ still target it, but new recordings go to the SD card.
 | `nav` | 64 | 25 Hz | navigator, observation mode (`gnss` builds): `status` bits (`elle_nav::status`), fix age, position/velocity north-east of home, baro and GNSS height above home, distance/bearing to home, track error, lateral acceleration and bank demand for a loiter around home (not applied), measured roll; invalid fields NaN |
 | `imu_raw` | 195 | 100 Hz (10 samples each) | `imu-raw-log` builds: first sample index, 10 × gyro + accel as the 20-bit FIFO integers (24-bit LE), IMU temperature; timestamp = when the first sample was read |
 | `imu_raw_mag` | 25 | on change (~10 Hz) | `imu-raw-log` builds: mag vector as fed to the AHRS (airframe frame), from sample `index` on |
-| `imu_raw_ctx` | 60 | 1 Hz + on change | `imu-raw-log` builds: AHRS quaternion entering sample `index`, gyro bias and mount it was fused with, encode round-trip errors |
+| `imu_raw_ctx` | 85 | 1 Hz + on change | `imu-raw-log` builds: AHRS quaternion entering sample `index`, gyro bias and mount it was fused with, encode round-trip errors, turn compensation state (`aid_state`) and the build's `turn_comp` mode and `gate_g` |
+| `imu_raw_fix` | 25 | ~5 Hz, turn compensation on | `imu-raw-log` builds: each GNSS fix handed to the attitude pipeline (receive time, first sample `index`, NED velocity, `pvt`) |
 
 Sizes are the payload after the 3-byte message header. In `imu-raw-log` builds
 `attitude_data` is logged at 50 Hz (a replay regenerates every sample).
 
 The whole header (definitions, info, one subscription per message) is written into
 the writer's 4 KB buffer before the first flush; `tests/header.rs` fails when less
-than 256 B would be left (3.5 KB used today). Rates are set in `elle-app`
+than 256 B would be left (3.7 KB used today). Rates are set in `elle-app`
 (`ULOG_*_DIVISOR` in `elle-config`).
 
 Each message struct carries its ULog format string as `FORMAT`; the `'F'` definition

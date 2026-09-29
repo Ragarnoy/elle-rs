@@ -15,7 +15,8 @@ behaviour changes.
 | [`STATE_DIAGRAMS.md`](STATE_DIAGRAMS.md) | Arming, failsafe, mode, autotune, calibration state machines |
 | [`TODO.md`](TODO.md) | Feature backlog and items still awaiting hardware verification |
 | [`docs/DART_PID.md`](docs/DART_PID.md) | How the current PID gains were derived from dart flight logs |
-| [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md) | Waypoint navigation design (not started) |
+| [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md) | Navigation plan: observation mode done, next steps |
+| [`docs/ATTITUDE.md`](docs/ATTITUDE.md) | Attitude estimation: the turn problem, turn compensation (off), raw capture and replay, simulated results, how a mode gets enabled |
 | [`docs/embassy-rp-sio-irq-fifo-flash-bug.md`](docs/embassy-rp-sio-irq-fifo-flash-bug.md) | Why the flash manager masks the SIO FIFO IRQ |
 | [`tools/elle-rpc-host/README.md`](tools/elle-rpc-host/README.md) | Host TUI and `direct` commands |
 | [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md) | ULog writer and message set |
@@ -40,7 +41,7 @@ Cargo workspace:
 - **`crates/elle-nav/`** — navigation, hardware-independent and host-tested: home frame (sguaba NED), estimator, L1 guidance. Runs in **observation mode** only (logged, never applied); see [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md)
 - **`drivers/`** — vendored sensor drivers: `mmc5616wa` (mag), `sam-m10q` (GNSS), `bmp390` (baro, local fork patched over crates.io)
 - **`tools/elle-rpc-host/`** — host CLI (TUI dashboard + `direct` commands)
-- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv] [--compare]`). `--compare` also runs Madgwick, Mahony and VQF from uf-ahrs with and without turn compensation and accel gating on the same inputs, and scores all of them against a gyro-only reference through turns (`reference.rs`: anchored on the accel's gravity direction in straight and level flight, drift closed at the next anchor). `--simulate out.ulg [--wind-north/--wind-east/--vibration/--gyro-bias-dps]` writes a simulated flight (`sim.rs`) and analyses it, adding a score against the simulated truth
+- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv] [--compare]`). `--compare` also runs Madgwick, Mahony and VQF from uf-ahrs with and without turn compensation and accel gating on the same inputs, and scores all of them against a gyro-only reference through turns (`reference.rs`: anchored on the accel's gravity direction in straight and level flight, drift closed at the next anchor). `--simulate out.ulg [--wind-north/--wind-east/--vibration/--gyro-bias-dps]` writes a simulated flight (`sim.rs`) and analyses it, adding a score against the simulated truth; `--score-by-rate` scores by turn rate instead of bank, for the vehicle ground test (TEST_PLAN 7.2)
 
 ## Building
 
@@ -181,7 +182,11 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 
 Steps 2–6 per sample are `elle_control::attitude::AttitudePipeline` (host-testable,
 the code a log replay runs); the driver keeps the FIFO, bias estimation, level-cal
-collection and publishing.
+collection and publishing. The pipeline also holds **turn compensation**
+(`AHRS_TURN_COMP`: `Off` by default, `Centripetal`, `GnssAccel`) and an optional accel
+gate (`AHRS_ACCEL_GATE_G`); with a mode on, the IMU task hands it each new GNSS solution.
+Off and ungated it is the plain Madgwick update bit for bit. Why and how it gets turned
+on: [`docs/ATTITUDE.md`](docs/ATTITUDE.md), TEST_PLAN Part 7.
 
 1. INT1 DATA_RDY wakes the task; it drains the FIFO, fusing every sample in order, up to `IMU_MAX_DRAIN` (32) per wake-up, publishing only the newest attitude (event 45 on multi-sample drains, rate-limited).
 2. Gyro bias (`elle_control::gyro_bias`) is measured over the first still second and subtracted from every sample. `IMU_STATUS.calibrated` means "bias measured".

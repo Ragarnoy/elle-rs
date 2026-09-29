@@ -46,10 +46,11 @@ cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 **Nothing merged since the 200 Hz loop (#33) has run on the aircraft.** That covers the
 200 Hz control loop and the 100 Hz logging it now uses (#33), navigation observation and
 the reworked GNSS data (#34), and the `imu-replay` branch, which moved the attitude
-fusion into `elle-control` and swapped the filter library (`ahrs` → uf-ahrs). The last
-one changes the code Stabilized flies on. Host tests show the fusion is unchanged
-(bit-identical after the move, within 3e-5° after the swap), but only the aircraft can
-confirm it.
+fusion into `elle-control`, swapped the filter library (`ahrs` → uf-ahrs) and added turn
+compensation (off). That changes the code Stabilized flies on. Host tests show the
+fusion is unchanged (bit-identical after the move, within 3e-5° after the swap, and
+compensation off is the plain filter bit for bit), but only the aircraft can confirm it.
+Turning compensation on is Part 7, after this session.
 
 Run this session in order on the **eagle**, props off, then 0.1–0.4 on the dart. Stop at
 the first failure. **No flight until 0.1–0.4 pass.** Copy the logs into `logs/` and
@@ -94,12 +95,14 @@ PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
 |---|------|----------|-----|------|
 | 1 | Repeat 0.2 row 1 with this build | No ULog dropouts at ~50 kB/s over 4+ MB; Core 1 busy within a few µs of 0.2 row 3 | | [ ] |
 | 2 | Same log: 6.10 rows 2 and 4 | `imu_raw` indices without gaps, `roundtrip_errors` 0; `elle-replay LOG` prints `OK` (exact) | | [ ] |
-| 3 | Same log, `elle-replay LOG --compare` | Runs; keep the table (differences only, no verdict yet) | | [ ] |
+| 3 | Same log, `elle-replay LOG --compare` | Runs; reference coverage printed (on the bench mostly "level", nothing scored) | | [ ] |
+| 4 | Before the flight: Part 7.2 (vehicle test) with this build | See 7.2 | | [ ] |
 
 ### 0.5 First flight after this session
 
 Only after 0.1–0.4 pass. If 0.4 passed, fly the `imu-raw-log` build (it flies the same
-code, only logs more); otherwise the normal build. Manual take-off, then Stabilized with
+code, only logs more); otherwise the normal build. Turn compensation stays off: this
+flight is the data for Part 7. Manual take-off, then Stabilized with
 Manual ready. Collect, in this order, stopping at anything unusual:
 
 1. Straight legs both ways, 20 s each.
@@ -604,6 +607,84 @@ differently; the build records more and logs `attitude_data` at 50 Hz.
 | 3 | Same log | `core1_load` busy mean/max within a few µs of a normal build's | [ ] |
 | 4 | Same log, `elle-replay FILE` | Every `attitude_data` sample while synced matches the replay exactly | [ ] |
 | 5 | Stabilized on the stand, stick steps and disturbances | Feels and responds as before (the fusion code moved, bit-identical on the host) | [ ] |
+
+## Part 7: Attitude Estimation and Turn Compensation
+
+Background, settings and the simulated numbers: [`docs/ATTITUDE.md`](docs/ATTITUDE.md).
+The firmware ships with `AHRS_TURN_COMP = Off` and no accel gate; nothing in 7.1–7.4
+changes how the aircraft flies. 7.5 onwards only after 7.4 picks a mode.
+
+```sh
+R="cargo run -q --release -p elle-replay --target x86_64-unknown-linux-gnu --"
+```
+
+### 7.1 Host checks (every PR, CI)
+
+| # | Check | Expected | Pass |
+|---|-------|----------|------|
+| 1 | `cargo test -p elle-control --target x86_64-unknown-linux-gnu` | Attitude pipeline, turn compensation, raw capture: all pass (includes exact replay per mode and across a gap, and Off = plain Madgwick bit for bit) | [ ] |
+| 2 | `cargo test -p elle-replay --target x86_64-unknown-linux-gnu` | Simulator, reference, scoring, vehicle test: all pass | [ ] |
+| 3 | `$R --simulate /tmp/s.ulg --compare --wind-east 6 --vibration 2 --gyro-bias-dps 0.03` | `OK` (exact); reference ≤ 0.2° off the truth; `madgwick-ce` ≈ 1.6° roll RMS, firmware ≈ 5.6° | [ ] |
+
+### 7.2 Vehicle ground test (real sensors, nothing flown)
+
+The aircraft strapped **level** in a car (nose forward, props off, engines disarmed),
+`imu-raw-log` build, compensation off. The car turns without banking, so the truth is
+level while the accel feels the sideways acceleration. GNSS fix outdoors first.
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Park 60 s, then drive straight 20 s at ≥ 25 km/h (7 m/s) | Straight stretches for the reference to anchor on | | [ ] |
+| 2 | Two or three laps of a roundabout each way, ≥ 25 km/h, straight 10 s between | | | [ ] |
+| 3 | `$R LOG --compare --score-by-rate` | `OK` (exact); reference covers the curves | | [ ] |
+| 4 | Same | `firmware` leans in curves (several degrees RMS, sign opposite per direction); `madgwick-cc` and `madgwick-ce` within ~1–2° of level. If a compensated variant is **worse** than the firmware, the forward axis or a sign is wrong: stop and investigate | | [ ] |
+| 5 | Same, `--csv /tmp/car.csv` in PlotJuggler | Roll of each variant through the curves; reference flat | | [ ] |
+
+### 7.3 Data flights (compensation off, `imu-raw-log` build)
+
+Part 0.5's flight, then one more on a windier day. Straight legs of ≥ 5 s between every
+manoeuvre (the reference anchors there): 20 s straight both ways; steady turns at ~15°,
+~30°, ~45° each way, 20 s each; 80 m circles both ways (also TEST_PLAN 6.9).
+
+| # | Check | Expected | Log | Pass |
+|---|-------|----------|-----|------|
+| 1 | `$R LOG --compare` | `OK`; no gaps (or few), `roundtrip_errors` 0 | | [ ] |
+| 2 | Reference coverage | ≥ 50 % of the turn time scored | | [ ] |
+| 3 | Firmware row | Record its roll/pitch RMS in turns and the per-direction mean: this is the size of the problem on the real aircraft (simulated: ~5–7°) | | [ ] |
+
+### 7.4 Decision
+
+Criteria in [`docs/ATTITUDE.md`](docs/ATTITUDE.md#from-data-to-the-aircraft): the mode
+with the lowest roll RMS in turns, if on **every** data flight it halves the firmware's
+roll RMS (and by ≥ 2°) in both directions and does not worsen pitch RMS by > 0.5°.
+Record the table from each flight in the PR that enables it. Otherwise stay `Off`.
+
+### 7.5 Enable: bench regression (props off)
+
+Set `AHRS_TURN_COMP` to the chosen mode, build flight + `imu-raw-log`.
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Part 0.1 rows 1–4 | Unchanged (below 6 m/s there is no compensation) | | [ ] |
+| 2 | 10 min armed idle outdoors with a GNSS fix | `core1_load` busy mean/max within ~10 µs of an `Off` build | | [ ] |
+| 3 | Same log, `$R LOG` | `OK` (exact) with `imu_raw_fix` records present (~5/s) and `imu_raw_ctx.turn_comp` set | | [ ] |
+| 4 | Repeat 7.2 with this build | The **firmware** now stays level in the curves, like the variant did in 7.2 | | [ ] |
+
+### 7.6 Enable: first flight
+
+Stabilized, Manual ready, calm day. Straight, then turns at ~15° and ~30° each way, then
+circles.
+
+| # | Check | Expected | Log | Pass |
+|---|-------|----------|-----|------|
+| 1 | Feel | Turns hold bank without the slow tightening; no oscillation; wings level after roll-out | | [ ] |
+| 2 | `$R LOG --compare` | `OK`; the firmware row now matches the chosen variant's row from 7.4 | | [ ] |
+| 3 | 6.9 row 4 (circling) | Bank demand vs measured roll agree better than before | | [ ] |
+
+### 7.7 Enable: retune
+
+The PID sees a different (better) attitude in turns: rerun the autotune (both axes) and
+compare gains with the previous set. Then a windy-day flight repeating 7.6.
 
 ## Abort Criteria
 

@@ -67,7 +67,9 @@ them all against a gyro-only reference in turns (roll error mean per direction, 
 pitch RMS). The reference needs straight-and-level stretches of ≥ 2 s between
 manoeuvres to anchor on; its coverage is printed. Trust differences larger than
 ~0.5° only. `--simulate out.ulg --wind-east 6 --vibration 2` runs the same analysis
-on a simulated flight, with the truth alongside.
+on a simulated flight, with the truth alongside. For the vehicle ground test (aircraft
+level in a car, TEST_PLAN 7.2) add `--score-by-rate`: a car turns without banking, so
+turns are picked by turn rate and the truth is level. Background: `docs/ATTITUDE.md`.
 
 ## 3. Identify the build
 
