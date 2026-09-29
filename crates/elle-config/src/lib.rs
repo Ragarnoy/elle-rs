@@ -152,6 +152,24 @@ pub const IMU_SPI_FREQ: u32 = 8_000_000; // 8 MHz SPI clock (ICM-42686-P rated t
 pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
 /// Madgwick AHRS filter gain (higher = faster convergence, more noise)
 pub const AHRS_BETA: f32 = 0.033;
+/// Turn compensation (`elle_control::attitude::TurnComp`): remove the
+/// centripetal acceleration (gyro rate × GNSS ground speed along the nose)
+/// from the accel before the AHRS, so a sustained turn is not levelled. Off
+/// until replayed flight data shows it helps (`elle-replay --compare`).
+pub const AHRS_TURN_COMP: bool = false;
+/// Below this GNSS ground speed there is no turn compensation, m/s.
+pub const AHRS_TURN_COMP_MIN_SPEED_MS: f32 = 6.0;
+/// A GNSS solution older than this is not used for turn compensation, ms.
+pub const AHRS_TURN_COMP_MAX_AGE_MS: u32 = 300;
+/// Turn compensation fades in and out over this long, s (no step in attitude).
+pub const AHRS_TURN_COMP_RAMP_S: f32 = 1.0;
+/// Accel gate: the AHRS skips the accel (gyro-only update) while the low-passed
+/// accel magnitude is further than this from 1 g. `None` = never skip.
+pub const AHRS_ACCEL_GATE_G: Option<f32> = None;
+/// Corner of the low-pass on the accel magnitude the gate reads, Hz: well
+/// below motor vibration, so that does not trip it.
+pub const AHRS_ACCEL_GATE_LPF_HZ: f32 = 5.0;
+const _: () = assert!(AHRS_TURN_COMP_MIN_SPEED_MS > 0.0 && AHRS_TURN_COMP_RAMP_S > 0.0);
 /// Corner of the 2nd-order Butterworth low-pass on the gyro rates handed to the
 /// attitude PID, run at the 1 kHz IMU rate. Engine vibration (eagle EDFs:
 /// 20-30 deg/s of roll-rate noise at 7-9k rpm) otherwise aliases into the

@@ -4,15 +4,15 @@
 //! the logged bias removed and the accel, both rotated by the logged mount,
 //! and the mag vector as fed. It is seeded with the firmware's quaternion when
 //! the replay (re)synchronises and then runs on its own, so its difference to
-//! the exact replay is the effect of the filter alone.
+//! the exact replay is the effect of the filter alone. Turn compensation and
+//! the accel gate are the firmware's own (`elle_control::attitude`).
 
 use core::time::Duration;
 
+use elle_control::attitude::{AccelGate, TurnComp};
 use nalgebra::{UnitQuaternion, Vector3};
 use uf_ahrs::{Ahrs, Madgwick, MadgwickParams, Mahony, MahonyParams, Vqf, VqfParams};
 
-/// Standard gravity, m/s².
-const G: f32 = 9.806_65;
 /// IMU sample period.
 const DT: Duration = Duration::from_micros(elle_config::AHRS_SAMPLE_PERIOD_US);
 /// VQF's mag rate: new mag readings arrive at ~10 Hz.
@@ -26,42 +26,69 @@ pub enum Kind {
     Vqf,
 }
 
-/// A filter and how its accelerometer input is gated.
+/// How the accel is corrected for the aircraft's own acceleration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Turn {
+    /// Not at all (the firmware today).
+    Off,
+    /// `TurnComp`: ω × (GNSS ground speed along the nose). Wind-sensitive.
+    Centripetal,
+    /// The GNSS velocity change between fixes, rotated into the body with the
+    /// variant's own attitude. Wind-proof, but 5 Hz and delayed.
+    Earth,
+}
+
+/// A filter, its turn compensation and how its accelerometer input is gated.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Spec {
     pub name: String,
     pub kind: Kind,
+    pub turn: Turn,
     /// Skip the accelerometer (gyro-only update, plus mag for VQF) while the
     /// low-passed accel magnitude is further than this from 1 g, in g.
     pub gate_g: Option<f32>,
 }
 
-/// Corner of the low-pass on the accel magnitude the gate looks at, Hz: slow
-/// enough that motor vibration (100+ Hz) does not trip it.
-pub const GATE_LPF_HZ: f32 = 5.0;
 /// Default gate threshold, g.
 pub const DEFAULT_GATE_G: f32 = 0.25;
 
-/// The comparison set: the firmware's filter as a variant (must equal the exact
-/// replay: a check on the plumbing), then each filter with and without gating.
+/// The comparison set. The first is the firmware's filter as a variant (must
+/// equal the exact replay: a check on the plumbing).
 #[must_use]
 pub fn default_specs() -> Vec<Spec> {
     let fw = Kind::Madgwick {
         beta: elle_config::AHRS_BETA,
     };
-    let spec = |name: &str, kind, gate_g| Spec {
+    let g = Some(DEFAULT_GATE_G);
+    let spec = |name: &str, kind, turn, gate_g| Spec {
         name: name.to_string(),
         kind,
+        turn,
         gate_g,
     };
     vec![
-        spec("madgwick", fw, None),
-        spec("madgwick-gated", fw, Some(DEFAULT_GATE_G)),
-        spec("mahony", Kind::Mahony, None),
-        spec("mahony-gated", Kind::Mahony, Some(DEFAULT_GATE_G)),
-        spec("vqf", Kind::Vqf, None),
-        spec("vqf-gated", Kind::Vqf, Some(DEFAULT_GATE_G)),
+        spec("madgwick", fw, Turn::Off, None),
+        spec("madgwick-gated", fw, Turn::Off, g),
+        spec("madgwick-cc", fw, Turn::Centripetal, None),
+        spec("madgwick-cc-gated", fw, Turn::Centripetal, g),
+        spec("madgwick-ce", fw, Turn::Earth, None),
+        spec("mahony", Kind::Mahony, Turn::Off, None),
+        spec("mahony-cc", Kind::Mahony, Turn::Centripetal, None),
+        spec("vqf", Kind::Vqf, Turn::Off, None),
+        spec("vqf-gated", Kind::Vqf, Turn::Off, g),
+        spec("vqf-cc", Kind::Vqf, Turn::Centripetal, None),
+        spec("vqf-ce", Kind::Vqf, Turn::Earth, None),
     ]
+}
+
+/// What GNSS offers at one sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Aid {
+    /// Ground speed usable for turn compensation (fresh, PVT, fast enough).
+    pub speed: Option<f32>,
+    /// Kinematic acceleration from the last two fixes, filter earth frame
+    /// (north, west, up), while fresh.
+    pub accel_earth: Option<Vector3<f32>>,
 }
 
 enum Filter {
@@ -83,15 +110,24 @@ impl Filter {
             ))),
         }
     }
+
+    fn orientation(&self) -> UnitQuaternion<f32> {
+        match self {
+            Self::Madgwick(f) => f.orientation(),
+            Self::Mahony(f) => f.orientation(),
+            Self::Vqf(f) => f.orientation(),
+        }
+    }
 }
 
 /// One variant running alongside the replay.
 pub struct Running {
     pub spec: Spec,
     filter: Filter,
-    /// Low-passed accel magnitude, m/s² (`None` until the first sample).
-    accel_norm_lp: Option<f32>,
-    lp_alpha: f32,
+    gate: AccelGate,
+    turn: TurnComp,
+    /// Fade for the earth-frame compensation (same ramp as `TurnComp`).
+    earth_weight: TurnComp,
     /// Samples fused without the accelerometer.
     pub gated: u64,
 }
@@ -99,13 +135,12 @@ pub struct Running {
 impl Running {
     #[must_use]
     pub fn new(spec: Spec) -> Self {
-        let dt = DT.as_secs_f32();
-        let rc = 1.0 / (2.0 * core::f32::consts::PI * GATE_LPF_HZ);
         Self {
             filter: Filter::new(spec.kind),
+            gate: AccelGate::new(spec.gate_g),
+            turn: TurnComp::new(),
+            earth_weight: TurnComp::new(),
             spec,
-            accel_norm_lp: None,
-            lp_alpha: dt / (rc + dt),
             gated: 0,
         }
     }
@@ -118,10 +153,12 @@ impl Running {
             Filter::Mahony(f) => f.set_orientation(q),
             Filter::Vqf(f) => f.set_orientation(q),
         }
-        self.accel_norm_lp = None;
+        self.gate = AccelGate::new(self.spec.gate_g);
+        self.turn = TurnComp::new();
+        self.earth_weight = TurnComp::new();
     }
 
-    /// One sample in the airframe frame (gyro debiased and mounted, accel
+    /// One sample in the filter frame (gyro debiased and mounted, accel
     /// mounted, mag as fed; `mag_new` when it changed with this sample).
     /// Returns (pitch, roll, yaw) in the firmware's convention (roll negated).
     pub fn step(
@@ -130,14 +167,27 @@ impl Running {
         accel: Vector3<f32>,
         mag: Option<&Vector3<f32>>,
         mag_new: bool,
+        aid: &Aid,
     ) -> [f32; 3] {
-        let n = accel.norm();
-        let lp = match self.accel_norm_lp {
-            Some(prev) => prev + self.lp_alpha * (n - prev),
-            None => n,
+        let accel = match self.spec.turn {
+            Turn::Off => accel,
+            Turn::Centripetal => {
+                self.turn.update(aid.speed);
+                self.turn.correct(&gyro, &accel)
+            }
+            Turn::Earth => {
+                // Reuse TurnComp's fade as a 0..1 weight (speed is unused).
+                self.earth_weight.update(aid.accel_earth.map(|_| 1.0));
+                match aid.accel_earth {
+                    Some(a) => {
+                        let body = self.filter.orientation().inverse() * a;
+                        accel - body * self.earth_weight.weight()
+                    }
+                    None => accel,
+                }
+            }
         };
-        self.accel_norm_lp = Some(lp);
-        let gate = self.spec.gate_g.is_some_and(|g| (lp - G).abs() > g * G);
+        let gate = self.gate.skip(&accel);
         self.gated += u64::from(gate);
 
         let q = match &mut self.filter {

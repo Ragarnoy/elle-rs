@@ -60,10 +60,14 @@ sample at 1 kHz for plotting:
 cargo run -q -p elle-replay --target x86_64-unknown-linux-gnu -- logs/LOG_NNNN.ulg --csv /tmp/replay.csv
 ```
 
-`--compare` adds the alternative filters (uf-ahrs Madgwick, Mahony, VQF, each also
-with accel gating, `--gate-g`) seeded from the firmware's state, as differences to the
-firmware. A difference is not an error: judge filters against a reference (the
-gyro-only propagation through turns, still to come).
+`--compare` adds the alternative filters (uf-ahrs Madgwick, Mahony, VQF; with and
+without turn compensation, `-cc` ground speed × gyro, `-ce` GNSS acceleration; with
+and without accel gating, `--gate-g`) seeded from the firmware's state, and scores
+them all against a gyro-only reference in turns (roll error mean per direction, RMS,
+pitch RMS). The reference needs straight-and-level stretches of ≥ 2 s between
+manoeuvres to anchor on; its coverage is printed. Trust differences larger than
+~0.5° only. `--simulate out.ulg --wind-east 6 --vibration 2` runs the same analysis
+on a simulated flight, with the truth alongside.
 
 ## 3. Identify the build
 

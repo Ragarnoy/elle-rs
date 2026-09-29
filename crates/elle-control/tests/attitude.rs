@@ -124,3 +124,97 @@ fn seeded_pipelines_replay_identically() {
     }
     assert_eq!(a.quat(), b.quat());
 }
+
+mod turn_comp {
+    use elle_control::attitude::{AccelGate, TurnComp, forward, usable_ground_speed};
+    use nalgebra::Vector3;
+
+    const G: f32 = 9.806_65;
+    const SAMPLES_PER_S: usize = 1000;
+
+    #[test]
+    fn usable_speed_needs_fresh_pvt_and_flying_speed() {
+        let (v, age) = (15.0, 100);
+        assert_eq!(usable_ground_speed(v, age, true), Some(v));
+        assert_eq!(usable_ground_speed(v, age, false), None, "GGA fallback");
+        assert_eq!(
+            usable_ground_speed(v, elle_config::AHRS_TURN_COMP_MAX_AGE_MS + 1, true),
+            None
+        );
+        assert_eq!(
+            usable_ground_speed(elle_config::AHRS_TURN_COMP_MIN_SPEED_MS - 0.1, age, true),
+            None
+        );
+        assert_eq!(usable_ground_speed(f32::NAN, age, true), None);
+    }
+
+    #[test]
+    fn fades_in_and_out_over_the_ramp() {
+        let mut tc = TurnComp::new();
+        let ramp = (elle_config::AHRS_TURN_COMP_RAMP_S * SAMPLES_PER_S as f32) as usize;
+        for _ in 0..ramp / 2 {
+            tc.update(Some(15.0));
+        }
+        assert!((tc.weight() - 0.5).abs() < 0.01, "{}", tc.weight());
+        for _ in 0..ramp {
+            tc.update(Some(15.0));
+        }
+        assert_eq!(tc.weight(), 1.0);
+        // Summed steps land within one step of zero; the clamp then lands it
+        // exactly on zero, where `correct` stops touching the accel.
+        for _ in 0..=ramp {
+            tc.update(None);
+        }
+        assert_eq!(tc.weight(), 0.0);
+    }
+
+    #[test]
+    fn inactive_correction_leaves_the_accel_bit_identical() {
+        let tc = TurnComp::new();
+        let a = Vector3::new(-0.0, 0.3, 9.7);
+        let out = tc.correct(&Vector3::new(0.1, 0.2, 0.3), &a);
+        assert!(
+            out.iter()
+                .zip(a.iter())
+                .all(|(x, y)| x.to_bits() == y.to_bits())
+        );
+    }
+
+    #[test]
+    fn removes_the_centripetal_term_of_a_steady_turn() {
+        // A level coordinated turn seen in the filter frame (forward -x):
+        // yaw rate r about up (+z) at speed V gives centripetal acceleration
+        // r × V·forward, which is what the accel reads on top of gravity.
+        let (v, r) = (15.0f32, 0.3f32);
+        let gyro = Vector3::new(0.0, 0.0, r);
+        let centripetal = gyro.cross(&(forward() * v));
+        let accel = Vector3::new(0.0, 0.0, G) + centripetal;
+        let mut tc = TurnComp::new();
+        for _ in 0..2 * SAMPLES_PER_S {
+            tc.update(Some(v));
+        }
+        let out = tc.correct(&gyro, &accel);
+        assert!((out - Vector3::new(0.0, 0.0, G)).norm() < 1e-4, "{out:?}");
+        // The centripetal term is sideways (along ±y), as a turn's should be.
+        assert!(centripetal.x.abs() < 1e-6 && centripetal.y.abs() > 4.0);
+    }
+
+    #[test]
+    fn gate_trips_on_sustained_load_not_on_vibration() {
+        let mut gate = AccelGate::new(Some(0.25));
+        // 3 m/s² of 150 Hz vibration on 1 g: stays open.
+        let tripped = (0..SAMPLES_PER_S).any(|i| {
+            let vib = 3.0 * (2.0 * core::f32::consts::PI * 150.0 * i as f32 / 1000.0).sin();
+            gate.skip(&Vector3::new(vib, vib, G))
+        });
+        assert!(!tripped);
+        // A sustained 1.5 g pull-up: trips once the low-pass catches up.
+        let tripped_after = (0..SAMPLES_PER_S)
+            .position(|_| gate.skip(&Vector3::new(0.0, 0.0, 1.5 * G)))
+            .expect("gate never tripped");
+        assert!(tripped_after < 200, "{tripped_after} ms");
+        // No threshold: never skips.
+        let mut off = AccelGate::new(None);
+        assert!(!(0..100).any(|_| off.skip(&Vector3::new(0.0, 0.0, 3.0 * G))));
+    }
+}

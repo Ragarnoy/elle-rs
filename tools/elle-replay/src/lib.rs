@@ -7,6 +7,7 @@
 //! ([`Faithfulness`]). Any mismatch means the harness does not reproduce the
 //! firmware, and nothing it says about other filters can be trusted.
 
+pub mod reference;
 pub mod sim;
 pub mod ulog;
 pub mod variants;
@@ -63,12 +64,90 @@ pub struct Track {
     pub gated: u64,
 }
 
+/// The filter-frame inputs at one sample (what the attitude filter fused).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Input {
+    /// Gyro, debiased and mounted, rad/s.
+    pub gyro: Vector3<f32>,
+    /// Accel, mounted, m/s².
+    pub accel: Vector3<f32>,
+    /// The GNSS aid available at this sample.
+    pub aid: variants::Aid,
+}
+
 /// Every recorded sample (synced or not) plus coverage.
 #[derive(Clone, Debug, Default)]
 pub struct Replay {
     pub samples: Vec<Sample>,
+    /// Aligned with `samples`.
+    pub inputs: Vec<Input>,
     pub coverage: Coverage,
     pub tracks: Vec<Track>,
+}
+
+/// One GNSS solution as logged (receive time, NED velocity).
+#[derive(Clone, Copy, Debug)]
+struct Fix {
+    t_us: u64,
+    vel_ned: Vector3<f32>,
+    pvt: bool,
+}
+
+fn fixes(log: &ULog) -> Vec<Fix> {
+    let Some(g) = log.get("gnss_data") else {
+        return Vec::new();
+    };
+    let mut out: Vec<Fix> = g
+        .records
+        .iter()
+        .map(|r| Fix {
+            t_us: g.u64(r, "timestamp"),
+            vel_ned: Vector3::new(
+                g.f32(r, "vel_n_ms"),
+                g.f32(r, "vel_e_ms"),
+                g.f32(r, "vel_d_ms"),
+            ),
+            // Older logs have no flag: take a finite velocity as NAV-PVT.
+            pvt: if g.has("pvt_active") {
+                g.u8(r, "pvt_active") != 0
+            } else {
+                g.f32(r, "vel_n_ms").is_finite()
+            },
+        })
+        .collect();
+    out.sort_by_key(|f| f.t_us);
+    out
+}
+
+/// The earth-frame acceleration from two consecutive fixes stays usable this
+/// long after the second one arrives, µs.
+const ACCEL_FRESH_US: u64 = 300_000;
+/// Two fixes further apart than this give no acceleration, µs.
+const ACCEL_MAX_SPAN_US: u64 = 500_000;
+
+/// The GNSS aid at `t_us`, given the fixes received up to then.
+fn aid_at(fixes: &[Fix], t_us: u64) -> variants::Aid {
+    let n = fixes.partition_point(|f| f.t_us <= t_us);
+    let Some(last) = n.checked_sub(1).map(|i| fixes[i]) else {
+        return variants::Aid::default();
+    };
+    let age_ms = ((t_us - last.t_us) / 1000) as u32;
+    let speed = elle_control::attitude::usable_ground_speed(last.vel_ned.norm(), age_ms, last.pvt);
+    let accel_earth = n
+        .checked_sub(2)
+        .map(|i| fixes[i])
+        .filter(|prev| {
+            prev.pvt
+                && last.pvt
+                && last.t_us - prev.t_us <= ACCEL_MAX_SPAN_US
+                && t_us - last.t_us <= ACCEL_FRESH_US
+        })
+        .map(|prev| {
+            let a = (last.vel_ned - prev.vel_ned) / ((last.t_us - prev.t_us) as f32 * 1e-6);
+            // NED -> the filter's north-west-up.
+            Vector3::new(a.x, -a.y, -a.z)
+        });
+    variants::Aid { speed, accel_earth }
 }
 
 /// How the replay compares with the attitude the firmware logged.
@@ -189,6 +268,8 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
         })
         .collect();
     let mut samples = Vec::new();
+    let mut inputs = Vec::new();
+    let fixes = fixes(log);
     let mut last: Option<u32> = None;
     // The variants' inputs, kept the way the Replayer keeps its own.
     let mut bias = Vector3::zeros();
@@ -232,8 +313,14 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                 was_synced = synced;
                 let g = mount * (Vector3::from(gyro.map(|r| decode(r, GYRO_SCALE))) - bias);
                 let a = mount * Vector3::from(accel.map(|r| decode(r, ACCEL_SCALE)));
+                let aid = aid_at(&fixes, t_us);
+                inputs.push(Input {
+                    gyro: g,
+                    accel: a,
+                    aid,
+                });
                 for (run, track) in runs.iter_mut().zip(&mut tracks) {
-                    let out = run.step(g, a, mag.as_ref(), mag_new);
+                    let out = run.step(g, a, mag.as_ref(), mag_new, &aid);
                     track.angles.push(synced.then_some(out));
                     track.gated = run.gated;
                 }
@@ -243,6 +330,7 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
     }
     Ok(Replay {
         samples,
+        inputs,
         coverage,
         tracks,
     })

@@ -124,3 +124,121 @@ impl AttitudePipeline {
         }
     }
 }
+
+/// Standard gravity, m/s².
+const G: f32 = 9.806_65;
+
+/// The attitude filter's forward axis, in its body frame (after the mount).
+///
+/// Derived from the firmware's hardware-verified conventions: pitch positive
+/// nose up and roll positive right wing down (after `fuse` negates it), with
+/// +1 g on z when level, make the filter's body axes forward −x, right +y,
+/// up +z. `elle-replay`'s simulator checks the derivation against those
+/// conventions; a wrong sign would show in a replay as more error, not less.
+#[must_use]
+pub fn forward() -> Vector3<f32> {
+    Vector3::new(-1.0, 0.0, 0.0)
+}
+
+/// A GNSS ground speed usable for turn compensation: fresh, from NAV-PVT,
+/// and fast enough that the aircraft is flying.
+#[must_use]
+pub fn usable_ground_speed(speed_ms: f32, age_ms: u32, pvt: bool) -> Option<f32> {
+    (pvt && speed_ms.is_finite()
+        && age_ms <= elle_config::AHRS_TURN_COMP_MAX_AGE_MS
+        && speed_ms >= elle_config::AHRS_TURN_COMP_MIN_SPEED_MS)
+        .then_some(speed_ms)
+}
+
+/// Turn compensation: in a coordinated turn the accelerometer reads gravity
+/// plus the centripetal acceleration ω × v, with v the velocity along the
+/// nose. Removing it leaves gravity, so the AHRS stops levelling the turn.
+///
+/// Without an airspeed sensor, v is the GNSS ground speed: in wind that is off
+/// by the wind speed, and the correction by ω × wind (≈ 1 m/s² at 0.2 rad/s in
+/// 5 m/s of wind). It fades in and out over `AHRS_TURN_COMP_RAMP_S`.
+#[derive(Clone, Copy, Debug)]
+pub struct TurnComp {
+    weight: f32,
+    speed: f32,
+    step: f32,
+}
+
+impl Default for TurnComp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TurnComp {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            weight: 0.0,
+            speed: 0.0,
+            step: elle_config::AHRS_SAMPLE_PERIOD_US as f32
+                / 1_000_000.0
+                / elle_config::AHRS_TURN_COMP_RAMP_S,
+        }
+    }
+
+    /// Once per sample: the usable ground speed ([`usable_ground_speed`]), or
+    /// `None`, which fades the correction out on the last speed.
+    pub fn update(&mut self, speed: Option<f32>) {
+        let target = match speed {
+            Some(v) => {
+                self.speed = v;
+                1.0
+            }
+            None => 0.0,
+        };
+        self.weight += (target - self.weight).clamp(-self.step, self.step);
+    }
+
+    /// How much of the correction applies, 0..=1.
+    #[must_use]
+    pub const fn weight(&self) -> f32 {
+        self.weight
+    }
+
+    /// The accel with the centripetal term removed (both in the filter frame,
+    /// gyro debiased). Unchanged while the weight is zero.
+    #[must_use]
+    pub fn correct(&self, gyro: &Vector3<f32>, accel: &Vector3<f32>) -> Vector3<f32> {
+        if self.weight == 0.0 {
+            return *accel;
+        }
+        accel - gyro.cross(&(forward() * self.speed)) * self.weight
+    }
+}
+
+/// Accel gate: says when the accel is too far from 1 g to trust for tilt.
+#[derive(Clone, Copy, Debug)]
+pub struct AccelGate {
+    threshold_ms2: Option<f32>,
+    alpha: f32,
+    norm_lp: Option<f32>,
+}
+
+impl AccelGate {
+    /// `threshold_g`: skip while the low-passed magnitude is further than this
+    /// from 1 g; `None` never skips.
+    #[must_use]
+    pub fn new(threshold_g: Option<f32>) -> Self {
+        let dt = elle_config::AHRS_SAMPLE_PERIOD_US as f32 / 1_000_000.0;
+        let rc = 1.0 / (2.0 * core::f32::consts::PI * elle_config::AHRS_ACCEL_GATE_LPF_HZ);
+        Self {
+            threshold_ms2: threshold_g.map(|g| g * G),
+            alpha: dt / (rc + dt),
+            norm_lp: None,
+        }
+    }
+
+    /// Once per sample: `true` when the accel should be skipped.
+    pub fn skip(&mut self, accel: &Vector3<f32>) -> bool {
+        let n = accel.norm();
+        let lp = self.norm_lp.map_or(n, |p| p + self.alpha * (n - p));
+        self.norm_lp = Some(lp);
+        self.threshold_ms2.is_some_and(|t| (lp - G).abs() > t)
+    }
+}
