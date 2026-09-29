@@ -8,8 +8,8 @@ description: Read and analyse Elle ULog flight logs (LOG_NNNN.ulg from the SD ca
 The firmware records every session to the SD card as `LOG_NNNN.ulg` (PX4 ULog,
 FAT32, one file per boot; logs from older firmware are `LOG_NNNN.ULG`). Message
 set and sizes: [`crates/elle-ulog/README.md`](../../../crates/elle-ulog/README.md).
-Event codes: the host labels in `tools/elle-rpc-host/src/tui/ui.rs`
-(`log_code_text`), also tabled in `docs/OPERATIONS.md`.
+Event codes: the host labels in `tools/elle-rpc-host/src/events.rs`
+(`label`), also tabled in `docs/OPERATIONS.md`.
 
 ## 1. Get the files
 

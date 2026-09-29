@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore")  # pyulog warns on every dropout record
 from pyulog import ULog  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
-UI_RS = REPO / "tools/elle-rpc-host/src/tui/ui.rs"
+UI_RS = REPO / "tools/elle-rpc-host/src/events.rs"
 MODES = {0: "Manual", 1: "Stabilized", 2: "AltitudeHold"}
 
 

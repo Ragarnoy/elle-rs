@@ -262,7 +262,7 @@ Code: `led_pattern` logic in `crates/elle-app/src/flight.rs` and `rpc.rs`.
 
 Firmware events travel to the TUI log panel as numeric codes
 (`crates/elle-hardware/src/event.rs`; host labels in
-`tools/elle-rpc-host/src/tui/ui.rs` `log_code_text()`). They also appear in defmt output
+`tools/elle-rpc-host/src/events.rs` `label()`). They also appear in defmt output
 when built with `defmt-logging`.
 
 | Code | Meaning |

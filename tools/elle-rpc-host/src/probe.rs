@@ -63,7 +63,10 @@ pub fn shutdown_flag() -> Arc<AtomicBool> {
 /// Reads from RTT up channel 1, COBS-decodes frames, and sends them via `inc_tx`.
 /// Receives outbound messages from `out_rx`, COBS-encodes, and writes to RTT down channel 0.
 ///
-/// Exits when `shutdown` is set to `true` or `out_rx` disconnects.
+/// Exits when `shutdown` is set to `true`, `out_rx` disconnects, or the probe
+/// or target stops answering (unplugged, reset, powered off): dropping
+/// `inc_tx` then closes the client's receive side, which callers see as a
+/// lost link rather than a crashed process.
 pub fn rtt_worker(
     mut session: Session,
     mut rtt: Rtt,
@@ -71,7 +74,9 @@ pub fn rtt_worker(
     mut out_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: Arc<AtomicBool>,
 ) {
-    let mut core = session.core(0).unwrap();
+    let Ok(mut core) = session.core(0) else {
+        return;
+    };
     let mut buf = [0u8; 1024];
     let mut inc_staging = vec![];
     let mut pending_out: Option<Vec<u8>> = None;
@@ -84,8 +89,12 @@ pub fn rtt_worker(
         let mut progress = false;
 
         // Read from device (up channel 1 = RPC TX; channel 0 is defmt)
-        let up = rtt.up_channel(1).unwrap();
-        let got = up.read(&mut core, &mut buf).unwrap();
+        let Some(up) = rtt.up_channel(1) else {
+            return;
+        };
+        let Ok(got) = up.read(&mut core, &mut buf) else {
+            return;
+        };
         if got != 0 {
             progress = true;
             let mut window = &buf[..got];
@@ -119,8 +128,12 @@ pub fn rtt_worker(
         }
 
         if let Some(tx) = pending_out.take() {
-            let down = rtt.down_channel(0).unwrap();
-            let ct = down.write(&mut core, &tx).unwrap();
+            let Some(down) = rtt.down_channel(0) else {
+                return;
+            };
+            let Ok(ct) = down.write(&mut core, &tx) else {
+                return;
+            };
             if ct == tx.len() {
                 progress = true;
             } else if ct != 0 {

@@ -18,44 +18,19 @@ use crossterm::terminal::{
 };
 use elle_rpc_icd::*;
 use futures::StreamExt;
-use postcard_rpc::header::VarSeqKind;
-use postcard_rpc::host_client::{HostClient, MultiSubRxError};
-use postcard_rpc::standard_icd::WireError;
+use postcard_rpc::host_client::MultiSubRxError;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use tokio::sync::mpsc;
 
-use crate::probe;
-use crate::wire::{ProbeRttRx, ProbeRttTx, TokSpawn};
+use elle_rpc_host::link::Link;
 
 use self::commands::CommandResult;
 use self::state::AppState;
 
 pub async fn run() -> Result<()> {
     // Connect to probe and set up RTT
-    let (session, rtt) = probe::connect()?;
-
-    let (out_tx, out_rx) = mpsc::channel(64);
-    let (inc_tx, inc_rx) = mpsc::channel(64);
-
-    let app_rx = ProbeRttRx { inc: inc_rx };
-    let app_tx = ProbeRttTx { out: out_tx };
-
-    // Spawn RTT worker thread with shutdown flag
-    let shutdown = probe::shutdown_flag();
-    let shutdown_clone = shutdown.clone();
-    let worker_handle =
-        std::thread::spawn(move || probe::rtt_worker(session, rtt, inc_tx, out_rx, shutdown_clone));
-
-    // Create HostClient
-    let client = HostClient::<WireError>::new_with_wire(
-        app_tx,
-        app_rx,
-        TokSpawn,
-        VarSeqKind::Seq2,
-        "error",
-        64,
-    );
+    let link = Link::connect()?;
+    let client = &link.client;
 
     // Subscribe to topics
     let mut log_sub = client.subscribe_multi::<LogTopic>(64).await?;
@@ -79,7 +54,7 @@ pub async fn run() -> Result<()> {
     state.connected = true;
 
     // Fetch initial version
-    let client_ref = &client;
+    let client_ref = client;
     if let Ok(Ok(v)) = tokio::time::timeout(
         Duration::from_secs(2),
         client_ref.send_resp::<GetVersionEndpoint>(&()),
@@ -143,7 +118,7 @@ pub async fn run() -> Result<()> {
                             state.command_input.clear();
                             if !input.trim().is_empty() {
                                 state.push_command_history(input.clone());
-                                match commands::execute(&input, &client).await {
+                                match commands::execute(&input, client).await {
                                     CommandResult::Ok(msg) => {
                                         if !msg.is_empty() {
                                             state.set_status_message(msg);
@@ -340,8 +315,7 @@ pub async fn run() -> Result<()> {
     io::stdout().execute(LeaveAlternateScreen)?;
 
     // Signal the RTT worker to stop and wait for it to release the probe
-    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
-    let _ = worker_handle.join();
+    link.close();
 
     result
 }

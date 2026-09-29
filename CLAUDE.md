@@ -259,7 +259,7 @@ One outgoing topic: `LogTopic` `(level: u8, code: u16)`.
 TUI dashboard (default) or `direct <cmd>`. `probe.rs` (probe-rs + RTT worker thread),
 `wire.rs` (tokio ↔ HostClient), `tui/` (event loop, state, ui, commands), `direct.rs`
 (one-shot commands; holds the link with 100 ms pings after commands that leave
-something moving). Event code labels: `tui/ui.rs` `log_code_text()` — add one for every
+something moving). Event code labels: `src/events.rs` `label()` — add one for every
 new `EVT_*`. Poll rates: attitude 10 Hz, status 0.5 Hz, mag 5 Hz, baro 1 Hz, GNSS 1 Hz,
 engine 5 Hz, RC 20 Hz, controller output 10 Hz.
 
@@ -311,7 +311,7 @@ the binaries' SWI handler).
 - **Constants live in `elle-config`**, with `const _: () = assert!(…)` for invariants; per-platform values are `#[cfg(feature = "platform-dart")]` pairs.
 - **Lend large structs to async fns, don't move them.** Passing `FlightController` or `ULogLogger` by value duplicates their storage in every enclosing future (+7.3 kB .bss once); `boot::run` builds the controller and lends `&mut`.
 - No `const fn` on `&mut self` methods.
-- New event: add the `EVT_*` constant in `event.rs`, a host label in `ui.rs`, and a row in the OPERATIONS.md table. Retired codes stay reserved.
+- New event: add the `EVT_*` constant in `event.rs`, a host label in `tools/elle-rpc-host/src/events.rs`, and a row in the OPERATIONS.md table. Retired codes stay reserved.
 - New pure logic goes in `elle-control` with host tests in `crates/elle-control/tests/`.
 - Commit and PR text carries no AI attribution.
 

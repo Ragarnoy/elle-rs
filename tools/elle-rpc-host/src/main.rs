@@ -7,9 +7,7 @@
 //! - Direct: Single commands via debug probe (for scripting)
 
 mod direct;
-mod probe;
 mod tui;
-mod wire;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
