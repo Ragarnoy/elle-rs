@@ -14,6 +14,8 @@ compile_error!("rpc-rc requires rpc-control (RC command source only applies in R
 pub mod boot;
 mod engines;
 mod logging;
+#[cfg(feature = "gnss")]
+mod nav;
 mod support;
 pub mod tasks;
 

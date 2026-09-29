@@ -11,8 +11,6 @@
 //! the module's known power-on defaults instead of inheriting unknown state.
 
 use embassy_rp::uart::{BufferedUart, BufferedUartRx, BufferedUartTx};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 
 use sam_m10q::asynch::{AckStatus, SamM10q};
@@ -23,12 +21,24 @@ use sam_m10q::ubx::{self, nav};
 
 use crate::elle_event;
 use crate::event;
+use crate::signal_cache::SignalCache;
 
 /// GNSS solution, independent of the RPC ICD types.
-#[derive(Clone, Copy, Debug, Default)]
+///
+/// Fields that the source of the current fix does not provide are NaN, not
+/// the last value another source left behind: on the GGA fallback that is
+/// every velocity and accuracy field.
+#[derive(Clone, Copy, Debug)]
 pub struct GnssData {
-    pub latitude: f32,
-    pub longitude: f32,
+    /// When the frame that last updated the fix was received, µs since boot;
+    /// 0 before the first one. Consumers use it to age the fix and to tell a
+    /// new solution from the same one read twice.
+    pub sample_us: u64,
+    /// Latitude, degrees × 10⁷ (the NAV-PVT encoding; `f32` degrees would
+    /// round to ~0.5 m).
+    pub lat_e7: i32,
+    /// Longitude, degrees × 10⁷.
+    pub lon_e7: i32,
     pub altitude_m: f32,
     /// 0 = no fix, 1 = GPS, 2 = DGPS, 3 = other.
     pub fix_quality: u8,
@@ -74,6 +84,44 @@ pub struct GnssData {
     pub sats_in_view: u8,
 }
 
+impl GnssData {
+    /// No fix yet: position zero, everything the receiver has not reported NaN.
+    pub const EMPTY: Self = Self {
+        sample_us: 0,
+        lat_e7: 0,
+        lon_e7: 0,
+        altitude_m: 0.0,
+        fix_quality: 0,
+        num_satellites: 0,
+        hdop: 99.9,
+        vel_n_ms: f32::NAN,
+        vel_e_ms: f32::NAN,
+        vel_d_ms: f32::NAN,
+        ground_speed_ms: f32::NAN,
+        heading_motion_deg: f32::NAN,
+        h_acc_m: f32::NAN,
+        v_acc_m: f32::NAN,
+        s_acc_ms: f32::NAN,
+        pvt_active: false,
+        link_baud: 0,
+        nav_rate_ms: 0,
+        cfg_mask: 0,
+        sats_in_view: 0,
+    };
+
+    /// Latitude in degrees.
+    #[must_use]
+    pub fn latitude_deg(&self) -> f64 {
+        f64::from(self.lat_e7) * 1e-7
+    }
+
+    /// Longitude in degrees.
+    #[must_use]
+    pub fn longitude_deg(&self) -> f64 {
+        f64::from(self.lon_e7) * 1e-7
+    }
+}
+
 /// Satellites in view, tracked per constellation and summed.
 ///
 /// Each constellation sends its own GSV set with its own count, so a single
@@ -109,7 +157,8 @@ impl SatsInView {
     }
 }
 
-pub static GNSS_SIGNAL: Signal<CriticalSectionRawMutex, GnssData> = Signal::new();
+/// The latest solution (and link state), for the navigator, ULog, RPC and CRSF.
+pub static GNSS: SignalCache<GnssData> = SignalCache::new(GnssData::EMPTY);
 
 /// Baud rate the module powers up at.
 pub const DEFAULT_BAUD: u32 = 9600;
@@ -466,10 +515,10 @@ pub async fn gnss_task(mut uart: BufferedUart<'static>) {
 /// The two must not drift apart — a stale CRSF frame is a wrong home point on
 /// the radio, which is worse than a stale TUI panel.
 fn publish(data: &GnssData) {
-    GNSS_SIGNAL.signal(*data);
+    GNSS.publish(*data);
     crate::crsf::TELEMETRY_GNSS.signal(crate::crsf::TelemetryGpsData {
-        latitude: data.latitude,
-        longitude: data.longitude,
+        lat_e7: data.lat_e7,
+        lon_e7: data.lon_e7,
         altitude_m: data.altitude_m,
         num_satellites: data.num_satellites,
         ground_speed_ms: data.ground_speed_ms,
@@ -499,17 +548,15 @@ async fn run(uart: &mut BufferedUart<'_>, fast: bool, nav_rate_ms: u16, cfg_mask
     let mut gnss = SamM10q::new(rx, tx);
 
     let mut data = GnssData {
-        hdop: 99.9,
         link_baud: if fast { TARGET_BAUD } else { DEFAULT_BAUD },
         nav_rate_ms,
         cfg_mask,
-        sats_in_view: 0,
-        ..GnssData::default()
+        ..GnssData::EMPTY
     };
     // Publish once up front so the link state is visible even before the first
     // fix — a receiver that never gets a fix should still report its baud rate
     // rather than leaving the host with nothing to read.
-    GNSS_SIGNAL.signal(data);
+    GNSS.publish(data);
     let mut last_pvt: Option<Instant> = None;
     // Last time *either* source updated the fix. `last_pvt` alone decides which
     // source steers; this decides whether the fix has gone stale.
@@ -625,6 +672,7 @@ async fn run(uart: &mut BufferedUart<'_>, fast: bool, nav_rate_ms: u16, cfg_mask
 
         if updated {
             last_fix_update = Some(now);
+            data.sample_us = now.as_micros();
         }
         let fix_fresh = last_fix_update.is_some_and(|t| now.duration_since(t) < PVT_STALE);
 
@@ -708,8 +756,8 @@ fn apply_pvt(data: &mut GnssData, pvt: &nav::NavPvtRef<'_>) {
     // Hold the last good position through a dropout rather than snapping to
     // zero, matching what the GGA path has always done.
     if data.fix_quality > 0 {
-        data.latitude = pvt.latitude() as f32;
-        data.longitude = pvt.longitude() as f32;
+        data.lat_e7 = pvt.latitude_raw();
+        data.lon_e7 = pvt.longitude_raw();
         data.altitude_m = pvt.height_msl() as f32;
     }
 
@@ -737,16 +785,25 @@ fn apply_gga(data: &mut GnssData, gga: &sam_m10q::nmea::sentences::GgaData) {
 
     if data.fix_quality > 0 {
         if let Some(lat) = gga.latitude {
-            data.latitude = lat as f32;
+            data.lat_e7 = libm::round(lat * 1e7) as i32;
         }
         if let Some(lon) = gga.longitude {
-            data.longitude = lon as f32;
+            data.lon_e7 = libm::round(lon * 1e7) as i32;
         }
         if let Some(alt) = gga.altitude {
             data.altitude_m = alt;
         }
     }
 
-    // GGA carries none of the velocity or accuracy fields; leave whatever the
-    // last NAV-PVT left behind rather than publishing invented zeroes.
+    // GGA carries none of the velocity or accuracy fields. Clear them rather
+    // than leave the last NAV-PVT values looking current (a stale velocity
+    // would steer the navigator); NaN also fails every accuracy gate.
+    data.vel_n_ms = f32::NAN;
+    data.vel_e_ms = f32::NAN;
+    data.vel_d_ms = f32::NAN;
+    data.ground_speed_ms = f32::NAN;
+    data.heading_motion_deg = f32::NAN;
+    data.h_acc_m = f32::NAN;
+    data.v_acc_m = f32::NAN;
+    data.s_acc_ms = f32::NAN;
 }

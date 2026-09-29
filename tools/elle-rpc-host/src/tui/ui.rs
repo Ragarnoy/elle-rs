@@ -441,7 +441,12 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                     Line::from(vec![
                         Span::styled("  Spd: ", Style::default().fg(LABEL)),
                         Span::styled(
-                            format!("{:.1} m/s", g.ground_speed_ms),
+                            // NaN on the NMEA fallback, which has no velocity.
+                            if g.ground_speed_ms.is_finite() {
+                                format!("{:.1} m/s", g.ground_speed_ms)
+                            } else {
+                                "---".to_string()
+                            },
                             Style::default().fg(if g.fix_quality == 0 {
                                 MUTED
                             } else {
@@ -450,7 +455,11 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                         ),
                         Span::styled(" | Trk: ", Style::default().fg(LABEL)),
                         Span::styled(
-                            format!("{:.0}°", g.heading_motion_deg),
+                            if g.heading_motion_deg.is_finite() {
+                                format!("{:.0}°", g.heading_motion_deg)
+                            } else {
+                                "---".to_string()
+                            },
                             Style::default().fg(if g.fix_quality == 0 {
                                 MUTED
                             } else {
@@ -459,8 +468,8 @@ fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {
                         ),
                         Span::styled(" | hAcc: ", Style::default().fg(LABEL)),
                         Span::styled(
-                            // hAcc is 0 until the first NAV-PVT; show that as
-                            // unknown rather than as a perfect fix.
+                            // hAcc is NaN until the first NAV-PVT and on the
+                            // NMEA fallback; show that as unknown.
                             if g.h_acc_m > 0.0 {
                                 format!("{:.1}m", g.h_acc_m)
                             } else {

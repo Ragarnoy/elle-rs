@@ -70,8 +70,9 @@ pub struct CrsfFlightMode {
 #[cfg(feature = "gnss")]
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub(crate) struct TelemetryGpsData {
-    pub(crate) latitude: f32,
-    pub(crate) longitude: f32,
+    /// Degrees × 10⁷, which is also the CRSF encoding.
+    pub(crate) lat_e7: i32,
+    pub(crate) lon_e7: i32,
     pub(crate) altitude_m: f32,
     pub(crate) num_satellites: u8,
     /// Ground speed in m/s, from UBX-NAV-PVT.
@@ -159,11 +160,12 @@ fn build_gps_frame(
     #[cfg(feature = "gnss")]
     let (lat_i, lon_i, alt, sats, speed) = if let Some(gps) = gps {
         (
-            (gps.latitude as f64 * 1e7) as i32,
-            (gps.longitude as f64 * 1e7) as i32,
+            gps.lat_e7,
+            gps.lon_e7,
             (gps.altitude_m + 1000.0).max(0.0) as u16,
             gps.num_satellites,
-            // The frame carries km/h × 10; NAV-PVT reports m/s.
+            // The frame carries km/h × 10; NAV-PVT reports m/s (NaN on the
+            // GGA fallback, which the cast turns into 0).
             (gps.ground_speed_ms * (3.6 * 10.0)).clamp(0.0, f32::from(u16::MAX)) as u16,
         )
     } else {

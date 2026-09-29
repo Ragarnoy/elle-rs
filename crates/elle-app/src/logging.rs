@@ -14,7 +14,7 @@ use elle_system::{FlightController, TimingMeasurement, update_ulog_timing};
 /// - Attitude, controller cycle: every tick (control-loop rate)
 /// - Commands, engine telemetry: 100 Hz
 /// - PID gains: on change (and once per file)
-/// - Status, loop stages: 8 Hz; mag 10 Hz; baro 5 Hz; GNSS, ESC health, Core 1 load: ~1 Hz
+/// - Status, loop stages: 8 Hz; mag 10 Hz; baro 5 Hz; ESC health, Core 1 load: ~1 Hz
 pub(crate) fn log_flight_data(
     logger: &mut ULogLogger,
     attitude: Option<&AttitudeData>,
@@ -159,15 +159,6 @@ pub(crate) fn log_flight_data(
         let _ = logger.log_magnetometer(mag.x as f32, mag.y as f32, mag.z as f32);
     }
 
-    // Log GNSS at ~1Hz — feature-gated
-    #[cfg(feature = "gnss")]
-    if loop_counter.is_multiple_of(elle_config::ULOG_GNSS_DIVISOR)
-        && let Some(gnss) = elle_hardware::gnss::GNSS_SIGNAL.try_take()
-    {
-        elle_hardware::gnss::GNSS_SIGNAL.signal(gnss); // put back for other readers
-        let _ = logger.log_gnss(&gnss);
-    }
-
     // Drain event channel into ULog
     while let Ok((level, code)) = elle_hardware::event::ULOG_EVENT_CHANNEL.try_receive() {
         let _ = logger.log_event(level, code);
@@ -175,4 +166,16 @@ pub(crate) fn log_flight_data(
 
     // Update performance monitoring
     update_ulog_timing(ulog_timer.elapsed_us());
+}
+
+/// Log each new GNSS solution (5 Hz on NAV-PVT) and the navigator's output
+/// (`nav`, 25 Hz), from `NavObserver::tick`.
+#[cfg(feature = "gnss")]
+pub(crate) fn log_nav(logger: &mut ULogLogger, tick: &crate::nav::NavTick) {
+    if let Some(gnss) = &tick.gnss {
+        let _ = logger.log_gnss(gnss);
+    }
+    if let Some(msg) = tick.nav {
+        let _ = logger.log_nav(msg);
+    }
 }

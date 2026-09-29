@@ -1016,6 +1016,7 @@ dependencies = [
  "elle-config",
  "elle-control",
  "elle-hardware",
+ "elle-nav",
  "elle-rpc-icd",
  "elle-system",
  "elle-ulog",
@@ -1146,12 +1147,10 @@ dependencies = [
 name = "elle-nav"
 version = "0.1.0"
 dependencies = [
- "defmt 1.1.1",
  "elle-config",
- "elle-control",
  "libm",
- "nalgebra 0.34.2",
  "sguaba",
+ "uom",
 ]
 
 [[package]]
@@ -1946,9 +1945,9 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.33.10"
+version = "0.33.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "928452f9c953e142b2f0973e4bd5f34445fcaa8069556ea97a3c9d34d15a4cf8"
+checksum = "35b4e837a1d133645d1dcf283e146a4b9901e390a1c13545f959cfed3a72f24f"
 dependencies = [
  "libm",
 ]
@@ -2545,11 +2544,10 @@ dependencies = [
  "glam 0.30.10",
  "glam 0.31.1",
  "glam 0.32.1",
- "glam 0.33.10",
+ "glam 0.33.11",
  "num-complex",
  "num-rational",
  "num-traits",
- "serde",
  "simba 0.10.2",
  "typenum",
 ]
@@ -2654,24 +2652,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-bigint"
-version = "0.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
-dependencies = [
- "num-integer",
- "num-traits",
- "serde",
-]
-
-[[package]]
 name = "num-complex"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
 dependencies = [
  "num-traits",
- "serde",
 ]
 
 [[package]]
@@ -2708,7 +2694,6 @@ checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
  "num-integer",
  "num-traits",
- "serde",
 ]
 
 [[package]]
@@ -3664,7 +3649,6 @@ checksum = "b5a5593d605f4495e906050262fb06268f531986b41a458c25a5552981c6e66f"
 dependencies = [
  "libm",
  "nalgebra 0.35.0",
- "serde",
  "typenum",
  "uom",
 ]
@@ -4353,11 +4337,7 @@ version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a739f83872836c82a4f2527d4e54b37007b3de68cafe7edde95fd695968bf4b9"
 dependencies = [
- "num-bigint",
- "num-complex",
- "num-rational",
  "num-traits",
- "serde_core",
  "typenum",
 ]
 

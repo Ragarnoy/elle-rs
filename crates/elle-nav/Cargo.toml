@@ -5,11 +5,11 @@ edition.workspace = true
 
 [dependencies]
 elle-config = { workspace = true }
-elle-control = { workspace = true }
-defmt = { workspace = true }
-nalgebra = { workspace = true }
 libm = { workspace = true }
-sguaba = { version = "0.10", default-features = false, features = ["libm", "serde"] }
+# Typed WGS84 / ECEF / NED frames at the home-frame boundary. Its `serde`
+# feature does not build without `std` (serde_core), so it stays off.
+sguaba = { version = "0.10", default-features = false, features = ["libm"] }
+uom = { workspace = true, features = ["f64"] }
 
 [lib]
 test = false

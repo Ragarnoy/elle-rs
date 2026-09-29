@@ -96,7 +96,6 @@ pub const ULOG_BARO_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 5; // 5 Hz
 pub const ULOG_COMMANDS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 100; // 100 Hz
 pub const ULOG_ENGINE_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 100; // 100 Hz
 const _: () = assert!(ULOG_COMMANDS_DIVISOR >= 1 && ULOG_ENGINE_DIVISOR >= 1);
-pub const ULOG_GNSS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_ESC_HEALTH_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
 pub const ULOG_CORE1_LOAD_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz window
 pub const STALE_EVENT_DRAIN_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ; // ~1 Hz
@@ -285,6 +284,45 @@ pub const HEADING_HOLD_KI: f32 = 0.0; // start P-only; enable after flight-test 
 pub const HEADING_HOLD_I_LIMIT_DEG: f32 = 10.0; // integral clamp, in roll-degrees
 pub const HEADING_HOLD_MAX_ROLL_DEG: f32 = 25.0; // bank angle clamp (< STABILIZED_MAX_ROLL_DEG)
 pub const HEADING_HOLD_MAX_ROLL_RATE_DEG_S: f32 = 15.0; // output slew-rate limiter
+
+// Navigation (elle-nav), observation mode: computed and logged as ULog `nav`,
+// never applied to the actuators.
+/// Navigator update and `nav` log rate.
+pub const NAV_UPDATE_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 25; // 25 Hz
+const _: () = assert!(NAV_UPDATE_DIVISOR >= 1);
+/// L1 period, s: roughly the time to converge onto a path. Shorter tracks more
+/// tightly and turns harder; ArduPlane's default is 17 s, small wings fly 12–15.
+pub const NAV_L1_PERIOD_S: f32 = 15.0;
+/// L1 damping ratio (ArduPlane default).
+pub const NAV_L1_DAMPING: f32 = 0.75;
+/// Bank demand limit, degrees (< `STABILIZED_MAX_ROLL_DEG`).
+pub const NAV_MAX_BANK_DEG: f32 = 30.0;
+/// Below this ground speed the velocity direction means nothing: no guidance.
+pub const NAV_MIN_GROUND_SPEED_MS: f32 = 4.0;
+/// Observation reference path: a loiter around home at this radius, m.
+pub const NAV_LOITER_RADIUS_M: f32 = 80.0;
+/// Observation loiter direction: true = clockwise seen from above (right turns).
+pub const NAV_LOITER_CLOCKWISE: bool = true;
+/// A fix with a worse horizontal accuracy estimate is not used for position, m.
+pub const NAV_MAX_H_ACC_M: f32 = 10.0;
+/// A fix with a worse speed accuracy estimate is not used for velocity, m/s.
+pub const NAV_MAX_S_ACC_MS: f32 = 1.5;
+/// A GNSS altitude with a worse vertical accuracy estimate is not logged as valid, m.
+pub const NAV_MAX_V_ACC_M: f32 = 15.0;
+/// Home is only taken from a fix at least this good (while disarmed), m.
+pub const NAV_HOME_MAX_H_ACC_M: f32 = 5.0;
+/// ... with at least this many satellites in the solution.
+pub const NAV_HOME_MIN_SATS: u8 = 6;
+/// Position is dropped when the newest usable fix is older than this, ms (5 fixes at 5 Hz).
+pub const NAV_FIX_TIMEOUT_MS: u32 = 1_000;
+/// Position is extrapolated along the measured ground velocity for at most this long, ms.
+pub const NAV_EXTRAPOLATE_MAX_MS: u32 = 400;
+/// Baro altitude is dropped when the newest reading is older than this, ms (~10 readings).
+pub const NAV_BARO_TIMEOUT_MS: u32 = 500;
+const _: () = assert!(NAV_MAX_BANK_DEG > 0.0 && NAV_MAX_BANK_DEG < STABILIZED_MAX_ROLL_DEG);
+const _: () = assert!(NAV_HOME_MAX_H_ACC_M <= NAV_MAX_H_ACC_M);
+const _: () = assert!(NAV_EXTRAPOLATE_MAX_MS < NAV_FIX_TIMEOUT_MS);
+const _: () = assert!(NAV_L1_PERIOD_S > 0.0 && NAV_L1_DAMPING > 0.0 && NAV_LOITER_RADIUS_M > 0.0);
 
 // Double-tap mag-cal gesture gating (motor vibration can trip the APEX tap detector,
 // so the gesture only starts calibration when the aircraft is demonstrably idle)
