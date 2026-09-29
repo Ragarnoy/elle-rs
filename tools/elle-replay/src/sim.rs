@@ -47,6 +47,10 @@ pub enum Segment {
     /// Pitch up to `pitch_deg` and back to level over `secs` (a smooth pitch
     /// rate pulse: the load factor rises in the first half).
     PullUp { pitch_deg: f64, secs: f64 },
+    /// Carried level in a vehicle: turning at `turn_rate_dps` (positive right)
+    /// without banking, at the configured speed (use no wind). The truth is
+    /// level while the accel feels the sideways acceleration.
+    Drive { turn_rate_dps: f64, secs: f64 },
 }
 
 /// Roll rate into and out of turns, °/s.
@@ -306,7 +310,8 @@ pub fn fly(cfg: &Config, profile: &[Segment]) -> Result<Flight> {
         let secs = match *seg {
             Segment::Straight { secs }
             | Segment::Turn { secs, .. }
-            | Segment::PullUp { secs, .. } => secs,
+            | Segment::PullUp { secs, .. }
+            | Segment::Drive { secs, .. } => secs,
         };
         let n = (secs / DT).round() as u32;
         for k in 0..n {
@@ -328,9 +333,14 @@ pub fn fly(cfg: &Config, profile: &[Segment]) -> Result<Flight> {
                     let w = 2.0 * PI / secs;
                     (0.0, pitch_deg.to_radians() / 2.0 * w * (w * t_seg).sin())
                 }
+                Segment::Drive { .. } => ((-s.bank / DT).clamp(-roll_rate, roll_rate), 0.0),
             };
-            // Coordinated turn: heading rate from bank at the airspeed.
-            let heading_rate = G * s.bank.tan() / cfg.airspeed_ms;
+            let heading_rate = match *seg {
+                // A vehicle turns flat.
+                Segment::Drive { turn_rate_dps, .. } => turn_rate_dps.to_radians(),
+                // Coordinated turn: heading rate from bank at the airspeed.
+                _ => G * s.bank.tan() / cfg.airspeed_ms,
+            };
             let w_frd = body_rates(&s, bank_rate, pitch_rate, heading_rate);
             let r = s.rotation();
 

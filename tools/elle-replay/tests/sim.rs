@@ -202,3 +202,75 @@ fn firmware_turn_compensation_modes_fly_and_replay_exactly() {
         "{rms:?}"
     );
 }
+
+#[test]
+fn vehicle_ground_test_separates_the_filters() {
+    // TEST_PLAN 7.2: the aircraft strapped level in a car, round a roundabout
+    // at ~25 km/h. The truth is level; without compensation the filter leans
+    // with the sideways acceleration, with it it stays level. Scored by turn
+    // rate, since nothing banks.
+    let cfg = Config {
+        airspeed_ms: 7.0,
+        vibration: 1.5,
+        ..Config::default()
+    };
+    let drive = [
+        Segment::Straight { secs: 6.0 },
+        Segment::Drive {
+            turn_rate_dps: 25.0,
+            secs: 12.0,
+        },
+        Segment::Straight { secs: 6.0 },
+        Segment::Drive {
+            turn_rate_dps: -25.0,
+            secs: 12.0,
+        },
+        Segment::Straight { secs: 6.0 },
+    ];
+    let f = sim::fly(&cfg, &drive).unwrap();
+    let specs: Vec<_> = elle_replay::variants::default_specs()
+        .into_iter()
+        .filter(|s| ["madgwick-cc", "madgwick-ce"].contains(&s.name.as_str()))
+        .collect();
+    let rep = elle_replay::replay_with(&ULog::parse(&f.ulog).unwrap(), &specs).unwrap();
+    let refr = elle_replay::reference::build(&rep);
+    let scores =
+        elle_replay::reference::score_all_by(&rep, &refr, elle_replay::reference::Select::Rate);
+    let rms = |n: &str| scores.iter().find(|s| s.name == n).unwrap().roll_rms_both();
+    // The reference itself stays level through the curves (anchors are never
+    // taken as a curve starts, while the low-passed accel still looks level).
+    let truth: Vec<Option<[f32; 3]>> = rep
+        .samples
+        .iter()
+        .map(|s| {
+            let t = f.truth[s.index as usize];
+            Some([t.pitch as f32, t.roll as f32, t.yaw as f32])
+        })
+        .collect();
+    let ref_err =
+        elle_replay::reference::score_where("reference", refr.iter().copied(), &truth, |i| {
+            let r = rep.inputs[i].gyro.z;
+            (r.abs() >= elle_replay::reference::TURN_RATE).then_some(r > 0.0)
+        });
+    assert!(
+        ref_err.roll_rms_both() < 0.5,
+        "reference off by {:.2}°",
+        ref_err.roll_rms_both()
+    );
+    assert!(
+        scores[0].samples.iter().all(|n| *n > 5000),
+        "{:?}",
+        scores[0]
+    );
+    assert!(rms("firmware") > 5.0, "firmware {:.1}°", rms("firmware"));
+    assert!(
+        rms("madgwick-cc") < 1.0,
+        "centripetal {:.2}°",
+        rms("madgwick-cc")
+    );
+    assert!(
+        rms("madgwick-ce") < 3.0,
+        "earth-frame {:.2}°",
+        rms("madgwick-ce")
+    );
+}

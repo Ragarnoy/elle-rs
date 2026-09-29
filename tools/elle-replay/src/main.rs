@@ -48,12 +48,16 @@ struct Args {
     /// Simulated residual gyro bias, °/s.
     #[arg(long, default_value_t = 0.0)]
     gyro_bias_dps: f64,
+    /// Count samples as "turning" by gyro turn rate (> 6°/s) instead of by
+    /// bank: for ground tests in a vehicle, which turns without banking.
+    #[arg(long)]
+    score_by_rate: bool,
 }
 
 fn print_scores(title: &str, scores: &[Score]) {
     println!("\n  {title}");
     println!(
-        "  in turns (|bank| > 10°)       roll error mean R/L      roll RMS    pitch RMS R/L    samples R/L"
+        "  in turns                      roll error mean R/L      roll RMS    pitch RMS R/L    samples R/L"
     );
     for s in scores {
         println!(
@@ -131,6 +135,11 @@ fn main() -> Result<()> {
     );
 
     if args.compare {
+        let select = if args.score_by_rate {
+            reference::Select::Rate
+        } else {
+            reference::Select::Bank
+        };
         let refr = reference::build(&replay);
         let covered = refr.iter().filter(|r| r.is_some()).count();
         println!(
@@ -140,7 +149,7 @@ fn main() -> Result<()> {
         );
         print_scores(
             "against the gyro reference",
-            &reference::score_all(&replay, &refr),
+            &reference::score_all_by(&replay, &refr, select),
         );
         if let Some(t) = &truth {
             let truth_angles: Vec<Option<[f32; 3]>> = replay
@@ -153,7 +162,7 @@ fn main() -> Result<()> {
                 .collect();
             print_scores(
                 "against the simulated truth",
-                &reference::score_all(&replay, &truth_angles),
+                &reference::score_all_by(&replay, &truth_angles, select),
             );
             let r = reference::score("reference", refr.iter().copied(), &truth_angles);
             println!(
