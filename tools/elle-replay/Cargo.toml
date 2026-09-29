@@ -9,9 +9,7 @@ elle-control = { workspace = true }
 elle-config = { workspace = true }
 nalgebra = { workspace = true }
 uf-ahrs = { workspace = true }
-anyhow = "1.0"
-clap = { version = "4", features = ["derive"] }
-
-[dev-dependencies]
 elle-ulog = { workspace = true }
 embassy-time = { workspace = true }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }

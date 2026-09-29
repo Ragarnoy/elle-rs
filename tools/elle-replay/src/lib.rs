@@ -7,6 +7,7 @@
 //! ([`Faithfulness`]). Any mismatch means the harness does not reproduce the
 //! firmware, and nothing it says about other filters can be trusted.
 
+pub mod sim;
 pub mod ulog;
 pub mod variants;
 
