@@ -176,6 +176,7 @@ pub async fn run(i2c: I2c<'static, Async>) -> ! {
                         temperature_c: m.temperature.get::<degree_celsius>(),
                         altitude_m: alt,
                         vario_ms: vario_filtered,
+                        sample_us: now.as_micros(),
                     });
                 }
                 Ok(Err(e)) => {

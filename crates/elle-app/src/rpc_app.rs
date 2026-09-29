@@ -491,11 +491,11 @@ const _: () = assert!(
 fn handle_get_gnss(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> GnssResp {
     #[cfg(feature = "gnss")]
     {
-        if let Some(gnss) = elle_hardware::gnss::GNSS_SIGNAL.try_take() {
-            elle_hardware::gnss::GNSS_SIGNAL.signal(gnss);
+        let gnss = elle_hardware::gnss::GNSS.read_cached();
+        if gnss.sample_us != 0 || gnss.link_baud != 0 {
             return GnssResp {
-                latitude: gnss.latitude,
-                longitude: gnss.longitude,
+                latitude: gnss.latitude_deg() as f32,
+                longitude: gnss.longitude_deg() as f32,
                 altitude_m: gnss.altitude_m,
                 fix_quality: gnss.fix_quality,
                 num_satellites: gnss.num_satellites,

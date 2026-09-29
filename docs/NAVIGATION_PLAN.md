@@ -1,182 +1,115 @@
-# Navigation & Waypoint System Plan
+# Navigation Plan
 
-## Current State
+Waypoint following, loiter and return-to-home after a pilot-controlled launch.
+Automatic takeoff and landing come later, as separate capabilities.
 
-- Inner attitude PID (pitch/roll to elevons) at 200 Hz (5 ms)
-- AHRS heading (Madgwick, magnetometer + gyro), hard-iron and level calibration
-- GNSS: SAM-M10Q, UBX-NAV-PVT at 5 Hz over 115200 baud (position, velocity NED, ground
-  speed, course, accuracy estimates); NMEA GGA fallback
-- Barometric altitude at ~20 Hz (BMP390)
-- Modes: Manual, Stabilized, AltitudeHold (currently a 0°/0° **level** hold — no altitude loop yet)
-- **Heading hold** (CH5, Stabilized): P controller from heading error to bank setpoint,
-  `elle-control/src/heading.rs` — this is the "simpler alternative" heading controller
-  of Layer 2 and step 2 of the build order
-- Eagle: differential thrust (2 engines); dart: single engine
-- `crates/elle-nav` is a workspace member but has no firmware users yet
-- No airspeed sensor (pitot tube planned)
+## Principles
 
----
+- **Navigation produces demands, never actuator commands.** It asks for a bank angle
+  (and later a pitch and a thrust); the existing attitude controller and RPM governor
+  fly them. Both airframes run the same code with their own measured limits.
+- **Every measurement carries its time and its validity.** A cached number is not a
+  measurement: fixes age out, a GGA fix has no velocity, a demand has a deadline.
+- **Hardware-independent.** `crates/elle-nav` takes timestamped samples and returns
+  demands, so logs can be replayed and failures simulated on the host.
+- **Safety before engagement.** Mode arbitration, pilot override, RC/GNSS loss and
+  fences are built before navigation is ever allowed to move a surface, not after
+  waypoint following works.
 
-## Layer 0 — Navigation Math Library
-
-Pure math, no hardware. Can be written and unit-tested on the host.
-
-- **Coordinate conversions**: lat/lon (WGS84) to local NED frame (North/East/Down in meters relative to a reference point). Equirectangular approximation is sufficient under ~10km.
-- **Bearing**: Great-circle bearing between two lat/lon points.
-- **Distance**: Haversine distance between two points.
-- **Cross-track error**: Perpendicular distance from current position to the line between two waypoints.
-- **Magnetic declination**: Offset between magnetic heading (AHRS) and true heading (GPS course). Can be a hardcoded constant for a known flying field or a simple lookup table.
-
-**Crate**: `elle-nav` (new, `no_std`, testable on host)
-
----
-
-## Layer 1 — State Estimation Upgrades
-
-- **Altitude estimator**: Complementary filter blending baro (smooth, drifty) with GPS altitude (noisy, absolute). Output: estimated altitude + climb rate.
-- **Position rate**: GNSS runs at 5 Hz (NAV-PVT). Between fixes, dead-reckon using AHRS heading + last known groundspeed for smoother position estimates; the SAM-M10Q can go to 10 Hz if needed.
-- **Groundspeed/track**: GPS provides these directly. Apply smoothing filter to reject outlier fixes.
-- **Wind estimation** (nice-to-have): Assuming roughly constant airspeed, the difference between heading vector (mag) and GPS track vector gives wind. Helps predict stall risk in turns.
-
----
-
-## Layer 2 — Outer Control Loops
-
-Two new PIDs sitting outside the existing attitude loop.
-
-### Heading / Course Controller
-
-```
-Desired Track -> [L1 or heading PID] -> Bank Angle Setpoint -> [Existing Roll PID] -> Elevons
+```mermaid
+flowchart TD
+    S[Timestamped GNSS and baro samples] --> E[Navigation state: position, velocity, height, validity]
+    M[Mission, home, selected mode] --> G[Path guidance]
+    E --> G
+    G --> L[Lateral: bank demand]
+    G --> V[Vertical and speed: pitch and thrust demands]
+    L --> A[Mode arbitration and envelope limits]
+    V --> A
+    P[Pilot override and health] --> A
+    A --> C[Attitude controller and RPM governor]
 ```
 
-- **L1 navigation controller**: Industry standard for fixed-wing path following. Computes lateral acceleration demand based on cross-track error and closing angle. Converts to bank angle via `bank = atan(a_lateral / g)`.
-- **Simpler alternative**: P controller on heading error with cross-track correction term. Less elegant but easier to implement and tune first.
-- **Turn coordination**: Bank angle must be appropriate for speed. `bank = atan(v^2 / (r * g))`. Without airspeed, use GPS groundspeed.
-- **Bank limiting**: Cap at 30-40 degrees for safety.
+## Current state
 
-### Altitude Controller
+- Inner attitude PID at 200 Hz; AHRS heading (Madgwick 9-DOF); heading hold (CH5,
+  Stabilized: heading error → roll setpoint, `elle-control/src/heading.rs`).
+- GNSS: SAM-M10Q, UBX-NAV-PVT at 5 Hz: position, NED velocity, accuracy estimates.
+  Position kept as degrees × 10⁷; every solution stamped with its receive time
+  (`GnssData::sample_us`). On the NMEA GGA fallback the velocity and accuracy fields
+  are NaN, so a stale NAV-PVT velocity can never pass as current.
+- Baro altitude and vario at ~20 Hz, stamped (`BaroReading::sample_us`).
+- AltitudeHold is a level (0°/0°) hold; there is no altitude loop yet.
+- No airspeed sensor.
+- **`elle-nav` runs in observation mode** (below): state, home and a lateral demand
+  are computed and logged; nothing reaches the controller.
 
-```
-Target Alt -> [Alt PID] -> Pitch Setpoint -> [Existing Pitch PID] -> Elevons
-```
+## Step 1 (done): observation mode
 
-- P or PD controller on altitude error, output clamped to safe pitch range (e.g. +/-15 degrees).
-- Use baro altitude for the control loop (smoother, lower latency). GPS for drift correction.
-- Rate-limit pitch setpoint changes to prevent jerky maneuvers.
+`crates/elle-nav`, host-tested in `crates/elle-nav/tests/`:
 
-### Speed / Throttle Controller
+| Module | What it does |
+|---|---|
+| `geo` | `GeoPoint` (degrees × 10⁷), `HomeNed` (a [sguaba](https://github.com/helsing-ai/sguaba) NED frame at home), `LocalFrame` (WGS84 → ECEF → home NED through sguaba, `f64`), `Ne` (`f32` north/east vectors for the guidance maths) |
+| `estimate` | `Estimator`: quality gates (`NAV_MAX_H_ACC_M`, `NAV_MAX_S_ACC_MS`), home capture, fix timeout (`NAV_FIX_TIMEOUT_MS`), extrapolation along ground velocity (≤ `NAV_EXTRAPOLATE_MAX_MS`), baro height above home |
+| `l1` | L1 guidance (after ArduPilot `AP_L1_Control`) for lines and loiter circles → lateral acceleration → bank demand, limited to `NAV_MAX_BANK_DEG` |
+| `lib` | `Navigator::update(now, path)` → state, guidance, `valid_until_us`, status bits |
 
-```
-Target Speed -> [Speed PID] -> Throttle %
-```
+sguaba sits at the frame boundary only: the home frame is typed, so a position in it
+cannot be confused with one in another frame (the body FRD frame, for wind
+estimation, later). Its conversion is `f64`, which the RP2350 does in software, so it
+runs once per fix (5 Hz), never per tick. Guidance works in `f32`. sguaba's `serde`
+feature does not build without `std`, so it is off.
 
-- V1: Fixed cruise throttle with minimum-speed protection (increase throttle if groundspeed drops below threshold).
-- V2: PID on GPS groundspeed error.
-- V3: Full TECS (Total Energy Control System) coordinating pitch + throttle for total energy management.
+Firmware (`elle-app/src/nav.rs`, both loops, `gnss` builds only): new GNSS and baro
+samples go to the navigator every tick; every 8 ticks (25 Hz) it is asked for the
+lateral demand on the **reference path**, a loiter around home
+(`NAV_LOITER_RADIUS_M` = 80 m, clockwise), logged as ULog `nav` next to the measured
+roll. `gnss_data` is now logged once per solution (5 Hz) with its receive time.
 
----
+**Home**: while disarmed, home follows every fix with h_acc ≤ `NAV_HOME_MAX_H_ACC_M`
+(5 m) and ≥ `NAV_HOME_MIN_SATS` (6) satellites, together with the baro altitude at that
+moment. It locks on the arming edge and is released on disarm. Without such a fix
+there is no home, and nothing is valid.
 
-## Layer 3 — Waypoint Data Model
+**Reading it**: `elle_log.py nav` (flight-logs skill). Circling the field clockwise at
+about 80 m in Stabilized, the demand and the measured roll should agree in sign and
+roughly in size; circling anticlockwise, they disagree. That checks the sign
+conventions end to end before any demand is used (TEST_PLAN 6.9).
 
-- **Waypoint struct**: `{ lat: f32, lon: f32, alt_m: f32, wp_type: WaypointType, radius_m: f32, speed: Option<f32> }`
-- **WaypointType**: `Flyover` (pass directly over), `Flyby` (begin turning early), `Loiter` (circle), `Land`, `RTL`
-- **Mission**: Ordered list of waypoints. Fixed-size array for `no_std` (e.g. `heapless::Vec<Waypoint, 32>`).
-- **Home position**: Captured on arm from current GPS fix. RTL target.
-- **Storage**: RAM for active mission (uploaded via RPC). Optional: persist to flash in profile region.
+Cost: +18.6 kB flash, +0.5 kB RAM (eagle flight build). CPU time is inside the
+`log` stage of `loop_stages`; not yet measured on the board.
 
----
+## Next steps
 
-## Layer 4 — Guidance / Mission Sequencer
+Each step flies in observation first, then with the pilot able to take over at once.
 
-The brain that decides what to do each tick.
+| Step | Deliverable | Before it may fly |
+|---|---|---|
+| 2 | Validate observation logs: fix age, extrapolation, home, sign conventions | Sustained stable Stabilized flight on the current prop and gains |
+| 3 | Safety and arbitration: nav mode on a switch, stick override, RC loss, GNSS loss (no position → wings level, pilot), max distance fence, demand deadline enforced | Step 2 |
+| 4 | Lateral guidance engaged: loiter around home, bank only; pilot keeps pitch and throttle | Step 3; measured bank and roll-rate limits |
+| 5 | Altitude: limited climb-rate controller on baro height above home → pitch demand, with pitch and rate limits and anti-windup; GNSS height blended for drift | Measured cruise trim and climb/sink capability |
+| 6 | Line segments and waypoint sequencing (acceptance radius or bisector crossing), completion action | Step 4 |
+| 7 | Mission upload over RPC, validated completely before it replaces the active one; TUI commands | Step 6 |
+| 8 | Return-to-home: route to home, loiter there (landing is separate) | Steps 3–7 |
+| 9 | Speed and energy: TECS or equivalent pitch/thrust coordination | Airspeed sensor, characterised aircraft |
 
-- **Waypoint sequencing**: Advance to next waypoint when within acceptance radius, or when crossing the bisector plane perpendicular to the path at the waypoint.
-- **Segment tracking**: Current segment = line from WP[n-1] to WP[n]. Feed to L1 controller.
-- **Altitude profile**: Immediate climb/descend on segment start, or follow a slope (gradual altitude change proportional to distance along segment).
-- **Loiter**: Orbit around a point at set radius. Constant bank angle calculated for radius + speed.
-- **Mission complete**: Configurable behavior — loiter at last waypoint or RTL.
+## What the plan must not assume
 
----
+- **GNSS loss cannot trigger a dead-reckoned return-to-home.** There is no inertial
+  estimator; position is gone `NAV_FIX_TIMEOUT_MS` after the last fix. GNSS loss hands
+  the aircraft back (wings level, pilot) instead.
+- **Height above home is not height above terrain.** A minimum-altitude floor is
+  relative to the take-off point only.
+- **Ground speed is not airspeed.** A tailwind gives high ground speed with too
+  little airflow; no stall protection can come from GNSS. A calibrated pitot sensor
+  should come before autonomous altitude and speed control is expanded.
+- **RPM is not speed.** The governor regulates propeller speed; navigation decides
+  the thrust it needs.
 
-## Layer 5 — Navigation Modes
+## Reference
 
-Extend `ControlMode` beyond Manual/Mixed/Autopilot:
-
-| Mode | Lateral | Vertical | Throttle |
-|------|---------|----------|----------|
-| Manual | Stick to elevons | Stick to elevons | Stick |
-| Stabilized | Stick to attitude setpoint | Stick to attitude setpoint | Stick |
-| AltHold | Stick to heading rate | Hold altitude | Cruise |
-| Guided | RPC target point | Target altitude | Auto |
-| Auto | Follow mission | Follow mission | Auto |
-| RTL | Fly to home | Descend to safe alt | Auto |
-| Loiter | Circle current pos | Hold altitude | Cruise |
-
-Each mode selects which outer loops are active and where setpoints come from.
-
----
-
-## Layer 6 — RPC / Mission Protocol
-
-New endpoints for mission management:
-
-- `UploadWaypoint { index, lat, lon, alt, type, radius }` — set one waypoint
-- `ClearMission` — wipe all waypoints
-- `GetMissionInfo` — count, current index
-- `GetWaypoint { index }` — read back a waypoint
-- `StartMission` / `PauseMission` / `ResumeMission`
-- `SetGuidedTarget { lat, lon, alt }` — fly to a single point (no mission)
-- `GetNavStatus` — current WP index, distance to WP, ETA, cross-track error, groundspeed
-
-TUI commands: `wp add 48.123 2.456 150`, `wp list`, `wp clear`, `mission start`, `nav status`, etc.
-
----
-
-## Layer 7 — Safety Systems
-
-Non-negotiable for autonomous flight.
-
-- **Geofence**: Cylindrical (max radius + max altitude from home). Breach triggers forced RTL.
-- **GPS loss failsafe**: Hold last heading + altitude for N seconds. If no fix, RTL via dead reckoning, then loiter/descend.
-- **RC loss failsafe**: Already have CRSF failsafe detection. Escalation: RC lost -> RTL -> timeout -> loiter descend.
-- **Minimum altitude floor**: Never command below e.g. 30m AGL.
-- **Stall protection**: If groundspeed drops below threshold, pitch down + increase throttle regardless of altitude command.
-- **Nav loop watchdog**: If guidance produces insane outputs, revert to stabilized mode.
-
----
-
-## Layer 8 — Future Additions
-
-- **Pitot tube / airspeed sensor**: Biggest safety gain for autonomous nav. Enables real stall protection, wind-aware guidance, proper TECS.
-- **Auto-takeoff**: Full throttle, pitch up to climb angle, climb to first waypoint altitude.
-- **Auto-landing**: Glide slope, flare, throttle cut. Hardest part of the whole system.
-- **Terrain following**: Requires terrain database or downward-facing sensor.
-- **MAVLink bridge**: Compatibility with QGroundControl / Mission Planner ground stations.
-
----
-
-## Suggested Build Order
-
-| Step | Deliverable | What It Enables |
-|------|-------------|-----------------|
-| 1 | Nav math library (`elle-nav`) | Unit-testable coordinate/bearing/distance functions |
-| 2 | ~~Heading controller~~ (done: heading hold) | Fly a commanded heading (yaw -> roll setpoint) |
-| 3 | Altitude hold | Outer loop on baro altitude -> pitch setpoint |
-| 4 | Fly-to-point (Guided mode) | Combine heading + alt to reach a single GPS coordinate |
-| 5 | Waypoint sequencing | Chain multiple points together |
-| 6 | L1 path following | Replace simple heading controller for smoother tracking |
-| 7 | Loiter / RTL | Special guidance modes |
-| 8 | Safety layers | Geofence, failsafes, stall protection |
-| 9 | Mission upload protocol | Full RPC endpoints + TUI commands |
-| 10 | TECS | Proper energy management replacing separate speed + alt PIDs |
-
-Steps 1-4 get "fly to a GPS point" — already very useful for testing.
-Steps 5-8 produce a real autopilot.
-Steps 9-10 make it production-quality.
-
----
-
-## Key Risk
-
-Without an airspeed sensor, GPS groundspeed is a poor substitute in wind. The biggest danger is stall during climbs and turns when flying into a headwind. Pitch limits and minimum groundspeed protection are the only defense until a pitot tube is added.
+- ArduPlane navigation tuning (L1): <https://ardupilot.org/plane/docs/navigation-tuning.html>
+- PX4 fixed-wing position tuning (inner loop first): <https://docs.px4.io/main/en/config_fw/position_tuning_guide_fixedwing>
+- ArduPlane TECS: <https://ardupilot.org/plane/docs/tecs-total-energy-control-system-for-speed-height-tuning-guide.html>
+- Park, Deyst, How, "A New Nonlinear Guidance Logic for Trajectory Tracking" (AIAA GNC 2004)

@@ -60,6 +60,9 @@ fn writes_flash(cmd: &rpc_handlers::RpcCommand) -> bool {
 /// starts on `ulog start`.
 pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -> ! {
     let mut ulog_logger = ULogLogger::new();
+    // Navigation in observation mode: computed and logged, never applied.
+    #[cfg(feature = "gnss")]
+    let mut nav = crate::nav::NavObserver::new();
     let mut loop_counter = 0u32;
 
     use core::sync::atomic::Ordering;
@@ -788,6 +791,10 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             },
             autotune: autotune_display,
             heading_hold: fc.is_heading_hold_active(),
+            #[cfg(feature = "gnss")]
+            home_set: Some(nav.home_set()),
+            #[cfg(not(feature = "gnss"))]
+            home_set: None,
         });
 
         // Publish flight state for RPC handlers
@@ -831,6 +838,11 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             flight_state::CONTROLLER_OUTPUT.publish(co);
         }
 
+        // Runs whether or not ULog is recording, so home keeps tracking the
+        // aircraft on the ground.
+        #[cfg(feature = "gnss")]
+        let nav_tick = nav.tick(fc.is_armed(), valid_attitude.as_ref(), loop_counter);
+
         // Log flight data to ULog flash storage (only when recording is active)
         let neutral = PilotCommands::Normalized(NormalizedCommands::neutral());
         let ulog_commands = commands.as_ref().unwrap_or(&neutral);
@@ -843,6 +855,8 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 loop_start.elapsed().as_micros() as u32,
                 fc,
             );
+            #[cfg(feature = "gnss")]
+            crate::logging::log_nav(&mut ulog_logger, &nav_tick);
         } else if loop_counter.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR) {
             // Drain stale events when not recording
             while elle_hardware::event::ULOG_EVENT_CHANNEL

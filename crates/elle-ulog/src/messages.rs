@@ -592,21 +592,21 @@ impl MagnetometerMessage {
     }
 }
 
-/// GNSS data message - logs GPS position fix
+/// GNSS data message - one per new solution
 ///
-/// Position, velocity and accuracy come from UBX-NAV-PVT. On the NMEA GGA
-/// fallback path only the position fields and `hdop` are meaningful; the
-/// velocity and accuracy fields hold the last NAV-PVT values, or zero if none
-/// was ever received.
+/// The timestamp is when the solution was received, not when it was logged.
+/// Position, velocity and accuracy come from UBX-NAV-PVT (`pvt_active` = 1).
+/// On the NMEA GGA fallback only the position fields and `hdop` are
+/// meaningful; the velocity and accuracy fields are NaN.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct GnssMessage {
     /// Timestamp in microseconds
     timestamp: u64,
-    /// Latitude in degrees
-    latitude: f32,
-    /// Longitude in degrees
-    longitude: f32,
+    /// Latitude, degrees × 10⁷
+    lat_e7: i32,
+    /// Longitude, degrees × 10⁷
+    lon_e7: i32,
     /// Altitude in meters
     altitude_m: f32,
     /// Fix quality (0=none, 1=GPS, 2=DGPS)
@@ -631,11 +631,13 @@ pub struct GnssMessage {
     v_acc_m: f32,
     /// Speed accuracy estimate in m/s (NAV-PVT only)
     s_acc_ms: f32,
+    /// 1 when the solution came from NAV-PVT, 0 on the GGA fallback
+    pvt_active: u8,
 }
 
 impl GnssMessage {
     /// Format definition string for ULog
-    pub(crate) const FORMAT: &'static str = "gnss_data:uint64_t timestamp;float latitude;float longitude;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop;float vel_n_ms;float vel_e_ms;float vel_d_ms;float ground_speed_ms;float heading_motion_deg;float h_acc_m;float v_acc_m;float s_acc_ms";
+    pub(crate) const FORMAT: &'static str = "gnss_data:uint64_t timestamp;int32_t lat_e7;int32_t lon_e7;float altitude_m;uint8_t fix_quality;uint8_t num_satellites;float hdop;float vel_n_ms;float vel_e_ms;float vel_d_ms;float ground_speed_ms;float heading_motion_deg;float h_acc_m;float v_acc_m;float s_acc_ms;uint8_t pvt_active";
 
     /// Message name
     pub const NAME: &'static str = "gnss_data";
@@ -645,15 +647,15 @@ impl GnssMessage {
         &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
-    pub(crate) const SIZE: usize = 58; // 8 + 3*4 + 1 + 1 + 4 + 8*4
+    pub(crate) const SIZE: usize = 59; // 8 + 2*4 + 4 + 1 + 1 + 4 + 8*4 + 1
 
     /// Create a new GNSS message
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
         timestamp: Instant,
-        latitude: f32,
-        longitude: f32,
+        lat_e7: i32,
+        lon_e7: i32,
         altitude_m: f32,
         fix_quality: u8,
         num_satellites: u8,
@@ -666,11 +668,12 @@ impl GnssMessage {
         h_acc_m: f32,
         v_acc_m: f32,
         s_acc_ms: f32,
+        pvt_active: bool,
     ) -> Self {
         Self {
             timestamp: timestamp.as_micros(),
-            latitude,
-            longitude,
+            lat_e7,
+            lon_e7,
             altitude_m,
             fix_quality,
             num_satellites,
@@ -683,6 +686,7 @@ impl GnssMessage {
             h_acc_m,
             v_acc_m,
             s_acc_ms,
+            pvt_active: pvt_active as u8,
         }
     }
 
@@ -691,8 +695,8 @@ impl GnssMessage {
     pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
-        buf[8..12].copy_from_slice(&self.latitude.to_le_bytes());
-        buf[12..16].copy_from_slice(&self.longitude.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.lat_e7.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.lon_e7.to_le_bytes());
         buf[16..20].copy_from_slice(&self.altitude_m.to_le_bytes());
         buf[20] = self.fix_quality;
         buf[21] = self.num_satellites;
@@ -705,13 +709,14 @@ impl GnssMessage {
         buf[46..50].copy_from_slice(&self.h_acc_m.to_le_bytes());
         buf[50..54].copy_from_slice(&self.v_acc_m.to_le_bytes());
         buf[54..58].copy_from_slice(&self.s_acc_ms.to_le_bytes());
+        buf[58] = self.pvt_active;
         buf
     }
 }
 
-// 8 (u64) + 3 f32 + 2 u8 + 1 f32 + 8 f32
+// 8 (u64) + 2 i32 + 1 f32 + 2 u8 + 1 f32 + 8 f32 + 1 u8
 const _: () = assert!(
-    GnssMessage::SIZE == 8 + 3 * 4 + 1 + 1 + 4 + 8 * 4,
+    GnssMessage::SIZE == 8 + 2 * 4 + 4 + 1 + 1 + 4 + 8 * 4 + 1,
     "GnssMessage::SIZE does not match its field widths"
 );
 
@@ -974,6 +979,90 @@ impl LoopStagesMessage {
 const _: () = assert!(
     LoopStagesMessage::SIZE == 8 + 2 + 7 * 2 + 7 * 2 + 4 + 4,
     "LoopStagesMessage::SIZE does not match its field widths"
+);
+
+/// Navigator output (observation mode), 25 Hz.
+///
+/// Position and velocity are in the home north/east frame; `status` holds the
+/// `elle_nav::status` bits that say which fields are valid. Invalid values are
+/// NaN. `bank_demand_deg` is what lateral guidance asks for on the reference
+/// path (a loiter around home); it is not applied. `roll_deg` is the measured
+/// roll at the same instant, positive right like the demand, for comparison.
+///
+/// Format: "nav:uint64_t timestamp;uint16_t status;uint16_t fix_age_ms;float pos_n_m;float pos_e_m;float vel_n_ms;float vel_e_ms;float alt_rel_m;float climb_ms;float gnss_alt_rel_m;float home_dist_m;float home_bearing_deg;float track_error_m;float lat_accel_ms2;float bank_demand_deg;float roll_deg"
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NavMessage {
+    /// Timestamp in microseconds (filled in by the logger)
+    pub timestamp: u64,
+    pub status: u16,
+    /// Age of the fix behind the position, ms (saturates at 65535)
+    pub fix_age_ms: u16,
+    pub pos_n_m: f32,
+    pub pos_e_m: f32,
+    pub vel_n_ms: f32,
+    pub vel_e_ms: f32,
+    /// Baro height above home
+    pub alt_rel_m: f32,
+    pub climb_ms: f32,
+    /// GNSS height above home
+    pub gnss_alt_rel_m: f32,
+    pub home_dist_m: f32,
+    /// Bearing to home, degrees clockwise from north
+    pub home_bearing_deg: f32,
+    /// Off the path: positive right of a line, positive outside a circle
+    pub track_error_m: f32,
+    pub lat_accel_ms2: f32,
+    pub bank_demand_deg: f32,
+    pub roll_deg: f32,
+}
+
+impl NavMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str = "nav:uint64_t timestamp;uint16_t status;uint16_t fix_age_ms;float pos_n_m;float pos_e_m;float vel_n_ms;float vel_e_ms;float alt_rel_m;float climb_ms;float gnss_alt_rel_m;float home_dist_m;float home_bearing_deg;float track_error_m;float lat_accel_ms2;float bank_demand_deg;float roll_deg";
+
+    /// Message name
+    pub const NAME: &'static str = "nav";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 64;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..10].copy_from_slice(&self.status.to_le_bytes());
+        buf[10..12].copy_from_slice(&self.fix_age_ms.to_le_bytes());
+        let floats = [
+            self.pos_n_m,
+            self.pos_e_m,
+            self.vel_n_ms,
+            self.vel_e_ms,
+            self.alt_rel_m,
+            self.climb_ms,
+            self.gnss_alt_rel_m,
+            self.home_dist_m,
+            self.home_bearing_deg,
+            self.track_error_m,
+            self.lat_accel_ms2,
+            self.bank_demand_deg,
+            self.roll_deg,
+        ];
+        for (i, v) in floats.iter().enumerate() {
+            buf[12 + 4 * i..16 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf
+    }
+}
+
+const _: () = assert!(
+    NavMessage::SIZE == 8 + 2 + 2 + 13 * 4,
+    "NavMessage::SIZE does not match its field widths"
 );
 
 /// Log event message — compact discrete event for ULog flash

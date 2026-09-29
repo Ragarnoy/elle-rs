@@ -8,8 +8,8 @@ use crate::format::{
 use crate::messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
     Core1LoadMessage, EngineMessage, EscHealthMessage, GnssMessage, GyroRawMessage,
-    LogEventMessage, LoopStagesMessage, MagnetometerMessage, MessageType, PidGainsMessage,
-    StatusMessage,
+    LogEventMessage, LoopStagesMessage, MagnetometerMessage, MessageType, NavMessage,
+    PidGainsMessage, StatusMessage,
 };
 use embassy_time::Instant;
 use heapless::Vec;
@@ -135,6 +135,9 @@ impl ULogWriter {
             .map_err(|_| WriteError::BufferFull)?;
         self.buffer
             .extend_from_slice(LoopStagesMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(NavMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
 
         // Write info messages (type 'I')
@@ -266,6 +269,11 @@ impl ULogWriter {
         msg_id: u16,
         data: &LoopStagesMessage,
     ) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a navigator output message
+    pub fn write_nav(&mut self, msg_id: u16, data: &NavMessage) -> Result<(), WriteError> {
         self.write_data_payload(msg_id, &data.to_bytes())
     }
 

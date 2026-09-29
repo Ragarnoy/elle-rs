@@ -35,6 +35,25 @@ The gesture is forgotten on every disarm — kill switch, RC failsafe, RPC disar
 emergency stop — so each re-arm needs a fresh up-and-down. It cannot complete while
 failsafe is active. Code: `crates/elle-control/src/arming.rs`.
 
+### Home position (GNSS builds)
+
+Home is set automatically; there is nothing to press. While disarmed it follows every
+good fix (h_acc ≤ 5 m, ≥ 6 satellites) with the baro altitude at that moment; arming
+locks it for the flight, and disarming releases it. Arm where you want home to be,
+after the fix is good. The radio's flight-mode text says whether arming would lock one:
+
+| FM text (disarmed) | Meaning |
+|---|---|
+| `WAIT H` | Home set: arming locks it |
+| `NOHOME` | No fix good enough yet; a flight armed now has no home |
+| `WAIT` | Build without GNSS |
+
+An EdgeTX logical switch on the FM sensor can announce the change. The radio's own
+GPS "home" (first fix it received) is a different point.
+
+Navigation only observes today (logged as ULog `nav`, never applied), so a missing
+home costs nothing but the navigation log for that flight.
+
 ### RPC (`rpc-control` without `rpc-rc`)
 
 Arming is explicit: `arm` in the TUI or `direct arm`. The gesture is not used. `arm` is
@@ -208,8 +227,10 @@ Flight Review).
 
 Logged at the 200 Hz control rate: attitude and controller internals (PID terms,
 setpoints, saturation, elevon pulses, loop dt); pilot commands and engine telemetry at
-100 Hz; status at 8 Hz; baro, mag and GNSS at their sensor rates; PID gains once per file and on every
-change. ESC link health (`esc_health`, ~1 Hz) counts DShot telemetry replies, timeouts,
+100 Hz; status at 8 Hz; baro and mag at their sensor rates; every GNSS solution (5 Hz); PID gains
+once per file and on every change. The navigator (`nav`, 25 Hz, GNSS builds) runs in
+observation mode: it logs what it would bank for a loiter around home and never moves
+a surface (home: see [Home position](#home-position-gnss-builds)). ESC link health (`esc_health`, ~1 Hz) counts DShot telemetry replies, timeouts,
 corrupt replies and re-configurations per ESC: corrupt replies point at wiring noise, and
 timeouts climbing at idle mean an ESC is silent. Core 1 load (`core1_load`, ~1 Hz) gives
 the IMU task's mean and max busy time per 1 ms sample and its longest mag and baro reads.

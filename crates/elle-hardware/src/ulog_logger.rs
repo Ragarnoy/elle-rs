@@ -44,6 +44,7 @@ pub struct ULogLogger {
     esc_health_msg_id: Option<u16>,
     core1_load_msg_id: Option<u16>,
     loop_stages_msg_id: Option<u16>,
+    nav_msg_id: Option<u16>,
     #[cfg(feature = "gyro-raw-log")]
     gyro_raw_msg_id: Option<u16>,
     /// Gains version last written to this file; `None` right after `initialize`.
@@ -77,6 +78,7 @@ impl ULogLogger {
             esc_health_msg_id: None,
             core1_load_msg_id: None,
             loop_stages_msg_id: None,
+            nav_msg_id: None,
             #[cfg(feature = "gyro-raw-log")]
             gyro_raw_msg_id: None,
             logged_gains_version: None,
@@ -196,6 +198,11 @@ impl ULogLogger {
         self.loop_stages_msg_id = Some(
             self.writer
                 .add_subscription(elle_ulog::LoopStagesMessage::NAME)
+                .map_err(|_| ULogError::InitFailed)?,
+        );
+        self.nav_msg_id = Some(
+            self.writer
+                .add_subscription(elle_ulog::NavMessage::NAME)
                 .map_err(|_| ULogError::InitFailed)?,
         );
         // Only capture builds write gyro_raw, so only they subscribe to it.
@@ -498,9 +505,9 @@ impl ULogLogger {
         }
 
         let msg = elle_ulog::GnssMessage::new(
-            Instant::now(),
-            gnss.latitude,
-            gnss.longitude,
+            Instant::from_micros(gnss.sample_us),
+            gnss.lat_e7,
+            gnss.lon_e7,
             gnss.altitude_m,
             gnss.fix_quality,
             gnss.num_satellites,
@@ -513,6 +520,7 @@ impl ULogLogger {
             gnss.h_acc_m,
             gnss.v_acc_m,
             gnss.s_acc_ms,
+            gnss.pvt_active,
         );
 
         self.writer.clear_buffer();
@@ -621,6 +629,21 @@ impl ULogLogger {
         self.writer.clear_buffer();
         self.writer
             .write_loop_stages(self.loop_stages_msg_id.unwrap(), &msg)
+            .map_err(|_| ULogError::BufferFull)?;
+
+        self.buffer_writer_output()
+    }
+
+    /// Log one navigator update (timestamp is filled in here).
+    pub fn log_nav(&mut self, mut msg: elle_ulog::NavMessage) -> Result<(), ULogError> {
+        if !self.initialized {
+            return Err(ULogError::NotInitialized);
+        }
+        msg.timestamp = Instant::now().as_micros();
+
+        self.writer.clear_buffer();
+        self.writer
+            .write_nav(self.nav_msg_id.unwrap(), &msg)
             .map_err(|_| ULogError::BufferFull)?;
 
         self.buffer_writer_output()

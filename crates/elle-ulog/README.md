@@ -28,13 +28,14 @@ still target it, but new recordings go to the SD card.
 | `system_status` | 24 | 8 Hz | loop time, IMU errors, calibrated, armed, CPU load, RC age |
 | `magnetometer_data` | 20 | ~10 Hz | raw counts |
 | `barometer_data` | 24 | 5 Hz | pressure, temperature, altitude, vario |
-| `gnss_data` | 58 | ~1 Hz | fix, position, velocity NED, ground speed, course, accuracies, sats |
+| `gnss_data` | 59 | 5 Hz (per solution) | timestamped with the solution's receive time: fix, lat/lon (degrees × 10⁷), velocity NED, ground speed, course, accuracies, sats, `pvt_active`; velocity and accuracies are NaN on the NMEA fallback |
 | `pid_gains` | 40 | per file + on change | Kp/Ki/Kd per axis, I limit, scale |
 | `log_event` | 11 | on event | level + event code (see [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#event-codes)) |
 | `autotune_status` | 24 | while tuning | phase, axis, relay state, setpoint, measurement, cycles, amplitude |
 | `esc_health` | 44 | ~1 Hz | per ESC, cumulative: telemetry replies, timeouts, corrupt replies (GCR/CRC), re-configurations, extended-telemetry frames |
 | `core1_load` | 32 | ~1 Hz | Core 1 IMU task over the window: wake-ups, mean and max busy µs per wake (deadline 1 ms), longest mag and baro read (own task, not part of the busy time), largest FIFO drain |
 | `loop_stages` | 46 | 8 Hz | flight loop only: mean and max µs per stage over 25 ticks (intake, update, outputs, switches, autotune, log, tail), DShot executor interrupt time and runs on Core 0 |
+| `nav` | 64 | 25 Hz | navigator, observation mode (`gnss` builds): `status` bits (`elle_nav::status`), fix age, position/velocity north-east of home, baro and GNSS height above home, distance/bearing to home, track error, lateral acceleration and bank demand for a loiter around home (not applied), measured roll; invalid fields NaN |
 | `gyro_raw` | 20 | 1 kHz | unfiltered gyro, `gyro-raw-log` builds only |
 
 Sizes are the payload after the 3-byte message header. Rates are set in `elle-app`

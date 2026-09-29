@@ -87,3 +87,5 @@ jobs:
         run: cargo test -p elle-control --target x86_64-unknown-linux-gnu
       - name: elle-control tests (dart)
         run: cargo test -p elle-control --target x86_64-unknown-linux-gnu --features platform-dart
+      - name: elle-nav tests
+        run: cargo test -p elle-nav --target x86_64-unknown-linux-gnu

@@ -37,7 +37,7 @@ Cargo workspace:
 - **`crates/elle-rpc-icd/`** — shared RPC Interface Control Document
 - **`crates/elle-ulog/`** — `no_std` ULog encoder
 - **`crates/elle-error/`** — error types
-- **`crates/elle-nav/`** — navigation math placeholder (workspace member, not yet used by the firmware)
+- **`crates/elle-nav/`** — navigation, hardware-independent and host-tested: home frame (sguaba NED), estimator, L1 guidance. Runs in **observation mode** only (logged, never applied); see [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md)
 - **`drivers/`** — vendored sensor drivers: `mmc5616wa` (mag), `sam-m10q` (GNSS), `bmp390` (baro, local fork patched over crates.io)
 - **`tools/elle-rpc-host/`** — host CLI (TUI dashboard + `direct` commands)
 
@@ -65,7 +65,7 @@ Feature flags (both binaries; they forward to `elle-app`):
 - `rpc-control` — postcard-RPC server over RTT. **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`), enforced by `compile_error!` in each `main.rs`.
 - `rpc-rc` — in RPC mode, pilot commands come from the RC receiver (gesture arming, kill switch, RC failsafe) while the TUI monitors. **Requires `rpc-control`** (`compile_error!` in `elle-app`).
 - `defmt-logging` — defmt over RTT (default). The macros are always compiled; without this feature they are no-ops.
-- `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss`. `rpc-control` also enables `gnss-gsv` (satellites in view).
+- `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss` and the navigator (`elle-nav`, observation mode). `rpc-control` also enables `gnss-gsv` (satellites in view).
 - `performance-monitoring` — timing instrumentation (`TimingMeasurement` is a no-op stub without it).
 - `gyro-raw-log` — every 1 kHz gyro sample to ULog as `gyro_raw` (~25 kB/s), for sizing `GYRO_RATE_LPF_HZ`. Bench only.
 
@@ -86,6 +86,7 @@ The workspace defaults to thumbv8m, so host crates need an explicit target:
 cargo build -p elle-rpc-host --target x86_64-unknown-linux-gnu
 cargo test  -p elle-control  --target x86_64-unknown-linux-gnu                          # eagle config
 cargo test  -p elle-control  --target x86_64-unknown-linux-gnu --features platform-dart  # dart config
+cargo test  -p elle-nav      --target x86_64-unknown-linux-gnu
 ```
 
 ### CI
@@ -94,7 +95,7 @@ cargo test  -p elle-control  --target x86_64-unknown-linux-gnu --features platfo
 `rpc-control,gnss` / `rpc-control,rpc-rc,gnss`; `cargo fmt --check`; both powerset
 checks; clippy `-D warnings` on both airframes (flight and RPC+RC) and the host tool;
 `elle-control` tests for both platforms (governor step response, level cal, autotune,
-arming, …).
+arming, …); `elle-nav` tests (geodesy, estimator, closed-loop L1 line and loiter with wind).
 
 ## Pin Map
 
@@ -213,7 +214,7 @@ They run in their own task, so bus transfers never hold up a 1 kHz sample, and e
 
 - `ATTITUDE` (`elle-hardware/src/imu.rs`) — AHRS attitude + filtered rates at 1 kHz; the control loop `try_take()`s it.
 - `MAG`, `BARO` (same file) — raw mag counts (~10 Hz), pressure/temp/altitude (~20 Hz); read by CRSF telemetry, RPC and ULog.
-- `GNSS_SIGNAL` (`elle-hardware/src/gnss.rs`) — `GnssData` for ULog, RPC and CRSF.
+- `GNSS` (`elle-hardware/src/gnss.rs`) — latest `GnssData` for the navigator, ULog, RPC and CRSF. `sample_us` is the solution's receive time (new-solution detection and ageing); lat/lon are degrees × 10⁷.
 - `FLIGHT_STATE`, `CONTROLLER_OUTPUT` (`elle-app/src/flight_state.rs`) — published by the RPC loop for the status and controller-output handlers.
 - `DSHOT_THROTTLE` / `ENGINE_CACHE` / `BEEP_SIGNAL` (`elle-hardware/src/dshot.rs`) — eRPM targets in, per-engine telemetry out.
 - `RPC_CMD_CHANNEL` + `RpcCommand` (`elle-app/src/rpc_handlers.rs`) — RPC handler → loop.
@@ -255,6 +256,19 @@ engine 5 Hz, RC 20 Hz, controller output 10 Hz.
 - **RAM layer only**: reapplied every boot, no config-write wear. `DYNMODEL` and `FIXMODE` constrain each other and must go in one VALSET (UBX-21035062 §3.10.5.1).
 - `gnss-gsv` requests GSV only on the 115200 link (it would eat 69 % of 9600).
 - `hdop` is only meaningful on the GGA path; `h_acc_m` is the real quality gate.
+- On the GGA path the velocity and accuracy fields are NaN (never the last NAV-PVT values), so a GGA fix never passes the navigator's gates.
+
+### Navigation (`crates/elle-nav`, `elle-app/src/nav.rs`)
+
+**Observation mode only**: `NavObserver` (both loops, `gnss` builds) feeds each new
+GNSS and baro sample (by `sample_us`) to `elle_nav::Navigator` every tick and, every
+`NAV_UPDATE_DIVISOR` ticks (25 Hz), logs its state and the L1 bank demand for a loiter
+around home as ULog `nav`. Nothing reaches `FlightController`. Home follows good fixes
+(`NAV_HOME_*`) while disarmed, locks on arming, releases on disarm. sguaba converts a
+fix into the typed `HomeNed` frame (`f64`, software float: once per fix, never per
+tick); guidance works on `f32` `Ne`. Bank demand is positive right, like the
+heading-hold roll setpoint. While disarmed the CRSF flight-mode text shows `WAIT H` /
+`NOHOME` (`CrsfFlightMode::home_set`; `WAIT` without GNSS). Plan and next steps: [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md).
 
 ### Logging
 

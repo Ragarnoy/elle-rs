@@ -14,6 +14,7 @@ elle-ulog = { workspace = true }
 elle-control = { workspace = true }
 elle-system = { workspace = true }
 elle-rpc-icd = { workspace = true, optional = true }
+elle-nav = { workspace = true, optional = true }
 
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
@@ -33,7 +34,8 @@ defmt = { workspace = true }
 rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "heapless", "elle-hardware/gnss-gsv"]
 # RC/CRSF pilot commands in RPC mode (TUI keeps monitoring).
 rpc-rc = []
-gnss = ["elle-hardware/gnss"]
+# GNSS task, and the navigator that runs on it (observation mode).
+gnss = ["elle-hardware/gnss", "elle-nav"]
 performance-monitoring = ["elle-system/performance-monitoring"]
 gyro-raw-log = ["elle-hardware/gyro-raw-log"]
 

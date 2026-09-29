@@ -9,6 +9,7 @@ Subcommands (all take one or more .ulg paths unless noted):
   esc       ESC link health and engine telemetry sanity
   sensors   mag / baro / GNSS / attitude rates and ranges
   stages    flight-loop time per stage (loop_stages) by armed/mode, DShot executor share
+  nav       navigator (observation mode): home, validity, fix age, bank demand vs roll
   window    events and key numbers between two times: window FILE T0 T1
 
 Needs pyulog and numpy (see SKILL.md for the venv). Older logs lack some
@@ -135,7 +136,7 @@ def armed_intervals(log):
 
 def cmd_list(logs, _args):
     for log in logs:
-        feats = [n for n in ("controller", "esc_health", "core1_load", "gyro_raw") if log.has(n)]
+        feats = [n for n in ("controller", "esc_health", "core1_load", "loop_stages", "nav", "gyro_raw") if log.has(n)]
         mag = changes_per_s(log, "magnetometer_data", ["mag_x", "mag_y", "mag_z"]) if log.has("magnetometer_data") else 0
         armed = sum(b - a for a, b in armed_intervals(log)) if log.has("system_status") else 0
         ev = len(log.m["log_event"]["code"]) if log.has("log_event") else 0
@@ -239,7 +240,10 @@ def cmd_sensors(logs, _args):
             print(f"  baro: logged {len(b['pressure_hpa']) / log.duration:.1f}/s, {b['pressure_hpa'].min():.2f}-{b['pressure_hpa'].max():.2f} hPa")
         if log.has("gnss_data"):
             g = log.m["gnss_data"]
-            print(f"  gnss: max sats {int(g['num_satellites'].max())}, max fix {int(g['fix_quality'].max())}, "
+            # Newer logs record one gnss_data per solution (≈5/s on NAV-PVT), older ones ~1/s.
+            pvt = f", NAV-PVT {100 * g['pvt_active'].mean():.0f}%" if "pvt_active" in g else ""
+            print(f"  gnss: logged {len(g['num_satellites']) / log.duration:.1f}/s{pvt}, max sats {int(g['num_satellites'].max())}, "
+                  f"max fix {int(g['fix_quality'].max())}, "
                   f"best h_acc {g['h_acc_m'][g['h_acc_m'] > 0].min() if (g['h_acc_m'] > 0).any() else '-'} m")
         a = log.m["attitude_data"]
         print(f"  attitude: pitch {np.degrees(a['pitch']).min():.1f}..{np.degrees(a['pitch']).max():.1f}°, "
@@ -286,6 +290,51 @@ def cmd_stages(logs, _args):
             print(f"  {'   max':28s}  " + "".join(f"{v:9.0f}" for v in p90))
 
 
+NAV_BITS = {"home": 1 << 0, "locked": 1 << 1, "pos": 1 << 2, "vel": 1 << 3, "alt": 1 << 4,
+            "extrap": 1 << 5, "guidance": 1 << 6, "bank_limited": 1 << 7, "capture": 1 << 8,
+            "too_slow": 1 << 9, "gnss_alt": 1 << 10}
+
+
+def cmd_nav(logs, _args):
+    """Navigator in observation mode: what it would have commanded, and whether
+    its inputs were usable. The demand is never applied, so bank demand vs
+    measured roll only shows how far the pilot's flying was from the path."""
+    for log in logs:
+        print(f"== {log.name}  ({log.duration:.0f}s)")
+        if not log.has("nav"):
+            print("  no nav messages (build before navigation observation mode, or no GNSS)")
+            continue
+        n = log.m["nav"]
+        st = n["status"].astype(int)
+        armed = np.zeros(len(st), bool)
+        if log.has("system_status"):
+            s = log.m["system_status"]
+            armed = np.interp(n["timestamp"], s["timestamp"], s["armed"]) > 0.5
+        print(f"  {len(st)} updates ({len(st) / log.duration:.1f}/s), armed {100 * armed.mean():.0f}% of them")
+        for label, sel in (("all", np.ones(len(st), bool)), ("armed", armed)):
+            if not sel.any():
+                continue
+            share = {k: 100 * ((st[sel] & b) != 0).mean() for k, b in NAV_BITS.items()}
+            print(f"  {label:5s} " + "  ".join(f"{k} {v:.0f}%" for k, v in share.items()))
+        age = n["fix_age_ms"][(st & NAV_BITS["pos"]) != 0]
+        if len(age):
+            print(f"  fix age (position valid): p50 {pct(age, 50)} ms, p99 {pct(age, 99)} ms, max {int(age.max())} ms")
+        pos = (st & NAV_BITS["pos"]) != 0
+        if pos.any():
+            print(f"  max distance from home {np.nanmax(n['home_dist_m'][pos]):.0f} m, "
+                  f"baro height {np.nanmin(n['alt_rel_m']):.1f}..{np.nanmax(n['alt_rel_m']):.1f} m, "
+                  f"GNSS height {np.nanmin(n['gnss_alt_rel_m']):.1f}..{np.nanmax(n['gnss_alt_rel_m']):.1f} m")
+        g = ((st & NAV_BITS["guidance"]) != 0) & armed
+        if g.any():
+            dem, roll = n["bank_demand_deg"][g], n["roll_deg"][g]
+            ok = np.isfinite(roll)
+            print(f"  armed with guidance: {g.sum() / 25:.0f} s, track error |p50| {np.nanpercentile(np.abs(n['track_error_m'][g]), 50):.0f} m, "
+                  f"bank demand {dem.min():.0f}..{dem.max():.0f}°, limited {100 * ((st[g] & NAV_BITS['bank_limited']) != 0).mean():.0f}%")
+            if ok.sum() > 10:
+                print(f"  demand vs measured roll: corr {np.corrcoef(dem[ok], roll[ok])[0, 1]:.2f}, "
+                      f"mean |diff| {np.abs(dem[ok] - roll[ok]).mean():.1f}° (the pilot was flying, not the navigator)")
+
+
 def cmd_window(logs, args):
     labels = event_labels()
     log = logs[0]
@@ -320,7 +369,7 @@ def cmd_window(logs, args):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("list", "summary", "timing", "esc", "sensors", "stages"):
+    for name in ("list", "summary", "timing", "esc", "sensors", "stages", "nav"):
         sp = sub.add_parser(name)
         sp.add_argument("files", nargs="+")
     w = sub.add_parser("window")
@@ -336,7 +385,7 @@ def main():
         except Exception as e:  # truncated or empty files are common after a power cut
             print(f"{Path(f).name}: unreadable ({e})", file=sys.stderr)
     {"list": cmd_list, "summary": cmd_summary, "timing": cmd_timing, "esc": cmd_esc,
-     "sensors": cmd_sensors, "stages": cmd_stages, "window": cmd_window}[args.cmd](logs, args)
+     "sensors": cmd_sensors, "stages": cmd_stages, "nav": cmd_nav, "window": cmd_window}[args.cmd](logs, args)
 
 
 if __name__ == "__main__":

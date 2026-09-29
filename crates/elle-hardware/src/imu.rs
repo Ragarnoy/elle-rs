@@ -95,6 +95,7 @@ pub static BARO: SignalCache<BaroReading> = SignalCache::new(BaroReading {
     temperature_c: 0.0,
     altitude_m: 0.0,
     vario_ms: 0.0,
+    sample_us: 0,
 });
 
 /// Barometer reading from BMP390
@@ -106,6 +107,8 @@ pub struct BaroReading {
     /// Vertical speed in m/s (positive = climbing, negative = sinking).
     /// Computed from altitude differentiation with EMA smoothing.
     pub vario_ms: f32,
+    /// When the measurement was read, µs since boot; 0 before the first one.
+    pub sample_us: u64,
 }
 
 /// Cross-core: Core0 signals loaded offsets at boot → Core1 IMU applies them

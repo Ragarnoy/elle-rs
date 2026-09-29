@@ -64,14 +64,17 @@ pub struct CrsfFlightMode {
     pub autotune: AutotuneDisplay,
     /// True while the heading-hold modifier is engaged (only meaningful when `mode == Stabilized`).
     pub heading_hold: bool,
+    /// Whether the navigator has a home: `None` in builds without GNSS.
+    pub home_set: Option<bool>,
 }
 
 /// Lightweight GPS data for telemetry (avoids dependency on elle-rpc-icd).
 #[cfg(feature = "gnss")]
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub(crate) struct TelemetryGpsData {
-    pub(crate) latitude: f32,
-    pub(crate) longitude: f32,
+    /// Degrees × 10⁷, which is also the CRSF encoding.
+    pub(crate) lat_e7: i32,
+    pub(crate) lon_e7: i32,
     pub(crate) altitude_m: f32,
     pub(crate) num_satellites: u8,
     /// Ground speed in m/s, from UBX-NAV-PVT.
@@ -109,7 +112,13 @@ fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
     let mode_str: &[u8] = if mode.failsafe {
         b"!FS!\0"
     } else if !mode.armed {
-        b"WAIT\0"
+        // Disarmed: say whether arming would lock a home (the navigator's,
+        // not the radio's own GPS home).
+        match mode.home_set {
+            Some(true) => b"WAIT H\0",
+            Some(false) => b"NOHOME\0",
+            None => b"WAIT\0",
+        }
     } else {
         match mode.autotune {
             AutotuneDisplay::Pitch => b"AT P\0",
@@ -159,11 +168,12 @@ fn build_gps_frame(
     #[cfg(feature = "gnss")]
     let (lat_i, lon_i, alt, sats, speed) = if let Some(gps) = gps {
         (
-            (gps.latitude as f64 * 1e7) as i32,
-            (gps.longitude as f64 * 1e7) as i32,
+            gps.lat_e7,
+            gps.lon_e7,
             (gps.altitude_m + 1000.0).max(0.0) as u16,
             gps.num_satellites,
-            // The frame carries km/h × 10; NAV-PVT reports m/s.
+            // The frame carries km/h × 10; NAV-PVT reports m/s (NaN on the
+            // GGA fallback, which the cast turns into 0).
             (gps.ground_speed_ms * (3.6 * 10.0)).clamp(0.0, f32::from(u16::MAX)) as u16,
         )
     } else {
@@ -256,6 +266,7 @@ pub async fn crsf_telemetry_task(mut tx: UartTx<'static, Async>) {
         mode: CrsfControlMode::Manual,
         autotune: AutotuneDisplay::Off,
         heading_hold: false,
+        home_set: None,
     };
 
     #[cfg(feature = "gnss")]

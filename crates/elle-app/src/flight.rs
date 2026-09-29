@@ -37,6 +37,9 @@ const RC_AUTOTUNE_CYCLES: usize = 6;
 /// starts once the SD card is ready.
 pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64) -> ! {
     let mut ulog_logger = ULogLogger::new();
+    // Navigation in observation mode: computed and logged, never applied.
+    #[cfg(feature = "gnss")]
+    let mut nav = crate::nav::NavObserver::new();
     let mut loop_counter = 0u32;
 
     info!("FLIGHT MODE - CRSF/ELRS Control");
@@ -298,6 +301,10 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                 },
                 autotune: autotune_display,
                 heading_hold: fc.is_heading_hold_active(),
+                #[cfg(feature = "gnss")]
+                home_set: Some(nav.home_set()),
+                #[cfg(not(feature = "gnss"))]
+                home_set: None,
             });
 
             stages.record(Stage::Outputs, clock.lap());
@@ -522,6 +529,11 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
             stages.record(Stage::Autotune, clock.lap());
 
+            // Runs whether or not ULog is recording, so home keeps tracking the
+            // aircraft on the ground. Its time counts in the log stage.
+            #[cfg(feature = "gnss")]
+            let nav_tick = nav.tick(fc.is_armed(), valid_attitude.as_ref(), loop_counter);
+
             // Auto-start ULog on SD card ready (runs until power off)
             if !ulog_recording
                 && elle_hardware::sd_writer::SD_READY.load(core::sync::atomic::Ordering::Acquire)
@@ -556,6 +568,8 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                     loop_start.elapsed().as_micros() as u32,
                     fc,
                 );
+                #[cfg(feature = "gnss")]
+                crate::logging::log_nav(&mut ulog_logger, &nav_tick);
             } else if loop_counter.is_multiple_of(STALE_EVENT_DRAIN_DIVISOR) {
                 // Drain stale events when not recording
                 while elle_hardware::event::ULOG_EVENT_CHANNEL
