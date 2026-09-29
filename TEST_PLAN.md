@@ -521,6 +521,19 @@ with `elle_log.py nav` and `elle_log.py sensors`.
 | 4 | Flight in Stabilized: circle the field clockwise at ~80 m, then anticlockwise | Clockwise: `bank_demand_deg` and `roll_deg` both positive and close; anticlockwise: they disagree in sign (demand still asks for a right turn). Confirms the sign conventions | [ ] |
 | 5 | Same flight | `gnss_data` ~5/s with `pvt_active` = 1; baro and GNSS height above home within a few metres | [ ] |
 
+### 6.10 Raw IMU Capture (bench, `imu-raw-log` build)
+
+Build with `--features imu-raw-log` (eagle flight build first). Nothing flies
+differently; the build records more and logs `attitude_data` at 50 Hz.
+
+| # | Test | Expected | Pass |
+|---|------|----------|------|
+| 1 | Power up, arm, run the engines at idle and a few throttle steps for 10+ min (props off) | No ULog dropouts (`elle_log.py timing`) over ~4 MB or more | [ ] |
+| 2 | Same log | `imu_raw` at ~100/s, first indices consecutive (step 10, no gaps); `imu_raw_ctx` ~1/s, `roundtrip_errors` 0 | [ ] |
+| 3 | Same log | `core1_load` busy mean/max within a few µs of a normal build's | [ ] |
+| 4 | Same log, `elle-replay FILE` | Every `attitude_data` sample while synced matches the replay exactly | [ ] |
+| 5 | Stabilized on the stand, stick steps and disturbances | Feels and responds as before (the fusion code moved, bit-identical on the host) | [ ] |
+
 ## Abort Criteria
 
 Stop testing and investigate if any of these occur:
