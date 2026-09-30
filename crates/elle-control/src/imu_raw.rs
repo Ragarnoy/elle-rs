@@ -76,7 +76,9 @@ pub struct Batch {
     pub first_index: u32,
     /// When the first sample was read, µs since boot.
     pub t_us: u64,
-    /// Samples in `data` (short only when flushed early).
+    /// Samples in `data`: always [`BATCH_SAMPLES`] from [`Recorder`], which
+    /// has no flush (it runs on while recording starts and stops), so a
+    /// capture's last 1–9 samples are not logged.
     pub count: u8,
     /// IMU temperature at the last sample, °C × 100.
     pub temp_centi_c: i16,
