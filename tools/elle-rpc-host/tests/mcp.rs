@@ -236,6 +236,11 @@ async fn lists_the_tools() {
         "level_cal",
         "ulog",
         "autotune",
+        "build_and_flash",
+        "reset_target",
+        "connect_defmt",
+        "log",
+        "wait_log",
     ] {
         assert!(names.iter().any(|n| n == t), "missing tool {t}: {names:?}");
     }
@@ -454,4 +459,20 @@ async fn tools_say_when_not_connected() {
     assert_eq!(r.is_error, Some(true));
     let text = r.content[0].as_text().unwrap().text.clone();
     assert!(text.contains("connect"), "{text}");
+}
+
+#[tokio::test]
+async fn defmt_tools_explain_what_is_missing() {
+    let r = rig(Options::default()).await;
+    let e = r.call("log", json!({})).await.unwrap_err();
+    assert!(e.contains("connect_defmt"), "{e}");
+    let e = r
+        .call("wait_log", json!({"contains": "x", "timeout_s": 0.1}))
+        .await
+        .unwrap_err();
+    assert!(e.contains("connect_defmt"), "{e}");
+    let e = r.call("connect_defmt", json!({})).await.unwrap_err();
+    assert!(e.contains("no ELF"), "{e}");
+    let s = r.json("link_status", json!({})).await;
+    assert_eq!(s["defmt_log"], json!(null));
 }

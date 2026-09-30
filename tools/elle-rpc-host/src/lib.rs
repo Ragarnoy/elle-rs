@@ -6,4 +6,5 @@ pub mod events;
 pub mod link;
 pub mod mcp;
 pub mod probe;
+pub mod target;
 pub mod wire;

@@ -92,6 +92,10 @@ struct Inner {
     events: std::sync::Mutex<EventLog>,
     /// The armed timer and keepalive, while the server has armed the engines.
     armed: Mutex<Option<ArmedGuard>>,
+    /// The flight build's defmt log, when attached to one.
+    defmt: Mutex<Option<crate::target::DefmtReader>>,
+    /// The last build flashed (its ELF decodes the defmt log).
+    last_build: Mutex<Option<(crate::target::Build, std::path::PathBuf)>>,
 }
 
 struct ArmedGuard {
@@ -322,6 +326,65 @@ pub struct AutotuneReq {
     pub cycles: Option<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AirframeParam {
+    Eagle,
+    Dart,
+}
+
+/// Which firmware: the three build lines of CLAUDE.md (RPC ones keep `gnss`).
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Profile {
+    /// CRSF/ELRS flight firmware (default features; defmt log, no RPC).
+    Flight,
+    /// RPC ground-test firmware (`rpc-control,gnss`): the host commands.
+    Rpc,
+    /// RPC monitoring with RC control (`rpc-control,rpc-rc,gnss`).
+    RpcRc,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct FlashReq {
+    pub airframe: AirframeParam,
+    pub profile: Profile,
+    /// Extra features, e.g. `imu-raw-log`, `performance-monitoring`.
+    #[serde(default)]
+    pub extra_features: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct DefmtReq {
+    /// ELF of the running build (default: the last one `build_and_flash` flashed).
+    #[serde(default)]
+    pub elf: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct LogReq {
+    /// Only lines after this sequence number (0: all buffered).
+    #[serde(default)]
+    pub since_seq: u64,
+    /// Only lines containing this text.
+    #[serde(default)]
+    pub contains: Option<String>,
+    /// At most this many, newest last (default 100).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WaitLogReq {
+    /// Text the line must contain, e.g. `115200 baud`.
+    pub contains: String,
+    /// Only lines after this sequence number; omit to wait for a new one.
+    #[serde(default)]
+    pub since_seq: Option<u64>,
+    /// Give up after this long, seconds (max 600).
+    pub timeout_s: f64,
+}
+
 // ---------------------------------------------------------------------------
 
 type ToolResult = Result<String, String>;
@@ -488,6 +551,8 @@ impl ElleMcp {
                 conn: Mutex::new(None),
                 events: std::sync::Mutex::new(EventLog::default()),
                 armed: Mutex::new(None),
+                defmt: Mutex::new(None),
+                last_build: Mutex::new(None),
             }),
             tool_router: Self::tool_router(),
         }
@@ -541,12 +606,59 @@ impl ElleMcp {
     /// Disarm (if this server armed) and release the probe. Called on exit.
     pub async fn shutdown(&self) {
         let _ = self.stop_engines().await;
+        if let Some(mut d) = self.inner.defmt.lock().await.take() {
+            let _ = tokio::task::spawn_blocking(move || d.stop()).await;
+        }
         if let Some(c) = self.inner.conn.lock().await.take() {
             c.events.abort();
             c.client.close();
             if let Some(l) = c.link {
                 let _ = tokio::task::spawn_blocking(move || l.close()).await;
             }
+        }
+    }
+
+    /// After flashing: the RPC link for RPC builds, the defmt log otherwise.
+    async fn reattach(&self, build: &crate::target::Build, elf: &std::path::Path) -> String {
+        if build.is_rpc() {
+            self.connect_retrying().await
+        } else {
+            self.start_defmt(elf).await
+        }
+    }
+
+    /// Connect, retrying while the freshly reset firmware boots.
+    async fn connect_retrying(&self) -> String {
+        let mut last = String::new();
+        for _ in 0..3 {
+            match tokio::task::spawn_blocking(|| Link::connect_within(Some(CONNECT_LIMIT))).await {
+                Ok(Ok(link)) => {
+                    let client = link.client.clone();
+                    return match self.attach(client, Some(link)).await {
+                        Ok(()) => "rpc".to_string(),
+                        Err(e) => e,
+                    };
+                }
+                Ok(Err(e)) => last = format!("{e:#}"),
+                Err(e) => last = e.to_string(),
+            }
+        }
+        format!("not attached: {last}")
+    }
+
+    async fn start_defmt(&self, elf: &std::path::Path) -> String {
+        let e = elf.to_path_buf();
+        match tokio::task::spawn_blocking(move || {
+            crate::target::DefmtReader::start(&e, CONNECT_LIMIT)
+        })
+        .await
+        {
+            Ok(Ok(r)) => {
+                *self.inner.defmt.lock().await = Some(r);
+                "defmt".to_string()
+            }
+            Ok(Err(e)) => format!("not attached: {e:#}"),
+            Err(e) => format!("not attached: {e}"),
         }
     }
 
@@ -636,8 +748,16 @@ impl ElleMcp {
     )]
     async fn link_status(&self) -> ToolResult {
         let connected = self.inner.conn.lock().await.is_some();
+        let defmt = self
+            .inner
+            .defmt
+            .lock()
+            .await
+            .as_ref()
+            .map(|d| json!({"elf": d.elf.display().to_string(), "alive": d.alive()}));
         let mut j = json!({
             "connected": connected,
+            "defmt_log": defmt,
             "motors_allowed": self.inner.opts.allow_motors,
             "max_throttle_pct": self.inner.opts.max_throttle_pct,
             "max_armed_s": self.inner.opts.max_armed.as_secs_f64(),
@@ -779,6 +899,163 @@ impl ElleMcp {
                 ));
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    // --- Build, flash, reset, defmt ----------------------------------------------
+
+    #[tool(
+        description = "Build firmware (cargo build --release) and flash it through the probe, \
+        then reset and reattach: RPC profiles connect the RPC link, the flight profile starts \
+        reading its defmt log (`log`, `wait_log`). Disarms and releases the probe first. Takes \
+        a minute or two. Ask the operator before replacing the firmware."
+    )]
+    async fn build_and_flash(&self, Parameters(r): Parameters<FlashReq>) -> ToolResult {
+        use crate::target::{Airframe, Build};
+        let (no_default_features, mut features): (bool, Vec<String>) = match r.profile {
+            Profile::Flight => (false, Vec::new()),
+            Profile::Rpc => (true, vec!["rpc-control".into(), "gnss".into()]),
+            Profile::RpcRc => (
+                true,
+                vec!["rpc-control".into(), "rpc-rc".into(), "gnss".into()],
+            ),
+        };
+        features.extend(r.extra_features);
+        let build = Build {
+            airframe: match r.airframe {
+                AirframeParam::Eagle => Airframe::Eagle,
+                AirframeParam::Dart => Airframe::Dart,
+            },
+            no_default_features,
+            features,
+        };
+        self.shutdown().await;
+        let b = build.clone();
+        let elf = tokio::task::spawn_blocking(move || b.run())
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?;
+        let e = elf.clone();
+        tokio::task::spawn_blocking(move || crate::target::flash(&e))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("flash failed: {e:#}"))?;
+        *self.inner.last_build.lock().await = Some((build.clone(), elf.clone()));
+        let attached = self.reattach(&build, &elf).await;
+        to_text(&json!({
+            "flashed": elf.display().to_string(),
+            "features": build.features,
+            "no_default_features": build.no_default_features,
+            "attached": attached,
+        }))
+    }
+
+    #[tool(
+        description = "Reset the flight controller (it reboots), then reattach as before \
+        (RPC link or defmt log). Disarms first."
+    )]
+    async fn reset_target(&self) -> ToolResult {
+        let was_defmt = self
+            .inner
+            .defmt
+            .lock()
+            .await
+            .as_ref()
+            .map(|d| d.elf.clone());
+        let was_rpc = self.inner.conn.lock().await.is_some();
+        self.shutdown().await;
+        tokio::task::spawn_blocking(crate::target::reset)
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("reset failed: {e:#}"))?;
+        let attached = if let Some(elf) = was_defmt {
+            self.start_defmt(&elf).await
+        } else if was_rpc {
+            self.connect_retrying().await
+        } else {
+            "not attached (was not before)".to_string()
+        };
+        to_text(&json!({ "reset": true, "attached": attached }))
+    }
+
+    #[tool(
+        description = "Read a flight build's defmt log (flight builds have no RPC): attach \
+        and decode with the given ELF, or the one last flashed. Then `log`, `wait_log`."
+    )]
+    async fn connect_defmt(&self, Parameters(r): Parameters<DefmtReq>) -> ToolResult {
+        let elf = match r.elf {
+            Some(p) => std::path::PathBuf::from(p),
+            None => self
+                .inner
+                .last_build
+                .lock()
+                .await
+                .as_ref()
+                .map(|(_, e)| e.clone())
+                .ok_or("no ELF: pass `elf`, or flash with build_and_flash first")?,
+        };
+        self.shutdown().await;
+        Ok(self.start_defmt(&elf).await)
+    }
+
+    #[tool(
+        description = "Decoded defmt lines buffered from a flight build (see connect_defmt), \
+        with sequence numbers for since_seq."
+    )]
+    async fn log(&self, Parameters(r): Parameters<LogReq>) -> ToolResult {
+        let d = self.inner.defmt.lock().await;
+        let d = d
+            .as_ref()
+            .ok_or("no defmt log attached: connect_defmt or build_and_flash")?;
+        let ring = d
+            .lines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut lines = ring.after(r.since_seq, r.contains.as_deref());
+        let limit = r.limit.unwrap_or(100);
+        if lines.len() > limit {
+            lines.drain(..lines.len() - limit);
+        }
+        to_text(&json!({ "last_seq": ring.last_seq(), "alive": d.alive(), "lines": lines }))
+    }
+
+    #[tool(
+        description = "Wait for a defmt line containing some text (e.g. after a reset: \
+        `115200 baud`). By default only lines after this call."
+    )]
+    async fn wait_log(&self, Parameters(r): Parameters<WaitLogReq>) -> ToolResult {
+        let lines = self
+            .inner
+            .defmt
+            .lock()
+            .await
+            .as_ref()
+            .map(|d| d.lines.clone())
+            .ok_or("no defmt log attached: connect_defmt or build_and_flash")?;
+        let since = r.since_seq.unwrap_or_else(|| {
+            lines
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .last_seq()
+        });
+        let end = Instant::now() + limit_secs(r.timeout_s);
+        loop {
+            let hit = lines
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .after(since, Some(&r.contains))
+                .into_iter()
+                .next();
+            if let Some(l) = hit {
+                return to_text(&json!(l));
+            }
+            if Instant::now() >= end {
+                return Err(format!(
+                    "no line containing {:?} within {:.1} s",
+                    r.contains, r.timeout_s
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 

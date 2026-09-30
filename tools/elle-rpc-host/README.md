@@ -48,12 +48,20 @@ the server is started with `--dangerously-allow-motors` (add it to `args` in
   exiting (Ctrl-C or the client closing stdin);
 - `disarm` and `emergency_stop` always work.
 
+**Builds and flight firmware.** `build_and_flash` builds a profile (`flight`,
+`rpc`, `rpc_rc`; the RPC ones always keep `gnss`) plus extras such as
+`imu-raw-log`, flashes it through the probe, resets, and reattaches: RPC builds
+get the RPC link, the flight build gets its defmt log decoded with the ELF
+(`log`, `wait_log`, e.g. wait for `115200 baud` after `reset_target`).
+`connect_defmt` attaches to a flight build already running.
+
 `read` covers every query endpoint, including `build` (platform, features, turn
 compensation, git describe: which build is flashed), `nav` (home, validity,
 bank demand) and `core1` (IMU task load). Tools: `connect`, `disconnect`, `link_status`, `read`, `sample`, `wait_for`,
 `events`, `wait_event`, `arm`, `extend_armed`, `set_throttle`, `disarm`,
 `emergency_stop`, `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`,
-`level_cal`, `ulog`, `autotune`. Tests (`tests/mcp.rs`) run every tool against
+`level_cal`, `ulog`, `autotune`, `build_and_flash`, `reset_target`,
+`connect_defmt`, `log`, `wait_log`. Tests (`tests/mcp.rs`) run every tool against
 a fake flight controller on the real RPC client path.
 
 ## Link keepalive
