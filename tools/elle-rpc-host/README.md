@@ -48,7 +48,9 @@ the server is started with `--dangerously-allow-motors` (add it to `args` in
   exiting (Ctrl-C or the client closing stdin);
 - `disarm` and `emergency_stop` always work.
 
-Tools: `connect`, `disconnect`, `link_status`, `read`, `sample`, `wait_for`,
+`read` covers every query endpoint, including `build` (platform, features, turn
+compensation, git describe: which build is flashed), `nav` (home, validity,
+bank demand) and `core1` (IMU task load). Tools: `connect`, `disconnect`, `link_status`, `read`, `sample`, `wait_for`,
 `events`, `wait_event`, `arm`, `extend_armed`, `set_throttle`, `disarm`,
 `emergency_stop`, `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`,
 `level_cal`, `ulog`, `autotune`. Tests (`tests/mcp.rs`) run every tool against

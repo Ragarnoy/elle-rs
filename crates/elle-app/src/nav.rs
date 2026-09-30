@@ -20,6 +20,12 @@ pub(crate) struct NavTick {
     pub nav: Option<NavMessage>,
 }
 
+/// The navigator's latest output, for the RPC `GetNav` query.
+pub(crate) static NAV_LAST: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<Option<NavMessage>>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(None));
+
 pub(crate) struct NavObserver {
     nav: Navigator,
     last_gnss_us: u64,
@@ -64,6 +70,9 @@ impl NavObserver {
 
         let nav = (self.last_gnss_us != 0 && loop_counter.is_multiple_of(NAV_UPDATE_DIVISOR))
             .then(|| self.message(attitude));
+        if nav.is_some() {
+            NAV_LAST.lock(|c| c.set(nav));
+        }
         NavTick { gnss, nav }
     }
 

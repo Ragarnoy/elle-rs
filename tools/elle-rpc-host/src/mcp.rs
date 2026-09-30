@@ -141,6 +141,13 @@ pub enum Source {
     Time,
     /// Firmware version.
     Version,
+    /// What the firmware was built as: platform, features, turn compensation,
+    /// loop rate, git describe.
+    Build,
+    /// The navigator's latest update: home, validity bits, position, bank demand.
+    Nav,
+    /// Core 1 (IMU task) load over the last ~1 s: mean/max busy µs, backlog.
+    Core1,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -430,6 +437,39 @@ async fn read_source(client: &HostClient<WireError>, what: Source) -> Result<Val
         Source::LevelCal => jv(&req::<GetLevelCalEndpoint>(client, &()).await?),
         Source::Time => json!({ "uptime_us": req::<GetTimeEndpoint>(client, &()).await? }),
         Source::Version => jv(&req::<GetVersionEndpoint>(client, &()).await?),
+        Source::Build => {
+            let b = req::<GetBuildInfoEndpoint>(client, &()).await?;
+            let text = |f: &[u8]| {
+                String::from_utf8_lossy(f)
+                    .trim_end_matches('\0')
+                    .to_string()
+            };
+            let features: Vec<&str> = [
+                (BUILD_FEATURE_RPC_RC, "rpc-rc"),
+                (BUILD_FEATURE_GNSS, "gnss"),
+                (BUILD_FEATURE_IMU_RAW_LOG, "imu-raw-log"),
+                (BUILD_FEATURE_PERF_MON, "performance-monitoring"),
+            ]
+            .into_iter()
+            .filter(|(bit, _)| b.features & bit != 0)
+            .map(|(_, n)| n)
+            .collect();
+            let turn_comp = ["off", "centripetal", "gnss_accel"]
+                .get(usize::from(b.turn_comp))
+                .copied()
+                .unwrap_or("unknown");
+            json!({
+                "platform": text(&b.platform),
+                "git": text(&b.git),
+                "features": features,
+                "turn_comp": turn_comp,
+                "accel_gate_g": (b.accel_gate_g_x100 != 0)
+                    .then(|| f64::from(b.accel_gate_g_x100) / 100.0),
+                "loop_hz": b.loop_hz,
+            })
+        }
+        Source::Nav => jv(&req::<GetNavEndpoint>(client, &()).await?),
+        Source::Core1 => jv(&req::<GetCore1LoadEndpoint>(client, &()).await?),
     };
     Ok(out)
 }
@@ -609,6 +649,10 @@ impl ElleMcp {
             match read_source(&client, Source::Version).await {
                 Ok(v) => j["firmware_version"] = v,
                 Err(e) => j["error"] = json!(e),
+            }
+            // Older firmware has no build info: leave it out.
+            if let Ok(b) = read_source(&client, Source::Build).await {
+                j["build"] = b;
             }
             if let Ok(t) = read_source(&client, Source::Time).await {
                 j["uptime_s"] = json!(t["uptime_us"].as_f64().unwrap_or(0.0) / 1e6);

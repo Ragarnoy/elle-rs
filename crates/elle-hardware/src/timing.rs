@@ -182,6 +182,32 @@ impl Default for Core1Load {
 /// Core 1 IMU task load, logged to ULog as `core1_load`.
 pub static CORE1_LOAD: Core1Load = Core1Load::new();
 
+/// The last complete [`CORE1_LOAD`] window, for ULog and the RPC query.
+static CORE1_LOAD_LAST: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<Core1LoadSnapshot>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Core1LoadSnapshot {
+    wakes: 0,
+    busy_sum_us: 0,
+    busy_max_us: 0,
+    mag_max_us: 0,
+    baro_max_us: 0,
+    max_drain: 0,
+}));
+
+/// Close the current Core 1 load window (the control loop does, ~1 Hz,
+/// whether or not ULog records) and keep it as [`core1_last_window`].
+pub fn take_core1_window() -> Core1LoadSnapshot {
+    let s = CORE1_LOAD.take();
+    CORE1_LOAD_LAST.lock(|c| c.set(s));
+    s
+}
+
+/// The last window closed by [`take_core1_window`].
+pub fn core1_last_window() -> Core1LoadSnapshot {
+    CORE1_LOAD_LAST.lock(core::cell::Cell::get)
+}
+
 /// Time Core 0 spends in the DShot executor's interrupt (SWI_IRQ_0), which
 /// preempts the control loop. Recorded by the binaries' handler, taken with the
 /// loop's stage timing. Each poll is only a few µs, so the 1 µs timer rounds

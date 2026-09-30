@@ -121,9 +121,9 @@ pub(crate) fn log_flight_data(
         }
     }
 
-    // Core 1 load at ~1 Hz; each record covers the window since the previous one.
+    // Core 1 load at ~1 Hz: the window the loop closed at the start of this tick.
     if loop_counter.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR) {
-        let load = elle_hardware::timing::CORE1_LOAD.take();
+        let load = elle_hardware::timing::core1_last_window();
         let _ = logger.log_core1_load(&load);
     }
 

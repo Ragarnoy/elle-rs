@@ -247,9 +247,9 @@ postcard-RPC over RTT (`elle-system/src/rpc.rs`):
 Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold ·
 safety: Arm, Disarm, EmergencyStop · query: GetStatus, GetAttitude, GetPerformance,
 ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels,
-GetControllerOutput, GetEngine · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,
+GetControllerOutput, GetEngine, GetNav (navigator's last update), GetCore1Load (last ~1 s window, closed by the loop whether or not ULog records) · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,
 GetULogInfo · autotune: StartAutotune (axis `0xFF`/`0xFE` = save/erase PID), AbortAutotune · calibration: StartMagCal, ClearMagCal, GetMagCal, StartLevelCal,
-ClearLevelCal, GetLevelCal · system: Ping, GetVersion, GetTime.
+ClearLevelCal, GetLevelCal · system: Ping, GetVersion, GetTime, GetBuildInfo (platform, features, turn compensation, loop rate, `git describe` from `elle-app/build.rs`).
 One outgoing topic: `LogTopic` `(level: u8, code: u16)`.
 
 **Host `probe.rs` reads RTT up channel 1, not 0.**

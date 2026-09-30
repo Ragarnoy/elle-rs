@@ -101,6 +101,22 @@ async fn run_fc(
                     yaw_rate_cdeg: 0,
                 }
             );
+        } else if key_is::<GetBuildInfoEndpoint>(&k) {
+            let mut platform = [0u8; 24];
+            platform[..17].copy_from_slice(b"RP2350-XFly-Eagle");
+            let mut git = [0u8; 24];
+            git[..10].copy_from_slice(b"abc1234def");
+            reply!(
+                GetBuildInfoEndpoint,
+                BuildInfoResp {
+                    platform,
+                    features: BUILD_FEATURE_RPC_RC | BUILD_FEATURE_GNSS,
+                    turn_comp: 1,
+                    accel_gate_g_x100: 0,
+                    loop_hz: 200,
+                    git,
+                }
+            );
         } else if key_is::<ArmEndpoint>(&k) {
             fc.lock().unwrap().armed = true;
             reply!(ArmEndpoint, ok);
@@ -233,6 +249,10 @@ async fn reads_with_degrees_and_status() {
     assert_eq!(a["yaw_deg"], json!(90.0));
     let s = r.json("link_status", json!({})).await;
     assert_eq!(s["connected"], json!(true));
+    assert_eq!(s["build"]["platform"], json!("RP2350-XFly-Eagle"));
+    assert_eq!(s["build"]["features"], json!(["rpc-rc", "gnss"]));
+    assert_eq!(s["build"]["turn_comp"], json!("centripetal"));
+    assert_eq!(s["build"]["accel_gate_g"], json!(null));
     assert_eq!(s["motors_allowed"], json!(false));
     assert_eq!(s["uptime_s"], json!(12.0));
 }
