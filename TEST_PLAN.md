@@ -750,6 +750,7 @@ host README).
 | # | Test | Expected | Pass |
 |---|------|----------|------|
 | 1 | `build_and_flash` eagle `rpc` | Builds, flashes, reattaches; `read build`: platform eagle, features include rpc-control and gnss, `git` = `git describe` of the checkout | [ ] |
+| 1b | Power the board, start the server, `connect` at once (board still booting) | Connects within the 30 s default; note `connect_timing` (RTT and first reply, s) here: the defaults assume ≤ ~20 s | [ ] |
 | 2 | `read` every source; `sample attitude` 60 s at 20 Hz | All answer; no request timeouts; ~1200 samples | [ ] |
 | 3 | `reset_target`, then `wait_event` 46 | Link comes back by itself; event 46 within ~2 s of the reset | [ ] |
 | 4 | Server **without** `--dangerously-allow-motors`: `arm`, `set_throttle 10` | Both refused by the server; no event 10 | [ ] |

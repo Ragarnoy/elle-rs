@@ -24,18 +24,32 @@ pub fn connect() -> Result<(Session, Rtt)> {
 /// As [`connect`], giving up after `limit` without an RTT control block
 /// (no firmware running, or a build without RTT).
 pub fn connect_within(limit: Option<Duration>) -> Result<(Session, Rtt)> {
-    let probes = Lister::new().list_all();
-    if probes.is_empty() {
-        anyhow::bail!("No debug probes found");
-    }
+    let started = std::time::Instant::now();
+    let out_of_time = || limit.is_some_and(|l| started.elapsed() > l);
 
-    eprintln!("Connecting to {:?}...", probes[0]);
-    let probe = probes[0].open()?;
-    let mut session = probe.attach("RP235x", Permissions::default())?;
+    // With a limit, a probe that is not there yet (USB enumerating) or a
+    // target that refuses the attach (booting, just reset) is retried too.
+    let mut session = loop {
+        let attempt = || -> Result<Session> {
+            let probes = Lister::new().list_all();
+            let Some(info) = probes.first() else {
+                anyhow::bail!("No debug probes found");
+            };
+            eprintln!("Connecting to {info:?}...");
+            Ok(info.open()?.attach("RP235x", Permissions::default())?)
+        };
+        match attempt() {
+            Ok(s) => break s,
+            Err(e) if limit.is_none() || out_of_time() => return Err(e),
+            Err(e) => {
+                eprintln!("probe not ready ({e}), retrying...");
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+    };
 
     // Attach RTT without halting the core to avoid corrupting PIO/ESC state.
     // SWD can read target memory while the core is running on Cortex-M.
-    let started = std::time::Instant::now();
     let rtt = {
         let mut core = session.core(0)?;
         eprintln!("Scanning for RTT control block (no halt)...");
@@ -43,8 +57,8 @@ pub fn connect_within(limit: Option<Duration>) -> Result<(Session, Rtt)> {
             match Rtt::attach_region(&mut core, &ScanRegion::Ram) {
                 Ok(r) => break r,
                 Err(e) => {
-                    if limit.is_some_and(|l| started.elapsed() > l) {
-                        anyhow::bail!("no RTT control block after {:?}: {e}", limit.unwrap());
+                    if let Some(l) = limit.filter(|_| out_of_time()) {
+                        anyhow::bail!("no RTT control block after {l:?}: {e}");
                     }
                     eprintln!("RTT not ready, retrying...");
                     std::thread::sleep(Duration::from_millis(500));

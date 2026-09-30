@@ -13,9 +13,11 @@ through `elle mcp`" table: read it and the Part before starting.
 
 1. **Part 8 first** if it has no pass recorded (`test_report`, or ask): the server has
    not been validated on hardware, and every other result depends on it.
-2. `link_status`. If `motors_allowed` is false, rows marked **motors** are skipped
-   (record `skip`, note "server started without motors"). Never suggest adding the flag
-   yourself; the operator decides, and only with props off.
+2. `connect` (up to ~20 s; if it times out, retry once with a longer `timeout_s` before
+   suspecting the hardware), then `link_status`. If `motors_allowed` is false, rows
+   marked **motors** are skipped (record `skip`, note "server started without
+   motors"). Never suggest adding the flag yourself; the operator decides, and only
+   with props off.
 3. Ask the operator which airframe, whether props are off, and whether the SD card is in
    the aircraft. Before any engine row, ask again that props are off, then pass
    `props_off_confirmed`.

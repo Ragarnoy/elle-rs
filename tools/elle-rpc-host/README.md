@@ -34,7 +34,10 @@ surfaces, modes, calibrations and ULog. It needs an RPC build
 the TUI cannot run at the same time (`disconnect` hands it over).
 
 To use it, copy `mcp.example.json` to `.mcp.json` at the repo root (Claude
-Code asks before starting it), then ask for `connect`.
+Code asks before starting it), then ask for `connect`. Connecting takes up to
+~20 s (probe attach, RTT scan, the firmware's first reply); `connect` and the
+reattach after `build_and_flash` / `reset_target` retry every stage for 30 s
+(`timeout_s` up to 120) and report how long each took (`connect_timing`).
 
 **Engines are off limits by default.** `arm` and `set_throttle` refuse unless
 the server is started with `--dangerously-allow-motors` (add it to `args` in

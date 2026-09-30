@@ -37,8 +37,12 @@ const REQ_TIMEOUT: Duration = Duration::from_secs(2);
 const KEEPALIVE: Duration = Duration::from_millis(100);
 /// Events kept for `events` / `wait_event`.
 const EVENT_LOG_LEN: usize = 4000;
-/// How long `connect` waits for the firmware's RTT control block.
-const CONNECT_LIMIT: Duration = Duration::from_secs(10);
+/// How long a connection may take by default: the probe attach, the RTT scan
+/// and the firmware's first RPC reply together take up to ~20 s, longer
+/// right after a flash or reset while the firmware boots.
+const CONNECT_LIMIT: Duration = Duration::from_secs(30);
+/// Longest `timeout_s` a `connect` call may ask for.
+const CONNECT_LIMIT_MAX: Duration = Duration::from_secs(120);
 
 /// What the server may do; set on its command line, never by the agent.
 #[derive(Clone, Debug)]
@@ -152,6 +156,14 @@ pub enum Source {
     Nav,
     /// Core 1 (IMU task) load over the last ~1 s: mean/max busy µs, backlog.
     Core1,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ConnectReq {
+    /// Give up after this long, seconds (default 30, max 120). Probe attach,
+    /// RTT scan and the first RPC reply together take up to ~20 s.
+    #[serde(default)]
+    pub timeout_s: Option<f64>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -698,23 +710,51 @@ impl ElleMcp {
         }
     }
 
-    /// Connect, retrying while the freshly reset firmware boots.
-    async fn connect_retrying(&self) -> String {
-        let mut last = String::new();
-        for _ in 0..3 {
-            match tokio::task::spawn_blocking(|| Link::connect_within(Some(CONNECT_LIMIT))).await {
-                Ok(Ok(link)) => {
-                    let client = link.client.clone();
-                    return match self.attach(client, Some(link)).await {
-                        Ok(()) => "rpc".to_string(),
-                        Err(e) => e,
-                    };
-                }
-                Ok(Err(e)) => last = format!("{e:#}"),
-                Err(e) => last = e.to_string(),
+    /// Attach to the probe and wait for the firmware to answer a ping, all
+    /// within `limit`; every stage is retried until then (the probe may still
+    /// be enumerating, the firmware still booting). How long each stage took.
+    async fn open_link(&self, limit: Duration) -> Result<Value, String> {
+        let started = Instant::now();
+        let link = tokio::task::spawn_blocking(move || Link::connect_within(Some(limit)))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("no RTT link within {} s: {e:#}", limit.as_secs()))?;
+        let rtt_s = started.elapsed().as_secs_f64();
+        // RTT is up before the RPC server runs: wait for its first reply.
+        let client = link.client.clone();
+        loop {
+            let last = match req::<PingEndpoint>(&client, &()).await {
+                Ok(()) => break,
+                Err(e) => e,
+            };
+            if !link.alive() {
+                return Err(format!(
+                    "the RTT link dropped before the firmware answered: {last}"
+                ));
             }
+            if started.elapsed() > limit {
+                let _ = tokio::task::spawn_blocking(move || link.close()).await;
+                return Err(format!(
+                    "RTT attached after {rtt_s:.1} s, but no RPC reply within {} s \
+                     (a flight build? use connect_defmt): {last}",
+                    limit.as_secs()
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        format!("not attached: {last}")
+        self.attach(client, Some(link)).await?;
+        Ok(json!({
+            "rtt_attached_s": (rtt_s * 10.0).round() / 10.0,
+            "first_reply_s": (started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
+        }))
+    }
+
+    /// Connect after a flash or reset; the result, or why not.
+    async fn connect_retrying(&self) -> String {
+        match self.open_link(CONNECT_LIMIT).await {
+            Ok(t) => format!("rpc (link up after {} s)", t["first_reply_s"]),
+            Err(e) => format!("not attached: {e}"),
+        }
     }
 
     async fn start_defmt(&self, elf: &std::path::Path) -> String {
@@ -788,20 +828,25 @@ impl Inner {
 impl ElleMcp {
     #[tool(
         description = "Attach to the debug probe and the firmware's RPC link (RPC builds: \
-        rpc-control or rpc-control,rpc-rc). Waits up to 10 s for the firmware's RTT block. \
+        rpc-control or rpc-control,rpc-rc). Takes up to ~20 s (probe attach, RTT scan, first \
+        reply); retries every stage until `timeout_s` (default 30). Returns how long it took. \
         No-op when already connected. The probe has one owner: the TUI cannot run at the same time."
     )]
-    async fn connect(&self) -> ToolResult {
+    async fn connect(&self, Parameters(r): Parameters<ConnectReq>) -> ToolResult {
         if self.inner.conn.lock().await.is_some() {
             return self.link_status().await;
         }
-        let link = tokio::task::spawn_blocking(|| Link::connect_within(Some(CONNECT_LIMIT)))
+        let limit = r.timeout_s.map_or(CONNECT_LIMIT, |s| {
+            Duration::from_secs_f64(s.clamp(1.0, CONNECT_LIMIT_MAX.as_secs_f64()))
+        });
+        let timing = self
+            .open_link(limit)
             .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| format!("could not connect: {e:#}"))?;
-        let client = link.client.clone();
-        self.attach(client, Some(link)).await?;
-        self.link_status().await
+            .map_err(|e| format!("could not connect: {e}"))?;
+        let mut status: Value =
+            serde_json::from_str(&self.link_status().await?).map_err(|e| e.to_string())?;
+        status["connect_timing"] = timing;
+        to_text(&status)
     }
 
     #[tool(
