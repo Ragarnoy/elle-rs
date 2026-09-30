@@ -8,6 +8,7 @@
 //! firmware, and nothing it says about other filters can be trusted.
 
 pub mod reference;
+pub mod report;
 pub mod sim;
 pub mod ulog;
 pub mod variants;

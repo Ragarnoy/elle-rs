@@ -385,6 +385,77 @@ pub struct WaitLogReq {
     pub timeout_s: f64,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct CopyLogsReq {
+    /// File names on the card, e.g. `LOG_0061.ulg`. Empty: the newest `last`.
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// How many of the newest files when no names are given (default 1).
+    #[serde(default)]
+    pub last: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct AnalyseReq {
+    pub command: crate::analysis::LogCommand,
+    /// Log names in `logs/` (e.g. `LOG_0061.ulg`) or paths.
+    pub files: Vec<String>,
+    /// `window` only: start, seconds from the file's first record.
+    #[serde(default)]
+    pub t0_s: Option<f64>,
+    /// `window` only: end.
+    #[serde(default)]
+    pub t1_s: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReplayReq {
+    /// Log name in `logs/` or a path (an `imu-raw-log` build's log). With
+    /// `simulate`, where to write the simulated flight.
+    pub file: String,
+    /// Also run the alternative filters and score them against the gyro reference.
+    #[serde(default)]
+    pub compare: bool,
+    /// Count turns by turn rate, not bank (the vehicle test, 7.2).
+    #[serde(default)]
+    pub score_by_rate: bool,
+    /// Simulate a flight into `file` first (host check of the harness).
+    #[serde(default)]
+    pub simulate: bool,
+    /// Simulation: wind towards north / east, m/s; accel vibration, m/s²;
+    /// residual gyro bias, °/s.
+    #[serde(default)]
+    pub wind_north: f64,
+    #[serde(default)]
+    pub wind_east: f64,
+    #[serde(default)]
+    pub vibration: f64,
+    #[serde(default)]
+    pub gyro_bias_dps: f64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct TestRecordReq {
+    /// TEST_PLAN part, e.g. `7`.
+    pub part: String,
+    /// Row or section, e.g. `7.2`.
+    pub row: String,
+    pub outcome: crate::analysis::Outcome,
+    /// What was measured or seen, and why this outcome.
+    #[serde(default)]
+    pub note: String,
+    /// Evidence: ULog files, CSVs.
+    #[serde(default)]
+    pub logs: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct TestReportReq {
+    /// `YYYY-MM-DD`; default the newest results file.
+    #[serde(default)]
+    pub date: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 
 type ToolResult = Result<String, String>;
@@ -1266,6 +1337,132 @@ impl ElleMcp {
                 ack(req::<StartAutotuneEndpoint>(&client, &start(AUTOTUNE_AXIS_ERASE_PID)).await?)
             }
         }
+    }
+    // --- Logs, analysis, results -----------------------------------------------
+
+    #[tool(
+        description = "ULog files on the mounted SD card (/run/media/$USER/*/LOG_*.ulg), \
+        and whether logs/ already has each. The card must be in the host's reader."
+    )]
+    async fn card_logs(&self) -> ToolResult {
+        use crate::analysis::{card_logs, card_root, logs_dir};
+        let files = card_logs(&card_root(), &logs_dir()).map_err(|e| format!("{e:#}"))?;
+        to_text(&jv(&files))
+    }
+
+    #[tool(
+        description = "Copy ULog files from the SD card into logs/ (named, or the newest \
+        `last`). Never overwrites a different file of the same name."
+    )]
+    async fn copy_logs(&self, Parameters(r): Parameters<CopyLogsReq>) -> ToolResult {
+        use crate::analysis::{card_logs, card_root, copy_logs, logs_dir};
+        tokio::task::spawn_blocking(move || {
+            let files = card_logs(&card_root(), &logs_dir())?;
+            copy_logs(&files, &logs_dir(), &r.names, r.last)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))
+        .and_then(|v| to_text(&v))
+    }
+
+    #[tool(
+        description = "Run the flight-log analyser (.claude/skills/flight-logs/elle_log.py) on \
+        logs: list, summary, timing, esc, sensors, stages, nav, or window (one file, t0_s..t1_s). \
+        Returns its text report. See the flight-logs skill for how to read it."
+    )]
+    async fn analyse_log(&self, Parameters(r): Parameters<AnalyseReq>) -> ToolResult {
+        use crate::analysis::{LogCommand, elle_log, resolve_log};
+        tokio::task::spawn_blocking(move || {
+            let files = r
+                .files
+                .iter()
+                .map(|f| resolve_log(f))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let window = match r.command {
+                LogCommand::Window => r.t0_s.zip(r.t1_s),
+                _ => None,
+            };
+            elle_log(r.command, &files, window)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))
+    }
+
+    #[tool(
+        description = "Replay a raw IMU log (imu-raw-log build) through the firmware's attitude \
+        pipeline (elle-replay): coverage, whether the replay reproduces the firmware exactly \
+        (`problems` empty), and with `compare` every filter's roll/pitch error in turns against \
+        the gyro reference. `simulate` writes and analyses a simulated flight instead. The first \
+        call builds elle-replay (a minute)."
+    )]
+    async fn replay(&self, Parameters(r): Parameters<ReplayReq>) -> ToolResult {
+        use crate::analysis::{ReplayOpts, logs_dir, replay, resolve_log};
+        tokio::task::spawn_blocking(move || {
+            let opts = ReplayOpts {
+                compare: r.compare,
+                score_by_rate: r.score_by_rate,
+                simulate: r.simulate.then_some([
+                    r.wind_north,
+                    r.wind_east,
+                    r.vibration,
+                    r.gyro_bias_dps,
+                ]),
+            };
+            let file = if r.simulate {
+                // A new file: a bare name goes in logs/.
+                let p = std::path::PathBuf::from(&r.file);
+                if p.components().count() == 1 {
+                    std::fs::create_dir_all(logs_dir())?;
+                    logs_dir().join(p)
+                } else {
+                    p
+                }
+            } else {
+                resolve_log(&r.file)?
+            };
+            replay(&file, &opts)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))
+        .and_then(|v| to_text(&v))
+    }
+
+    #[tool(
+        description = "Record a TEST_PLAN result (pass, fail, skip, inconclusive) with a note and \
+        evidence, in logs/test-runs/<date>.jsonl. The connected firmware's build info is \
+        attached. Record what was measured, not only the verdict."
+    )]
+    async fn test_record(&self, Parameters(r): Parameters<TestRecordReq>) -> ToolResult {
+        use crate::analysis::{TestResult, logs_dir, record};
+        let build = match self.client().await {
+            Ok(c) => read_source(&c, Source::Build).await.ok(),
+            Err(_) => None,
+        };
+        let result = TestResult {
+            at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+            part: r.part,
+            row: r.row,
+            outcome: r.outcome,
+            note: r.note,
+            logs: r.logs,
+            build,
+        };
+        let path = record(&logs_dir(), &result).map_err(|e| format!("{e:#}"))?;
+        to_text(&json!({ "recorded": path.display().to_string(), "result": result }))
+    }
+
+    #[tool(
+        description = "The recorded TEST_PLAN results of one day (default: the newest): the \
+        latest outcome per row, and counts."
+    )]
+    async fn test_report(&self, Parameters(r): Parameters<TestReportReq>) -> ToolResult {
+        use crate::analysis::{logs_dir, report};
+        report(&logs_dir(), r.date.as_deref())
+            .map_err(|e| format!("{e:#}"))
+            .and_then(|v| to_text(&v))
     }
 }
 

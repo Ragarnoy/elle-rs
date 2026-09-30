@@ -1,4 +1,4 @@
-//! `elle-replay LOG_NNNN.ulg [--compare] [--csv out.csv]`
+//! `elle-replay LOG_NNNN.ulg [--compare] [--csv out.csv] [--json]`
 //! `elle-replay --simulate out.ulg [--wind-north N --wind-east E] [--vibration A] [--compare]`
 //!
 //! Replays a raw IMU log (`imu-raw-log` build) through the firmware's attitude
@@ -13,9 +13,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use elle_replay::reference::{self, Score};
+use elle_replay::reference;
+use elle_replay::report::{self, Report, ScoreRow};
 use elle_replay::sim;
-use elle_replay::ulog::ULog;
 
 #[derive(Parser)]
 #[command(about = "Replay an Elle raw IMU log through the attitude pipeline")]
@@ -52,9 +52,12 @@ struct Args {
     /// bank: for ground tests in a vehicle, which turns without banking.
     #[arg(long)]
     score_by_rate: bool,
+    /// Print the report as JSON instead of text.
+    #[arg(long)]
+    json: bool,
 }
 
-fn print_scores(title: &str, scores: &[Score]) {
+fn print_scores(title: &str, scores: &[ScoreRow]) {
     println!("\n  {title}");
     println!(
         "  in turns                      roll error mean R/L      roll RMS    pitch RMS R/L    samples R/L"
@@ -65,12 +68,55 @@ fn print_scores(title: &str, scores: &[Score]) {
             s.name,
             s.roll_mean_deg[0],
             s.roll_mean_deg[1],
-            s.roll_rms_both(),
+            s.roll_rms_deg,
             s.pitch_rms_deg[0],
             s.pitch_rms_deg[1],
             s.samples[0],
             s.samples[1]
         );
+    }
+}
+
+fn print_report(r: &Report) {
+    println!("{}", r.log);
+    if r.truncated {
+        println!("  file ends inside a record (power cut?): read up to there");
+    }
+    let c = &r.coverage;
+    println!(
+        "  samples {} ({:.1} s), synced {} ({:.1}%), gaps {} ({} samples lost), ULog dropouts {}",
+        c.samples, c.seconds, c.synced, c.synced_pct, c.gaps, c.lost, c.dropouts
+    );
+    println!(
+        "  contexts {}, mag changes {}, encode round-trip errors {}",
+        c.contexts, c.mag_changes, c.roundtrip_errors
+    );
+    let f = &r.faithfulness;
+    println!(
+        "  attitude_data: {} exact, {} mismatched, {} not checked (source sample may be unsynced or lost)",
+        f.exact, f.mismatched, f.unchecked
+    );
+    if let Some(cmp) = &r.comparison {
+        println!(
+            "\n  gyro reference: covers {:.0}% of the samples (needs straight-and-level stretches of {} s between manoeuvres)",
+            cmp.reference_coverage_pct,
+            reference::ANCHOR_S
+        );
+        print_scores("against the gyro reference", &cmp.vs_reference);
+        if let Some(t) = &cmp.vs_truth {
+            print_scores("against the simulated truth", t);
+        }
+        if let Some(r) = &cmp.reference_vs_truth {
+            println!(
+                "  (the reference itself is {:.2}° roll / {:.2}° pitch RMS off the truth in turns)",
+                r.roll_rms_deg,
+                r.pitch_rms_deg[0].max(r.pitch_rms_deg[1])
+            );
+        }
+        println!("\n  samples fused without the accelerometer (gate)");
+        for (name, pct) in &cmp.gated_pct {
+            println!("  {name:<22} {pct:5.1}%");
+        }
     }
 }
 
@@ -86,7 +132,9 @@ fn main() -> Result<()> {
         let flight = sim::fly(&cfg, &sim::standard_profile())?;
         std::fs::write(&args.log, &flight.ulog)
             .with_context(|| format!("writing {}", args.log.display()))?;
-        println!("simulated flight written to {}", args.log.display());
+        if !args.json {
+            println!("simulated flight written to {}", args.log.display());
+        }
         Some(flight.truth)
     } else {
         None
@@ -94,108 +142,38 @@ fn main() -> Result<()> {
 
     let data =
         std::fs::read(&args.log).with_context(|| format!("reading {}", args.log.display()))?;
-    let log = ULog::parse(&data)?;
-    let specs: Vec<_> = if args.compare {
-        elle_replay::variants::default_specs()
-            .into_iter()
-            .map(|mut s| {
-                s.gate_g = s.gate_g.map(|_| args.gate_g);
-                s
-            })
-            .collect()
-    } else {
-        Vec::new()
+    let opts = report::Options {
+        compare: args.compare,
+        gate_g: args.gate_g,
+        score_by_rate: args.score_by_rate,
     };
-    let replay = elle_replay::replay_with(&log, &specs)?;
-    let c = &replay.coverage;
+    let (r, replay) = report::analyse(
+        &args.log.display().to_string(),
+        &data,
+        &opts,
+        truth.as_deref(),
+    )?;
 
-    println!("{}", args.log.display());
-    if log.truncated {
-        println!("  file ends inside a record (power cut?): read up to there");
-    }
-    println!(
-        "  samples {} ({:.1} s), synced {} ({:.1}%), gaps {} ({} samples lost), ULog dropouts {}",
-        c.samples,
-        c.samples as f64 / 1000.0,
-        c.synced,
-        100.0 * c.synced as f64 / c.samples.max(1) as f64,
-        c.gaps,
-        c.lost,
-        c.dropouts
-    );
-    println!(
-        "  contexts {}, mag changes {}, encode round-trip errors {}",
-        c.contexts, c.mag_changes, c.roundtrip_errors
-    );
-
-    let f = elle_replay::faithfulness(&log, &replay);
-    println!(
-        "  attitude_data: {} exact, {} mismatched, {} not checked (source sample may be unsynced or lost)",
-        f.exact, f.mismatched, f.unchecked
-    );
-
-    if args.compare {
-        let select = if args.score_by_rate {
-            reference::Select::Rate
-        } else {
-            reference::Select::Bank
-        };
-        let refr = reference::build(&replay);
-        let covered = refr.iter().filter(|r| r.is_some()).count();
-        println!(
-            "\n  gyro reference: covers {:.0}% of the samples (needs straight-and-level stretches of {} s between manoeuvres)",
-            100.0 * covered as f64 / refr.len().max(1) as f64,
-            reference::ANCHOR_S
-        );
-        print_scores(
-            "against the gyro reference",
-            &reference::score_all_by(&replay, &refr, select),
-        );
-        if let Some(t) = &truth {
-            let truth_angles: Vec<Option<[f32; 3]>> = replay
-                .samples
-                .iter()
-                .map(|s| {
-                    t.get(s.index as usize)
-                        .map(|t| [t.pitch as f32, t.roll as f32, t.yaw as f32])
-                })
-                .collect();
-            print_scores(
-                "against the simulated truth",
-                &reference::score_all_by(&replay, &truth_angles, select),
-            );
-            let r = reference::score("reference", refr.iter().copied(), &truth_angles);
-            println!(
-                "  (the reference itself is {:.2}° roll / {:.2}° pitch RMS off the truth in turns)",
-                r.roll_rms_both(),
-                r.pitch_rms_deg[0].max(r.pitch_rms_deg[1])
-            );
-        }
-        println!("\n  samples fused without the accelerometer (gate)");
-        for c in elle_replay::compare(&replay)
-            .iter()
-            .filter(|c| c.gated_share > 0.0)
-        {
-            println!("  {:<22} {:5.1}%", c.name, 100.0 * c.gated_share);
-        }
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&r)?);
+    } else {
+        print_report(&r);
     }
 
     if let Some(path) = &args.csv {
         let file =
             std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
         elle_replay::write_csv(&replay, std::io::BufWriter::new(file))?;
-        println!("  wrote {}", path.display());
+        if !args.json {
+            println!("  wrote {}", path.display());
+        }
     }
 
-    if c.roundtrip_errors > 0 {
-        bail!("the logged integers do not reproduce the driver's floats (scale mismatch)");
+    if let Some(p) = r.problems.first() {
+        bail!("{p}");
     }
-    if !f.ok() {
-        bail!(
-            "the replay does not reproduce the firmware (worst {:.4}°); results from it cannot be trusted",
-            f.worst_deg
-        );
+    if !args.json {
+        println!("\nOK: the replay reproduces the firmware's attitude exactly");
     }
-    println!("\nOK: the replay reproduces the firmware's attitude exactly");
     Ok(())
 }

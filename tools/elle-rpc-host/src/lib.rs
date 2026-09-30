@@ -2,6 +2,7 @@
 //! bridge, the postcard-RPC client, and event labels. Shared by the TUI, the
 //! `direct` commands and the MCP server.
 
+pub mod analysis;
 pub mod events;
 pub mod link;
 pub mod mcp;

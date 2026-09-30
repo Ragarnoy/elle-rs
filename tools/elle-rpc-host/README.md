@@ -57,12 +57,30 @@ get the RPC link, the flight build gets its defmt log decoded with the ELF
 
 `read` covers every query endpoint, including `build` (platform, features, turn
 compensation, git describe: which build is flashed), `nav` (home, validity,
-bank demand) and `core1` (IMU task load). Tools: `connect`, `disconnect`, `link_status`, `read`, `sample`, `wait_for`,
-`events`, `wait_event`, `arm`, `extend_armed`, `set_throttle`, `disarm`,
-`emergency_stop`, `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`,
-`level_cal`, `ulog`, `autotune`, `build_and_flash`, `reset_target`,
-`connect_defmt`, `log`, `wait_log`. Tests (`tests/mcp.rs`) run every tool against
-a fake flight controller on the real RPC client path.
+bank demand) and `core1` (IMU task load).
+
+**After a session.** `card_logs` lists the ULog files on the mounted SD card,
+`copy_logs` copies them into `logs/` (never over a different file of the same
+name), `analyse_log` runs the flight-logs skill's `elle_log.py` (`summary`,
+`timing`, `esc`, `nav`, `window`, …), and `replay` runs `elle-replay --json` on
+an `imu-raw-log` log (or a simulated one) and returns its report. `test_record`
+appends a TEST_PLAN result (pass / fail / skip / inconclusive, note, evidence,
+and the connected firmware's build info) to `logs/test-runs/<date>.jsonl`;
+`test_report` gives the latest outcome per row.
+
+Tools:
+
+| Group | Tools |
+|---|---|
+| Link | `connect`, `disconnect`, `link_status` |
+| Read | `read`, `sample`, `wait_for`, `events`, `wait_event` |
+| Firmware | `build_and_flash`, `reset_target`, `connect_defmt`, `log`, `wait_log` |
+| Engines (gated) | `arm`, `extend_armed`, `set_throttle`, `disarm`, `emergency_stop` |
+| Commands | `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`, `level_cal`, `ulog`, `autotune` |
+| Logs and results | `card_logs`, `copy_logs`, `analyse_log`, `replay`, `test_record`, `test_report` |
+
+Tests (`tests/mcp.rs`) run the RPC tools against a fake flight controller on the
+real RPC client path; `src/analysis.rs` tests the card copy and the results file.
 
 ## Link keepalive
 

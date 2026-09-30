@@ -20,7 +20,8 @@ use crate::probe;
 /// The workspace root (this crate is `tools/elle-rpc-host`).
 #[must_use]
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    root.canonicalize().unwrap_or(root)
 }
 
 /// Which airframe binary.
