@@ -39,6 +39,58 @@ cargo run --release --no-default-features --features rpc-control,rpc-rc,gnss
 cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 ```
 
+## Running it through `elle mcp`
+
+`elle mcp` ([`tools/elle-rpc-host/README.md`](tools/elle-rpc-host/README.md#mcp-server-elle-mcp))
+lets an agent run most of this plan: it flashes builds, reads every query endpoint,
+waits for conditions and events while the operator acts, fetches the SD card logs,
+analyses them and records each result (`test_record`, in `logs/test-runs/<date>.jsonl`).
+The `test-plan-runner` skill walks a Part through it. How each section runs:
+
+- **auto**: the agent does it alone.
+- **assisted**: the operator does something physical (tilt, switch, TX off, walk); the
+  agent tells them what, then verifies with `wait_for`, `wait_event` or `sample`.
+- **log**: checked afterwards from the SD card log (`copy_logs`, `analyse_log`, `replay`).
+- **manual**: needs eyes, ears, a scope or a flight; the agent only records what the
+  operator reports.
+
+Engines only spin with `--dangerously-allow-motors` on the server (rows marked
+**motors**), props off. The probe has one owner: the TUI and the server cannot run
+together, so TUI rows run as their `elle mcp` equivalent. Flight builds have no RPC:
+their rows are assisted through the defmt log (`log`, `wait_log`) or checked from the log.
+
+| Section | How | Tools and notes |
+|---|---|---|
+| 0.1 | log; rows 1, 2, 4 assisted on an RPC build | `sample attitude` (drift, 10 min), `wait_for pitch_deg`; row 3 as 1.3 |
+| 0.2 | log; row 5 manual (scope) | operator runs the armed session on the flight build; `analyse_log timing / stages / list` |
+| 0.3 | assisted outdoors; row 1 manual (radio text) | `read nav` (bits), `read gnss` |
+| 0.4 | log | `analyse_log timing`, `replay` (exact), `replay compare` |
+| 0.5 | manual (flight) | afterwards: log, as 7.3 |
+| 1.1, 1.2 | assisted, motors for 1.2 | RPC+RC build; operator moves sticks, agent reads `rc` and `controller` pulses / `engine`; operator confirms the physical direction |
+| 1.3 | assisted | operator tilts; `wait_for`, then the correction signs in `controller` |
+| 1.4 | assisted, motors | `wait_event` 10 / 16 / 17; beeps by ear |
+| 2.1–2.5 | assisted | `read status` (mode), `controller` (setpoints, corrections); 2.5 rows 3–4 with `autotune` |
+| 3.1, 3.2 | auto + log | `ulog start/stop`, `reset_target`, `copy_logs`, `analyse_log list` |
+| 3.3 | assisted + log | `autotune pitch/abort`, `read status`; rows 5–7 from the log |
+| 3.4.1–3.4.5 | assisted | operator tilts to follow the elevons; `wait_event` 90–94, `read controller`; 3.4.3 with `reset_target` for the power cycle |
+| 3.4.6 | assisted on the flight build | `wait_log`; CH7 by the operator |
+| 4.1 | auto (`set_mode` per mode) | the TUI's command parser itself is not covered |
+| 4.2 | auto, row 5 assisted | `set_mode`, `arm` (motors), `set_elevons`, `read controller` |
+| 5.x | log | `analyse_log`; plots by hand in PlotJuggler where a row says plot |
+| 6.1 | assisted, motors | RPC+RC build; TX off; `wait_event` 13 / 14 / 15 |
+| 6.2 | rows 1–2 auto (motors); rows 3–6 manual | the server always disarms before letting go, so the host-loss rows run with the TUI and `direct` (Part 8 row 8 covers the server) |
+| 6.3 | auto, motors (arming at throttle 0) | `arm`, `autotune save_pid`, `mag_cal start`, `level_cal start`, `wait_event` 63 / 100 / 152; power cycles as `reset_target` |
+| 6.4 | row 1 auto, row 2 assisted | `reset_target`, `wait_event` 46 / 47 |
+| 6.5, 6.6 | assisted | `wait_event` 130 / 131, 48; `read mag` stops changing |
+| 6.7 | manual (scope); row 2 auto | `events` 45 / 41 |
+| 6.8 | rows 1–2 manual (scope); 3, 6 log; 4–5 assisted | `wait_event` 160–163, `analyse_log esc` |
+| 6.9 | rows 1–3 assisted outdoors (laptop and probe on the aircraft); 4–5 log | `read nav`, `read gnss`, `analyse_log nav` |
+| 6.10 | log; row 5 manual | `replay`, `analyse_log timing` |
+| 7.1 | auto | `cargo test` from a shell; `replay simulate` |
+| 7.2–7.4 | log | `replay compare score_by_rate` (7.2), `replay compare` (7.3) |
+| 7.5–7.7 | as the rows they repeat; flight manual | |
+| 8 | auto / assisted | validates the server itself: run it first |
+
 ---
 
 ## Part 0: Untested Changes (bench session before the next flight)
@@ -50,7 +102,8 @@ fusion into `elle-control`, swapped the filter library (`ahrs` → uf-ahrs) and 
 compensation (off). That changes the code Stabilized flies on. Host tests show the
 fusion is unchanged (bit-identical after the move, within 3e-5° after the swap, and
 compensation off is the plain filter bit for bit), but only the aircraft can confirm it.
-Turning compensation on is Part 7, after this session.
+Turning compensation on is Part 7, after this session. The `elle mcp` server has
+not touched the hardware either: Part 8, before using it for anything else.
 
 Run this session in order on the **eagle**, props off, then 0.1–0.4 on the dart. Stop at
 the first failure. **No flight until 0.1–0.4 pass.** Copy the logs into `logs/` and
@@ -685,6 +738,30 @@ circles.
 
 The PID sees a different (better) attitude in turns: rerun the autotune (both axes) and
 compare gains with the previous set. Then a windy-day flight repeating 7.6.
+
+## Part 8: `elle mcp` on the hardware
+
+**Never run on the aircraft yet.** The server is tested against a fake flight controller
+on the real RPC client path; these rows check the parts only hardware has: the probe,
+flashing, RTT timing and the engine gates. Run it on the eagle, props off, before using
+the server for any other Part. Start it from Claude Code with `.mcp.json` (see the
+host README).
+
+| # | Test | Expected | Pass |
+|---|------|----------|------|
+| 1 | `build_and_flash` eagle `rpc` | Builds, flashes, reattaches; `read build`: platform eagle, features include rpc-control and gnss, `git` = `git describe` of the checkout | [ ] |
+| 2 | `read` every source; `sample attitude` 60 s at 20 Hz | All answer; no request timeouts; ~1200 samples | [ ] |
+| 3 | `reset_target`, then `wait_event` 46 | Link comes back by itself; event 46 within ~2 s of the reset | [ ] |
+| 4 | Server **without** `--dangerously-allow-motors`: `arm`, `set_throttle 10` | Both refused by the server; no event 10 | [ ] |
+| 5 | Restart with `--dangerously-allow-motors --max-armed-s 15`: `arm` without `props_off_confirmed`, then with it | Refused, then armed (event 10); `set_throttle 50` refused (cap 30); `set_throttle 10` spins | [ ] |
+| 6 | Armed, wait 15 s without `extend_armed` | Throttle 0 and disarm (event 11) at 15 s | [ ] |
+| 7 | Armed, quit Claude Code (the client closes stdin) | Disarmed on the way out (event 11), not by the firmware's host failsafe | [ ] |
+| 8 | Armed, `kill -9` the server process | Firmware host-link failsafe within ~300 ms: engines stop, disarmed | [ ] |
+| 9 | `disconnect`, run the TUI, quit it, `connect` | TUI works while the server is disconnected; the server reconnects after | [ ] |
+| 10 | `build_and_flash` eagle `flight`, then `wait_log` `115200` after `reset_target` | defmt lines arrive decoded; GNSS baud line found | [ ] |
+| 11 | Card in the host's reader: `card_logs`, `copy_logs` | Lists the card's files; copies the newest into `logs/`; a second copy skips it | [ ] |
+| 12 | `analyse_log summary` and `replay` on that file (an `imu-raw-log` build for `replay`) | Same output as running the tools by hand | [ ] |
+| 13 | `test_record` a row, `test_report` | The row, its note and the build info in `logs/test-runs/<date>.jsonl` | [ ] |
 
 ## Abort Criteria
 
