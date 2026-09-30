@@ -590,16 +590,20 @@ async fn read_source(client: &HostClient<WireError>, what: Source) -> Result<Val
                     .trim_end_matches('\0')
                     .to_string()
             };
-            let features: Vec<&str> = [
-                (BUILD_FEATURE_RPC_RC, "rpc-rc"),
-                (BUILD_FEATURE_GNSS, "gnss"),
-                (BUILD_FEATURE_IMU_RAW_LOG, "imu-raw-log"),
-                (BUILD_FEATURE_PERF_MON, "performance-monitoring"),
-            ]
-            .into_iter()
-            .filter(|(bit, _)| b.features & bit != 0)
-            .map(|(_, n)| n)
-            .collect();
+            // No bit for rpc-control: only an RPC build answers this at all.
+            let features: Vec<&str> = std::iter::once("rpc-control")
+                .chain(
+                    [
+                        (BUILD_FEATURE_RPC_RC, "rpc-rc"),
+                        (BUILD_FEATURE_GNSS, "gnss"),
+                        (BUILD_FEATURE_IMU_RAW_LOG, "imu-raw-log"),
+                        (BUILD_FEATURE_PERF_MON, "performance-monitoring"),
+                    ]
+                    .into_iter()
+                    .filter(|(bit, _)| b.features & bit != 0)
+                    .map(|(_, n)| n),
+                )
+                .collect();
             let turn_comp = ["off", "centripetal", "gnss_accel"]
                 .get(usize::from(b.turn_comp))
                 .copied()
@@ -835,6 +839,10 @@ impl ElleMcp {
     async fn connect(&self, Parameters(r): Parameters<ConnectReq>) -> ToolResult {
         if self.inner.conn.lock().await.is_some() {
             return self.link_status().await;
+        }
+        // A defmt session (flight build) holds the probe: release it first.
+        if let Some(mut d) = self.inner.defmt.lock().await.take() {
+            let _ = tokio::task::spawn_blocking(move || d.stop()).await;
         }
         let limit = r.timeout_s.map_or(CONNECT_LIMIT, |s| {
             Duration::from_secs_f64(s.clamp(1.0, CONNECT_LIMIT_MAX.as_secs_f64()))
@@ -1196,6 +1204,10 @@ impl ElleMcp {
                 "refused: confirm the propellers are removed (props_off_confirmed)".to_string(),
             );
         }
+        // Re-arming replaces the timer: an old one left running would disarm early.
+        if let Some(g) = self.inner.armed.lock().await.take() {
+            g.task.abort();
+        }
         let client = self.client().await?;
         ack(req::<ArmEndpoint>(&client, &()).await?)?;
         let deadline = Arc::new(std::sync::Mutex::new(
@@ -1308,7 +1320,9 @@ impl ElleMcp {
     #[tool(description = "Engage or release heading hold (Stabilized only).")]
     async fn set_heading_hold(&self, Parameters(r): Parameters<HeadingHoldReq>) -> ToolResult {
         let client = self.client().await?;
-        let heading_cdeg = (r.heading_deg.rem_euclid(360.0) * 100.0) as i16;
+        // Centidegrees in an i16: ±180°, not 0..360° (327.67° is the i16 limit).
+        let wrapped = (r.heading_deg + 180.0).rem_euclid(360.0) - 180.0;
+        let heading_cdeg = (wrapped * 100.0).round() as i16;
         ack(req::<SetHeadingHoldEndpoint>(
             &client,
             &SetHeadingHoldReq {

@@ -27,6 +27,7 @@ struct Fc {
     pitch_cdeg: i16,
     pings: u32,
     disarms: u32,
+    heading_cdeg: Option<i16>,
 }
 
 type Shared = Arc<Mutex<Fc>>;
@@ -143,6 +144,10 @@ async fn run_fc(
             let r: SetElevonsReq = postcard::from_bytes(&frame.body).unwrap();
             fc.lock().unwrap().elevons = (r.left, r.right);
             reply!(SetElevonsEndpoint, ok);
+        } else if key_is::<SetHeadingHoldEndpoint>(&k) {
+            let r: SetHeadingHoldReq = postcard::from_bytes(&frame.body).unwrap();
+            fc.lock().unwrap().heading_cdeg = r.enabled.then_some(r.heading_cdeg);
+            reply!(SetHeadingHoldEndpoint, ok);
         }
         // Anything else goes unanswered: the tool times out, as with a
         // firmware that lacks the endpoint.
@@ -255,7 +260,10 @@ async fn reads_with_degrees_and_status() {
     let s = r.json("link_status", json!({})).await;
     assert_eq!(s["connected"], json!(true));
     assert_eq!(s["build"]["platform"], json!("RP2350-XFly-Eagle"));
-    assert_eq!(s["build"]["features"], json!(["rpc-rc", "gnss"]));
+    assert_eq!(
+        s["build"]["features"],
+        json!(["rpc-control", "rpc-rc", "gnss"])
+    );
     assert_eq!(s["build"]["turn_comp"], json!("centripetal"));
     assert_eq!(s["build"]["accel_gate_g"], json!(null));
     assert_eq!(s["motors_allowed"], json!(false));
@@ -427,6 +435,42 @@ async fn the_armed_timer_disarms_by_itself() {
     }
     let s = r.json("link_status", json!({})).await;
     assert_eq!(s["armed_by_server"], json!(false));
+}
+
+#[tokio::test]
+async fn arming_again_replaces_the_timer() {
+    let r = rig(motors(400)).await;
+    r.call("arm", json!({"props_off_confirmed": true}))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    r.call("arm", json!({"props_off_confirmed": true}))
+        .await
+        .unwrap();
+    // The first timer would have fired at 400 ms.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        r.fc.lock().unwrap().armed,
+        "re-armed: still armed at 550 ms"
+    );
+    let s = r.json("link_status", json!({})).await;
+    assert_eq!(s["armed_by_server"], json!(true));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!r.fc.lock().unwrap().armed, "the second timer disarms");
+}
+
+#[tokio::test]
+async fn heading_hold_wraps_to_plus_minus_180() {
+    let r = rig(Options::default()).await;
+    for (deg, cdeg) in [(350.0, -1000), (90.0, 9000), (-90.0, -9000), (720.5, 50)] {
+        r.call(
+            "set_heading_hold",
+            json!({"enabled": true, "heading_deg": deg}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.fc.lock().unwrap().heading_cdeg, Some(cdeg), "{deg}°");
+    }
 }
 
 #[tokio::test]
