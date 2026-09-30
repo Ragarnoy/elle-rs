@@ -87,7 +87,7 @@ Each step flies in observation first, then with the pilot able to take over at o
 |---|---|---|
 | 2 | Validate observation logs: fix age, extrapolation, home, sign conventions | Sustained stable Stabilized flight on the current prop and gains |
 | 3 | Safety and arbitration: nav mode on a switch, stick override, RC loss, GNSS loss (no position → wings level, pilot), max distance fence, demand deadline enforced | Step 2 |
-| 4 | Lateral guidance engaged: loiter around home, bank only; pilot keeps pitch and throttle | Step 3; measured bank and roll-rate limits |
+| 4 | Lateral guidance engaged: loiter around home, bank only; pilot keeps pitch and throttle | Step 3; measured bank and roll-rate limits; the attitude right in sustained turns (turn compensation, [`ATTITUDE.md`](ATTITUDE.md): simulated, the current filter reads a held 15° bank as ~5°) |
 | 5 | Altitude: limited climb-rate controller on baro height above home → pitch demand, with pitch and rate limits and anti-windup; GNSS height blended for drift | Measured cruise trim and climb/sink capability |
 | 6 | Line segments and waypoint sequencing (acceptance radius or bisector crossing), completion action | Step 4 |
 | 7 | Mission upload over RPC, validated completely before it replaces the active one; TUI commands | Step 6 |

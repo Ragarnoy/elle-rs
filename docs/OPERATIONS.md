@@ -234,8 +234,9 @@ a surface (home: see [Home position](#home-position-gnss-builds)). ESC link heal
 corrupt replies and re-configurations per ESC: corrupt replies point at wiring noise, and
 timeouts climbing at idle mean an ESC is silent. Core 1 load (`core1_load`, ~1 Hz) gives
 the IMU task's mean and max busy time per 1 ms sample and its longest mag and baro reads.
-The `gyro-raw-log` build adds every
-1 kHz gyro sample for vibration analysis.
+The `imu-raw-log` build adds every
+1 kHz IMU sample (raw integers, with the AHRS state) for replaying the attitude
+estimate on a computer and for vibration analysis; it logs `attitude_data` at 50 Hz.
 See [`crates/elle-ulog/README.md`](../crates/elle-ulog/README.md).
 
 `ulog extract [file]` and `ulog erase` operate on the legacy on-board flash store only.
@@ -261,7 +262,7 @@ Code: `led_pattern` logic in `crates/elle-app/src/flight.rs` and `rpc.rs`.
 
 Firmware events travel to the TUI log panel as numeric codes
 (`crates/elle-hardware/src/event.rs`; host labels in
-`tools/elle-rpc-host/src/tui/ui.rs` `log_code_text()`). They also appear in defmt output
+`tools/elle-rpc-host/src/events.rs` `label()`). They also appear in defmt output
 when built with `defmt-logging`.
 
 | Code | Meaning |

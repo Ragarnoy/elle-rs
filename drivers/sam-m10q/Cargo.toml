@@ -13,7 +13,7 @@ embedded-io-async = { version = "0.7", default-features = false }
 [dependencies.nmea]
 version = "0.8"
 default-features = false
-features = ["GNSS", "other"]
+features = ["GGA", "GSV"]
 
 [dependencies.defmt]
 version = "1.0"

@@ -39,6 +39,133 @@ cargo run --release --no-default-features --features rpc-control,rpc-rc,gnss
 cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 ```
 
+## Running it through `elle mcp`
+
+`elle mcp` ([`tools/elle-rpc-host/README.md`](tools/elle-rpc-host/README.md#mcp-server-elle-mcp))
+lets an agent run most of this plan: it flashes builds, reads every query endpoint,
+waits for conditions and events while the operator acts, fetches the SD card logs,
+analyses them and records each result (`test_record`, in `logs/test-runs/<date>.jsonl`).
+The `test-plan-runner` skill walks a Part through it. How each section runs:
+
+- **auto**: the agent does it alone.
+- **assisted**: the operator does something physical (tilt, switch, TX off, walk); the
+  agent tells them what, then verifies with `wait_for`, `wait_event` or `sample`.
+- **log**: checked afterwards from the SD card log (`copy_logs`, `analyse_log`, `replay`).
+- **manual**: needs eyes, ears, a scope or a flight; the agent only records what the
+  operator reports.
+
+Engines only spin with `--dangerously-allow-motors` on the server (rows marked
+**motors**), props off. The probe has one owner: the TUI and the server cannot run
+together, so TUI rows run as their `elle mcp` equivalent. Flight builds have no RPC:
+their rows are assisted through the defmt log (`log`, `wait_log`) or checked from the log.
+
+| Section | How | Tools and notes |
+|---|---|---|
+| 0.1 | log; rows 1, 2, 4 assisted on an RPC build | `sample attitude` (drift, 10 min), `wait_for pitch_deg`; row 3 as 1.3 |
+| 0.2 | log; row 5 manual (scope) | operator runs the armed session on the flight build; `analyse_log timing / stages / list` |
+| 0.3 | assisted outdoors; row 1 manual (radio text) | `read nav` (bits), `read gnss` |
+| 0.4 | log | `analyse_log timing`, `replay` (exact), `replay compare` |
+| 0.5 | manual (flight) | afterwards: log, as 7.3 |
+| 1.1, 1.2 | assisted, motors for 1.2 | RPC+RC build; operator moves sticks, agent reads `rc` and `controller` pulses / `engine`; operator confirms the physical direction |
+| 1.3 | assisted | operator tilts; `wait_for`, then the correction signs in `controller` |
+| 1.4 | assisted, motors | `wait_event` 10 / 16 / 17; beeps by ear |
+| 2.1–2.5 | assisted | `read status` (mode), `controller` (setpoints, corrections); 2.5 rows 3–4 with `autotune` |
+| 3.1, 3.2 | auto + log | `ulog start/stop`, `reset_target`, `copy_logs`, `analyse_log list` |
+| 3.3 | assisted + log | `autotune pitch/abort`, `read status`; rows 5–7 from the log |
+| 3.4.1–3.4.5 | assisted | operator tilts to follow the elevons; `wait_event` 90–94, `read controller`; 3.4.3 with `reset_target` for the power cycle |
+| 3.4.6 | assisted on the flight build | `wait_log`; CH7 by the operator |
+| 4.1 | auto (`set_mode` per mode) | the TUI's command parser itself is not covered |
+| 4.2 | auto, row 5 assisted | `set_mode`, `arm` (motors), `set_elevons`, `read controller` |
+| 5.x | log | `analyse_log`; plots by hand in PlotJuggler where a row says plot |
+| 6.1 | assisted, motors | RPC+RC build; TX off; `wait_event` 13 / 14 / 15 |
+| 6.2 | rows 1–2 auto (motors); rows 3–6 manual | the server always disarms before letting go, so the host-loss rows run with the TUI and `direct` (Part 8 row 8 covers the server) |
+| 6.3 | auto, motors (arming at throttle 0) | `arm`, `autotune save_pid`, `mag_cal start`, `level_cal start`, `wait_event` 63 / 100 / 152; power cycles as `reset_target` |
+| 6.4 | row 1 auto, row 2 assisted | `reset_target`, `wait_event` 46 / 47 |
+| 6.5, 6.6 | assisted | `wait_event` 130 / 131, 48; `read mag` stops changing |
+| 6.7 | manual (scope); row 2 auto | `events` 45 / 41 |
+| 6.8 | rows 1–2 manual (scope); 3, 6 log; 4–5 assisted | `wait_event` 160–163, `analyse_log esc` |
+| 6.9 | rows 1–3 assisted outdoors (laptop and probe on the aircraft); 4–5 log | `read nav`, `read gnss`, `analyse_log nav` |
+| 6.10 | log; row 5 manual | `replay`, `analyse_log timing` |
+| 7.1 | auto | `cargo test` from a shell; `replay simulate` |
+| 7.2–7.4 | log | `replay compare score_by_rate` (7.2), `replay compare` (7.3) |
+| 7.5–7.7 | as the rows they repeat; flight manual | |
+| 8 | auto / assisted | validates the server itself: run it first |
+
+---
+
+## Part 0: Untested Changes (bench session before the next flight)
+
+**Nothing merged since the 200 Hz loop (#33) has run on the aircraft.** That covers the
+200 Hz control loop and the 100 Hz logging it now uses (#33), navigation observation and
+the reworked GNSS data (#34), and the `imu-replay` branch, which moved the attitude
+fusion into `elle-control`, swapped the filter library (`ahrs` → uf-ahrs) and added turn
+compensation (off). That changes the code Stabilized flies on. Host tests show the
+fusion is unchanged (bit-identical after the move, within 3e-5° after the swap, and
+compensation off is the plain filter bit for bit), but only the aircraft can confirm it.
+Turning compensation on is Part 7, after this session. The `elle mcp` server has
+not touched the hardware either: Part 8, before using it for anything else.
+
+Run this session in order on the **eagle**, props off, then 0.1–0.4 on the dart. Stop at
+the first failure. **No flight until 0.1–0.4 pass.** Copy the logs into `logs/` and
+note the file numbers in each row. Baselines are from LOG_0065 (200 Hz loop, before
+these changes): armed loop time p50 237 µs / p99 949 µs, Core 1 busy mean 373 µs /
+max 869 µs.
+
+```sh
+PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
+```
+
+### 0.1 Attitude (normal flight build, SD card in)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Power up flat and still, leave it 10 min disarmed | Pitch and roll within ±0.5° of the pre-change reading on the same surface, drift < 0.5° over the 10 min (`$PY $LOG sensors`) | | [ ] |
+| 2 | Tilt nose up, nose down, right wing down, left wing down, ~20° each | Pitch positive nose up, roll positive right wing down (CRSF attitude on the radio, then `attitude_data`) | | [ ] |
+| 3 | Part 1.3 in full (Stabilized, armed, in hand) | All seven rows as before: corrects against the tilt, D damps quick rotations | | [ ] |
+| 4 | Rotate 360° in yaw on the bench, slowly | Yaw follows and returns to within ~5° of the start; no jump when the mag reading updates | | [ ] |
+
+### 0.2 Timing and logging (normal flight build)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Armed 15+ min: idle, throttle steps, Manual and Stabilized, until the log passes ~4 MB | `$PY $LOG timing`: median tick 5.00 ms, no late ticks after boot, **no ULog dropouts** | | [ ] |
+| 2 | Same log | Loop time p50/p99 within ~10 % of the baseline; `$PY $LOG stages`: `log` stage not noticeably larger (the navigator runs there, 25 Hz) | | [ ] |
+| 3 | Same log | `core1_load` busy mean/max within ~10 % of the baseline | | [ ] |
+| 4 | Same log | `commands` and `engine_data` at ~100 Hz, `attitude_data` and `controller` at ~200 Hz, `gnss_data` at ~5 Hz (`$PY $LOG list`) | | [ ] |
+| 5 | Scope PIN_12/13 against a stick step (6.7 row 1) | New pulse within one 5 ms frame | | [ ] |
+
+### 0.3 GNSS and navigation observation (outdoors, normal flight build)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Power up outdoors, wait for the fix | Radio FM text `NOHOME` → `WAIT H` once hAcc ≤ 5 m and ≥ 6 satellites | | [ ] |
+| 2 | 6.9 rows 1–3 (home, lock while armed, GNSS covered 5 s) | As in 6.9 | | [ ] |
+| 3 | TUI (RPC build) GNSS panel | Lat/lon as before (now from integer degrees × 10⁷); Spd/Trk `---` if it falls back to NMEA | | [ ] |
+
+### 0.4 Raw IMU capture and replay (`--features imu-raw-log`)
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Repeat 0.2 row 1 with this build | No ULog dropouts at ~50 kB/s over 4+ MB; Core 1 busy within a few µs of 0.2 row 3 | | [ ] |
+| 2 | Same log: 6.10 rows 2 and 4 | `imu_raw` indices without gaps, `roundtrip_errors` 0; `elle-replay LOG` prints `OK` (exact) | | [ ] |
+| 3 | Same log, `elle-replay LOG --compare` | Runs; reference coverage printed (on the bench mostly "level", nothing scored) | | [ ] |
+| 4 | Before the flight: Part 7.2 (vehicle test) with this build | See 7.2 | | [ ] |
+
+### 0.5 First flight after this session
+
+Only after 0.1–0.4 pass. If 0.4 passed, fly the `imu-raw-log` build (it flies the same
+code, only logs more); otherwise the normal build. Turn compensation stays off: this
+flight is the data for Part 7. Manual take-off, then Stabilized with
+Manual ready. Collect, in this order, stopping at anything unusual:
+
+1. Straight legs both ways, 20 s each.
+2. Steady turns at ~15°, ~30°, ~45°, each direction, 20 s each.
+3. 80 m circles around home, clockwise then anticlockwise (6.9 rows 4–5).
+
+Then the flight rows of TODO's pending list: the 200 Hz loop's autotune pass, and the
+autotune checks. That log also feeds the attitude-filter comparison (`elle-replay
+--compare`, and the turn-correction work).
+
 ---
 
 ## Part 1: Axis Verification (props off, Manual mode)
@@ -86,8 +213,8 @@ Hold board in hand. Verify PID corrects **against** the tilt, not with it.
 | 7 | Quick roll rotation  | D-term damps the motion (opposes rate)      | [x]  |
 
 If P-term is inverted (corrects wrong way at steady angle): the attitude sign for that axis is
-wrong. Roll and roll rate are already negated for this PCB in `Imu::run()`
-(`crates/elle-hardware/src/imu/driver.rs`); fix the sign there, for angle **and** rate.
+wrong. Roll and roll rate are already negated for this PCB in `AttitudePipeline::fuse`
+(`crates/elle-control/src/attitude.rs`); fix the sign there, for angle **and** rate.
 `PITCH_INVERT`/`ROLL_INVERT` only flip the sticks (`elle-control/src/commands.rs`) and
 cannot fix a PID sign.
 If D-term is inverted (accelerates rotation): the rate sign is wrong at the same place.
@@ -520,6 +647,122 @@ with `elle_log.py nav` and `elle_log.py sensors`.
 | 3 | Cover the antenna (or unplug GNSS) for 5 s while armed | Position drops (bit 2 clear) ~1 s after the last fix; extrapolated (bit 5) only for the first 400 ms; `bank_demand_deg` NaN | [ ] |
 | 4 | Flight in Stabilized: circle the field clockwise at ~80 m, then anticlockwise | Clockwise: `bank_demand_deg` and `roll_deg` both positive and close; anticlockwise: they disagree in sign (demand still asks for a right turn). Confirms the sign conventions | [ ] |
 | 5 | Same flight | `gnss_data` ~5/s with `pvt_active` = 1; baro and GNSS height above home within a few metres | [ ] |
+
+### 6.10 Raw IMU Capture (bench, `imu-raw-log` build)
+
+Build with `--features imu-raw-log` (eagle flight build first). Nothing flies
+differently; the build records more and logs `attitude_data` at 50 Hz.
+
+| # | Test | Expected | Pass |
+|---|------|----------|------|
+| 1 | Power up, arm, run the engines at idle and a few throttle steps for 10+ min (props off) | No ULog dropouts (`elle_log.py timing`) over ~4 MB or more | [ ] |
+| 2 | Same log | `imu_raw` at ~100/s, first indices consecutive (step 10, no gaps); `imu_raw_ctx` ~1/s, `roundtrip_errors` 0 | [ ] |
+| 3 | Same log | `core1_load` busy mean/max within a few µs of a normal build's | [ ] |
+| 4 | Same log, `elle-replay FILE` | Every `attitude_data` sample while synced matches the replay exactly | [ ] |
+| 5 | Stabilized on the stand, stick steps and disturbances | Feels and responds as before (the fusion code moved, bit-identical on the host) | [ ] |
+
+## Part 7: Attitude Estimation and Turn Compensation
+
+Background, settings and the simulated numbers: [`docs/ATTITUDE.md`](docs/ATTITUDE.md).
+The firmware ships with `AHRS_TURN_COMP = Off` and no accel gate; nothing in 7.1–7.4
+changes how the aircraft flies. 7.5 onwards only after 7.4 picks a mode.
+
+```sh
+R="cargo run -q --release -p elle-replay --target x86_64-unknown-linux-gnu --"
+```
+
+### 7.1 Host checks (every PR, CI)
+
+| # | Check | Expected | Pass |
+|---|-------|----------|------|
+| 1 | `cargo test -p elle-control --target x86_64-unknown-linux-gnu` | Attitude pipeline, turn compensation, raw capture: all pass (includes exact replay per mode and across a gap, and Off = plain Madgwick bit for bit) | [ ] |
+| 2 | `cargo test -p elle-replay --target x86_64-unknown-linux-gnu` | Simulator, reference, scoring, vehicle test: all pass | [ ] |
+| 3 | `$R --simulate /tmp/s.ulg --compare --wind-east 6 --vibration 2 --gyro-bias-dps 0.03` | `OK` (exact); reference ≤ 0.2° off the truth; `madgwick-ce` ≈ 1.6° roll RMS, firmware ≈ 5.6° | [ ] |
+
+### 7.2 Vehicle ground test (real sensors, nothing flown)
+
+The aircraft strapped **level** in a car (nose forward, props off, engines disarmed),
+`imu-raw-log` build, compensation off. The car turns without banking, so the truth is
+level while the accel feels the sideways acceleration. GNSS fix outdoors first.
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Park 60 s, then drive straight 20 s at ≥ 25 km/h (7 m/s) | Straight stretches for the reference to anchor on | | [ ] |
+| 2 | Two or three laps of a roundabout each way, ≥ 25 km/h, straight 10 s between | | | [ ] |
+| 3 | `$R LOG --compare --score-by-rate` | `OK` (exact); reference covers the curves | | [ ] |
+| 4 | Same | `firmware` leans in curves (several degrees RMS, sign opposite per direction); `madgwick-cc` and `madgwick-ce` within ~1–2° of level. If a compensated variant is **worse** than the firmware, the forward axis or a sign is wrong: stop and investigate | | [ ] |
+| 5 | Same, `--csv /tmp/car.csv` in PlotJuggler | Roll of each variant through the curves; reference flat | | [ ] |
+
+### 7.3 Data flights (compensation off, `imu-raw-log` build)
+
+Part 0.5's flight, then one more on a windier day. Straight legs of ≥ 5 s between every
+manoeuvre (the reference anchors there): 20 s straight both ways; steady turns at ~15°,
+~30°, ~45° each way, 20 s each; 80 m circles both ways (also TEST_PLAN 6.9).
+
+| # | Check | Expected | Log | Pass |
+|---|-------|----------|-----|------|
+| 1 | `$R LOG --compare` | `OK`; no gaps (or few), `roundtrip_errors` 0 | | [ ] |
+| 2 | Reference coverage | ≥ 50 % of the turn time scored | | [ ] |
+| 3 | Firmware row | Record its roll/pitch RMS in turns and the per-direction mean: this is the size of the problem on the real aircraft (simulated: ~5–7°) | | [ ] |
+
+### 7.4 Decision
+
+Criteria in [`docs/ATTITUDE.md`](docs/ATTITUDE.md#from-data-to-the-aircraft): the mode
+with the lowest roll RMS in turns, if on **every** data flight it halves the firmware's
+roll RMS (and by ≥ 2°) in both directions and does not worsen pitch RMS by > 0.5°.
+Record the table from each flight in the PR that enables it. Otherwise stay `Off`.
+
+### 7.5 Enable: bench regression (props off)
+
+Set `AHRS_TURN_COMP` to the chosen mode, build flight + `imu-raw-log`.
+
+| # | Test | Expected | Log | Pass |
+|---|------|----------|-----|------|
+| 1 | Part 0.1 rows 1–4 | Unchanged (below 6 m/s there is no compensation) | | [ ] |
+| 2 | 10 min armed idle outdoors with a GNSS fix | `core1_load` busy mean/max within ~10 µs of an `Off` build | | [ ] |
+| 3 | Same log, `$R LOG` | `OK` (exact) with `imu_raw_fix` records present (~5/s) and `imu_raw_ctx.turn_comp` set | | [ ] |
+| 4 | Repeat 7.2 with this build | The **firmware** now stays level in the curves, like the variant did in 7.2 | | [ ] |
+
+### 7.6 Enable: first flight
+
+Stabilized, Manual ready, calm day. Straight, then turns at ~15° and ~30° each way, then
+circles.
+
+| # | Check | Expected | Log | Pass |
+|---|-------|----------|-----|------|
+| 1 | Feel | Turns hold bank without the slow tightening; no oscillation; wings level after roll-out | | [ ] |
+| 2 | `$R LOG --compare` | `OK`; the firmware row now matches the chosen variant's row from 7.4 | | [ ] |
+| 3 | 6.9 row 4 (circling) | Bank demand vs measured roll agree better than before | | [ ] |
+
+### 7.7 Enable: retune
+
+The PID sees a different (better) attitude in turns: rerun the autotune (both axes) and
+compare gains with the previous set. Then a windy-day flight repeating 7.6.
+
+## Part 8: `elle mcp` on the hardware
+
+**Never run on the aircraft yet.** The server is tested against a fake flight controller
+on the real RPC client path; these rows check the parts only hardware has: the probe,
+flashing, RTT timing and the engine gates. Run it on the eagle, props off, before using
+the server for any other Part. Start it from Claude Code with `.mcp.json` (see the
+host README).
+
+| # | Test | Expected | Pass |
+|---|------|----------|------|
+| 1 | `build_and_flash` eagle `rpc` | Builds, flashes, reattaches; `read build`: platform eagle, features include rpc-control and gnss, `git` = `git describe` of the checkout | [ ] |
+| 1b | Power the board, start the server, `connect` at once (board still booting) | Connects within the 30 s default; note `connect_timing` (RTT and first reply, s) here: the defaults assume ≤ ~20 s | [ ] |
+| 2 | `read` every source; `sample attitude` 60 s at 20 Hz | All answer; no request timeouts; ~1200 samples | [ ] |
+| 3 | `reset_target`, then `wait_event` 46 | Link comes back by itself; event 46 within ~2 s of the reset | [ ] |
+| 4 | Server **without** `--dangerously-allow-motors`: `arm`, `set_throttle 10` | Both refused by the server; no event 10 | [ ] |
+| 5 | Restart with `--dangerously-allow-motors --max-armed-s 15`: `arm` without `props_off_confirmed`, then with it | Refused, then armed (event 10); `set_throttle 50` refused (cap 30); `set_throttle 10` spins | [ ] |
+| 6 | Armed, wait 15 s without `extend_armed` | Throttle 0 and disarm (event 11) at 15 s | [ ] |
+| 7 | Armed, quit Claude Code (the client closes stdin) | Disarmed on the way out (event 11), not by the firmware's host failsafe | [ ] |
+| 8 | Armed, `kill -9` the server process | Firmware host-link failsafe within ~300 ms: engines stop, disarmed | [ ] |
+| 9 | `disconnect`, run the TUI, quit it, `connect` | TUI works while the server is disconnected; the server reconnects after | [ ] |
+| 10 | `build_and_flash` eagle `flight`, then `wait_log` `115200` after `reset_target` | defmt lines arrive decoded; GNSS baud line found | [ ] |
+| 11 | Card in the host's reader: `card_logs`, `copy_logs` | Lists the card's files; copies the newest into `logs/`; a second copy skips it | [ ] |
+| 12 | `analyse_log summary` and `replay` on that file (an `imu-raw-log` build for `replay`) | Same output as running the tools by hand | [ ] |
+| 13 | `test_record` a row, `test_report` | The row, its note and the build info in `logs/test-runs/<date>.jsonl` | [ ] |
 
 ## Abort Criteria
 

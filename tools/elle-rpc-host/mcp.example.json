@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "elle": {
+      "command": "cargo",
+      "args": [
+        "run", "-q", "--release", "-p", "elle-rpc-host",
+        "--target", "x86_64-unknown-linux-gnu", "--", "mcp"
+      ]
+    }
+  }
+}

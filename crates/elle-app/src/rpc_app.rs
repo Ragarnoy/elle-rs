@@ -439,6 +439,84 @@ fn handle_abort_autotune(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Ack
     send_cmd(ctx, RpcCommand::AbortAutotune)
 }
 
+/// ASCII into a NUL-padded fixed field (truncated if longer).
+const fn ascii_field<const N: usize>(s: &str) -> [u8; N] {
+    let b = s.as_bytes();
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < N && i < b.len() {
+        out[i] = b[i];
+        i += 1;
+    }
+    out
+}
+
+fn handle_get_build_info(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> BuildInfoResp {
+    let mut features = 0;
+    if cfg!(feature = "rpc-rc") {
+        features |= BUILD_FEATURE_RPC_RC;
+    }
+    if cfg!(feature = "gnss") {
+        features |= BUILD_FEATURE_GNSS;
+    }
+    if cfg!(feature = "imu-raw-log") {
+        features |= BUILD_FEATURE_IMU_RAW_LOG;
+    }
+    if cfg!(feature = "performance-monitoring") {
+        features |= BUILD_FEATURE_PERF_MON;
+    }
+    BuildInfoResp {
+        platform: ascii_field(elle_config::PLATFORM_NAME),
+        features,
+        turn_comp: elle_config::AHRS_TURN_COMP as u8,
+        accel_gate_g_x100: elle_config::AHRS_ACCEL_GATE_G.map_or(0, |g| (g * 100.0) as u16),
+        loop_hz: elle_config::CONTROL_LOOP_FREQUENCY_HZ as u16,
+        git: ascii_field(env!("ELLE_GIT_DESCRIBE")),
+    }
+}
+
+fn handle_get_nav(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> NavResp {
+    #[cfg(feature = "gnss")]
+    if let Some(n) = crate::nav::NAV_LAST.lock(core::cell::Cell::get) {
+        return NavResp {
+            available: true,
+            status: n.status,
+            fix_age_ms: n.fix_age_ms,
+            pos_n_m: n.pos_n_m,
+            pos_e_m: n.pos_e_m,
+            home_dist_m: n.home_dist_m,
+            home_bearing_deg: n.home_bearing_deg,
+            alt_rel_m: n.alt_rel_m,
+            track_error_m: n.track_error_m,
+            bank_demand_deg: n.bank_demand_deg,
+        };
+    }
+    NavResp {
+        available: false,
+        status: 0,
+        fix_age_ms: u16::MAX,
+        pos_n_m: f32::NAN,
+        pos_e_m: f32::NAN,
+        home_dist_m: f32::NAN,
+        home_bearing_deg: f32::NAN,
+        alt_rel_m: f32::NAN,
+        track_error_m: f32::NAN,
+        bank_demand_deg: f32::NAN,
+    }
+}
+
+fn handle_get_core1_load(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Core1LoadResp {
+    let w = elle_hardware::timing::core1_last_window();
+    Core1LoadResp {
+        wakes: w.wakes,
+        busy_avg_us: w.busy_avg_us(),
+        busy_max_us: w.busy_max_us,
+        mag_max_us: w.mag_max_us,
+        baro_max_us: w.baro_max_us,
+        max_drain: w.max_drain,
+    }
+}
+
 fn handle_start_mag_cal(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     send_cmd(ctx, RpcCommand::StartMagCal)
 }
@@ -592,6 +670,9 @@ postcard_rpc::define_dispatch! {
         | ClearLevelCalEndpoint     | blocking  | handle_clear_level_cal      |
         | GetLevelCalEndpoint       | blocking  | handle_get_level_cal        |
         | SetHeadingHoldEndpoint    | blocking  | handle_set_heading_hold     |
+        | GetBuildInfoEndpoint      | blocking  | handle_get_build_info       |
+        | GetNavEndpoint            | blocking  | handle_get_nav              |
+        | GetCore1LoadEndpoint      | blocking  | handle_get_core1_load       |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

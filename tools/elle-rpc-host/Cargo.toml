@@ -14,7 +14,7 @@ elle-rpc-icd = { workspace = true, features = ["use-std"] }
 postcard-rpc = { workspace = true, features = ["use-std"] }
 cobs = { workspace = true }
 
-probe-rs = { version = "0.32", default-features = false, features = ["builtin-targets"] }
+probe-rs = { version = "0.32", default-features = false, features = ["builtin-targets", "builtin-formats"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
@@ -22,3 +22,16 @@ ratatui = "0.30"
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = "0.3"
 chrono = "0.4"
+# MCP server (`elle mcp`): stdio transport, tool macros, JSON schemas for tool inputs.
+rmcp = { version = "3.5", features = ["server", "macros", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Decode the defmt log of flight builds (they have no RPC) for `elle mcp`.
+defmt-decoder = "1.1"
+
+[dev-dependencies]
+# A fake device on the real HostClient path, and an in-memory MCP client.
+postcard-rpc = { workspace = true, features = ["use-std", "test-utils"] }
+postcard = { workspace = true, features = ["use-std"] }
+rmcp = { version = "3.5", features = ["server", "macros", "transport-io", "client"] }

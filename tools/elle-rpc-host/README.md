@@ -23,6 +23,68 @@ Two modes:
 Arming, calibration, autotune and the event codes shown in the Logs panel are explained
 in [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md).
 
+## MCP server (`elle mcp`)
+
+An MCP server on stdio that holds the probe, so an agent (Claude Code) can
+interrogate and command the flight controller and run most of `TEST_PLAN.md`:
+read any query endpoint, sample a source for statistics, wait for a condition
+while the operator acts (tilt, switch, TX off), wait for firmware events, set
+surfaces, modes, calibrations and ULog. It needs an RPC build
+(`rpc-control,gnss` or `rpc-control,rpc-rc,gnss`); the probe has one owner, so
+the TUI cannot run at the same time (`disconnect` hands it over).
+
+To use it, copy `mcp.example.json` to `.mcp.json` at the repo root (Claude
+Code asks before starting it), then ask for `connect`. Connecting takes up to
+~20 s (probe attach, RTT scan, the firmware's first reply); `connect` and the
+reattach after `build_and_flash` / `reset_target` retry every stage for 30 s
+(`timeout_s` up to 120) and report how long each took (`connect_timing`).
+
+**Engines are off limits by default.** `arm` and `set_throttle` refuse unless
+the server is started with `--dangerously-allow-motors` (add it to `args` in
+`.mcp.json` yourself, for a props-off session). Even then:
+
+- `arm` needs `props_off_confirmed: true`;
+- throttle is capped (`--max-throttle`, 30 %);
+- an armed timer (`--max-armed-s`, 60 s) commands throttle 0 and disarms unless
+  `extend_armed` renews it;
+- the server pings every 100 ms while armed and disarms before disconnecting or
+  exiting (Ctrl-C or the client closing stdin);
+- `disarm` and `emergency_stop` always work.
+
+**Builds and flight firmware.** `build_and_flash` builds a profile (`flight`,
+`rpc`, `rpc_rc`; the RPC ones always keep `gnss`) plus extras such as
+`imu-raw-log`, flashes it through the probe, resets, and reattaches: RPC builds
+get the RPC link, the flight build gets its defmt log decoded with the ELF
+(`log`, `wait_log`, e.g. wait for `115200 baud` after `reset_target`).
+`connect_defmt` attaches to a flight build already running.
+
+`read` covers every query endpoint, including `build` (platform, features, turn
+compensation, git describe: which build is flashed), `nav` (home, validity,
+bank demand) and `core1` (IMU task load).
+
+**After a session.** `card_logs` lists the ULog files on the mounted SD card,
+`copy_logs` copies them into `logs/` (never over a different file of the same
+name), `analyse_log` runs the flight-logs skill's `elle_log.py` (`summary`,
+`timing`, `esc`, `nav`, `window`, …), and `replay` runs `elle-replay --json` on
+an `imu-raw-log` log (or a simulated one) and returns its report. `test_record`
+appends a TEST_PLAN result (pass / fail / skip / inconclusive, note, evidence,
+and the connected firmware's build info) to `logs/test-runs/<date>.jsonl`;
+`test_report` gives the latest outcome per row.
+
+Tools:
+
+| Group | Tools |
+|---|---|
+| Link | `connect`, `disconnect`, `link_status` |
+| Read | `read`, `sample`, `wait_for`, `events`, `wait_event` |
+| Firmware | `build_and_flash`, `reset_target`, `connect_defmt`, `log`, `wait_log` |
+| Engines (gated) | `arm`, `extend_armed`, `set_throttle`, `disarm`, `emergency_stop` |
+| Commands | `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`, `level_cal`, `ulog`, `autotune` |
+| Logs and results | `card_logs`, `copy_logs`, `analyse_log`, `replay`, `test_record`, `test_report` |
+
+Tests (`tests/mcp.rs`) run the RPC tools against a fake flight controller on the
+real RPC client path; `src/analysis.rs` tests the card copy and the results file.
+
 ## Link keepalive
 
 In pure RPC mode the firmware treats the host like an RC transmitter: if nothing arrives

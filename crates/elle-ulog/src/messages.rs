@@ -350,57 +350,199 @@ const _: () = assert!(
     "PidGainsMessage::SIZE does not match its field widths"
 );
 
-/// Raw gyro sample - every 1 kHz sample, unfiltered and bias-corrected, in the
-/// airframe frame (rad/s, sensor axes: x = roll axis before the roll sign flip).
-/// Only written by builds with the `gyro-raw-log` feature, for sizing the rate
-/// filter from a real vibration spectrum.
+/// Raw IMU capture (`imu-raw-log` builds): 10 consecutive ICM-42686 samples
+/// as the 20-bit FIFO integers, 24-bit little-endian, gyro x/y/z then accel
+/// x/y/z per sample (`elle_control::imu_raw`). Timestamp = when the first
+/// sample was read. With `imu_raw_mag` and `imu_raw_ctx`, a replay reproduces
+/// the firmware's attitude exactly.
 ///
-/// Format: "gyro_raw:uint64_t timestamp;float gyro_x;float gyro_y;float gyro_z"
+/// Format: "imu_raw:uint64_t timestamp;uint32_t first_index;uint8_t count;int16_t temp_centi_c;uint8_t[180] data"
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GyroRawMessage {
-    /// Timestamp in microseconds (Core1 time of processing; samples drained in
-    /// one wake-up share nearly the same stamp)
+#[derive(Debug, Clone, Copy)]
+pub struct ImuRawMessage {
     pub timestamp: u64,
-    /// Gyro X (rad/s)
-    pub gyro_x: f32,
-    /// Gyro Y (rad/s)
-    pub gyro_y: f32,
-    /// Gyro Z (rad/s)
-    pub gyro_z: f32,
+    pub first_index: u32,
+    pub count: u8,
+    pub temp_centi_c: i16,
+    pub data: [u8; 180],
 }
 
-impl GyroRawMessage {
+impl ImuRawMessage {
     /// Format definition string for ULog
-    pub(crate) const FORMAT: &'static str =
-        "gyro_raw:uint64_t timestamp;float gyro_x;float gyro_y;float gyro_z";
+    pub(crate) const FORMAT: &'static str = "imu_raw:uint64_t timestamp;uint32_t first_index;uint8_t count;int16_t temp_centi_c;uint8_t[180] data";
 
     /// Message name
-    pub const NAME: &'static str = "gyro_raw";
+    pub const NAME: &'static str = "imu_raw";
 
     /// Format definition message (header + `FORMAT`), built at compile time
     pub(crate) const FORMAT_MSG: &'static [u8] =
         &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
-    pub(crate) const SIZE: usize = 20;
+    pub(crate) const SIZE: usize = 8 + 4 + 1 + 2 + 180;
 
     /// Serialize to little-endian bytes
     #[must_use]
     pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
-        buf[8..12].copy_from_slice(&self.gyro_x.to_le_bytes());
-        buf[12..16].copy_from_slice(&self.gyro_y.to_le_bytes());
-        buf[16..20].copy_from_slice(&self.gyro_z.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.first_index.to_le_bytes());
+        buf[12] = self.count;
+        buf[13..15].copy_from_slice(&self.temp_centi_c.to_le_bytes());
+        buf[15..].copy_from_slice(&self.data);
         buf
     }
 }
 
-const _: () = assert!(
-    GyroRawMessage::SIZE == 8 + 4 + 4 + 4,
-    "GyroRawMessage::SIZE does not match its field widths"
-);
+/// The mag vector fed to the AHRS changed (`imu-raw-log` builds): airframe
+/// frame, offset-corrected, as fed; `valid` 0 = 6-DOF from `index` on.
+///
+/// Format: "imu_raw_mag:uint64_t timestamp;uint32_t index;uint8_t valid;float[3] mag"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ImuRawMagMessage {
+    pub timestamp: u64,
+    pub index: u32,
+    pub valid: u8,
+    pub mag: [f32; 3],
+}
+
+impl ImuRawMagMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str =
+        "imu_raw_mag:uint64_t timestamp;uint32_t index;uint8_t valid;float[3] mag";
+
+    /// Message name
+    pub const NAME: &'static str = "imu_raw_mag";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 8 + 4 + 1 + 12;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.index.to_le_bytes());
+        buf[12] = self.valid;
+        for (i, v) in self.mag.iter().enumerate() {
+            buf[13 + 4 * i..17 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf
+    }
+}
+
+/// Attitude pipeline state entering sample `index` (`imu-raw-log` builds):
+/// AHRS quaternion, and the gyro bias and level-cal mount that sample was fused
+/// with. Every 1000 samples and on any change; a replay starts or resumes here.
+/// `roundtrip_errors` > 0 means the logged integers do not reproduce the
+/// driver's floats, and the replay cannot be exact.
+///
+/// `aid_state` is the turn compensation state beyond the quaternion
+/// (`elle_control::attitude::AidState`); `turn_comp` and `gate_g` are the
+/// recording build's modes (`AhrsTurnComp as u8`; gate in g, NaN for none).
+///
+/// Format: "imu_raw_ctx:uint64_t timestamp;uint32_t index;float[4] quat;float[3] gyro_bias;float[4] mount;uint32_t roundtrip_errors;float[5] aid_state;uint8_t turn_comp;float gate_g"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ImuRawCtxMessage {
+    pub timestamp: u64,
+    pub index: u32,
+    /// w, x, y, z
+    pub quat: [f32; 4],
+    pub gyro_bias: [f32; 3],
+    /// w, x, y, z
+    pub mount: [f32; 4],
+    pub roundtrip_errors: u32,
+    pub aid_state: [f32; 5],
+    pub turn_comp: u8,
+    pub gate_g: f32,
+}
+
+impl ImuRawCtxMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str = "imu_raw_ctx:uint64_t timestamp;uint32_t index;float[4] quat;float[3] gyro_bias;float[4] mount;uint32_t roundtrip_errors;float[5] aid_state;uint8_t turn_comp;float gate_g";
+
+    /// Message name
+    pub const NAME: &'static str = "imu_raw_ctx";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 8 + 4 + 16 + 12 + 16 + 4 + 20 + 1 + 4;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.index.to_le_bytes());
+        let floats = self
+            .quat
+            .iter()
+            .chain(self.gyro_bias.iter())
+            .chain(self.mount.iter());
+        for (i, v) in floats.enumerate() {
+            buf[12 + 4 * i..16 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf[56..60].copy_from_slice(&self.roundtrip_errors.to_le_bytes());
+        for (i, v) in self.aid_state.iter().enumerate() {
+            buf[60 + 4 * i..64 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf[80] = self.turn_comp;
+        buf[81..85].copy_from_slice(&self.gate_g.to_le_bytes());
+        buf
+    }
+}
+
+/// A GNSS fix handed to the attitude pipeline (`imu-raw-log` builds with turn
+/// compensation): receive time, the first sample `index` it applied to, NED
+/// velocity, whether from NAV-PVT. A replay applies it at that index.
+///
+/// Format: "imu_raw_fix:uint64_t timestamp;uint32_t index;float[3] vel_ned;uint8_t pvt"
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ImuRawFixMessage {
+    pub timestamp: u64,
+    pub index: u32,
+    pub vel_ned: [f32; 3],
+    pub pvt: u8,
+}
+
+impl ImuRawFixMessage {
+    /// Format definition string for ULog
+    pub(crate) const FORMAT: &'static str =
+        "imu_raw_fix:uint64_t timestamp;uint32_t index;float[3] vel_ned;uint8_t pvt";
+
+    /// Message name
+    pub const NAME: &'static str = "imu_raw_fix";
+
+    /// Format definition message (header + `FORMAT`), built at compile time
+    pub(crate) const FORMAT_MSG: &'static [u8] =
+        &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
+
+    /// Size of the message in bytes
+    pub(crate) const SIZE: usize = 8 + 4 + 12 + 1;
+
+    /// Serialize to little-endian bytes
+    #[must_use]
+    pub(crate) fn to_bytes(self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.index.to_le_bytes());
+        for (i, v) in self.vel_ned.iter().enumerate() {
+            buf[12 + 4 * i..16 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        buf[24] = self.pvt;
+        buf
+    }
+}
 
 /// System status message - logs performance and health metrics
 ///

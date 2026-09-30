@@ -129,23 +129,15 @@ pub static MAG_CAL_PROGRESS: core::sync::atomic::AtomicU16 = core::sync::atomic:
 /// Core0 acts on this only when disarmed.
 pub static TAP_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// One unfiltered, bias-corrected gyro sample in the airframe frame (rad/s),
-/// for the `gyro-raw-log` vibration capture.
-#[cfg(feature = "gyro-raw-log")]
-#[derive(Clone, Copy)]
-pub struct GyroRawSample {
-    pub timestamp: Instant,
-    pub gyro: [f32; 3],
-}
-
-/// Core1 → Core0 queue of every 1 kHz gyro sample while `gyro-raw-log` is
-/// built in. Holds ~4 control ticks; the ULog path drains it every tick, and
-/// samples are dropped (not blocked on) if it ever fills.
-#[cfg(feature = "gyro-raw-log")]
-pub static GYRO_RAW_CHANNEL: embassy_sync::channel::Channel<
+/// Core1 → Core0 queue of raw IMU records (`imu-raw-log` builds): batches of 10
+/// samples, plus mag and context changes. 16 records hold well over a control
+/// tick (a batch is 10 ms); the ULog path drains it every tick, and records are
+/// dropped (never blocked on) if it fills, which the sample index makes visible.
+#[cfg(feature = "imu-raw-log")]
+pub static IMU_RAW_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
-    GyroRawSample,
-    48,
+    elle_control::imu_raw::Record,
+    16,
 > = embassy_sync::channel::Channel::new();
 
 /// Channel for LED pattern updates

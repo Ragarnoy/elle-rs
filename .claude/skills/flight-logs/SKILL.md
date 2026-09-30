@@ -8,8 +8,8 @@ description: Read and analyse Elle ULog flight logs (LOG_NNNN.ulg from the SD ca
 The firmware records every session to the SD card as `LOG_NNNN.ulg` (PX4 ULog,
 FAT32, one file per boot; logs from older firmware are `LOG_NNNN.ULG`). Message
 set and sizes: [`crates/elle-ulog/README.md`](../../../crates/elle-ulog/README.md).
-Event codes: the host labels in `tools/elle-rpc-host/src/tui/ui.rs`
-(`log_code_text`), also tabled in `docs/OPERATIONS.md`.
+Event codes: the host labels in `tools/elle-rpc-host/src/events.rs`
+(`label`), also tabled in `docs/OPERATIONS.md`.
 
 ## 1. Get the files
 
@@ -50,6 +50,26 @@ or more files and degrades gracefully on older logs that lack newer messages:
 
 For anything else, load the file directly — `pyulog.ULog(path).data_list` gives one
 numpy dict per message — and keep the ad-hoc script in the scratchpad.
+
+**Raw IMU logs** (`imu-raw-log` builds, `imu_raw` present in `list`): replay the
+attitude pipeline on the host with the Rust tool, which first checks the replay
+reproduces the logged attitude exactly (exit code 1 if not), then writes every
+sample at 1 kHz for plotting:
+
+```sh
+cargo run -q -p elle-replay --target x86_64-unknown-linux-gnu -- logs/LOG_NNNN.ulg --csv /tmp/replay.csv
+```
+
+`--compare` adds the alternative filters (uf-ahrs Madgwick, Mahony, VQF; with and
+without turn compensation, `-cc` ground speed × gyro, `-ce` GNSS acceleration; with
+and without accel gating, `--gate-g`) seeded from the firmware's state, and scores
+them all against a gyro-only reference in turns (roll error mean per direction, RMS,
+pitch RMS). The reference needs straight-and-level stretches of ≥ 2 s between
+manoeuvres to anchor on; its coverage is printed. Trust differences larger than
+~0.5° only. `--simulate out.ulg --wind-east 6 --vibration 2` runs the same analysis
+on a simulated flight, with the truth alongside. For the vehicle ground test (aircraft
+level in a car, TEST_PLAN 7.2) add `--score-by-rate`: a car turns without banking, so
+turns are picked by turn rate and the truth is level. Background: `docs/ATTITUDE.md`.
 
 ## 3. Identify the build
 

@@ -83,10 +83,22 @@ pub const CONTROL_LOOP_DT: f32 = CONTROL_LOOP_PERIOD_MS as f32 / 1000.0;
 // The integer frequency (tick counts, divisors) must be exact.
 const _: () = assert!(1000 % CONTROL_LOOP_PERIOD_MS == 0);
 pub const IMU_UPDATE_FREQUENCY_HZ: u32 = 1000; // IMU reads at 1kHz
+/// ICM-42686 full-scale ranges as its driver configures them (icm426xx
+/// `ICM42686`): they fix the scale from 20-bit FIFO integers to physical units,
+/// which the raw IMU capture (`elle_control::imu_raw`) reproduces.
+pub const IMU_GYRO_FULL_SCALE_DPS: f32 = 4000.0;
+pub const IMU_ACCEL_FULL_SCALE_G: f32 = 32.0;
 
 // ULog sub-sampling divisors (relative to CONTROL_LOOP_FREQUENCY_HZ), derived so
 // the recorded rates don't change with the loop rate.
 pub const ULOG_STATUS_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 8; // 8 Hz (also the loop_stages window)
+/// `attitude_data` at the full loop rate, except in `imu-raw-log` builds, where
+/// a replay regenerates it from the raw samples and 50 Hz is enough to check
+/// that the replay matches.
+#[cfg(not(feature = "imu-raw-log"))]
+pub const ULOG_ATTITUDE_DIVISOR: u32 = 1;
+#[cfg(feature = "imu-raw-log")]
+pub const ULOG_ATTITUDE_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 50; // 50 Hz
 pub const ULOG_MAG_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 10; // 10 Hz
 pub const ULOG_BARO_DIVISOR: u32 = CONTROL_LOOP_FREQUENCY_HZ / 5; // 5 Hz
 // Pilot commands and engine telemetry change slowly, so they log at 100 Hz while
@@ -140,11 +152,43 @@ pub const IMU_SPI_FREQ: u32 = 8_000_000; // 8 MHz SPI clock (ICM-42686-P rated t
 pub const AHRS_SAMPLE_PERIOD_US: u64 = 1000; // 1ms (matches 1 kHz ICM ODR)
 /// Madgwick AHRS filter gain (higher = faster convergence, more noise)
 pub const AHRS_BETA: f32 = 0.033;
+/// How the AHRS removes the aircraft's own acceleration from the accel before
+/// fusing it (`elle_control::attitude`). Without it a sustained coordinated
+/// turn is slowly "levelled": the accel points through the belly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AhrsTurnComp {
+    /// Not at all (every build so far).
+    Off = 0,
+    /// Centripetal term: gyro rate × GNSS ground speed along the nose. Good in
+    /// calm air; off by ω × wind in wind (ground speed is not airspeed).
+    Centripetal = 1,
+    /// Kinematic acceleration from the GNSS velocity change between fixes,
+    /// rotated into the body. Wind-proof; 5 Hz and delayed by the receiver.
+    GnssAccel = 2,
+}
+
+/// Turn compensation mode. `Off` until replayed flight data (`elle-replay
+/// --compare`, TEST_PLAN Part 7) shows which mode helps on this aircraft.
+pub const AHRS_TURN_COMP: AhrsTurnComp = AhrsTurnComp::Off;
+/// Below this GNSS ground speed there is no turn compensation, m/s.
+pub const AHRS_TURN_COMP_MIN_SPEED_MS: f32 = 6.0;
+/// A GNSS solution older than this is not used for turn compensation, ms.
+pub const AHRS_TURN_COMP_MAX_AGE_MS: u32 = 300;
+/// Turn compensation fades in and out over this long, s (no step in attitude).
+pub const AHRS_TURN_COMP_RAMP_S: f32 = 1.0;
+/// Accel gate: the AHRS skips the accel (gyro-only update) while the low-passed
+/// accel magnitude is further than this from 1 g. `None` = never skip.
+pub const AHRS_ACCEL_GATE_G: Option<f32> = None;
+/// Corner of the low-pass on the accel magnitude the gate reads, Hz: well
+/// below motor vibration, so that does not trip it.
+pub const AHRS_ACCEL_GATE_LPF_HZ: f32 = 5.0;
+const _: () = assert!(AHRS_TURN_COMP_MIN_SPEED_MS > 0.0 && AHRS_TURN_COMP_RAMP_S > 0.0);
 /// Corner of the 2nd-order Butterworth low-pass on the gyro rates handed to the
 /// attitude PID, run at the 1 kHz IMU rate. Engine vibration (eagle EDFs:
 /// 20-30 deg/s of roll-rate noise at 7-9k rpm) otherwise aliases into the
 /// 200 Hz loop and moves the elevons. 30 Hz keeps the 5-8 Hz control band
-/// within ~4 % and costs ~7 ms of group delay. Size it from a `gyro-raw-log`
+/// within ~4 % and costs ~7 ms of group delay. Size it from an `imu-raw-log`
 /// capture.
 pub const GYRO_RATE_LPF_HZ: f32 = 30.0;
 /// Magnetometer read interval in IMU ticks (100 = 10Hz at 1kHz IMU rate)

@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore")  # pyulog warns on every dropout record
 from pyulog import ULog  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
-UI_RS = REPO / "tools/elle-rpc-host/src/tui/ui.rs"
+UI_RS = REPO / "tools/elle-rpc-host/src/events.rs"
 MODES = {0: "Manual", 1: "Stabilized", 2: "AltitudeHold"}
 
 
@@ -136,7 +136,7 @@ def armed_intervals(log):
 
 def cmd_list(logs, _args):
     for log in logs:
-        feats = [n for n in ("controller", "esc_health", "core1_load", "loop_stages", "nav", "gyro_raw") if log.has(n)]
+        feats = [n for n in ("controller", "esc_health", "core1_load", "loop_stages", "nav", "imu_raw", "gyro_raw") if log.has(n)]
         mag = changes_per_s(log, "magnetometer_data", ["mag_x", "mag_y", "mag_z"]) if log.has("magnetometer_data") else 0
         armed = sum(b - a for a, b in armed_intervals(log)) if log.has("system_status") else 0
         ev = len(log.m["log_event"]["code"]) if log.has("log_event") else 0

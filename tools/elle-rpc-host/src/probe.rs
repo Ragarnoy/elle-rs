@@ -13,42 +13,60 @@ use probe_rs::rtt::{Rtt, ScanRegion};
 use probe_rs::{Permissions, Session};
 use tokio::sync::mpsc;
 
-/// Connect to a debug probe and attach RTT.
+/// Connect to a debug probe and attach RTT, retrying until the firmware's
+/// RTT control block appears (it does once the firmware has booted).
 ///
 /// Returns the session and RTT instance ready for I/O.
 pub fn connect() -> Result<(Session, Rtt)> {
-    let probes = Lister::new().list_all();
-    if probes.is_empty() {
-        anyhow::bail!("No debug probes found");
-    }
+    connect_within(None)
+}
 
-    eprintln!("Connecting to {:?}...", probes[0]);
-    let probe = probes[0].open()?;
-    let mut session = probe.attach("RP235x", Permissions::default())?;
+/// As [`connect`], giving up after `limit` without an RTT control block
+/// (no firmware running, or a build without RTT).
+pub fn connect_within(limit: Option<Duration>) -> Result<(Session, Rtt)> {
+    let started = std::time::Instant::now();
+    let out_of_time = || limit.is_some_and(|l| started.elapsed() > l);
+
+    // With a limit, a probe that is not there yet (USB enumerating) or a
+    // target that refuses the attach (booting, just reset) is retried too.
+    let mut session = loop {
+        let attempt = || -> Result<Session> {
+            let probes = Lister::new().list_all();
+            let Some(info) = probes.first() else {
+                anyhow::bail!("No debug probes found");
+            };
+            eprintln!("Connecting to {info:?}...");
+            Ok(info.open()?.attach("RP235x", Permissions::default())?)
+        };
+        match attempt() {
+            Ok(s) => break s,
+            Err(e) if limit.is_none() || out_of_time() => return Err(e),
+            Err(e) => {
+                eprintln!("probe not ready ({e}), retrying...");
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+    };
 
     // Attach RTT without halting the core to avoid corrupting PIO/ESC state.
     // SWD can read target memory while the core is running on Cortex-M.
     let rtt = {
         let mut core = session.core(0)?;
         eprintln!("Scanning for RTT control block (no halt)...");
-
-        let rtt;
         loop {
             match Rtt::attach_region(&mut core, &ScanRegion::Ram) {
-                Ok(r) => {
-                    rtt = r;
-                    break;
-                }
-                Err(_e) => {
+                Ok(r) => break r,
+                Err(e) => {
+                    if let Some(l) = limit.filter(|_| out_of_time()) {
+                        anyhow::bail!("no RTT control block after {l:?}: {e}");
+                    }
                     eprintln!("RTT not ready, retrying...");
                     std::thread::sleep(Duration::from_millis(500));
                 }
             }
         }
-
-        eprintln!("RTT attached at {:#010x}", rtt.ptr());
-        rtt
     };
+    eprintln!("RTT attached at {:#010x}", rtt.ptr());
 
     Ok((session, rtt))
 }
@@ -63,7 +81,10 @@ pub fn shutdown_flag() -> Arc<AtomicBool> {
 /// Reads from RTT up channel 1, COBS-decodes frames, and sends them via `inc_tx`.
 /// Receives outbound messages from `out_rx`, COBS-encodes, and writes to RTT down channel 0.
 ///
-/// Exits when `shutdown` is set to `true` or `out_rx` disconnects.
+/// Exits when `shutdown` is set to `true`, `out_rx` disconnects, or the probe
+/// or target stops answering (unplugged, reset, powered off): dropping
+/// `inc_tx` then closes the client's receive side, which callers see as a
+/// lost link rather than a crashed process.
 pub fn rtt_worker(
     mut session: Session,
     mut rtt: Rtt,
@@ -71,7 +92,9 @@ pub fn rtt_worker(
     mut out_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: Arc<AtomicBool>,
 ) {
-    let mut core = session.core(0).unwrap();
+    let Ok(mut core) = session.core(0) else {
+        return;
+    };
     let mut buf = [0u8; 1024];
     let mut inc_staging = vec![];
     let mut pending_out: Option<Vec<u8>> = None;
@@ -84,8 +107,12 @@ pub fn rtt_worker(
         let mut progress = false;
 
         // Read from device (up channel 1 = RPC TX; channel 0 is defmt)
-        let up = rtt.up_channel(1).unwrap();
-        let got = up.read(&mut core, &mut buf).unwrap();
+        let Some(up) = rtt.up_channel(1) else {
+            return;
+        };
+        let Ok(got) = up.read(&mut core, &mut buf) else {
+            return;
+        };
         if got != 0 {
             progress = true;
             let mut window = &buf[..got];
@@ -119,8 +146,12 @@ pub fn rtt_worker(
         }
 
         if let Some(tx) = pending_out.take() {
-            let down = rtt.down_channel(0).unwrap();
-            let ct = down.write(&mut core, &tx).unwrap();
+            let Some(down) = rtt.down_channel(0) else {
+                return;
+            };
+            let Ok(ct) = down.write(&mut core, &tx) else {
+                return;
+            };
             if ct == tx.len() {
                 progress = true;
             } else if ct != 0 {

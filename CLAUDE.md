@@ -15,12 +15,14 @@ behaviour changes.
 | [`STATE_DIAGRAMS.md`](STATE_DIAGRAMS.md) | Arming, failsafe, mode, autotune, calibration state machines |
 | [`TODO.md`](TODO.md) | Feature backlog and items still awaiting hardware verification |
 | [`docs/DART_PID.md`](docs/DART_PID.md) | How the current PID gains were derived from dart flight logs |
-| [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md) | Waypoint navigation design (not started) |
+| [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md) | Navigation plan: observation mode done, next steps |
+| [`docs/ATTITUDE.md`](docs/ATTITUDE.md) | Attitude estimation: the turn problem, turn compensation (off), raw capture and replay, simulated results, how a mode gets enabled |
 | [`docs/embassy-rp-sio-irq-fifo-flash-bug.md`](docs/embassy-rp-sio-irq-fifo-flash-bug.md) | Why the flash manager masks the SIO FIFO IRQ |
 | [`tools/elle-rpc-host/README.md`](tools/elle-rpc-host/README.md) | Host TUI and `direct` commands |
 | [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md) | ULog writer and message set |
 | [`.claude/skills/governor-calibration/SKILL.md`](.claude/skills/governor-calibration/SKILL.md) | Re-sweeping the RPM governor table |
 | [`.claude/skills/flight-logs/SKILL.md`](.claude/skills/flight-logs/SKILL.md) | Reading ULog flight logs: finding files, timing, ESC health, sensor rates, build comparisons (`elle_log.py`) |
+| [`.claude/skills/test-plan-runner/SKILL.md`](.claude/skills/test-plan-runner/SKILL.md) | Running TEST_PLAN.md rows through the `elle mcp` tools and recording results |
 | [`docs/archive/`](docs/archive/) | Superseded design specs (sensor drivers), kept for reference |
 
 ## Project Structure
@@ -32,14 +34,15 @@ Cargo workspace:
 - **`crates/elle-app/`** — the application both binaries run: boot sequence, flight and RPC control loops, RPC dispatch, ULog per-tick logging, shared tasks. The binaries keep only pins, engine setup, `bind_interrupts!`, `led_task` and `main()` — **make behaviour changes here, once**, not in a binary.
 - **`crates/elle-system/`** — `FlightController` (arming, failsafe, modes, PID, mixing, heading hold) and the RPC transport
 - **`crates/elle-hardware/`** — drivers and tasks: `crsf`, `dshot`, `event`, `flash`, `gnss`, `imu`, `led`, `pwm`, `sd_writer`, `timing`, `watchdog`, the ULog logger
-- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `autotune`, `commands`, `filter`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`
+- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `attitude`, `autotune`, `commands`, `filter`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`
 - **`crates/elle-config/`** — every tunable constant and per-platform value (`lib.rs`, `lut.rs`, `profile.rs`)
 - **`crates/elle-rpc-icd/`** — shared RPC Interface Control Document
 - **`crates/elle-ulog/`** — `no_std` ULog encoder
 - **`crates/elle-error/`** — error types
 - **`crates/elle-nav/`** — navigation, hardware-independent and host-tested: home frame (sguaba NED), estimator, L1 guidance. Runs in **observation mode** only (logged, never applied); see [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md)
 - **`drivers/`** — vendored sensor drivers: `mmc5616wa` (mag), `sam-m10q` (GNSS), `bmp390` (baro, local fork patched over crates.io)
-- **`tools/elle-rpc-host/`** — host CLI (TUI dashboard + `direct` commands)
+- **`tools/elle-rpc-host/`** — host CLI (TUI dashboard + `direct` commands) and `elle mcp`, an MCP server on stdio that holds the probe for an agent (engines only with `--dangerously-allow-motors`; see its README)
+- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv] [--compare] [--json]`; `report.rs` holds the analysis as a value, which `--json` prints and `elle mcp`'s `replay` tool reads). `--compare` also runs Madgwick, Mahony and VQF from uf-ahrs with and without turn compensation and accel gating on the same inputs, and scores all of them against a gyro-only reference through turns (`reference.rs`: anchored on the accel's gravity direction in straight and level flight, drift closed at the next anchor). `--simulate out.ulg [--wind-north/--wind-east/--vibration/--gyro-bias-dps]` writes a simulated flight (`sim.rs`) and analyses it, adding a score against the simulated truth; `--score-by-rate` scores by turn rate instead of bank, for the vehicle ground test (TEST_PLAN 7.2)
 
 ## Building
 
@@ -67,7 +70,7 @@ Feature flags (both binaries; they forward to `elle-app`):
 - `defmt-logging` — defmt over RTT (default). The macros are always compiled; without this feature they are no-ops.
 - `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss` and the navigator (`elle-nav`, observation mode). `rpc-control` also enables `gnss-gsv` (satellites in view).
 - `performance-monitoring` — timing instrumentation (`TimingMeasurement` is a no-op stub without it).
-- `gyro-raw-log` — every 1 kHz gyro sample to ULog as `gyro_raw` (~25 kB/s), for sizing `GYRO_RATE_LPF_HZ`. Bench only.
+- `imu-raw-log` — every 1 kHz IMU sample as the raw 20-bit FIFO integers (`imu_raw`, batches of 10) plus the mag as fed (`imu_raw_mag`) and the AHRS/bias/mount state (`imu_raw_ctx`, every 1000 samples and on change), ~20 kB/s: enough for a host replay to reproduce the attitude angles exactly (`elle_control::imu_raw`), and for sizing `GYRO_RATE_LPF_HZ`. `attitude_data` drops to 50 Hz and the ULog queue doubles to 128 slots (+~37 kB RAM). Bench and test flights.
 
 CRSF telemetry TX and ULog are always compiled in.
 
@@ -87,6 +90,9 @@ cargo build -p elle-rpc-host --target x86_64-unknown-linux-gnu
 cargo test  -p elle-control  --target x86_64-unknown-linux-gnu                          # eagle config
 cargo test  -p elle-control  --target x86_64-unknown-linux-gnu --features platform-dart  # dart config
 cargo test  -p elle-nav      --target x86_64-unknown-linux-gnu
+cargo test  -p elle-ulog     --target x86_64-unknown-linux-gnu   # header fits the 4 KB buffer
+cargo test  -p elle-replay   --target x86_64-unknown-linux-gnu   # synthetic log, end to end
+cargo run   -p elle-replay   --target x86_64-unknown-linux-gnu -- logs/LOG_NNNN.ulg
 ```
 
 ### CI
@@ -95,7 +101,9 @@ cargo test  -p elle-nav      --target x86_64-unknown-linux-gnu
 `rpc-control,gnss` / `rpc-control,rpc-rc,gnss`; `cargo fmt --check`; both powerset
 checks; clippy `-D warnings` on both airframes (flight and RPC+RC) and the host tool;
 `elle-control` tests for both platforms (governor step response, level cal, autotune,
-arming, …); `elle-nav` tests (geodesy, estimator, closed-loop L1 line and loiter with wind).
+arming, …, the attitude pipeline and raw IMU capture); `elle-nav` tests (geodesy, estimator,
+closed-loop L1 line and loiter with wind); `elle-ulog` (header size); `elle-replay` (clippy,
+and a synthetic log written by the firmware encoder, replayed end to end).
 
 ## Pin Map
 
@@ -171,12 +179,20 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 - Autotune (`elle-control/src/autotune.rs`): `update(pitch_deg, roll_deg, tick)` measures its own axis and enforces the ±20° envelope on both from settling on. Both loops call `support::guard_autotune` before it every tick; it aborts and restores gains once the run loses the aircraft (`check_run_conditions`: kill, disarm/failsafe, attitude controller off, no attitude). A run never changes axis. Crossings and relay flips use `AUTOTUNE_HYSTERESIS_DEG`; `validate_result` also caps the tuned axis's Kp/Kd change at `AUTOTUNE_MAX_GAIN_RATIO` (Ki is exempt, see its doc).
 - Elevons are on hardware PWM slice 6 at a 1 MHz count (`elle-hardware/src/pwm.rs`), 200 Hz frames (`REFRESH_INTERVAL_US` = 5 000; digital servos on both airframes); the compare latches at wrap, so output is always the latest command, ≤ 1 frame (5 ms) old.
 
-### IMU pipeline (`elle-hardware/src/imu/driver.rs`)
+### IMU pipeline (`elle-hardware/src/imu/driver.rs`, `elle-control/src/attitude.rs`)
+
+Steps 2–6 per sample are `elle_control::attitude::AttitudePipeline` (host-testable,
+the code a log replay runs); the driver keeps the FIFO, bias estimation, level-cal
+collection and publishing. The pipeline also holds **turn compensation**
+(`AHRS_TURN_COMP`: `Off` by default, `Centripetal`, `GnssAccel`) and an optional accel
+gate (`AHRS_ACCEL_GATE_G`); with a mode on, the IMU task hands it each new GNSS solution.
+Off and ungated it is the plain Madgwick update bit for bit. Why and how it gets turned
+on: [`docs/ATTITUDE.md`](docs/ATTITUDE.md), TEST_PLAN Part 7.
 
 1. INT1 DATA_RDY wakes the task; it drains the FIFO, fusing every sample in order, up to `IMU_MAX_DRAIN` (32) per wake-up, publishing only the newest attitude (event 45 on multi-sample drains, rate-limited).
 2. Gyro bias (`elle_control::gyro_bias`) is measured over the first still second and subtracted from every sample. `IMU_STATUS.calibrated` means "bias measured".
 3. Level-cal mount quaternion rotates accel, gyro and (offset-corrected) mag into the airframe frame before the AHRS.
-4. Madgwick AHRS at 1 kHz, 9-DOF once a mag reading exists; on a mag I2C error `has_mag` is cleared so a stale vector is never fused.
+4. Madgwick AHRS (uf-ahrs) at 1 kHz, 9-DOF once a mag reading exists; a zero accel or mag vector falls back to fewer sensors, so every sample is integrated; on a mag I2C error `has_mag` is cleared so a stale vector is never fused.
 5. **Roll and roll rate are negated** after the quaternion → Euler conversion (this PCB orientation).
 6. Rates published for the PID pass through a 2nd-order Butterworth low-pass (`GYRO_RATE_LPF_HZ` = 30); the AHRS integrates unfiltered gyro.
 
@@ -232,9 +248,9 @@ postcard-RPC over RTT (`elle-system/src/rpc.rs`):
 Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold ·
 safety: Arm, Disarm, EmergencyStop · query: GetStatus, GetAttitude, GetPerformance,
 ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels,
-GetControllerOutput, GetEngine · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,
+GetControllerOutput, GetEngine, GetNav (navigator's last update), GetCore1Load (last ~1 s window, closed by the loop whether or not ULog records) · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,
 GetULogInfo · autotune: StartAutotune (axis `0xFF`/`0xFE` = save/erase PID), AbortAutotune · calibration: StartMagCal, ClearMagCal, GetMagCal, StartLevelCal,
-ClearLevelCal, GetLevelCal · system: Ping, GetVersion, GetTime.
+ClearLevelCal, GetLevelCal · system: Ping, GetVersion, GetTime, GetBuildInfo (platform, features, turn compensation, loop rate, `git describe` from `elle-app/build.rs`).
 One outgoing topic: `LogTopic` `(level: u8, code: u16)`.
 
 **Host `probe.rs` reads RTT up channel 1, not 0.**
@@ -244,7 +260,7 @@ One outgoing topic: `LogTopic` `(level: u8, code: u16)`.
 TUI dashboard (default) or `direct <cmd>`. `probe.rs` (probe-rs + RTT worker thread),
 `wire.rs` (tokio ↔ HostClient), `tui/` (event loop, state, ui, commands), `direct.rs`
 (one-shot commands; holds the link with 100 ms pings after commands that leave
-something moving). Event code labels: `tui/ui.rs` `log_code_text()` — add one for every
+something moving). Event code labels: `src/events.rs` `label()` — add one for every
 new `EVT_*`. Poll rates: attitude 10 Hz, status 0.5 Hz, mag 5 Hz, baro 1 Hz, GNSS 1 Hz,
 engine 5 Hz, RC 20 Hz, controller output 10 Hz.
 
@@ -296,7 +312,7 @@ the binaries' SWI handler).
 - **Constants live in `elle-config`**, with `const _: () = assert!(…)` for invariants; per-platform values are `#[cfg(feature = "platform-dart")]` pairs.
 - **Lend large structs to async fns, don't move them.** Passing `FlightController` or `ULogLogger` by value duplicates their storage in every enclosing future (+7.3 kB .bss once); `boot::run` builds the controller and lends `&mut`.
 - No `const fn` on `&mut self` methods.
-- New event: add the `EVT_*` constant in `event.rs`, a host label in `ui.rs`, and a row in the OPERATIONS.md table. Retired codes stay reserved.
+- New event: add the `EVT_*` constant in `event.rs`, a host label in `tools/elle-rpc-host/src/events.rs`, and a row in the OPERATIONS.md table. Retired codes stay reserved.
 - New pure logic goes in `elle-control` with host tests in `crates/elle-control/tests/`.
 - Commit and PR text carries no AI attribution.
 
@@ -311,7 +327,7 @@ the binaries' SWI handler).
 | cobs 0.5 | yes | yes | Frame encoding |
 | ratatui 0.30 | - | yes | TUI |
 | icm426xx (git `ProfFan/icm426xx` rev `7e22a5a`) | yes | - | ICM-42686-P driver. The 42686-P support postdates the 0.4.0 release; switch to crates.io once upstream releases again. |
-| ahrs 0.8 · nalgebra 0.34 | yes | - | Madgwick AHRS, linear algebra (`libm`) |
+| uf-ahrs 0.2 · nalgebra 0.35 | yes | - | Madgwick AHRS (also Mahony and VQF, compared in `elle-replay`), linear algebra (`libm`). One nalgebra version across the workspace (sguaba needs 0.35). |
 | embassy-dshot 0.5.1 | yes | - | DShot over PIO (own crate). One `BidirDshotProgram` per PIO block; every send is fallible. 0.5.1 adds `command_with_extended_telemetry` (EDT from a stopped motor) and fixes issue #8: every push waits out the previous frame's cycle. |
 | ublox 0.10 (`ubx_proto33`) | yes | - | UBX parsing and CFG-VALSET building |
 | sequential-storage 8.0 | yes | - | Flash MapStorage (profile) and queue (legacy ULog) |

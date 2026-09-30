@@ -7,9 +7,9 @@ use crate::format::{
 };
 use crate::messages::{
     AttitudeMessage, AutotuneMessage, BarometerMessage, CommandsMessage, ControllerMessage,
-    Core1LoadMessage, EngineMessage, EscHealthMessage, GnssMessage, GyroRawMessage,
-    LogEventMessage, LoopStagesMessage, MagnetometerMessage, MessageType, NavMessage,
-    PidGainsMessage, StatusMessage,
+    Core1LoadMessage, EngineMessage, EscHealthMessage, GnssMessage, ImuRawCtxMessage,
+    ImuRawFixMessage, ImuRawMagMessage, ImuRawMessage, LogEventMessage, LoopStagesMessage,
+    MagnetometerMessage, MessageType, NavMessage, PidGainsMessage, StatusMessage,
 };
 use embassy_time::Instant;
 use heapless::Vec;
@@ -18,7 +18,9 @@ use heapless::Vec;
 pub(crate) const BUFFER_SIZE: usize = 4096;
 
 /// Largest data ('D') message payload: 2-byte msg_id plus the serialized message
-const MAX_DATA_PAYLOAD: usize = 128;
+/// (`imu_raw`, 195 B, is the largest).
+const MAX_DATA_PAYLOAD: usize = 256;
+const _: () = assert!(2 + crate::messages::ImuRawMessage::SIZE <= MAX_DATA_PAYLOAD);
 
 /// Write errors
 #[derive(Debug, Clone, Copy, defmt::Format)]
@@ -125,7 +127,16 @@ impl ULogWriter {
             .extend_from_slice(PidGainsMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
         self.buffer
-            .extend_from_slice(GyroRawMessage::FORMAT_MSG)
+            .extend_from_slice(ImuRawMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(ImuRawMagMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(ImuRawCtxMessage::FORMAT_MSG)
+            .map_err(|_| WriteError::BufferFull)?;
+        self.buffer
+            .extend_from_slice(ImuRawFixMessage::FORMAT_MSG)
             .map_err(|_| WriteError::BufferFull)?;
         self.buffer
             .extend_from_slice(EscHealthMessage::FORMAT_MSG)
@@ -277,8 +288,35 @@ impl ULogWriter {
         self.write_data_payload(msg_id, &data.to_bytes())
     }
 
-    /// Write a raw gyro data message
-    pub fn write_gyro_raw(&mut self, msg_id: u16, data: &GyroRawMessage) -> Result<(), WriteError> {
+    /// Write a raw IMU batch message
+    pub fn write_imu_raw(&mut self, msg_id: u16, data: &ImuRawMessage) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a raw IMU mag-change message
+    pub fn write_imu_raw_mag(
+        &mut self,
+        msg_id: u16,
+        data: &ImuRawMagMessage,
+    ) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a raw IMU GNSS fix message
+    pub fn write_imu_raw_fix(
+        &mut self,
+        msg_id: u16,
+        data: &ImuRawFixMessage,
+    ) -> Result<(), WriteError> {
+        self.write_data_payload(msg_id, &data.to_bytes())
+    }
+
+    /// Write a raw IMU context message
+    pub fn write_imu_raw_ctx(
+        &mut self,
+        msg_id: u16,
+        data: &ImuRawCtxMessage,
+    ) -> Result<(), WriteError> {
         self.write_data_payload(msg_id, &data.to_bytes())
     }
 

@@ -35,7 +35,6 @@ crc = { workspace = true }
 cortex-m = "0.7"
 defmt = { workspace = true }
 libm = { workspace = true }
-ahrs = { workspace = true }
 nalgebra = { workspace = true }
 heapless = { workspace = true }
 static_cell = { workspace = true }
@@ -80,13 +79,14 @@ gnss = []  # Enable GPS telemetry frames
 # only satellites *used*. Costs ~2.4 kB/s at 5 Hz, so it is enabled solely on
 # the fast link — see gnss::config_groups.
 gnss-gsv = ["gnss"]
-# Log every 1 kHz gyro sample (unfiltered, bias-corrected, airframe frame) to
-# ULog as `gyro_raw`, to size GYRO_RATE_LPF_HZ from a real vibration spectrum.
-# ~25 kB/s extra on the SD card: bench diagnosis only.
 # Execution-time statistics for the IMU loop and flash manager (read by
 # elle-system's performance monitor). Enabled by elle-system/performance-monitoring.
 performance-monitoring = []
-gyro-raw-log = []
+# Log every 1 kHz IMU sample as the raw FIFO integers (`imu_raw`, with
+# `imu_raw_mag` and `imu_raw_ctx`), enough to replay the attitude pipeline
+# exactly on the host (tools/elle-replay) and to size GYRO_RATE_LPF_HZ from a
+# real vibration spectrum. ~20 kB/s extra: bench and test flights only.
+imu-raw-log = ["elle-config/imu-raw-log"]
 single-engine = []  # Single-engine platform (dart) — uses dshot_single_task instead of dshot_task
 
 [lib]

@@ -1,0 +1,17 @@
+[package]
+name = "elle-replay"
+version.workspace = true
+edition.workspace = true
+description = "Replay Elle raw IMU logs (imu-raw-log builds) through the attitude pipeline on the host"
+
+[dependencies]
+elle-control = { workspace = true }
+elle-config = { workspace = true }
+nalgebra = { workspace = true }
+uf-ahrs = { workspace = true }
+elle-ulog = { workspace = true }
+embassy-time = { workspace = true }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

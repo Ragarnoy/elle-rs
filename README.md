@@ -27,6 +27,7 @@ the board over a debug probe.
 | `crates/elle-rpc-icd`, `crates/elle-ulog`, `crates/elle-error`, `crates/elle-nav` | RPC contract, ULog encoder, errors, navigation (observation mode: computed and logged, not applied) |
 | `drivers/` | Vendored sensor drivers |
 | `tools/elle-rpc-host` | Host TUI and command-line tool |
+| `tools/elle-replay` | Replays raw IMU logs through the attitude pipeline on the host |
 
 ## Quick start
 
@@ -54,5 +55,6 @@ cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 | [`tools/elle-rpc-host/README.md`](tools/elle-rpc-host/README.md) | Host tool |
 | [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md) | Flight log format |
 | [`docs/DART_PID.md`](docs/DART_PID.md) | How the PID gains were derived |
-| [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md) | Waypoint navigation plan |
+| [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md) | Navigation plan |
+| [`docs/ATTITUDE.md`](docs/ATTITUDE.md) | Attitude estimation and turn compensation |
 | [`docs/embassy-rp-sio-irq-fifo-flash-bug.md`](docs/embassy-rp-sio-irq-fifo-flash-bug.md) | An embassy-rp multicore flash bug and its workaround |

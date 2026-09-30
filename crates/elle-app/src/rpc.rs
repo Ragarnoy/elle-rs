@@ -120,6 +120,10 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         ticker.next().await;
         let loop_start = Instant::now();
         resync_after_stall(&mut ticker, &mut previous_tick, loop_start);
+        // Close the Core 1 load window (~1 Hz) for ULog and the RPC query.
+        if loop_counter.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR) {
+            elle_hardware::timing::take_core1_window();
+        }
         let loop_timer = TimingMeasurement::start();
 
         // Supervisor check

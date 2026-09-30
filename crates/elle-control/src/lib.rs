@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod arming;
+pub mod attitude;
 pub mod autotune;
 pub mod commands;
 pub mod dshot_pace;
@@ -9,6 +10,7 @@ pub mod filter;
 pub mod governor;
 pub mod gyro_bias;
 pub mod heading;
+pub mod imu_raw;
 pub mod level_cal;
 pub mod mixing;
 pub mod pid;

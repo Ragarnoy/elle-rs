@@ -4,15 +4,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Subcommand;
+use elle_rpc_host::link::Link;
 use elle_rpc_icd::*;
-use postcard_rpc::header::VarSeqKind;
 use postcard_rpc::host_client::HostClient;
 use postcard_rpc::standard_icd::WireError;
-use tokio::sync::mpsc;
 use tokio::time::timeout;
-
-use crate::probe;
-use crate::wire::{ProbeRttRx, ProbeRttTx, TokSpawn};
 
 const CMD_TIMEOUT: Duration = Duration::from_secs(2);
 /// Keepalive period while holding the link: well inside the firmware's 200 ms
@@ -124,42 +120,9 @@ pub enum LevelCalAction {
     Status,
 }
 
-struct ProbeConnection {
-    client: HostClient<WireError>,
-    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    worker_handle: std::thread::JoinHandle<()>,
-}
-
-fn connect_client() -> Result<ProbeConnection> {
-    let (session, rtt) = probe::connect()?;
-
-    let (out_tx, out_rx) = mpsc::channel(64);
-    let (inc_tx, inc_rx) = mpsc::channel(64);
-
-    let shutdown = probe::shutdown_flag();
-    let shutdown_clone = shutdown.clone();
-    let worker_handle =
-        std::thread::spawn(move || probe::rtt_worker(session, rtt, inc_tx, out_rx, shutdown_clone));
-
-    let client = HostClient::<WireError>::new_with_wire(
-        ProbeRttTx { out: out_tx },
-        ProbeRttRx { inc: inc_rx },
-        TokSpawn,
-        VarSeqKind::Seq2,
-        "error",
-        64,
-    );
-
-    Ok(ProbeConnection {
-        client,
-        shutdown,
-        worker_handle,
-    })
-}
-
 pub async fn run(cmd: DirectCommand) -> Result<()> {
-    let conn = connect_client()?;
-    let client = &conn.client;
+    let link = Link::connect()?;
+    let client = &link.client;
 
     // Commands that leave something moving. The firmware fails safe ~300 ms
     // after the host goes quiet, so these keep the link alive until Ctrl-C.
@@ -434,10 +397,8 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
         hold_link(client).await?;
     }
 
-    // Signal the RTT worker to stop and wait for it to release the probe
-    conn.shutdown
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    let _ = conn.worker_handle.join();
+    // Stop the RTT worker and release the probe.
+    link.close();
 
     Ok(())
 }

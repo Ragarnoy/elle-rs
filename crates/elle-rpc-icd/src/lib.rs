@@ -394,6 +394,71 @@ pub const GNSS_CFG_KEY_NAMES: [&str; 10] = [
 // Wire Types - Topics (streaming data)
 // ============================================================================
 
+/// What the firmware was built as, so a host knows which rows of the test
+/// plan apply and whether a log matches the build it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct BuildInfoResp {
+    /// `elle_config::PLATFORM_NAME`, NUL-padded ASCII.
+    pub platform: [u8; 24],
+    /// `BUILD_FEATURE_*` bits.
+    pub features: u16,
+    /// `AHRS_TURN_COMP` as a number (0 off, 1 centripetal, 2 GNSS acceleration).
+    pub turn_comp: u8,
+    /// `AHRS_ACCEL_GATE_G` × 100, 0 when there is no gate.
+    pub accel_gate_g_x100: u16,
+    /// Control loop rate, Hz.
+    pub loop_hz: u16,
+    /// `git describe --always --dirty` at build time, NUL-padded ASCII.
+    pub git: [u8; 24],
+}
+
+/// `BuildInfoResp::features`: RC commands in RPC mode (`rpc-rc`).
+pub const BUILD_FEATURE_RPC_RC: u16 = 1 << 0;
+/// `BuildInfoResp::features`: GNSS task and navigator (`gnss`).
+pub const BUILD_FEATURE_GNSS: u16 = 1 << 1;
+/// `BuildInfoResp::features`: raw IMU capture (`imu-raw-log`).
+pub const BUILD_FEATURE_IMU_RAW_LOG: u16 = 1 << 2;
+/// `BuildInfoResp::features`: timing instrumentation (`performance-monitoring`).
+pub const BUILD_FEATURE_PERF_MON: u16 = 1 << 3;
+
+/// The navigator's latest update (observation mode; see ULog `nav`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
+pub struct NavResp {
+    /// False without the `gnss` feature, or before the first update.
+    pub available: bool,
+    /// `elle_nav::status` bits (home set 0, locked 1, position 2, velocity 3,
+    /// baro altitude 4, extrapolated 5, guidance 6, bank limited 7, loiter
+    /// capture 8, too slow 9, GNSS altitude 10).
+    pub status: u16,
+    pub fix_age_ms: u16,
+    /// Metres north/east of home (NaN when not valid).
+    pub pos_n_m: f32,
+    pub pos_e_m: f32,
+    pub home_dist_m: f32,
+    pub home_bearing_deg: f32,
+    /// Baro height above home, m.
+    pub alt_rel_m: f32,
+    /// Off the loiter circle, m (positive outside).
+    pub track_error_m: f32,
+    /// Bank the navigator would ask for (not applied), degrees.
+    pub bank_demand_deg: f32,
+}
+
+/// Core 1 (IMU task) load over the last ~1 s window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct Core1LoadResp {
+    /// IMU wake-ups in the window (~1000 at 1 kHz).
+    pub wakes: u32,
+    /// Mean and longest busy time per wake-up, µs (deadline 1000).
+    pub busy_avg_us: u32,
+    pub busy_max_us: u32,
+    /// Longest mag and baro read, µs (own task).
+    pub mag_max_us: u32,
+    pub baro_max_us: u32,
+    /// Most FIFO samples drained in one wake-up (1 = no backlog).
+    pub max_drain: u32,
+}
+
 /// Log message for device-side logging
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct LogMsg {
@@ -445,6 +510,9 @@ endpoints! {
     | ClearLevelCalEndpoint   | ()                | AckResp           | "elle/cal/level/clear"  |
     | GetLevelCalEndpoint     | ()                | LevelCalResp      | "elle/cal/level/get"    |
     | SetHeadingHoldEndpoint  | SetHeadingHoldReq | AckResp           | "elle/ctrl/heading_hold" |
+    | GetBuildInfoEndpoint    | ()                | BuildInfoResp     | "elle/sys/build"        |
+    | GetNavEndpoint          | ()                | NavResp           | "elle/query/nav"        |
+    | GetCore1LoadEndpoint    | ()                | Core1LoadResp     | "elle/query/core1"      |
 }
 
 // ============================================================================
