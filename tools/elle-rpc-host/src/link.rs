@@ -27,7 +27,12 @@ impl Link {
     /// Attach to the probe and the firmware's RPC channels. Blocks until the
     /// RTT control block is found.
     pub fn connect() -> Result<Self> {
-        let (session, rtt) = probe::connect()?;
+        Self::connect_within(None)
+    }
+
+    /// As [`Self::connect`], giving up after `limit` without an RTT control block.
+    pub fn connect_within(limit: Option<std::time::Duration>) -> Result<Self> {
+        let (session, rtt) = probe::connect_within(limit)?;
         let (out_tx, out_rx) = mpsc::channel(64);
         let (inc_tx, inc_rx) = mpsc::channel(64);
         let shutdown = probe::shutdown_flag();

@@ -13,10 +13,17 @@ use probe_rs::rtt::{Rtt, ScanRegion};
 use probe_rs::{Permissions, Session};
 use tokio::sync::mpsc;
 
-/// Connect to a debug probe and attach RTT.
+/// Connect to a debug probe and attach RTT, retrying until the firmware's
+/// RTT control block appears (it does once the firmware has booted).
 ///
 /// Returns the session and RTT instance ready for I/O.
 pub fn connect() -> Result<(Session, Rtt)> {
+    connect_within(None)
+}
+
+/// As [`connect`], giving up after `limit` without an RTT control block
+/// (no firmware running, or a build without RTT).
+pub fn connect_within(limit: Option<Duration>) -> Result<(Session, Rtt)> {
     let probes = Lister::new().list_all();
     if probes.is_empty() {
         anyhow::bail!("No debug probes found");
@@ -28,27 +35,24 @@ pub fn connect() -> Result<(Session, Rtt)> {
 
     // Attach RTT without halting the core to avoid corrupting PIO/ESC state.
     // SWD can read target memory while the core is running on Cortex-M.
+    let started = std::time::Instant::now();
     let rtt = {
         let mut core = session.core(0)?;
         eprintln!("Scanning for RTT control block (no halt)...");
-
-        let rtt;
         loop {
             match Rtt::attach_region(&mut core, &ScanRegion::Ram) {
-                Ok(r) => {
-                    rtt = r;
-                    break;
-                }
-                Err(_e) => {
+                Ok(r) => break r,
+                Err(e) => {
+                    if limit.is_some_and(|l| started.elapsed() > l) {
+                        anyhow::bail!("no RTT control block after {:?}: {e}", limit.unwrap());
+                    }
                     eprintln!("RTT not ready, retrying...");
                     std::thread::sleep(Duration::from_millis(500));
                 }
             }
         }
-
-        eprintln!("RTT attached at {:#010x}", rtt.ptr());
-        rtt
     };
+    eprintln!("RTT attached at {:#010x}", rtt.ptr());
 
     Ok((session, rtt))
 }

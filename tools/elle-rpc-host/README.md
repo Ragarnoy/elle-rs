@@ -23,6 +23,37 @@ Two modes:
 Arming, calibration, autotune and the event codes shown in the Logs panel are explained
 in [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md).
 
+## MCP server (`elle mcp`)
+
+An MCP server on stdio that holds the probe, so an agent (Claude Code) can
+interrogate and command the flight controller and run most of `TEST_PLAN.md`:
+read any query endpoint, sample a source for statistics, wait for a condition
+while the operator acts (tilt, switch, TX off), wait for firmware events, set
+surfaces, modes, calibrations and ULog. It needs an RPC build
+(`rpc-control,gnss` or `rpc-control,rpc-rc,gnss`); the probe has one owner, so
+the TUI cannot run at the same time (`disconnect` hands it over).
+
+To use it, copy `mcp.example.json` to `.mcp.json` at the repo root (Claude
+Code asks before starting it), then ask for `connect`.
+
+**Engines are off limits by default.** `arm` and `set_throttle` refuse unless
+the server is started with `--dangerously-allow-motors` (add it to `args` in
+`.mcp.json` yourself, for a props-off session). Even then:
+
+- `arm` needs `props_off_confirmed: true`;
+- throttle is capped (`--max-throttle`, 30 %);
+- an armed timer (`--max-armed-s`, 60 s) commands throttle 0 and disarms unless
+  `extend_armed` renews it;
+- the server pings every 100 ms while armed and disarms before disconnecting or
+  exiting (Ctrl-C or the client closing stdin);
+- `disarm` and `emergency_stop` always work.
+
+Tools: `connect`, `disconnect`, `link_status`, `read`, `sample`, `wait_for`,
+`events`, `wait_event`, `arm`, `extend_armed`, `set_throttle`, `disarm`,
+`emergency_stop`, `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`,
+`level_cal`, `ulog`, `autotune`. Tests (`tests/mcp.rs`) run every tool against
+a fake flight controller on the real RPC client path.
+
 ## Link keepalive
 
 In pure RPC mode the firmware treats the host like an RC transmitter: if nothing arrives
