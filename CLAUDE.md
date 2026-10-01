@@ -23,6 +23,9 @@ behaviour changes.
 | [`.claude/skills/governor-calibration/SKILL.md`](.claude/skills/governor-calibration/SKILL.md) | Re-sweeping the RPM governor table |
 | [`.claude/skills/flight-logs/SKILL.md`](.claude/skills/flight-logs/SKILL.md) | Reading ULog flight logs: finding files, timing, ESC health, sensor rates, build comparisons (`elle_log.py`) |
 | [`.claude/skills/test-plan-runner/SKILL.md`](.claude/skills/test-plan-runner/SKILL.md) | Running TEST_PLAN.md rows through the `elle mcp` tools and recording results |
+| [`docs/VERSIONING.md`](docs/VERSIONING.md) | Semver for the workspace: compatibility surfaces, bump rules, release steps |
+| [`CHANGELOG.md`](CHANGELOG.md) | Released versions and `Unreleased` changes |
+| [`docs/changes/`](docs/changes/README.md) | Change proposals for flight-safety and breaking changes (process + `TEMPLATE.md`) |
 | [`docs/archive/`](docs/archive/) | Superseded design specs (sensor drivers), kept for reference |
 
 ## Project Structure
@@ -314,6 +317,8 @@ the binaries' SWI handler).
 - No `const fn` on `&mut self` methods.
 - New event: add the `EVT_*` constant in `event.rs`, a host label in `tools/elle-rpc-host/src/events.rs`, and a row in the OPERATIONS.md table. Retired codes stay reserved.
 - New pure logic goes in `elle-control` with host tests in `crates/elle-control/tests/`.
+- **Flight-safety changes start from a proposal** in `docs/changes/` (arming, failsafe, kill switch, modes, anything that newly moves a surface or engine, any breaking change); see its README.
+- **Versioning:** one workspace version, semver per [`docs/VERSIONING.md`](docs/VERSIONING.md). A PR that changes a compatibility surface (operator behaviour, RPC ICD, flash profile, ULog, event codes) or tunes the aircraft adds a line under `Unreleased` in `CHANGELOG.md`, naming the surface.
 - Commit and PR text carries no AI attribution.
 
 ## Key Dependencies
