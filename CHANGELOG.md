@@ -6,6 +6,15 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 
 ## [Unreleased]
 
+### Added
+- Yaw damper (`elle_control::yaw_damper`, proposal 0001): washed-out yaw rate into
+  the eagle's differential thrust in Stabilized and AltitudeHold. Ships **inert**
+  (`YAW_DAMPER_GAIN` = 0 on both airframes), so flight behaviour is unchanged.
+
+### ULog
+- `controller` gains `yaw_damp` (float, the damper's command, 0 while it is off);
+  57 B per message, up from 53. Added field, not breaking.
+
 ## [0.2.0] - 2026-10-01
 
 First tagged version. Everything before it was `0.1.0`; see `git log` for the

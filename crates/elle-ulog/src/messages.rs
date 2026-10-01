@@ -213,7 +213,7 @@ impl CommandsMessage {
 /// timing, the setpoint it used, its P/I/D terms, mixer saturation and the pulses
 /// the PWM really output. Complements `commands`, which logs pilot input.
 ///
-/// Format: "controller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us"
+/// Format: "controller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us;float yaw_damp"
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ControllerMessage {
@@ -245,11 +245,14 @@ pub struct ControllerMessage {
     pub elevon_left_pulse_us: u16,
     /// Right elevon pulse actually output (after trim and inversion), microseconds
     pub elevon_right_pulse_us: u16,
+    /// Yaw damper command added to the differential thrust (normalized yaw,
+    /// positive slows the left engine); 0 when the damper is not running
+    pub yaw_damp: f32,
 }
 
 impl ControllerMessage {
     /// Format definition string for ULog
-    pub(crate) const FORMAT: &'static str = "controller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us";
+    pub(crate) const FORMAT: &'static str = "controller:uint64_t timestamp;uint32_t dt_us;uint32_t att_age_us;float pitch_sp_deg;float roll_sp_deg;float pitch_p;float pitch_i;float pitch_d;float roll_p;float roll_i;float roll_d;uint8_t saturation;uint16_t elevon_left_pulse_us;uint16_t elevon_right_pulse_us;float yaw_damp";
 
     /// Message name
     pub const NAME: &'static str = "controller";
@@ -259,7 +262,7 @@ impl ControllerMessage {
         &format_msg::<{ Self::FORMAT.len() + MESSAGE_HEADER_SIZE }>(Self::FORMAT);
 
     /// Size of the message in bytes
-    pub(crate) const SIZE: usize = 53;
+    pub(crate) const SIZE: usize = 57;
 
     /// Serialize to little-endian bytes
     #[must_use]
@@ -279,12 +282,13 @@ impl ControllerMessage {
         buf[48] = self.saturation;
         buf[49..51].copy_from_slice(&self.elevon_left_pulse_us.to_le_bytes());
         buf[51..53].copy_from_slice(&self.elevon_right_pulse_us.to_le_bytes());
+        buf[53..57].copy_from_slice(&self.yaw_damp.to_le_bytes());
         buf
     }
 }
 
 const _: () = assert!(
-    ControllerMessage::SIZE == 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 2 + 2,
+    ControllerMessage::SIZE == 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 2 + 2 + 4,
     "ControllerMessage::SIZE does not match its field widths"
 );
 

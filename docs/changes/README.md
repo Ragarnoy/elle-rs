@@ -45,4 +45,6 @@ doesn't apply gets "None", not padding.
 
 ## Open proposals
 
-None yet.
+| # | Title | Status |
+|---|-------|--------|
+| [0001](0001-eagle-yaw-damper.md) | Yaw damper on the eagle | Accepted: code inert (gain 0); enabling waits for an eagle flight log (gate 1) |

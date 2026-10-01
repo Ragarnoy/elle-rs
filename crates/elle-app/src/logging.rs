@@ -85,6 +85,7 @@ pub(crate) fn log_flight_data(
         saturation: last_out.saturation.bits(),
         elevon_left_pulse_us: last_out.elevon_left_pulse_us as u16,
         elevon_right_pulse_us: last_out.elevon_right_pulse_us as u16,
+        yaw_damp: last_out.yaw_damp,
     });
     let gains = fc.pid_config();
     let _ = logger.log_pid_gains(
