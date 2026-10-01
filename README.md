@@ -51,6 +51,8 @@ cargo run -p elle-rpc-host --target x86_64-unknown-linux-gnu
 | [`CLAUDE.md`](CLAUDE.md) | **Developing it:** architecture, features, pins, conventions, CI |
 | [`TEST_PLAN.md`](TEST_PLAN.md) | Bench and field checks before flight |
 | [`STATE_DIAGRAMS.md`](STATE_DIAGRAMS.md) | State machines |
+| [`CHANGELOG.md`](CHANGELOG.md), [`docs/VERSIONING.md`](docs/VERSIONING.md) | Releases and how versions are bumped |
+| [`docs/changes/`](docs/changes/README.md) | Change proposals for flight-safety changes |
 | [`TODO.md`](TODO.md) | Backlog and items awaiting hardware verification |
 | [`tools/elle-rpc-host/README.md`](tools/elle-rpc-host/README.md) | Host tool |
 | [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md) | Flight log format |
