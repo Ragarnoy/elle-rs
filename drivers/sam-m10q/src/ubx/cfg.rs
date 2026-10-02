@@ -76,6 +76,94 @@ pub fn build_valset(buf: &mut [u8], layers: u8, items: &[CfgVal]) -> Option<usiz
     build_frame(buf, class::CFG, VALSET, &payload[..len])
 }
 
+/// CFG-VALGET poll and response header: `version`, `layer`, then a `u16`
+/// position.
+pub const VALGET_HEADER_SIZE: usize = 4;
+
+/// CFG-VALGET `layer` for the RAM layer, the configuration in use.
+///
+/// Unlike VALSET's bitmask this is an index (UBX-21035062 §3.10.4: 0 RAM,
+/// 1 BBR, 2 flash, 7 default), so [`LAYER_RAM`] would ask for BBR.
+pub const VALGET_LAYER_RAM: u8 = 0;
+
+/// Bytes of key ID in a key/value pair.
+const KEY_SIZE: usize = 4;
+
+/// Build a UBX-CFG-VALGET poll for the keys of `items` into `buf`.
+///
+/// Only the keys are sent; the values in `items` are what
+/// [`valget_matches`] later compares the answer against. Returns the frame
+/// length, or `None` if it does not fit in `MAX_VALSET_PAYLOAD` or `buf`.
+#[must_use]
+pub fn build_valget(buf: &mut [u8], layer: u8, items: &[CfgVal]) -> Option<usize> {
+    let mut payload = [0u8; MAX_VALSET_PAYLOAD];
+    // version 0 (poll request), layer, position 0.
+    payload[1] = layer;
+
+    let mut len = VALGET_HEADER_SIZE;
+    let mut kv = [0u8; 16];
+    for item in items {
+        if len + KEY_SIZE > MAX_VALSET_PAYLOAD || item.len() > kv.len() {
+            return None;
+        }
+        item.write_to(&mut kv);
+        payload[len..len + KEY_SIZE].copy_from_slice(&kv[..KEY_SIZE]);
+        len += KEY_SIZE;
+    }
+
+    build_frame(buf, class::CFG, VALGET, &payload[..len])
+}
+
+/// Size of the value stored under `key`, from the size field in bits 28–30.
+const fn value_size(key: u32) -> Option<usize> {
+    match (key >> 28) & 0b111 {
+        1 | 2 => Some(1),
+        3 => Some(2),
+        4 => Some(4),
+        5 => Some(8),
+        _ => None,
+    }
+}
+
+/// Whether a CFG-VALGET response `payload` holds exactly the values in
+/// `items`.
+///
+/// Compares the raw key/value bytes against what [`CfgVal::write_to`]
+/// produces, so no per-type decoding is needed. A key missing from the
+/// response, or a response that cannot be walked to its end, does not match.
+#[must_use]
+pub fn valget_matches(payload: &[u8], items: &[CfgVal]) -> bool {
+    let mut kv = [0u8; 16];
+    items.iter().all(|item| {
+        if item.len() > kv.len() {
+            return false;
+        }
+        let n = item.write_to(&mut kv);
+        let want = &kv[..n];
+        let mut pos = VALGET_HEADER_SIZE;
+        while pos + KEY_SIZE <= payload.len() {
+            let key = u32::from_le_bytes([
+                payload[pos],
+                payload[pos + 1],
+                payload[pos + 2],
+                payload[pos + 3],
+            ]);
+            let Some(size) = value_size(key) else {
+                return false;
+            };
+            let end = pos + KEY_SIZE + size;
+            if end > payload.len() {
+                return false;
+            }
+            if payload[pos..pos + KEY_SIZE] == want[..KEY_SIZE] {
+                return payload[pos..end] == *want;
+            }
+            pos = end;
+        }
+        false
+    })
+}
+
 #[cfg(test)]
 extern crate alloc;
 
@@ -165,5 +253,78 @@ mod tests {
         // u32 keys are 8 bytes each; 16 of them overflow the 128-byte payload.
         let items = [CfgVal::Uart1Baudrate(115_200); 16];
         assert!(build_valset(&mut buf, LAYER_RAM, &items).is_none());
+    }
+
+    const GROUP0: [CfgVal; 2] = [
+        CfgVal::NavSpgDynModel(NavDynamicModel::AirborneWithLess4gAcceleration),
+        CfgVal::NavSpgFixMode(NavFixMode::Only3D),
+    ];
+
+    /// A VALGET response payload: version 1, the layer, position 0, then the
+    /// key/value pairs as the module would send them.
+    fn response(pairs: &[&[u8]]) -> alloc::vec::Vec<u8> {
+        let mut p = alloc::vec![0x01, VALGET_LAYER_RAM, 0, 0];
+        for kv in pairs {
+            p.extend_from_slice(kv);
+        }
+        p
+    }
+
+    #[test]
+    fn valget_poll_carries_only_the_keys() {
+        let mut buf = [0u8; MAX_VALSET_FRAME];
+        let len = build_valget(&mut buf, VALGET_LAYER_RAM, &GROUP0).unwrap();
+        assert_eq!(
+            len,
+            ubx::HEADER_SIZE + VALGET_HEADER_SIZE + 2 * 4 + ubx::CHECKSUM_SIZE
+        );
+        assert_eq!(buf[3], VALGET);
+        let payload = &buf[ubx::HEADER_SIZE..len - ubx::CHECKSUM_SIZE];
+        assert_eq!(&payload[..4], &[0, VALGET_LAYER_RAM, 0, 0]);
+        assert_eq!(
+            u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]),
+            0x2011_0021
+        );
+        assert_eq!(
+            u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]),
+            0x2011_0011
+        );
+    }
+
+    #[test]
+    fn valget_matches_values_in_any_order() {
+        // FIXMODE 2 = 3D only, DYNMODEL 8 = AIR4, answered in the other order.
+        let p = response(&[&[0x11, 0x00, 0x11, 0x20, 2], &[0x21, 0x00, 0x11, 0x20, 8]]);
+        assert!(valget_matches(&p, &GROUP0));
+    }
+
+    #[test]
+    fn valget_rejects_a_different_value() {
+        // DYNMODEL 0 = portable, the module's default.
+        let p = response(&[&[0x21, 0x00, 0x11, 0x20, 0], &[0x11, 0x00, 0x11, 0x20, 2]]);
+        assert!(!valget_matches(&p, &GROUP0));
+    }
+
+    #[test]
+    fn valget_rejects_a_missing_key() {
+        let p = response(&[&[0x21, 0x00, 0x11, 0x20, 8]]);
+        assert!(!valget_matches(&p, &GROUP0));
+    }
+
+    #[test]
+    fn valget_walks_multi_byte_values() {
+        // RATE-MEAS (u16) before the key we look for.
+        let p = response(&[
+            &[0x01, 0x00, 0x21, 0x30, 0xC8, 0x00],
+            &[0x02, 0x00, 0x21, 0x30, 1, 0],
+        ]);
+        assert!(valget_matches(&p, &[CfgVal::RateNav(1)]));
+        assert!(!valget_matches(&p, &[CfgVal::RateMeas(1000)]));
+    }
+
+    #[test]
+    fn valget_rejects_a_truncated_response() {
+        let p = response(&[&[0x01, 0x00, 0x21, 0x30, 0xC8]]);
+        assert!(!valget_matches(&p, &[CfgVal::RateMeas(200)]));
     }
 }

@@ -194,6 +194,52 @@ where
             return Ok(status);
         }
     }
+
+    /// Ask the module whether its `layer` configuration already holds `items`
+    /// (CFG-VALGET), and wait for the answer.
+    ///
+    /// Returns `Some(true)` if every key has exactly the given value,
+    /// `Some(false)` if any differs or is missing, and `None` if the module
+    /// refused the poll (ACK-NAK). Like [`wait_for_ack`] it never gives up on
+    /// its own: wrap it in a timeout.
+    ///
+    /// [`wait_for_ack`]: Self::wait_for_ack
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::FrameTooLarge`] if the keys exceed one message,
+    /// [`Error::Uart`] on a read or write failure, or [`Error::Timeout`] if the
+    /// port reports end-of-stream.
+    pub async fn poll_matches(
+        &mut self,
+        layer: u8,
+        items: &[ubx::cfg::CfgVal],
+    ) -> Result<Option<bool>, Error<E>> {
+        let mut frame = [0u8; ubx::cfg::MAX_VALSET_FRAME];
+        let len = ubx::cfg::build_valget(&mut frame, layer, items).ok_or(Error::FrameTooLarge)?;
+        self.tx
+            .write_all(&frame[..len])
+            .await
+            .map_err(Error::Uart)?;
+        self.tx.flush().await.map_err(Error::Uart)?;
+
+        loop {
+            let Frame::Ubx(frame) = self.next_frame().await? else {
+                continue;
+            };
+            if frame.class == ubx::class::CFG && frame.id == ubx::cfg::VALGET {
+                return Ok(Some(ubx::cfg::valget_matches(frame.payload, items)));
+            }
+            if frame.class == ubx::class::ACK
+                && frame.id == ubx::ack::NAK
+                && frame.payload.len() >= 2
+                && frame.payload[0] == ubx::class::CFG
+                && frame.payload[1] == ubx::cfg::VALGET
+            {
+                return Ok(None);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -423,6 +469,60 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(status, AckStatus::Nak);
+        });
+    }
+
+    const GROUP0: [ubx::cfg::CfgVal; 2] = [
+        ubx::cfg::CfgVal::NavSpgDynModel(ubx::cfg::NavDynamicModel::AirborneWithLess4gAcceleration),
+        ubx::cfg::CfgVal::NavSpgFixMode(ubx::cfg::NavFixMode::Only3D),
+    ];
+
+    #[test]
+    fn poll_matches_reads_the_valget_answer() {
+        let mut stream = Vec::new();
+        // An ACK for an earlier VALSET, which the poll must step over.
+        stream.extend_from_slice(&build_ubx(
+            ubx::class::ACK,
+            ubx::ack::ACK,
+            &[ubx::class::CFG, ubx::cfg::VALSET],
+        ));
+        stream.extend_from_slice(&build_ubx(
+            ubx::class::CFG,
+            ubx::cfg::VALGET,
+            &[
+                0x01, 0x00, 0x00, 0x00, // version, layer RAM, position
+                0x21, 0x00, 0x11, 0x20, 8, // DYNMODEL = AIR4
+                0x11, 0x00, 0x11, 0x20, 2, // FIXMODE = 3D only
+            ],
+        ));
+        let mut gnss = SamM10q::new(MockRx::new(&stream, 9), MockTx::default());
+
+        block_on(async {
+            let got = gnss
+                .poll_matches(ubx::cfg::VALGET_LAYER_RAM, &GROUP0)
+                .await
+                .unwrap();
+            assert_eq!(got, Some(true));
+        });
+        let (_, tx) = gnss.destroy();
+        assert_eq!(tx.written[3], ubx::cfg::VALGET);
+    }
+
+    #[test]
+    fn poll_matches_reports_a_refused_poll() {
+        let stream = build_ubx(
+            ubx::class::ACK,
+            ubx::ack::NAK,
+            &[ubx::class::CFG, ubx::cfg::VALGET],
+        );
+        let mut gnss = SamM10q::new(MockRx::new(&stream, 32), MockTx::default());
+
+        block_on(async {
+            let got = gnss
+                .poll_matches(ubx::cfg::VALGET_LAYER_RAM, &GROUP0)
+                .await
+                .unwrap();
+            assert_eq!(got, None);
         });
     }
 }
