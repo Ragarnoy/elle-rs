@@ -216,6 +216,10 @@ const ALREADY_FAST_PROBE: Duration = Duration::from_millis(1_200);
 /// ring's worth of 64-byte reads with room to spare, so a module that keeps
 /// streaming cannot hold the loop.
 const RX_DISCARD_MAX_READS: usize = 32;
+/// How long a discard read waits for more before the RX path counts as drained:
+/// longer than the UART's receive timeout (32 bit times) at the slowest rate,
+/// 3.3 ms at 9600, so bytes left in the hardware FIFO have reached the ring.
+const RX_DISCARD_IDLE: Duration = Duration::from_millis(5);
 /// Settling time after the cold-start reset.
 const RESET_SETTLE: Duration = Duration::from_millis(500);
 /// Upper bound on waiting for the UART to clock out a queued message.
@@ -492,19 +496,25 @@ async fn send_gnss_reset(uart: &mut BufferedUart<'_>) {
 /// would decode one and conclude the module answers there: at boot, a leftover
 /// 9600-baud NMEA sentence made a 9600 module look already fast, the baud switch
 /// was skipped and configuration ran at the wrong rate for the whole session.
-/// The pause lets bytes still in the hardware FIFO reach the ring (its receive
-/// timeout is a few character times) before it is emptied; the bound keeps a
-/// module that streams continuously from holding the loop.
+///
+/// The discard drives `read` itself rather than checking `read_ready`. After a
+/// UART error, or with the ring full, embassy-rp's interrupt handler turns RX
+/// interrupts off and leaves up to a FIFO's worth (32 bytes, enough for a short
+/// NMEA sentence) in the hardware; only a `read` turns them back on, and
+/// `read_ready` looks at the software ring alone. Each `read` here re-enables
+/// them, so the FIFO drains into the ring and any latched error is reported and
+/// cleared, and the loop ends at the first read that finds nothing within
+/// [`RX_DISCARD_IDLE`]. The bound keeps a module that streams continuously at
+/// the new rate from holding it.
 async fn switch_baud(uart: &mut BufferedUart<'_>, baud: u32) {
     uart.set_baudrate(baud);
-    Timer::after(Duration::from_millis(2)).await;
     let mut scratch = [0u8; 64];
     for _ in 0..RX_DISCARD_MAX_READS {
-        // A latched error is reported once by `read`, then cleared.
-        if !uart.read_ready().unwrap_or(true) {
+        // Data or an error: something was there, keep going. Timeout: drained.
+        let read = embedded_io_async::Read::read(uart, &mut scratch);
+        if with_timeout(RX_DISCARD_IDLE, read).await.is_err() {
             break;
         }
-        let _ = embedded_io_async::Read::read(uart, &mut scratch).await;
     }
 }
 
