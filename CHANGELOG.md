@@ -22,6 +22,13 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   the last session) was reported lost (`cfg_mask` 0x3FE). An unanswered group is
   now read back with CFG-VALGET and counted as applied when the values are in
   place (`sam-m10q`: `build_valget`, `valget_matches`, `poll_matches`).
+- RPC transmit over RTT (`elle_system::rpc::RttTx`): encoding a reply no longer
+  runs inside a critical section, which held off every interrupt (the DShot
+  executor included) for the whole send; a reply near 1 KB no longer panics the
+  firmware (the COBS buffer was smaller than the worst-case encoding); a frame and
+  its delimiter are written in one RTT write, so a full channel drops whole frames
+  instead of gluing two together; an oversized message is an error instead of
+  being dropped silently. Internal; no compatibility surface changes.
 
 ## [0.3.0] - 2026-10-02
 
