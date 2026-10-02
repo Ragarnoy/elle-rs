@@ -212,6 +212,14 @@ const BAUD_PROBE_TIMEOUT: Duration = Duration::from_millis(2_000);
 /// the slowest output interval, the module's own 1 Hz default, so one frame
 /// always fits.
 const ALREADY_FAST_PROBE: Duration = Duration::from_millis(1_200);
+/// Upper bound on reads when discarding the RX ring after a baud change: the
+/// ring's worth of 64-byte reads with room to spare, so a module that keeps
+/// streaming cannot hold the loop.
+const RX_DISCARD_MAX_READS: usize = 32;
+/// How long a discard read waits for more before the RX path counts as drained:
+/// longer than the UART's receive timeout (32 bit times) at the slowest rate,
+/// 3.3 ms at 9600, so bytes left in the hardware FIFO have reached the ring.
+const RX_DISCARD_IDLE: Duration = Duration::from_millis(5);
 /// Settling time after the cold-start reset.
 const RESET_SETTLE: Duration = Duration::from_millis(500);
 /// Upper bound on waiting for the UART to clock out a queued message.
@@ -481,6 +489,35 @@ async fn send_gnss_reset(uart: &mut BufferedUart<'_>) {
     }
 }
 
+/// Change the UART's baud rate and discard everything received before it.
+///
+/// `set_baudrate` leaves the software RX ring as it was. Bytes that arrived
+/// correctly at the old rate are still valid frames, so a probe at the new rate
+/// would decode one and conclude the module answers there: at boot, a leftover
+/// 9600-baud NMEA sentence made a 9600 module look already fast, the baud switch
+/// was skipped and configuration ran at the wrong rate for the whole session.
+///
+/// The discard drives `read` itself rather than checking `read_ready`. After a
+/// UART error, or with the ring full, embassy-rp's interrupt handler turns RX
+/// interrupts off and leaves up to a FIFO's worth (32 bytes, enough for a short
+/// NMEA sentence) in the hardware; only a `read` turns them back on, and
+/// `read_ready` looks at the software ring alone. Each `read` here re-enables
+/// them, so the FIFO drains into the ring and any latched error is reported and
+/// cleared, and the loop ends at the first read that finds nothing within
+/// [`RX_DISCARD_IDLE`]. The bound keeps a module that streams continuously at
+/// the new rate from holding it.
+async fn switch_baud(uart: &mut BufferedUart<'_>, baud: u32) {
+    uart.set_baudrate(baud);
+    let mut scratch = [0u8; 64];
+    for _ in 0..RX_DISCARD_MAX_READS {
+        // Data or an error: something was there, keep going. Timeout: drained.
+        let read = embedded_io_async::Read::read(uart, &mut scratch);
+        if with_timeout(RX_DISCARD_IDLE, read).await.is_err() {
+            break;
+        }
+    }
+}
+
 #[embassy_executor::task]
 pub async fn gnss_task(mut uart: BufferedUart<'static>) {
     // Listen at the target baud first. After an MCU-only reset (a flash,
@@ -489,14 +526,14 @@ pub async fn gnss_task(mut uart: BufferedUart<'static>) {
     // configuration that followed then lost keys or was abandoned outright on
     // the eagle, with no UART errors to show for it. A module that already
     // talks at 115200 gets neither.
-    uart.set_baudrate(TARGET_BAUD);
+    switch_baud(&mut uart, TARGET_BAUD).await;
     let already_fast = {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
         link_alive(&mut gnss, ALREADY_FAST_PROBE).await
     };
     if !already_fast {
-        uart.set_baudrate(DEFAULT_BAUD);
+        switch_baud(&mut uart, DEFAULT_BAUD).await;
     }
     send_gnss_reset(&mut uart).await;
     Timer::after(RESET_SETTLE).await;
@@ -520,7 +557,7 @@ pub async fn gnss_task(mut uart: BufferedUart<'static>) {
         // Changing the divisor before they are on the wire corrupts the tail of
         // the message we just sent, and the module never switches.
         drain_tx(&mut uart).await;
-        uart.set_baudrate(TARGET_BAUD);
+        switch_baud(&mut uart, TARGET_BAUD).await;
 
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
@@ -530,7 +567,7 @@ pub async fn gnss_task(mut uart: BufferedUart<'static>) {
     if !fast {
         // The module never answered at the new rate, so it is still at its
         // power-on baud. Go back and stay there.
-        uart.set_baudrate(DEFAULT_BAUD);
+        switch_baud(&mut uart, DEFAULT_BAUD).await;
     }
 
     let requested_rate_ms = if fast { NAV_RATE_MS } else { SLOW_NAV_RATE_MS };
