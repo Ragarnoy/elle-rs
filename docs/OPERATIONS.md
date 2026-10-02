@@ -162,6 +162,12 @@ stays.
 Reported angles are what the *uncorrected* attitude reads with the airframe level:
 "pitch −2.1°" means the board sits 2.1° nose-down.
 
+Before the level offset there is a fixed **board orientation** per airframe
+(`BOARD_YAW_DEG` in `elle-config`, proposal 0003): the eagle's controller sits turned
+round (180°), the dart's does not. It is a build constant, not a calibration; the level
+offset is measured on the raw sensor and stays valid across it, and its reported angles
+are in the airframe's frame.
+
 - TUI: `level cal start` · `level cal clear` · `level cal`
 - Direct: `direct level-cal start|clear|status`
 - Field: double-tap with CH7 in **pitch or roll**.

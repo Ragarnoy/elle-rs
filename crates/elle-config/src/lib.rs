@@ -408,6 +408,25 @@ pub const LEVEL_CAL_MAX_GYRO_RAD_S: f32 = 0.1;
 /// attitude, not that the board is mounted crooked; the run fails as "tilted".
 pub const LEVEL_CAL_MAX_TILT_DEG: f32 = 15.0;
 
+/// How the flight controller sits in the airframe: the rotation about the
+/// vertical, in degrees, that takes the sensor's axes onto the airframe's
+/// (proposal 0003). Applied to accel, gyro and mag before the level-cal tilt.
+/// The sign mapping in `elle_control::attitude` was confirmed on the dart's
+/// mounting; the eagle's board sits turned round (TEST_PLAN 0.1.2, 2026-10-02:
+/// pitch and roll both reversed).
+#[cfg(not(feature = "platform-dart"))]
+pub const BOARD_YAW_DEG: f32 = 180.0;
+#[cfg(feature = "platform-dart")]
+pub const BOARD_YAW_DEG: f32 = 0.0;
+
+// A mounting is a quarter turn; anything else is a typo.
+const _: () = assert!(
+    BOARD_YAW_DEG == 0.0
+        || BOARD_YAW_DEG == 90.0
+        || BOARD_YAW_DEG == 180.0
+        || BOARD_YAW_DEG == 270.0
+);
+
 // Gyro bias estimation at boot. Samples are at the 1 kHz IMU rate.
 /// Samples averaged into the bias once the board has been still for all of them (1 s).
 pub const GYRO_BIAS_SAMPLES: u32 = 1000;

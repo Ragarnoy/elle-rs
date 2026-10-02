@@ -52,6 +52,18 @@ pub fn compute_mount(
     UnitQuaternion::rotation_between(&up, &Vector3::z()).ok_or(LevelCalFail::Tilted)
 }
 
+/// A stored level-cal tilt (measured on raw sensor accel) expressed in the
+/// airframe's frame, through the board orientation `board`
+/// (`elle_control::attitude::board_rotation`): `board × level × board⁻¹`. Pass
+/// the result to [`mount_to_display_deg`]. Identity board: unchanged.
+#[must_use]
+pub fn level_in_airframe(
+    board: &UnitQuaternion<f32>,
+    level: &UnitQuaternion<f32>,
+) -> UnitQuaternion<f32> {
+    board * level * board.inverse()
+}
+
 /// The mounting offset as (roll, pitch) in degrees, in the same sign convention as
 /// the attitude telemetry: what the *uncorrected* attitude reads with the airframe
 /// level. "pitch −2.1" means the board sits 2.1° nose-down.

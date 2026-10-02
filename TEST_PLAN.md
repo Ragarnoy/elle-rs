@@ -120,7 +120,7 @@ PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
 | # | Test | Expected | Log | Pass |
 |---|------|----------|-----|------|
 | 1 | Power up flat and still, leave it 10 min disarmed | Pitch and roll within ±0.5° of the pre-change reading on the same surface, drift < 0.5° over the 10 min (`$PY $LOG sensors`) | | [ ] |
-| 2 | Tilt nose up, nose down, right wing down, left wing down, ~20° each | Pitch positive nose up, roll positive right wing down (CRSF attitude on the radio, then `attitude_data`) | | [ ] |
+| 2 | Tilt nose up, nose down, right wing down, left wing down, ~20° each, on **each airframe** | Pitch positive nose up, roll positive right wing down (CRSF attitude on the radio, then `attitude_data`). Eagle 2026-10-02 before proposal 0003: pitch and roll both reversed (board turned round) | | [ ] |
 | 3 | Part 1.3 in full (Stabilized, armed, in hand) | All seven rows as before: corrects against the tilt, D damps quick rotations | | [ ] |
 | 4 | Rotate 360° in yaw on the bench, slowly | Yaw follows and returns to within ~5° of the start; no jump when the mag reading updates | | [ ] |
 
@@ -172,6 +172,8 @@ autotune checks. That log also feeds the attitude-filter comparison (`elle-repla
 
 **Firmware: RPC+RC** (`--features rpc-control,rpc-rc,gnss`) + TUI for monitoring.
 **Critical: verify all axes move the correct direction before any other test.**
+The attitude signs depend on the airframe's board orientation (`BOARD_YAW_DEG`,
+proposal 0003): run 0.1 row 2 first, and after any change to that constant.
 
 ### 1.1 Elevon Direction (Manual mode, armed)
 
