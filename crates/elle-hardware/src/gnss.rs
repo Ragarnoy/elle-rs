@@ -207,6 +207,11 @@ const CFG_BIT_RATE_MEAS: u16 = 1 << 1;
 const MODULE_DEFAULT_RATE_MS: u16 = 1_000;
 /// How long to wait for traffic after a baud change before declaring it failed.
 const BAUD_PROBE_TIMEOUT: Duration = Duration::from_millis(2_000);
+/// How long to listen at [`TARGET_BAUD`] at boot for a module that is already
+/// there (it keeps its RAM configuration across an MCU-only reset). Longer than
+/// the slowest output interval, the module's own 1 Hz default, so one frame
+/// always fits.
+const ALREADY_FAST_PROBE: Duration = Duration::from_millis(1_200);
 /// Settling time after the cold-start reset.
 const RESET_SETTLE: Duration = Duration::from_millis(500);
 /// Upper bound on waiting for the UART to clock out a queued message.
@@ -419,40 +424,57 @@ async fn drain_tx(uart: &mut BufferedUart<'_>) {
 /// the first read at 115200 returns that stale error; giving up there fell back
 /// to 9600 against a module sending at 115200, and GNSS stayed dead for the
 /// session. UBX and NMEA checksums keep misread bytes from passing as a frame.
-async fn link_alive(gnss: &mut Gnss<'_>) -> bool {
+async fn link_alive(gnss: &mut Gnss<'_>, timeout: Duration) -> bool {
     let probe = async {
         // Each error is reported once and then cleared, so this waits for new
         // data between attempts rather than spinning.
         while gnss.next_frame().await.is_err() {}
     };
-    with_timeout(BAUD_PROBE_TIMEOUT, probe).await.is_ok()
+    with_timeout(timeout, probe).await.is_ok()
+}
+
+/// GNSS-only hot reset, at whatever baud the UART is set to.
+async fn send_gnss_reset(uart: &mut BufferedUart<'_>) {
+    let (tx, rx) = uart.split_ref();
+    let mut gnss = SamM10q::new(rx, tx);
+    // UBX-CFG-RST: navBbrMask = 0x0000, resetMode = 0x02 (GNSS-only software
+    // reset). 0x0000 is a *hot* start — ephemeris and almanac are kept, which
+    // is what we want: it gives the fastest time to first fix. (A cold start
+    // would be 0xFFFF.) The UART configuration survives it.
+    if gnss
+        .send_ubx(ubx::class::CFG, ubx::cfg::RST, &[0x00, 0x00, 0x02, 0x00])
+        .await
+        .is_err()
+    {
+        elle_event!(warn, event::EVT_GNSS_UART_ERROR, "GNSS: reset send failed");
+    }
 }
 
 #[embassy_executor::task]
 pub async fn gnss_task(mut uart: BufferedUart<'static>) {
-    // GNSS-only hot reset, so the receiver starts from its power-on defaults.
-    {
+    // Listen at the target baud first. After an MCU-only reset (a flash,
+    // `cargo run`) the module is still at 115200 from the last session, and
+    // the 9600-baud reset and baud switch below reach it as garbage: the
+    // configuration that followed then lost keys or was abandoned outright on
+    // the eagle, with no UART errors to show for it. A module that already
+    // talks at 115200 gets neither.
+    uart.set_baudrate(TARGET_BAUD);
+    let already_fast = {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
-        // UBX-CFG-RST: navBbrMask = 0x0000, resetMode = 0x02 (GNSS-only
-        // software reset). 0x0000 is a *hot* start — ephemeris and almanac are
-        // kept, which is what we want: it gives the fastest time to first fix.
-        // (A cold start would be 0xFFFF.)
-        if gnss
-            .send_ubx(ubx::class::CFG, ubx::cfg::RST, &[0x00, 0x00, 0x02, 0x00])
-            .await
-            .is_err()
-        {
-            elle_event!(warn, event::EVT_GNSS_UART_ERROR, "GNSS: reset send failed");
-        }
+        link_alive(&mut gnss, ALREADY_FAST_PROBE).await
+    };
+    if !already_fast {
+        uart.set_baudrate(DEFAULT_BAUD);
     }
+    send_gnss_reset(&mut uart).await;
     Timer::after(RESET_SETTLE).await;
 
     // Change baud FIRST, then configure at whatever rate we actually achieved.
     // The reverse order is a trap: a solution rate that only fits at 115200,
     // applied before a baud switch that then fails, leaves the module pushing
     // more bytes than a 9600 link can carry and silently dropping frames.
-    let sent = {
+    let sent = !already_fast && {
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
         gnss.send_valset(LAYER_RAM, &[CfgVal::Uart1Baudrate(TARGET_BAUD)])
@@ -460,7 +482,7 @@ pub async fn gnss_task(mut uart: BufferedUart<'static>) {
             .is_ok()
     };
 
-    let mut fast = false;
+    let mut fast = already_fast;
     if sent {
         // `flush()` only drains the software ring buffer; the hardware FIFO and
         // shift register can still hold ~32 bytes, which is 33 ms at 9600.
@@ -471,7 +493,7 @@ pub async fn gnss_task(mut uart: BufferedUart<'static>) {
 
         let (tx, rx) = uart.split_ref();
         let mut gnss = SamM10q::new(rx, tx);
-        fast = link_alive(&mut gnss).await;
+        fast = link_alive(&mut gnss, BAUD_PROBE_TIMEOUT).await;
     }
 
     if !fast {

@@ -13,6 +13,10 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   module ran its defaults (1 Hz, default dynamic model, NMEA on). Read errors are
   now skipped until the 400 ms timeout, and event 140's text counts them. On the
   eagle a power-on boot now configures fully (`cfg_mask` 0x3FF, 5 Hz).
+- GNSS boot after an MCU-only reset (flash, `cargo run`): the task now listens
+  at 115200 for up to 1.2 s first and, when the module is already there, skips
+  the 9600-baud reset and baud switch, which reached it as garbage and could
+  abandon configuration. A power-on boot reaches GNSS up to 1.2 s later.
 
 ## [0.3.0] - 2026-10-02
 
