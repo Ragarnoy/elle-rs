@@ -48,3 +48,4 @@ doesn't apply gets "None", not padding.
 | # | Title | Status |
 |---|-------|--------|
 | [0001](0001-eagle-yaw-damper.md) | Yaw damper on the eagle | Accepted: code inert (gain 0); enabling waits for an eagle flight log (gate 1) |
+| [0002](0002-esc-config-over-rpc.md) | AM32 ESC configuration over RPC | Draft: bootloader entry to confirm on the bench |
