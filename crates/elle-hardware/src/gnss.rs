@@ -16,7 +16,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use sam_m10q::asynch::{AckStatus, SamM10q};
 use sam_m10q::nmea::{ParseResult, sentences::GnssType};
 use sam_m10q::types::Frame;
-use sam_m10q::ubx::cfg::{CfgVal, LAYER_RAM, NavDynamicModel, NavFixMode};
+use sam_m10q::ubx::cfg::{CfgVal, LAYER_RAM, NavDynamicModel, NavFixMode, VALGET_LAYER_RAM};
 use sam_m10q::ubx::{self, nav};
 
 use crate::elle_event;
@@ -350,6 +350,22 @@ async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> CfgOutcome {
     }
 }
 
+/// Whether the module's RAM configuration already holds `items` (CFG-VALGET).
+///
+/// `None` when it refused the poll or did not answer within [`ACK_TIMEOUT`].
+/// UART errors resend the poll after a pause, as in [`apply_valset`].
+async fn already_set(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> Option<bool> {
+    let poll = async {
+        loop {
+            match gnss.poll_matches(VALGET_LAYER_RAM, items).await {
+                Ok(answer) => return answer,
+                Err(_) => Timer::after(Duration::from_millis(1)).await,
+            }
+        }
+    };
+    with_timeout(ACK_TIMEOUT, poll).await.ok().flatten()
+}
+
 /// Apply each configuration group on its own, reporting which ones stuck.
 ///
 /// A CFG-VALSET is rejected in full if the module dislikes any part of it, so
@@ -377,6 +393,21 @@ async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16, gsv: bool) -> u16 {
                     event::EVT_GNSS_CFG_NAK,
                     "GNSS: key {} rejected (NAK)",
                     i
+                );
+            }
+            // On the eagle the dynamic-model group goes unanswered after an
+            // MCU-only reset whenever the module already holds those values
+            // from the last session. Ask before calling it lost: if the values
+            // are in place the group is applied, ACK or not.
+            CfgOutcome::NoAnswer { uart_errors }
+                if already_set(gnss, group.as_slice()).await == Some(true) =>
+            {
+                mask |= 1 << i;
+                silent = 0;
+                defmt::info!(
+                    "GNSS: key {} unanswered ({} UART errors) but already set",
+                    i,
+                    uart_errors
                 );
             }
             CfgOutcome::NoAnswer { uart_errors } => {

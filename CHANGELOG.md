@@ -17,6 +17,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   at 115200 for up to 1.2 s first and, when the module is already there, skips
   the 9600-baud reset and baud switch, which reached it as garbage and could
   abandon configuration. A power-on boot reaches GNSS up to 1.2 s later.
+- GNSS configuration mask after an MCU-only reset: the module does not answer a
+  CFG-VALSET that changes nothing, so the dynamic-model group (already set from
+  the last session) was reported lost (`cfg_mask` 0x3FE). An unanswered group is
+  now read back with CFG-VALGET and counted as applied when the values are in
+  place (`sam-m10q`: `build_valget`, `valget_matches`, `poll_matches`).
 
 ## [0.3.0] - 2026-10-02
 
