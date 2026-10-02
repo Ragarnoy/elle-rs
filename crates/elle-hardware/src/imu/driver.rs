@@ -23,7 +23,7 @@ struct LevelCalAccum {
 /// result goes to Core0 to report and persist.
 fn level_cal_step(
     acc: &mut Option<LevelCalAccum>,
-    mount: &mut nalgebra::UnitQuaternion<f32>,
+    pipeline: &mut AttitudePipeline,
     raw_accel: &nalgebra::Vector3<f32>,
     raw_gyro: &nalgebra::Vector3<f32>,
 ) {
@@ -46,7 +46,7 @@ fn level_cal_step(
     let result = elle_control::level_cal::compute_mount(mean, a.max_gyro, LEVEL_CAL_MAX_GYRO_RAD_S);
     match result {
         Ok(m) => {
-            *mount = m;
+            pipeline.set_level_mount(Some(&m));
             info!("Core1: Level cal complete");
         }
         Err(e) => warn!("Core1: Level cal failed: {} (max gyro {})", e, a.max_gyro),
@@ -69,7 +69,7 @@ fn fuse_sample(
 
     let raw_gyro = pipeline.debias(nalgebra::Vector3::new(gx, gy, gz));
     let raw_accel = nalgebra::Vector3::new(ax, ay, az);
-    level_cal_step(level_cal, &mut pipeline.mount, &raw_accel, &raw_gyro);
+    level_cal_step(level_cal, pipeline, &raw_accel, &raw_gyro);
 
     let a = pipeline.fuse(raw_gyro, raw_accel, mag);
     AttitudeData {
@@ -118,7 +118,7 @@ impl<'a> Imu<'a> {
         Self {
             icm: None,
             spi_dev: Some(spi_dev),
-            pipeline: AttitudePipeline::new(),
+            pipeline: AttitudePipeline::with_board(elle_control::attitude::board_rotation()),
             #[cfg(feature = "gnss")]
             last_gnss_us: 0,
             #[cfg(feature = "imu-raw-log")]
@@ -410,7 +410,8 @@ impl<'a> Imu<'a> {
 
             // Level calibration: loaded/cleared mount from Core0, or a start request
             if let Some(mount) = level_cal::LEVEL_CALIBRATION_SIGNAL.try_take() {
-                self.pipeline.mount = mount;
+                // A clear arrives as the identity: board orientation only.
+                self.pipeline.set_level_mount(Some(&mount));
                 info!("Core1: Level cal mount applied");
             }
             if level_cal::LEVEL_CAL_START_SIGNAL.try_take().is_some() {

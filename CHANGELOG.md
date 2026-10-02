@@ -7,6 +7,13 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Fixed
+- Eagle attitude signs (operator behaviour, proposal 0003): pitch and roll both read
+  reversed because the eagle's controller is mounted turned round, and the firmware
+  had one sensor mapping for both airframes. New per-platform `BOARD_YAW_DEG`
+  (eagle 180°, dart 0°) rotates accel, gyro and mag before the level-cal tilt. The
+  dart is unchanged bit for bit; the eagle's stored level cal stays valid, its
+  reported angles are now in the airframe's frame. `imu_raw_ctx.mount` holds the
+  composed rotation.
 - GNSS configuration on boot (operator behaviour): waiting for each CFG-VALSET
   acknowledgement gave up on the first UART error, and the framing / overrun
   flags left by the baud switch failed every key within milliseconds, so the

@@ -195,7 +195,7 @@ on: [`docs/ATTITUDE.md`](docs/ATTITUDE.md), TEST_PLAN Part 7.
 
 1. INT1 DATA_RDY wakes the task; it drains the FIFO, fusing every sample in order, up to `IMU_MAX_DRAIN` (32) per wake-up, publishing only the newest attitude (event 45 on multi-sample drains, rate-limited).
 2. Gyro bias (`elle_control::gyro_bias`) is measured over the first still second and subtracted from every sample. `IMU_STATUS.calibrated` means "bias measured".
-3. Level-cal mount quaternion rotates accel, gyro and (offset-corrected) mag into the airframe frame before the AHRS.
+3. Level-cal mount quaternion, then the per-airframe board orientation (`BOARD_YAW_DEG`: eagle 180°, dart 0°; proposal 0003), rotate accel, gyro and (offset-corrected) mag into the airframe frame before the AHRS. The pipeline holds the composed rotation (`mount` = board × level; `set_level_mount`); the stored level cal is the raw-sensor tilt alone.
 4. Madgwick AHRS (uf-ahrs) at 1 kHz, 9-DOF once a mag reading exists; a zero accel or mag vector falls back to fewer sensors, so every sample is integrated; on a mag I2C error `has_mag` is cleared so a stale vector is never fused.
 5. **Roll and roll rate are negated** after the quaternion → Euler conversion (this PCB orientation).
 6. Rates published for the PID pass through a 2nd-order Butterworth low-pass (`GYRO_RATE_LPF_HZ` = 30); the AHRS integrates unfiltered gyro.

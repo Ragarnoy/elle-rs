@@ -2,7 +2,8 @@
 //! (Core 1 IMU task) and host replay, so a replay runs exactly the code that flew.
 //!
 //! Per sample: subtract the gyro bias, rotate gyro and accel from the sensor
-//! frame into the airframe frame (level-cal mount), step the Madgwick AHRS on
+//! frame into the airframe frame (level-cal tilt, then the board orientation,
+//! proposal 0003), step the Madgwick AHRS on
 //! the unfiltered gyro, and low-pass the rates handed to the PID. The level
 //! calibration itself (collection, signals) stays in the driver, which runs it
 //! between [`AttitudePipeline::debias`] and [`AttitudePipeline::fuse`].
@@ -37,12 +38,25 @@ pub struct Attitude {
 /// carries it so a resumed replay matches exactly.
 pub type AidState = [f32; 5];
 
+/// The platform's board orientation (`elle_config::BOARD_YAW_DEG`) as a rotation
+/// about the sensor's Z axis: sensor axes onto the airframe's.
+#[must_use]
+pub fn board_rotation() -> UnitQuaternion<f32> {
+    UnitQuaternion::from_axis_angle(&Vector3::z_axis(), elle_config::BOARD_YAW_DEG.to_radians())
+}
+
 pub struct AttitudePipeline {
     ahrs: Madgwick,
     rate_filter: GyroFilter,
-    /// Level calibration: rotation from the IMU frame to the airframe frame,
-    /// applied to every sensor vector before the AHRS. Identity = uncorrected.
+    /// Rotation from the IMU frame to the airframe frame, applied to every
+    /// sensor vector before the AHRS: the board orientation after the level-cal
+    /// tilt (`board × level`). Identity = uncorrected. Set through
+    /// [`Self::set_level_mount`]; written directly only by a replay restoring a
+    /// logged value.
     pub mount: UnitQuaternion<f32>,
+    /// Board orientation (see [`board_rotation`]); identity unless built with
+    /// [`Self::with_board`].
+    board: UnitQuaternion<f32>,
     /// Gyro zero-rate offset (sensor frame), subtracted before everything else.
     /// Zero until the boot-time estimate completes.
     pub gyro_bias: Vector3<f32>,
@@ -63,12 +77,31 @@ impl Default for AttitudePipeline {
 }
 
 impl AttitudePipeline {
-    /// The firmware configuration: `AHRS_BETA` at `AHRS_SAMPLE_PERIOD_US`, rates
-    /// filtered at `GYRO_RATE_LPF_HZ`, `AHRS_TURN_COMP` and `AHRS_ACCEL_GATE_G`,
-    /// no mount, no bias.
+    /// The firmware's filter configuration: `AHRS_BETA` at
+    /// `AHRS_SAMPLE_PERIOD_US`, rates filtered at `GYRO_RATE_LPF_HZ`,
+    /// `AHRS_TURN_COMP` and `AHRS_ACCEL_GATE_G`, no mount, no bias. The sensor
+    /// frame is taken as the airframe frame (no board orientation): what host
+    /// tests, replays and simulations use.
     #[must_use]
     pub fn new() -> Self {
         Self::with_modes(elle_config::AHRS_TURN_COMP, elle_config::AHRS_ACCEL_GATE_G)
+    }
+
+    /// As [`Self::new`] for a board mounted at `board` (the firmware passes
+    /// [`board_rotation`]).
+    #[must_use]
+    pub fn with_board(board: UnitQuaternion<f32>) -> Self {
+        let mut p = Self::new();
+        p.board = board;
+        p.mount = board;
+        p
+    }
+
+    /// Apply a level calibration (`None` clears it): the mount becomes the board
+    /// orientation after the level-cal tilt. The tilt is measured on raw sensor
+    /// accel, so it is applied first.
+    pub fn set_level_mount(&mut self, level: Option<&UnitQuaternion<f32>>) {
+        self.mount = level.map_or(self.board, |l| self.board * l);
     }
 
     /// As [`Self::new`] with another turn compensation mode and accel gate
@@ -87,6 +120,7 @@ impl AttitudePipeline {
                 elle_config::IMU_UPDATE_FREQUENCY_HZ as f32,
             ),
             mount: UnitQuaternion::identity(),
+            board: UnitQuaternion::identity(),
             gyro_bias: Vector3::zeros(),
             mode,
             gate_g,

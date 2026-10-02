@@ -12,7 +12,7 @@ use core::cell::Cell;
 
 use elle_config::profile::{FlashRequest, FlashResponse, ProfileEntry};
 use elle_control::level_cal::{
-    LevelCalFail, mount_from_bytes, mount_to_bytes, mount_to_display_deg,
+    LevelCalFail, level_in_airframe, mount_from_bytes, mount_to_bytes, mount_to_display_deg,
 };
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::Mutex;
@@ -71,7 +71,11 @@ pub fn is_collecting() -> bool {
 }
 
 fn set_mount(mount: Option<&UnitQuaternion<f32>>) {
-    let (roll_deg, pitch_deg) = mount.map_or((0.0, 0.0), mount_to_display_deg);
+    // Shown in the airframe's frame, like the attitude (proposal 0003).
+    let board = elle_control::attitude::board_rotation();
+    let (roll_deg, pitch_deg) = mount.map_or((0.0, 0.0), |m| {
+        mount_to_display_deg(&level_in_airframe(&board, m))
+    });
     STATUS.lock(|c| {
         c.set(LevelCalStatus {
             roll_deg,
