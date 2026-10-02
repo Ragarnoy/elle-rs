@@ -306,26 +306,42 @@ enum CfgOutcome {
     Ack,
     /// Understood and refused — an unknown or unsupported key.
     Nak,
-    /// Nothing came back. A different fault from a refusal: the link may be
-    /// wrong rather than the key.
-    NoAnswer,
+    /// Nothing came back within [`ACK_TIMEOUT`]. A different fault from a
+    /// refusal: the link may be wrong rather than the key. `uart_errors` counts
+    /// the read errors skipped while waiting, which tells a noisy link from a
+    /// silent one.
+    NoAnswer { uart_errors: u16 },
 }
 
 /// Send a CFG-VALSET and wait for the module to acknowledge it.
+///
+/// UART read errors while waiting are skipped, as in [`link_alive`]: right
+/// after the baud switch the UART still holds framing / overrun flags latched
+/// from the old rate, and giving up on the first one abandoned every key within
+/// a few milliseconds of a power-on boot. Only the timeout ends the wait.
 async fn apply_valset(gnss: &mut Gnss<'_>, items: &[CfgVal]) -> CfgOutcome {
     if gnss.send_valset(LAYER_RAM, items).await.is_err() {
-        return CfgOutcome::NoAnswer;
+        return CfgOutcome::NoAnswer { uart_errors: 0 };
     }
-    match with_timeout(
-        ACK_TIMEOUT,
-        gnss.wait_for_ack(ubx::class::CFG, ubx::cfg::VALSET),
-    )
-    .await
-    {
-        Ok(Ok(AckStatus::Ack)) => CfgOutcome::Ack,
-        Ok(Ok(AckStatus::Nak)) => CfgOutcome::Nak,
-        // Timed out, or the link failed.
-        _ => CfgOutcome::NoAnswer,
+    let mut uart_errors: u16 = 0;
+    let wait = async {
+        loop {
+            match gnss.wait_for_ack(ubx::class::CFG, ubx::cfg::VALSET).await {
+                Ok(AckStatus::Ack) => return CfgOutcome::Ack,
+                Ok(AckStatus::Nak) => return CfgOutcome::Nak,
+                Err(_) => {
+                    uart_errors = uart_errors.saturating_add(1);
+                    // An error is normally reported once and cleared; the pause
+                    // keeps a flag that does not clear from spinning Core 0
+                    // for the whole timeout.
+                    Timer::after(Duration::from_millis(1)).await;
+                }
+            }
+        }
+    };
+    match with_timeout(ACK_TIMEOUT, wait).await {
+        Ok(outcome) => outcome,
+        Err(_) => CfgOutcome::NoAnswer { uart_errors },
     }
 }
 
@@ -358,13 +374,14 @@ async fn apply_config(gnss: &mut Gnss<'_>, rate_ms: u16, gsv: bool) -> u16 {
                     i
                 );
             }
-            CfgOutcome::NoAnswer => {
+            CfgOutcome::NoAnswer { uart_errors } => {
                 silent += 1;
                 elle_event!(
                     warn,
                     event::EVT_GNSS_CFG_TIMEOUT,
-                    "GNSS: key {} unanswered",
-                    i
+                    "GNSS: key {} unanswered ({} UART errors)",
+                    i,
+                    uart_errors
                 );
                 // The module is not talking to us; stop rather than spend the
                 // per-key timeout another seven times over. Flag it, so the

@@ -6,6 +6,14 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 
 ## [Unreleased]
 
+### Fixed
+- GNSS configuration on boot (operator behaviour): waiting for each CFG-VALSET
+  acknowledgement gave up on the first UART error, and the framing / overrun
+  flags left by the baud switch failed every key within milliseconds, so the
+  module ran its defaults (1 Hz, default dynamic model, NMEA on). Read errors are
+  now skipped until the 400 ms timeout, and event 140's text counts them. On the
+  eagle a power-on boot now configures fully (`cfg_mask` 0x3FF, 5 Hz).
+
 ## [0.3.0] - 2026-10-02
 
 ### Added
