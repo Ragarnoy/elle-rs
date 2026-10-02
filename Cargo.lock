@@ -1190,7 +1190,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elle-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "defmt 1.1.1",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "elle-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defmt 1.1.1",
  "heapless 0.9.3",
@@ -1222,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "elle-control"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "defmt 1.1.1",
@@ -1235,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "elle-dart"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "compile-time",
  "cortex-m-rt",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "elle-eagle"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "compile-time",
  "cortex-m-rt",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "elle-error"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defmt 1.1.1",
  "thiserror 2.0.21",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "elle-hardware"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aligned",
  "block-device-adapters",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "elle-nav"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "elle-config",
  "libm",
@@ -1337,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "elle-replay"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "elle-rpc-host"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "elle-rpc-icd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "heapless 0.9.3",
  "postcard",
@@ -1388,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "elle-system"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cobs 0.5.1",
  "defmt 1.1.1",
@@ -1410,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "elle-ulog"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defmt 1.1.1",
  "embassy-time",
@@ -2659,7 +2659,7 @@ dependencies = [
 
 [[package]]
 name = "mmc5616wa"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defmt 1.1.1",
  "embedded-hal 1.0.0",
@@ -3749,7 +3749,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sam-m10q"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defmt 1.1.1",
  "embedded-hal 1.0.0",

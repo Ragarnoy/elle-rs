@@ -6,6 +6,8 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-02
+
 ### Added
 - Yaw damper (`elle_control::yaw_damper`, proposal 0001): washed-out yaw rate into
   the eagle's differential thrust in Stabilized and AltitudeHold. Ships **inert**
@@ -19,6 +21,10 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   changes meaning in the same way (layout unchanged).
 - `controller` gains `yaw_damp` (float, the damper's command, 0 while it is off);
   57 B per message, up from 53. Added field, not breaking.
+
+### Fixed
+- Builds with Rust 1.99: `fetch_update` → `try_update` in the flash manager
+  (clippy `-D warnings` failed on the deprecation).
 
 ## [0.2.0] - 2026-10-01
 
@@ -50,5 +56,6 @@ against.
 ### Event codes
 - As in `docs/OPERATIONS.md#event-codes`.
 
-[Unreleased]: https://github.com/Ragarnoy/elle-rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Ragarnoy/elle-rs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Ragarnoy/elle-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ragarnoy/elle-rs/releases/tag/v0.2.0
