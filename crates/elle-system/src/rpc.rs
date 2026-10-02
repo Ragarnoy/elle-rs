@@ -3,12 +3,12 @@
 //! This module provides RTT-based transport for postcard-RPC communication.
 //! Based on prpcrtt by James Munns: https://github.com/jamesmunns/prpcrtt
 
-use core::cell::RefCell;
 use core::fmt::Arguments;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use defmt::info;
-use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::Mutex;
 use postcard_rpc::header::VarHeader;
 use postcard_rpc::header::VarKeyKind;
 use postcard_rpc::server::{WireRx, WireRxErrorKind, WireTx, WireTxErrorKind};
@@ -22,26 +22,65 @@ use crate::frame_buf::FrameBuf;
 const TX_BUF_SIZE: usize = 1024;
 const RX_BUF_SIZE: usize = 1024;
 
+/// Worst-case COBS encoding of a full `TX_BUF_SIZE` frame, plus its 0x00 delimiter.
+const TX_FRAME_SIZE: usize = cobs::max_encoding_length(TX_BUF_SIZE) + 1;
+
 // Static buffers for TX double-buffering
 static BUF_TX_1: StaticCell<[u8; TX_BUF_SIZE]> = StaticCell::new();
-static BUF_TX_2: StaticCell<[u8; TX_BUF_SIZE]> = StaticCell::new();
+static BUF_TX_2: StaticCell<[u8; TX_FRAME_SIZE]> = StaticCell::new();
 
 // Static storage for RttTx inner state
-static TX_STO: StaticCell<Mutex<CriticalSectionRawMutex, RefCell<RttTxInner>>> = StaticCell::new();
+static TX_STO: StaticCell<Mutex<CriticalSectionRawMutex, RttTxInner>> = StaticCell::new();
 
 /// RTT TX transport inner state
 struct RttTxInner {
     channel: UpChannel,
+    /// Header + postcard body, before COBS.
     buf1: &'static mut [u8; TX_BUF_SIZE],
-    buf2: &'static mut [u8; TX_BUF_SIZE],
+    /// The COBS-encoded frame and its delimiter, as written to RTT.
+    buf2: &'static mut [u8; TX_FRAME_SIZE],
+}
+
+/// COBS-encode `raw` (`buf1[..len]` or caller data) into `buf2` and write the
+/// frame and its delimiter to RTT in one write.
+///
+/// The up channel is `NoBlockSkip`: a write that does not fit is dropped whole.
+/// One write per frame means a full buffer loses whole frames, never a frame's
+/// delimiter (which would glue it to the next frame and lose both).
+fn write_frame(
+    channel: &mut UpChannel,
+    buf2: &mut [u8],
+    raw: &[u8],
+) -> Result<(), WireTxErrorKind> {
+    let len = encode_frame(raw, buf2).ok_or(WireTxErrorKind::Other)?;
+    if channel.write(&buf2[..len]) == len {
+        Ok(())
+    } else {
+        // Host not reading fast enough (or not at all): frame dropped.
+        Err(WireTxErrorKind::Other)
+    }
+}
+
+/// COBS-encode `raw` into `out` followed by the 0x00 delimiter, as one frame.
+/// `None` if `out` is too small; never panics (unlike `cobs::encode`).
+fn encode_frame(raw: &[u8], out: &mut [u8]) -> Option<usize> {
+    let len = cobs::try_encode(raw, out).ok()?;
+    *out.get_mut(len)? = 0;
+    Some(len + 1)
 }
 
 /// RTT TX transport for postcard-RPC
 ///
-/// Uses double-buffering to allow encoding while sending.
+/// Shared by the RPC server and the log publisher (both on Core 0's thread
+/// executor) through an async mutex: encoding and the RTT copy run with
+/// interrupts enabled, so a send never delays the DShot interrupt executor.
+///
+/// Errors are `WireTxErrorKind::Other`, which the postcard-rpc server treats as
+/// non-fatal: a message too large for the buffers, or a frame dropped because
+/// the host is not reading.
 #[derive(Clone)]
 pub struct RttTx {
-    inner: &'static Mutex<CriticalSectionRawMutex, RefCell<RttTxInner>>,
+    inner: &'static Mutex<CriticalSectionRawMutex, RttTxInner>,
 }
 
 impl WireTx for RttTx {
@@ -52,50 +91,29 @@ impl WireTx for RttTx {
         hdr: VarHeader,
         msg: &T,
     ) -> Result<(), Self::Error> {
-        self.inner.lock(|inner| {
-            let mut inner = inner.borrow_mut();
-            let RttTxInner {
-                channel,
-                buf1,
-                buf2,
-            } = &mut *inner;
+        let mut inner = self.inner.lock().await;
+        let RttTxInner {
+            channel,
+            buf1,
+            buf2,
+        } = &mut *inner;
 
-            // Write header to buf1
-            let Some((hdr_slice, later)) = hdr.write_to_slice(&mut buf1[..]) else {
-                return Ok(());
-            };
-            let hdr_len = hdr_slice.len();
+        // Header, then the postcard body right after it, in buf1
+        let (hdr_slice, later) = hdr
+            .write_to_slice(&mut buf1[..])
+            .ok_or(WireTxErrorKind::Other)?;
+        let hdr_len = hdr_slice.len();
+        let body_len = postcard::to_slice(msg, later)
+            .map_err(|_| WireTxErrorKind::Other)?
+            .len();
 
-            // Serialize message body after header
-            let Ok(body) = postcard::to_slice(msg, later) else {
-                return Ok(());
-            };
-            let body_len = body.len();
-            let used = hdr_len + body_len;
-
-            // COBS encode from buf1 into buf2
-            let encoded_len = cobs::encode(&buf1[..used], &mut buf2[..]);
-
-            // Write encoded data + sentinel
-            channel.write(&buf2[..encoded_len]);
-            channel.write(&[0x00]);
-
-            Ok(())
-        })
+        write_frame(channel, &mut buf2[..], &buf1[..hdr_len + body_len])
     }
 
     async fn send_raw(&self, buf: &[u8]) -> Result<(), Self::Error> {
-        self.inner.lock(|inner| {
-            let mut inner = inner.borrow_mut();
-            let RttTxInner { channel, buf2, .. } = &mut *inner;
-
-            // COBS encode raw data into buf2
-            let encoded_len = cobs::encode(buf, &mut buf2[..]);
-            channel.write(&buf2[..encoded_len]);
-            channel.write(&[0x00]);
-
-            Ok(())
-        })
+        let mut inner = self.inner.lock().await;
+        let RttTxInner { channel, buf2, .. } = &mut *inner;
+        write_frame(channel, &mut buf2[..], buf)
     }
 
     async fn send_log_str(&self, _key: VarKeyKind, _s: &str) -> Result<(), Self::Error> {
@@ -195,6 +213,10 @@ pub struct RttChannels {
 /// - Up channel 0: defmt logs
 /// - Up channel 1: RPC responses (COBS encoded)
 /// - Down channel 0: RPC requests (COBS encoded)
+///
+/// All `NoBlockSkip`: a write that does not fit is dropped. `BlockIfFull` would
+/// spin Core 0 forever once the host stops reading (TUI closed, probe left
+/// attached), until the watchdog resets the board.
 pub fn init_rtt_rpc() -> RttChannels {
     // Initialize RTT with channels for defmt and RPC
     let channels = rtt_init! {
@@ -226,13 +248,13 @@ pub fn init_rtt_rpc() -> RttChannels {
 
     // Initialize TX transport with double buffering
     let buf1 = BUF_TX_1.init([0u8; TX_BUF_SIZE]);
-    let buf2 = BUF_TX_2.init([0u8; TX_BUF_SIZE]);
+    let buf2 = BUF_TX_2.init([0u8; TX_FRAME_SIZE]);
 
-    let tx_inner = TX_STO.init(Mutex::new(RefCell::new(RttTxInner {
+    let tx_inner = TX_STO.init(Mutex::new(RttTxInner {
         channel: channels.up.1,
         buf1,
         buf2,
-    })));
+    }));
 
     RttChannels {
         tx: RttTx { inner: tx_inner },

@@ -245,8 +245,8 @@ They run in their own task, so bus transfers never hold up a 1 kHz sample, and e
 ### RPC transport and protocol
 
 postcard-RPC over RTT (`elle-system/src/rpc.rs`):
-- Up channel 0: defmt (NoBlockSkip) · Up channel 1: RPC TX (BlockIfFull, COBS) · Down channel 0: RPC RX (COBS).
-- `RttTx` (blocking mutex, double-buffered COBS), `RttRx` (frame reassembly, 100 µs poll; stamps `HOST_LAST_RX_MS`), `ElleWireSpawn` stub (all handlers blocking).
+- Up channel 0: defmt · Up channel 1: RPC TX (COBS) · Down channel 0: RPC RX (COBS). All `NoBlockSkip`: a write that doesn't fit is dropped whole. **Not `BlockIfFull`**, which would spin Core 0 until the watchdog fires once the host stops reading.
+- `RttTx` (async mutex, so encoding never runs with interrupts masked; COBS into a worst-case-sized buffer and **one RTT write per frame, delimiter included**, so a full channel loses whole frames, never glues two together; an oversized message or a dropped frame is `WireTxErrorKind::Other`, non-fatal to the server), `RttRx` (frame reassembly, 100 µs poll; stamps `HOST_LAST_RX_MS`), `ElleWireSpawn` stub (all handlers blocking).
 - ICD in `crates/elle-rpc-icd/src/lib.rs` (`endpoints!` / `topics!`); dispatch via `define_dispatch!` in `elle-app/src/rpc_app.rs`; server loop in `elle-app/src/tasks.rs` `rpc_server_task()`.
 
 Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold ·
