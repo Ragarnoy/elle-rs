@@ -49,3 +49,4 @@ doesn't apply gets "None", not padding.
 |---|-------|--------|
 | [0001](0001-eagle-yaw-damper.md) | Yaw damper on the eagle | Accepted: code inert (gain 0); enabling waits for an eagle flight log (gate 1) |
 | [0002](0002-esc-config-over-rpc.md) | AM32 ESC configuration over RPC | Draft: bootloader entry to confirm on the bench |
+| [0003](0003-board-orientation.md) | Per-airframe board orientation | Implemented: bench 0.1.2 / 0.1.4 / Part 1.3 on the eagle due |
