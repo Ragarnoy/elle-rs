@@ -24,6 +24,9 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   at 115200 for up to 1.2 s first and, when the module is already there, skips
   the 9600-baud reset and baud switch, which reached it as garbage and could
   abandon configuration. A power-on boot reaches GNSS up to 1.2 s later.
+- GNSS baud probe: every baud change now discards the RX ring first. Bytes left
+  over from 9600 still decoded as valid frames at 115200, so a 9600 module could
+  pass for one already at 115200 and lose GNSS for the session.
 - GNSS configuration mask after an MCU-only reset: the module does not answer a
   CFG-VALSET that changes nothing, so the dynamic-model group (already set from
   the last session) was reported lost (`cfg_mask` 0x3FE). An unanswered group is
