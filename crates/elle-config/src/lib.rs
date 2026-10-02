@@ -377,11 +377,16 @@ pub const NAV_HOME_MIN_SATS: u8 = 6;
 pub const NAV_FIX_TIMEOUT_MS: u32 = 1_000;
 /// Position is extrapolated along the measured ground velocity for at most this long, ms.
 pub const NAV_EXTRAPOLATE_MAX_MS: u32 = 400;
+/// The navigator reports coasting (`elle_nav::status::COASTING`) once the newest
+/// usable fix is older than this, ms: 1.5 intervals of the 5 Hz NAV-PVT stream, so
+/// one late fix doesn't count but a missing one does.
+pub const NAV_COAST_AFTER_MS: u32 = 300;
 /// Baro altitude is dropped when the newest reading is older than this, ms (~10 readings).
 pub const NAV_BARO_TIMEOUT_MS: u32 = 500;
 const _: () = assert!(NAV_MAX_BANK_DEG > 0.0 && NAV_MAX_BANK_DEG < STABILIZED_MAX_ROLL_DEG);
 const _: () = assert!(NAV_HOME_MAX_H_ACC_M <= NAV_MAX_H_ACC_M);
 const _: () = assert!(NAV_EXTRAPOLATE_MAX_MS < NAV_FIX_TIMEOUT_MS);
+const _: () = assert!(NAV_COAST_AFTER_MS > 200 && NAV_COAST_AFTER_MS < NAV_FIX_TIMEOUT_MS);
 const _: () = assert!(NAV_L1_PERIOD_S > 0.0 && NAV_L1_DAMPING > 0.0 && NAV_LOITER_RADIUS_M > 0.0);
 
 // Double-tap mag-cal gesture gating (motor vibration can trip the APEX tap detector,

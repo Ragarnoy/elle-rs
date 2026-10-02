@@ -121,11 +121,8 @@ fn position_extrapolates_briefly_then_expires() {
 
     let at = |ms: u64| n.update(2 * S + ms * 1000, &p);
     let o = at(100);
-    assert!(
-        o.state.extrapolated && (o.state.pos.e - 2.0).abs() < 0.01,
-        "{:?}",
-        o.state.pos
-    );
+    assert!((o.state.pos.e - 2.0).abs() < 0.01, "{:?}", o.state.pos);
+    assert!(!o.state.coasting, "100 ms after a fix is not coasting");
     assert!(o.guidance.is_some());
     assert_eq!(
         o.valid_until_us,
@@ -157,4 +154,43 @@ fn stale_baro_drops_altitude() {
     let late = S + u64::from(elle_config::NAV_BARO_TIMEOUT_MS) * 1000 + 1;
     assert!(n.update(S, &p).status & status::ALT_VALID != 0);
     assert!(n.update(late, &p).status & status::ALT_VALID == 0);
+}
+
+/// A live 5 Hz stream, sampled at 25 Hz between fixes, never reports coasting:
+/// the fix age is always nonzero there, which is not a dropout.
+#[test]
+fn live_stream_is_not_coasting() {
+    let (mut n, p) = nav();
+    n.on_gnss(fix(S, HOME, Some(Ne::ZERO)));
+    n.set_armed(true);
+    for k in 0..25u64 {
+        let t_fix = 2 * S + k * 200_000;
+        n.on_gnss(fix(t_fix, NORTH, Some(Ne::new(0.0, 20.0))));
+        for j in 0..5u64 {
+            let o = n.update(t_fix + j * 40_000 + 1, &p);
+            assert!(o.status & status::POS_VALID != 0);
+            assert!(o.status & status::COASTING == 0, "fix {k}, tick {j}");
+        }
+    }
+}
+
+/// After a dropout the bit sets past NAV_COAST_AFTER_MS and stays until the
+/// position drops at NAV_FIX_TIMEOUT_MS (TEST_PLAN 6.9 row 3).
+#[test]
+fn dropout_coasts_until_the_fix_times_out() {
+    let (mut n, p) = nav();
+    n.on_gnss(fix(S, HOME, Some(Ne::ZERO)));
+    n.set_armed(true);
+    n.on_gnss(fix(2 * S, NORTH, Some(Ne::new(0.0, 20.0))));
+    let coast = u64::from(elle_config::NAV_COAST_AFTER_MS);
+    let timeout = u64::from(elle_config::NAV_FIX_TIMEOUT_MS);
+    let at = |ms: u64| n.update(2 * S + ms * 1000, &p);
+
+    assert!(at(coast).status & status::COASTING == 0);
+    let o = at(coast + 1);
+    assert!(o.status & status::COASTING != 0 && o.status & status::POS_VALID != 0);
+    let o = at(timeout);
+    assert!(o.status & status::COASTING != 0 && o.status & status::POS_VALID != 0);
+    let o = at(timeout + 1);
+    assert!(o.status & status::POS_VALID == 0 && o.status & status::COASTING == 0);
 }

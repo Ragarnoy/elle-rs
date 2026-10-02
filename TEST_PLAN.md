@@ -664,7 +664,7 @@ with `elle_log.py nav` and `elle_log.py sensors`.
 |---|------|----------|------|
 | 1 | Power up outdoors, wait for a 3D fix, disarmed | Radio FM text goes `NOHOME` → `WAIT H`; `nav.status` has home (bit 0) and position (bit 2); `fix_age_ms` < 250 | [ ] |
 | 2 | Arm, carry the aircraft ~50 m, disarm | Home locked (bit 1) while armed; `home_dist_m` grows to ~50 m and bearing points back; after disarm home follows the aircraft again | [ ] |
-| 3 | Cover the antenna (or unplug GNSS) for 5 s while armed | Position drops (bit 2 clear) ~1 s after the last fix; extrapolated (bit 5) only for the first 400 ms; `bank_demand_deg` NaN | [ ] |
+| 3 | Cover the antenna (or unplug GNSS) for 5 s while armed | Coasting (bit 5) sets ~0.3 s after the last fix and is never set while fixes arrive; position drops (bits 2 and 5 clear) ~1 s after the last fix; `bank_demand_deg` NaN | [ ] |
 | 4 | Flight in Stabilized: circle the field clockwise at ~80 m, then anticlockwise | Clockwise: `bank_demand_deg` and `roll_deg` both positive and close; anticlockwise: they disagree in sign (demand still asks for a right turn). Confirms the sign conventions | [ ] |
 | 5 | Same flight | `gnss_data` ~5/s with `pvt_active` = 1; baro and GNSS height above home within a few metres | [ ] |
 

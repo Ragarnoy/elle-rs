@@ -342,10 +342,10 @@ impl<'a> SequentialFlashManager<'a> {
             Ok(Some(data)) => {
                 let len = data.len() as u32;
                 // Saturating: an under-count must never wrap to ~4 billion.
-                let _ = ULOG_BYTES_USED.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |b| {
+                let _ = ULOG_BYTES_USED.try_update(Ordering::Relaxed, Ordering::Relaxed, |b| {
                     Some(b.saturating_sub(len))
                 });
-                let _ = ULOG_ITEMS_STORED.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                let _ = ULOG_ITEMS_STORED.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                     Some(n.saturating_sub(1))
                 });
                 FlashResponse::ULogPopSuccess

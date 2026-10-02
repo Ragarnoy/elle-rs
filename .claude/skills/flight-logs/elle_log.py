@@ -290,8 +290,10 @@ def cmd_stages(logs, _args):
             print(f"  {'   max':28s}  " + "".join(f"{v:9.0f}" for v in p90))
 
 
+# Bit 5 is "coasting" (no fix for > NAV_COAST_AFTER_MS); logs from 0.2.0 and
+# earlier set it whenever velocity was valid, so its share there means nothing.
 NAV_BITS = {"home": 1 << 0, "locked": 1 << 1, "pos": 1 << 2, "vel": 1 << 3, "alt": 1 << 4,
-            "extrap": 1 << 5, "guidance": 1 << 6, "bank_limited": 1 << 7, "capture": 1 << 8,
+            "coasting": 1 << 5, "guidance": 1 << 6, "bank_limited": 1 << 7, "capture": 1 << 8,
             "too_slow": 1 << 9, "gnss_alt": 1 << 10}
 
 

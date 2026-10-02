@@ -427,7 +427,7 @@ pub struct NavResp {
     /// False without the `gnss` feature, or before the first update.
     pub available: bool,
     /// `elle_nav::status` bits (home set 0, locked 1, position 2, velocity 3,
-    /// baro altitude 4, extrapolated 5, guidance 6, bank limited 7, loiter
+    /// baro altitude 4, coasting 5, guidance 6, bank limited 7, loiter
     /// capture 8, too slow 9, GNSS altitude 10).
     pub status: u16,
     pub fix_age_ms: u16,
