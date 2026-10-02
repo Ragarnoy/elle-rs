@@ -7,6 +7,21 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Fixed
+- GNSS configuration on boot (operator behaviour): waiting for each CFG-VALSET
+  acknowledgement gave up on the first UART error, and the framing / overrun
+  flags left by the baud switch failed every key within milliseconds, so the
+  module ran its defaults (1 Hz, default dynamic model, NMEA on). Read errors are
+  now skipped until the 400 ms timeout, and event 140's text counts them. On the
+  eagle a power-on boot now configures fully (`cfg_mask` 0x3FF, 5 Hz).
+- GNSS boot after an MCU-only reset (flash, `cargo run`): the task now listens
+  at 115200 for up to 1.2 s first and, when the module is already there, skips
+  the 9600-baud reset and baud switch, which reached it as garbage and could
+  abandon configuration. A power-on boot reaches GNSS up to 1.2 s later.
+- GNSS configuration mask after an MCU-only reset: the module does not answer a
+  CFG-VALSET that changes nothing, so the dynamic-model group (already set from
+  the last session) was reported lost (`cfg_mask` 0x3FE). An unanswered group is
+  now read back with CFG-VALGET and counted as applied when the values are in
+  place (`sam-m10q`: `build_valget`, `valget_matches`, `poll_matches`).
 - RPC transmit over RTT (`elle_system::rpc::RttTx`): encoding a reply no longer
   runs inside a critical section, which held off every interrupt (the DShot
   executor included) for the whole send; a reply near 1 KB no longer panics the
