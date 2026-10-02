@@ -14,6 +14,13 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   dart is unchanged bit for bit; the eagle's stored level cal stays valid, its
   reported angles are now in the airframe's frame. `imu_raw_ctx.mount` holds the
   composed rotation.
+- RPC transmit over RTT (`elle_system::rpc::RttTx`): encoding a reply no longer
+  runs inside a critical section, which held off every interrupt (the DShot
+  executor included) for the whole send; a reply near 1 KB no longer panics the
+  firmware (the COBS buffer was smaller than the worst-case encoding); a frame and
+  its delimiter are written in one RTT write, so a full channel drops whole frames
+  instead of gluing two together; an oversized message is an error instead of
+  being dropped silently. Internal; no compatibility surface changes.
 
 ## [0.3.0] - 2026-10-02
 
