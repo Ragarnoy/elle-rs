@@ -198,6 +198,26 @@ If any row is wrong: adjust `PITCH_INVERT` or `ROLL_INVERT` in `elle-config/src/
 
 If reversed: flip `YAW_INVERT` in `elle-config/src/lib.rs`.
 
+### 1.2a Yaw Damper Direction (eagle, props off, bench build with `YAW_DAMPER_GAIN` > 0)
+
+Only once the gain is raised (proposal [0001](docs/changes/0001-eagle-yaw-damper.md)).
+The shipped gain is 0, which makes these rows a no-op. Use a temporary bench build with
+the gain at about 0.3. Armed, throttle about 50 %, yaw stick centred. Watch `engine_data`
+targets, or the `yaw_damp` column of ULog `controller`.
+
+| # | Mode / action | Expected | Pass |
+|---|---------------|----------|------|
+| 1 | Stabilized: twist the nose **right** by hand, briskly | Left engine slows (`yaw_damp` > 0) | [ ] |
+| 2 | Stabilized: twist the nose **left** | Right engine slows (`yaw_damp` < 0) | [ ] |
+| 3 | Stabilized: hold the aircraft still after a twist | Engines equal again within ~3 s (washout) | [ ] |
+| 4 | Manual: same twists | Engines equal, `yaw_damp` = 0 | [ ] |
+| 5 | Stabilized, throttle under 5 %: same twists | `yaw_damp` = 0 | [ ] |
+
+If rows 1 and 2 are reversed, the yaw-rate sign is wrong. **Do not fly.** That is
+positive feedback. Fix the sign in `AttitudePipeline::fuse`
+(`crates/elle-control/src/attitude.rs`), not in the damper, and check heading hold
+(6.5) too, since it uses the same yaw convention.
+
 ### 1.3 Stabilized PID Direction (Stabilized mode, armed)
 
 Hold board in hand. Verify PID corrects **against** the tilt, not with it.

@@ -110,12 +110,13 @@ const fn generate_yaw_differential_lut() -> [(i32, i32); RC_LUT_SIZE] {
         let yaw_factor_fp = (yaw_input_fp * YAW_TO_DIFF_GAIN_FP) / 1024;
 
         let (left_mult_fp, right_mult_fp) = if yaw_factor_fp > 0 {
-            // Right turn: reduce left engine
+            // Above centre: slow the left engine, a nose-left moment (a right
+            // stick arrives below centre, through YAW_INVERT)
             let reduction = (yaw_factor_fp * 205) / 1024; // 0.2 * 1024 = ~205 in fixed point
             let reduction = if reduction > 205 { 205 } else { reduction };
             (1024 - reduction, 1024)
         } else if yaw_factor_fp < 0 {
-            // Left turn: reduce right engine
+            // Below centre: slow the right engine, a nose-right moment
             let reduction = ((-yaw_factor_fp) * 205) / 1024; // 0.2 * 1024 = ~205 in fixed point
             let reduction = if reduction > 205 { 205 } else { reduction };
             (1024, 1024 - reduction)

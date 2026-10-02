@@ -142,6 +142,22 @@ pub const YAW_TO_DIFF_GAIN: f32 = 1.0; // How much yaw affects differential thru
 pub const YAW_TO_DIFF_GAIN: f32 = 0.0; // Single engine — no yaw via differential thrust
 pub const YAW_TO_ELEVON_GAIN: f32 = 0.1; // Small yaw contribution to elevons for coordination
 
+// Yaw damper (`elle_control::yaw_damper`, docs/changes/0001-eagle-yaw-damper.md):
+// washed-out yaw rate → differential thrust, Stabilized and AltitudeHold only.
+/// Normalized differential-thrust yaw command per rad/s of washed-out yaw rate.
+/// 0 = off. Stays 0 on the eagle until a flight log shows a lightly damped
+/// Dutch roll (the proposal's gate 1); the dart has no differential thrust.
+#[cfg(not(feature = "platform-dart"))]
+pub const YAW_DAMPER_GAIN: f32 = 0.0;
+#[cfg(feature = "platform-dart")]
+pub const YAW_DAMPER_GAIN: f32 = 0.0;
+/// Washout (high-pass) time constant: the damper fades out of a steady turn,
+/// whose yaw rate is constant, over a few of these.
+pub const YAW_DAMPER_WASHOUT_S: f32 = 1.0;
+/// Largest damper command, normalized yaw (1.0 = full stick = 20 % differential).
+/// Leaves the pilot's stick at least half the range.
+pub const YAW_DAMPER_MAX: f32 = 0.5;
+
 // IMU parameters
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C fast mode (MMC5616WA + BMP390)
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
@@ -514,6 +530,14 @@ const _: () = assert!(PID_I_LIMIT >= 0.0 && PID_I_LIMIT <= 1000.0);
 const _: () = assert!(PITCH_INVERT == 1.0 || PITCH_INVERT == -1.0);
 const _: () = assert!(ROLL_INVERT == 1.0 || ROLL_INVERT == -1.0);
 const _: () = assert!(YAW_INVERT == 1.0 || YAW_INVERT == -1.0);
+
+// Yaw damper: never negative (that is positive feedback), never on a single
+// engine, washout long compared with the loop, authority within the stick range.
+const _: () = assert!(YAW_DAMPER_GAIN >= 0.0);
+#[cfg(feature = "platform-dart")]
+const _: () = assert!(YAW_DAMPER_GAIN == 0.0);
+const _: () = assert!(YAW_DAMPER_WASHOUT_S > 2.0 * CONTROL_LOOP_DT);
+const _: () = assert!(YAW_DAMPER_MAX > 0.0 && YAW_DAMPER_MAX <= 1.0);
 
 // Mode thresholds must be ordered
 const _: () = assert!(MANUAL_MODE_THRESHOLD < STABILIZED_MODE_THRESHOLD);

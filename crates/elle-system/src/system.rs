@@ -6,12 +6,13 @@ use elle_control::commands::{AttitudeMode, NormalizedCommands, PilotCommands};
 use elle_control::filter::smooth_setpoint;
 use elle_control::mixing::{
     elevons::{ControlInputs, MixSaturation, mix_elevons, mix_elevons_direct_lut},
-    yaw::throttle_with_differential_lut,
+    yaw::{normalized_yaw_to_rc, throttle_with_differential_lut},
 };
 use elle_control::{
     arming::ArmingState,
     heading::HeadingController,
     pid::{AttitudeController, AxisTerms, PidConfig},
+    yaw_damper::YawDamper,
 };
 use elle_hardware::event::{EVT_RC_RESTORED, EVT_RC_SIGNAL_LOST, EVT_RC_WARNING};
 use elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT, is_attitude_valid};
@@ -108,12 +109,17 @@ pub struct ControllerOutputSnapshot {
     /// Pulses the PWM actually output (after trim and right-servo inversion).
     pub elevon_left_pulse_us: u32,
     pub elevon_right_pulse_us: u32,
+    /// Yaw damper command added to the differential thrust (normalized yaw,
+    /// positive slows the left engine); 0 when the damper is not running.
+    pub yaw_damp: f32,
 }
 
 pub struct FlightController<'a> {
     pwm: PwmOutputs<'a>,
     arming: ArmingState,
     attitude_controller: AttitudeController,
+    /// Yaw rate → differential thrust, alongside the attitude PID.
+    yaw_damper: YawDamper,
     last_packet_time: Instant,
     last_attitude: Option<AttitudeData>,
     // Smoothed setpoints for attitude hold (in radians for consistency)
@@ -167,6 +173,7 @@ impl<'a> FlightController<'a> {
             pwm,
             arming: ArmingState::default(),
             attitude_controller,
+            yaw_damper: YawDamper::from_config(),
             last_packet_time: Instant::now(),
             last_attitude: None,
             filtered_pitch_setpoint_rad: 0.0,
@@ -323,6 +330,7 @@ impl<'a> FlightController<'a> {
             // place that still knows the previous mode.
             if self.current_control_mode == ControlMode::Manual {
                 self.attitude_controller.reset();
+                self.yaw_damper.reset();
                 self.last_saturation = MixSaturation::default();
             }
             self.current_control_mode = current_mode;
@@ -361,6 +369,7 @@ impl<'a> FlightController<'a> {
     fn update_fast_path_raw(&mut self, channels: &[u16; 16]) {
         self.arming.update(channels[THROTTLE_CH]);
         self.attitude_controller.enabled = false;
+        self.yaw_damper.reset();
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
         self.last_saturation = elevon_outputs.saturation;
@@ -392,6 +401,7 @@ impl<'a> FlightController<'a> {
             saturation: elevon_outputs.saturation,
             elevon_left_pulse_us: left_pulse,
             elevon_right_pulse_us: right_pulse,
+            yaw_damp: 0.0,
             ..self.last_output
         };
     }
@@ -505,6 +515,7 @@ impl<'a> FlightController<'a> {
         let mut pitch_terms = AxisTerms::default();
         let mut roll_terms = AxisTerms::default();
         let mut att_age_us = u32::MAX;
+        let mut yaw_damp = 0.0f32;
 
         // Apply control mode logic
         let final_inputs = match norm.attitude_mode {
@@ -513,6 +524,7 @@ impl<'a> FlightController<'a> {
                     self.attitude_controller.reset();
                     self.last_saturation = MixSaturation::default();
                 }
+                self.yaw_damper.reset();
                 if self.heading_hold_active {
                     self.disengage_heading_hold();
                 }
@@ -554,6 +566,15 @@ impl<'a> FlightController<'a> {
                         pitch_correction = pt.total();
                         roll_correction = rt.total();
 
+                        // Same gate as the PID (mode, armed, Core 1 healthy),
+                        // plus the throttle: differential thrust scales with it.
+                        yaw_damp = if self.attitude_controller.enabled && !low_throttle {
+                            self.yaw_damper.update(att.yaw_rate)
+                        } else {
+                            self.yaw_damper.reset();
+                            0.0
+                        };
+
                         // 100% PID output for pitch/roll, throttle/yaw remain manual
                         ControlInputs {
                             pitch: pitch_correction,
@@ -562,7 +583,11 @@ impl<'a> FlightController<'a> {
                             throttle: pilot_inputs.throttle,
                         }
                     }
-                    None => pilot_inputs, // No attitude - fallback to manual
+                    None => {
+                        // No attitude - fallback to manual, damper included
+                        self.yaw_damper.reset();
+                        pilot_inputs
+                    }
                 }
             }
         };
@@ -577,7 +602,9 @@ impl<'a> FlightController<'a> {
         // Linear DShot mapping for normalized commands — the RC throttle curve
         // has a deadzone/ramp designed for stick input, not a 0-100% command.
         let base_thrust = (final_inputs.throttle * DSHOT_THROTTLE_MAX as f32) as u16;
-        let yaw_rc = ((final_inputs.yaw * 1023.5) + 1023.5).clamp(0.0, 2047.0) as u16;
+        // The damper drives the engines only: through `mix_elevons` its yaw
+        // would become a roll command that the roll PID then fights.
+        let yaw_rc = normalized_yaw_to_rc((final_inputs.yaw + yaw_damp).clamp(-1.0, 1.0));
 
         let (left_thrust, right_thrust) = if self.arming.armed {
             apply_differential_thrust_lut(base_thrust, yaw_rc)
@@ -609,6 +636,7 @@ impl<'a> FlightController<'a> {
             saturation: elevon_outputs.saturation,
             elevon_left_pulse_us: left_pulse,
             elevon_right_pulse_us: right_pulse,
+            yaw_damp,
         };
     }
 
@@ -668,6 +696,7 @@ impl<'a> FlightController<'a> {
     /// the snapshot says so (the main loop sends `engine_output()` to the ESCs).
     fn hold_failsafe(&mut self) {
         self.attitude_controller.enabled = false;
+        self.yaw_damper.reset();
         self.pwm.set_safe_positions();
         self.last_output = ControllerOutputSnapshot {
             pitch_correction: 0.0,
@@ -682,6 +711,7 @@ impl<'a> FlightController<'a> {
             saturation: MixSaturation::default(),
             elevon_left_pulse_us: ELEVON_LEFT_CENTER_US,
             elevon_right_pulse_us: ELEVON_RIGHT_CENTER_US,
+            yaw_damp: 0.0,
             ..self.last_output
         };
     }

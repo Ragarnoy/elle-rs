@@ -14,6 +14,7 @@ pub mod imu_raw;
 pub mod level_cal;
 pub mod mixing;
 pub mod pid;
+pub mod yaw_damper;
 
 // Re-export commonly used types
 pub use arming::ArmingState;
