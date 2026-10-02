@@ -12,6 +12,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   (`YAW_DAMPER_GAIN` = 0 on both airframes), so flight behaviour is unchanged.
 
 ### ULog
+- **Breaking:** `nav.status` bit 5 now means *coasting*: no usable fix for more
+  than `NAV_COAST_AFTER_MS` (300 ms), until position drops at 1 s. It used to be
+  set whenever velocity was valid, which on a live stream was almost always. The
+  bit is renamed `elle_nav::status::COASTING`. **RPC ICD:** `NavResp.status` bit 5
+  changes meaning in the same way (layout unchanged).
 - `controller` gains `yaw_damp` (float, the damper's command, 0 while it is off);
   57 B per message, up from 53. Added field, not breaking.
 

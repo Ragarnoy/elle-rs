@@ -31,8 +31,10 @@ pub mod status {
     pub const VEL_VALID: u16 = 1 << 3;
     /// Baro height above home is valid.
     pub const ALT_VALID: u16 = 1 << 4;
-    /// Position carried forward from the last fix along the ground velocity.
-    pub const EXTRAPOLATED: u16 = 1 << 5;
+    /// No usable fix for longer than expected: position is coasting on the
+    /// last one (`NAV_COAST_AFTER_MS` until it drops at `NAV_FIX_TIMEOUT_MS`).
+    /// Logs from 0.2.0 and earlier set this bit whenever velocity was valid.
+    pub const COASTING: u16 = 1 << 5;
     pub const GUIDANCE_VALID: u16 = 1 << 6;
     pub const BANK_LIMITED: u16 = 1 << 7;
     /// Loiter capture (heading for the circle) rather than on it.
@@ -135,7 +137,7 @@ impl Navigator {
         set(status::POS_VALID, state.pos_valid);
         set(status::VEL_VALID, state.vel_valid);
         set(status::ALT_VALID, state.alt_valid);
-        set(status::EXTRAPOLATED, state.extrapolated);
+        set(status::COASTING, state.coasting);
         set(status::GNSS_ALT_VALID, state.gnss_alt_rel_m.is_some());
 
         let guidance = (state.pos_valid && state.vel_valid)

@@ -57,6 +57,8 @@ pub struct EstimatorConfig {
     pub home_min_sats: u8,
     pub fix_timeout_us: u64,
     pub extrapolate_max_us: u64,
+    /// Fix age from which the state reports `coasting`.
+    pub coast_after_us: u64,
     pub baro_timeout_us: u64,
 }
 
@@ -73,6 +75,7 @@ impl EstimatorConfig {
             home_min_sats: c::NAV_HOME_MIN_SATS,
             fix_timeout_us: c::NAV_FIX_TIMEOUT_MS as u64 * 1000,
             extrapolate_max_us: c::NAV_EXTRAPOLATE_MAX_MS as u64 * 1000,
+            coast_after_us: c::NAV_COAST_AFTER_MS as u64 * 1000,
             baro_timeout_us: c::NAV_BARO_TIMEOUT_MS as u64 * 1000,
         }
     }
@@ -98,8 +101,11 @@ pub struct NavState {
     /// Metres north/east of home. Meaningful only when `pos_valid`.
     pub pos: Ne,
     pub pos_valid: bool,
-    /// `pos` was carried forward from the last fix along the ground velocity.
-    pub extrapolated: bool,
+    /// No usable fix for longer than expected (`coast_after_us`): `pos` is the
+    /// last fix carried along the ground velocity, until `fix_timeout_us` drops
+    /// it. Clear on a live stream, where `pos` is also carried forward, but only
+    /// across the gap since the last fix.
+    pub coasting: bool,
     /// Ground velocity, m/s. Meaningful only when `vel_valid`.
     pub vel: Ne,
     pub vel_valid: bool,
@@ -247,11 +253,9 @@ impl Estimator {
             st.vel = v;
             st.vel_valid = true;
             let dt = age.min(self.cfg.extrapolate_max_us);
-            if dt > 0 {
-                st.pos += v * (dt as f32 * 1e-6);
-                st.extrapolated = true;
-            }
+            st.pos += v * (dt as f32 * 1e-6);
         }
+        st.coasting = age > self.cfg.coast_after_us;
         if let Some(ref_alt) = home.gnss_alt_msl_m
             && self.vertical_usable(fix)
         {
