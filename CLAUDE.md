@@ -174,7 +174,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 
 ### Controller (`elle-system/src/system.rs`, `elle-control`)
 
-- Stabilized: stick → attitude setpoint (±25° pitch, ±45° roll), EMA with time constant `SETPOINT_FILTER_TAU_S` (68 ms; `SETPOINT_FILTER_ALPHA` is derived per tick) with each step capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). The autotune override bypasses both.
+- Stabilized: stick → attitude setpoint (pitch ±25° dart / ±15° eagle, ±45° roll), EMA with time constant `SETPOINT_FILTER_TAU_S` (68 ms; `SETPOINT_FILTER_ALPHA` is derived per tick) with each step capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). The autotune override bypasses both.
 - AltitudeHold is a 0°/0° level hold for now.
 - Heading hold (`elle-control/src/heading.rs`) replaces the roll setpoint in Stabilized.
 - Yaw damper (`elle-control/src/yaw_damper.rs`, proposal [0001](docs/changes/0001-eagle-yaw-damper.md)): in Stabilized and AltitudeHold, the yaw rate goes through a washout (`YAW_DAMPER_WASHOUT_S`) and a gain, is clamped to `YAW_DAMPER_MAX`, and is added to the **differential thrust** yaw only, never to `mix_elevons`. It resets whenever the PID is off, at low throttle, and with no attitude. `YAW_DAMPER_GAIN` is 0 on both airframes (inert) until the proposal's gate 1.

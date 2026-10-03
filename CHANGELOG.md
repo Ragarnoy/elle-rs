@@ -6,6 +6,16 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 
 ## [Unreleased]
 
+### Changed
+- Eagle Stabilized pitch limit ±25° → ±15° (operator behaviour, tuning): full pitch
+  stick now asks for 15°. LOG_0082's three departures all began from a 22–25°
+  setpoint at a full-throttle launch, where the nose rides above the setpoint and
+  full nose-down elevon can't recover it. The dart keeps ±25°.
+- Eagle elevon trim (tuning, operator behaviour, every mode): left 100 → 50 µs,
+  right −50 → 100 µs, so neutral is 25 µs nose-down and 75 µs left roll instead of
+  75 µs nose-up. LOG_0082 held ~100 µs nose-down and ~50 µs left roll in level
+  flight, gliding included.
+
 ### Added
 - Magnetometer health (operator behaviour, event codes): boot self-test (event 49,
   mag not used on failure); median-of-3 spike filter (event 119) ahead of the
