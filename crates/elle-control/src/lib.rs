@@ -12,6 +12,7 @@ pub mod gyro_bias;
 pub mod heading;
 pub mod imu_raw;
 pub mod level_cal;
+pub mod mag;
 pub mod mixing;
 pub mod pid;
 pub mod yaw_damper;

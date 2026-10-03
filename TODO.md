@@ -5,7 +5,7 @@ Open work only — finished work is in git history. Current behaviour is documen
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) (operator guide).
 
 When proposing new event codes, take a free range: `event.rs` uses 1–9, 10–18, 20–23,
-30–34, 40–48, 50–51, 60–63, 70–71, 80–82, 90–94, 100–103, 110–116, 120, 130–132,
+30–34, 40–49, 50–51, 60–63, 70–71, 80–82, 90–94, 100–103, 110–120, 130–132,
 140–141, 150–158 and 160–163; **170 and up is free**. Flash MapStorage keys 1–3 are taken (PID,
 mag cal, level cal) and `MAP_KEY_SLOTS = 4`, so a new key means raising it.
 
@@ -19,6 +19,17 @@ is the ordered bench session that covers them before the next flight.
 - [ ] **RC failsafe, TX off** (dart): expect event 14 within ~300 ms, disarm, orange rapid flash; then re-arm needs the gesture.
 - [ ] **Host-link failsafe**: kill the TUI / unplug the probe while armed in RPC mode → disarm within ~300 ms. `direct throttle` holds the link until Ctrl-C.
 - [ ] **Arming gesture** on both airframes: boot with stick low does not arm; up-then-down arms at zero thrust; kill and failsafe need a new gesture.
+- [ ] **GNSS: no satellites on either airframe — test before relying on GNSS.** The link
+  works (115200, `cfg_mask` 0x3FF, NAV-PVT at 5 Hz) but the module reports 0 satellites
+  and 0 in view. Dart: last fix in LOG_0045 (2026-09-26, 17 sats), none in any log since,
+  including outdoor flights on 2026-10-03 (LOG_0047–0052). Eagle: none since its April logs
+  (0012/0013), including the 2026-10-03 field session (LOG_0073–0082). Nothing in the
+  firmware writes the module's BBR/flash and the RAM config is unchanged since 2026-09-10,
+  so the cause isn't obvious from the code. Test, outdoors, 5 min still, kill switch on:
+  dart flight build from `0ea6096` (2026-09-14, ground test only: never arm or fly it) vs
+  current, same spot. Old sees satellites → bisect the firmware. Both zero → hardware or
+  environment: nothing over the module, then SD card out and ESC unpowered (the SD SPI's
+  25 MHz has a harmonic 0.4 MHz from GPS L1).
 - [ ] **GNSS UBX path**: 115200 baud switch, 5 Hz NAV-PVT, velocity/accuracy fields, GGA fallback.
 - [ ] **Elevon latency**: scope PIN_12/13 against a stick step — expect ≤ one 5 ms frame (200 Hz servo PWM). Servos confirmed fine at 200 Hz (no jitter, cool).
 - [ ] **Pitch autotune** since the measurement-invert fix, and autotune in general since the latency fixes (gains derived before them were compensating for delay). Check the save lands after disarm and that a bad run is rejected (event 94).

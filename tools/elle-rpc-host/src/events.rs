@@ -48,6 +48,7 @@ pub const fn label(code: u16) -> &'static str {
         46 => "IMU: gyro bias measured",
         47 => "IMU: gyro bias failed (keep still at boot)",
         48 => "I2C0 error: mag and baro disabled (AHRS 6-DOF)",
+        49 => "Mag self-test FAILED: mag not used",
         // CRSF receiver (50–59)
         50 => "CRSF RX: first frame received",
         51 => "CRSF RX: UART error",
@@ -80,6 +81,9 @@ pub const fn label(code: u16) -> &'static str {
         114 => "Mag cal: cleared",
         115 => "Mag cal: loaded from flash",
         116 => "Mag cal: no saved cal",
+        117 => "Mag field implausible or stale",
+        118 => "Mag field fit again",
+        119 => "Mag spikes rejected",
         // Tap detection (120–129)
         120 => "IMU: double-tap detected (calibration gesture)",
         // Heading hold (130–139)

@@ -630,6 +630,18 @@ does nothing there):
 | 3 | Switch CH6 to Manual                     | Event 131, direct control                                    | [ ]  |
 | 4 | Back to Stabilized with CH5 still on     | Event 130 again, new heading captured                        | [ ]  |
 
+### 6.5a Magnetometer Health (rows 1–2: flight build, defmt log; rows 3–6: RPC build, events)
+
+| # | Action | Expected | Pass |
+|---|--------|----------|------|
+| 1 | Boot the **dart** | defmt: `MMC5616WA: initialized … self-test factory […], status 0x..` with Sat_sensor (bit 5) clear; no event 49. Record the status byte | [x] 2026-10-03: factory [95, 117, 121], status 0x51 |
+| 2 | Boot the **eagle** | Self-test result recorded (pass or event 49): it sits in a ~15 G field | [ ] |
+| 3 | Dart, calibrated, still on the bench | No event 117 within 10 s | [x] 2026-10-03: none in ~4 min (RPC build) |
+| 4 | Eagle, only if row 2 passed | Event 117 within ~1 s of boot ("implausible"; ~1–3 G with the boot cal-bound fix from `yaw-sign` merged, ~17 G without it), still fused (gate observing) | [ ] |
+| 5 | Mag cal with the aircraft only tilted, not rotated | Event 112 (rotation) | [ ] |
+| 6 | Mag cal with a magnet (phone, tool) moved near the board throughout | Event 112 (field) | [ ] |
+| 7 | Bench: does Status1 bit 6 (`Meas_m_done`) toggle in continuous mode? | Recorded, for reading only completed conversions (spike root cause) | [ ] |
+
 ### 6.6 I2C Fault
 
 | # | Action                                           | Expected                                               | Pass |
