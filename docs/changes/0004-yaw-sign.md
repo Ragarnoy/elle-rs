@@ -130,6 +130,14 @@ Done so far (2026-10-03):
   `heading_hold_closes_the_loop`; both, plus the updated rate-sign tests, fail with
   the old sign); `elle-replay` tests, including a synthetic legacy log replayed
   exactly and the old sign under the new marker caught; `elle-ulog` header test.
+- **Bench, eagle (2026-10-03, RPC build `a2827b6`):** 0.1.4 passed. One full turn
+  clockwise from above read +356.6° integrated rate and +361.0° net yaw, back
+  within 1.0° of the start (it read −368.6° before the change). A turn the other
+  way read negative.
+- **Where zero is, eagle:** not measurable. The eagle's mag sits in a ~15 G
+  airframe field. Even with its cal loaded (after fix `9146a49`, which stopped
+  boot rejecting offsets above 100 000 counts), yaw stays within ~3° at N and E.
+  A hardware problem, separate from this proposal; measure zero on the dart.
 
 Still to do:
 
