@@ -297,7 +297,7 @@ when built with `defmt-logging`.
 | 90–94 | Autotune started / complete / aborted / safety abort / rejected |
 | 100–103 | PID saved / save failed / loaded / nothing saved |
 | 110–116 | Mag cal started, complete, failed, saved, cleared, loaded, nothing saved |
-| 117 / 118 | Mag field implausible (corrected magnitude outside 0.15–0.85 G) or stale for 0.5 s / fit again for 5 s. Reported only: the AHRS keeps fusing it (`MAG_GATE_ENFORCED` off) |
+| 117 / 118 | Mag field implausible (corrected magnitude outside 0.15–0.85 G) for 0.5 s, or the raw reading frozen for 2 s and still frozen 0.5 s later / fit again for 5 s. Reported only: the AHRS keeps fusing it (`MAG_GATE_ENFORCED` off) |
 | 119 | Mag spikes rejected (median-of-3; at most one event per 10 s) |
 | 120 | Double-tap detected |
 | 130 / 131 / 132 | Heading hold engaged / disengaged / target set |

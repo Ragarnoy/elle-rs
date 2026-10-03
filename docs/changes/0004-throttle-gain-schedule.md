@@ -5,7 +5,7 @@
 | Status | Draft, in two steps like [0001](0001-eagle-yaw-damper.md): (1) the code ships **inert** (`GAIN_SCHED_*_MIN` = 1.0 on both airframes); (2) lowering the dart's roll factor waits for gate 1 |
 | Airframes | dart first; eagle compiled in, inert |
 | Date | 2026-10-03 |
-| Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): tuning inside Stabilized and AltitudeHold, one ULog field added |
+| Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): tuning inside Stabilized and AltitudeHold, two ULog fields added |
 | Surfaces | operator behaviour (Stabilized / AltitudeHold feel at high throttle), ULog (`controller` field added) |
 
 ## Motivation

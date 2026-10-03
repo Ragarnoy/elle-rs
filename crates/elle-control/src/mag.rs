@@ -233,7 +233,7 @@ impl MagHealth {
         self.last_raw = Some(*raw);
 
         let gauss = norm(field) / MAG_COUNTS_PER_GAUSS;
-        let problem = if self.repeats + 1 >= self.stale_n {
+        let problem = if self.repeats >= self.stale_n.saturating_sub(1) {
             Some(DropReason::Stale)
         } else if !(MAG_FIELD_MIN_G..=MAG_FIELD_MAX_G).contains(&gauss) {
             Some(DropReason::Implausible { gauss })

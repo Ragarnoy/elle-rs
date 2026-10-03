@@ -202,6 +202,21 @@ fn a_frozen_reading_is_dropped_as_stale() {
     assert_eq!(changes, vec![MagChange::Dropped(DropReason::Stale)]);
 }
 
+/// The repeat count saturates at `u16::MAX` (~1.8 h at 10 Hz); a reading
+/// frozen longer than that must stay stale, not overflow or read as healthy.
+#[test]
+fn a_reading_frozen_past_the_repeat_counter_stays_stale() {
+    let mut h = MagHealth::new();
+    let r = reading(direction(3, 50), EARTH_G);
+    let field = core::array::from_fn(|i| r[i] - OFFSET[i]);
+    let mut changes = Vec::new();
+    for _ in 0..usize::from(u16::MAX) + n(MAG_RESTORE_S) + 10 {
+        changes.extend(h.update(&r, &field));
+    }
+    assert!(!h.fused());
+    assert_eq!(changes, vec![MagChange::Dropped(DropReason::Stale)]);
+}
+
 #[test]
 fn new_offsets_after_a_drop_report_the_restore() {
     let mut h = MagHealth::new();

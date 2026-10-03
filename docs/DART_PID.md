@@ -78,8 +78,8 @@ today to that wall.
 
 0050 → 0052: cutting roll Kd 0.07 → 0.04 did not remove the 3.9 Hz roll
 oscillation. In an episode the summed roll command passes ±1 and the elevons
-go stop to stop every ~125 ms, so the gain value hardly matters once it
-starts. The logs at roll Kp 0.125 / Kd 0.03 (0032–0035) stayed at 34–53 dps
+go stop to stop every ~125 ms; while they sit at the stops a smaller gain
+changes nothing, which may be why the cut had so little effect. The logs at roll Kp 0.125 / Kd 0.03 (0032–0035) stayed at 34–53 dps
 with > 100 dps under 4% of the time; the oscillation appeared with Kp 0.25.
 No GNSS fix in any of these logs, so throttle is the only speed proxy.
 

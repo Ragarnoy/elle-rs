@@ -10,7 +10,7 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 - Magnetometer health (operator behaviour, event codes): boot self-test (event 49,
   mag not used on failure); median-of-3 spike filter (event 119) ahead of the
   calibration and the health check;
-  `MagHealth` reports a corrected field outside 0.15–0.85 G or frozen for 2 s
+  `MagHealth` reports a corrected field outside 0.15–0.85 G or frozen for 2.5 s
   (117) and its recovery (118). Reported only: the AHRS fuses the raw corrected
   mag exactly as before (`MAG_GATE_ENFORCED` off) until a proposal decides from
   flight logs.
