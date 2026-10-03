@@ -273,8 +273,8 @@ Hold board in hand, armed.
 | # | Stick input                           | Expected servo response                         | Pass |
 |---|---------------------------------------|-------------------------------------------------|------|
 | 1 | CH6 mid (Stabilized), sticks centered | Elevons hold trim, PID corrects for hand tilt   | [x]  |
-| 2 | Full pitch stick forward              | Elevons deflect to nose-down attitude (~25°)    | [x]  |
-| 3 | Full pitch stick back                 | Elevons deflect to nose-up (~25°)               | [x]  |
+| 2 | Full pitch stick forward              | Elevons deflect to nose-down attitude (~25°; eagle ~15°) | [x]  |
+| 3 | Full pitch stick back                 | Elevons deflect to nose-up (~25°; eagle ~15°)   | [x]  |
 | 4 | Full roll stick left                  | Elevons split for left roll (~45°)              | [x]  |
 | 5 | Full roll stick right                 | Elevons split for right roll (~45°)             | [x]  |
 | 6 | Release sticks (center)               | Elevons return to level hold (0°/0°)            | [x]  |
@@ -473,7 +473,7 @@ Flash `--no-default-features --features rpc-control,gnss`, launch TUI.
 |---|---------------------------|-------------------------------------------|------|
 | 1 | `mode stab`, `arm`        | Attitude controller active                | [ ]  |
 | 2 | `elevon 0 0`              | Setpoint near 0/0, PID corrections small  | [ ]  |
-| 3 | `elevon 50 0`             | Pitch setpoint ~12.5° (50% of 25°)        | [ ]  |
+| 3 | `elevon 50 0`             | Pitch setpoint ~12.5° (50% of 25°; eagle ~7.5°) | [ ]  |
 | 4 | `elevon 0 50`             | Roll setpoint ~22.5° (50% of 45°)         | [ ]  |
 | 5 | `elevon 0 0` → tilt board | PID corrections respond to attitude error | [ ]  |
 

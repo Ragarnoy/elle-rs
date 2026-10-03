@@ -106,11 +106,24 @@ Radio-side setup (LiteRadio 3 Pro / EdgeTX) is not in the repo.
 ## Flight modes
 
 - **Manual** — sticks drive the elevons directly; attitude controller off.
-- **Stabilized** — sticks command an attitude: up to ±25° pitch
-  (`STABILIZED_MAX_PITCH_DEG`) and ±45° roll (`STABILIZED_MAX_ROLL_DEG`). Setpoints are
+- **Stabilized** — sticks command an attitude: up to ±25° pitch on the dart, ±15° on
+  the eagle (`STABILIZED_MAX_PITCH_DEG`) and ±45° roll (`STABILIZED_MAX_ROLL_DEG`). Setpoints are
   smoothed and slewed at no more than 90°/s.
 - **AltitudeHold** — currently a **level hold** (0° pitch, 0° roll), throttle stays
   manual. There is no barometric altitude loop yet.
+
+### Launch (eagle)
+
+The eagle pitches up with power: at full throttle the nose rides 7–8° above the
+setpoint, and once it is high and slow the elevons can't bring it down (LOG_0082:
+three departures in five launches, each from full throttle with up-stick).
+
+- Launch at **60–70% throttle with the pitch stick centred**. Let it accelerate in
+  level flight before climbing, then climb gently and add throttle.
+- If a wing drops while slow, **centre the roll stick and lower the nose**. More
+  opposite roll on a stalled wing can deepen the stall.
+- There is no airspeed or stall protection; GNSS ground speed isn't available
+  either while GNSS has no fix (TODO, *Pending verification*).
 
 ### Heading hold (CH5, Stabilized only)
 

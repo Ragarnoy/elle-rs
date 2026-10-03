@@ -75,6 +75,12 @@ is the ordered bench session that covers them before the next flight.
 
 ## Field readiness
 
+**Eagle power pitch-up (hardware)**
+- At full throttle the nose rides 7–8° above the setpoint and full nose-down elevon
+  can't hold it (LOG_0082, 385 s: setpoint −17°, pitch +20°). Check the thrust line
+  against the CG: add 2–3° of down-thrust on both motors, or move the CG slightly
+  forward. Re-check with a Stabilized pass at full throttle and setpoint 0.
+
 **Crash detection / auto-disarm (~2–3 h)**
 - ICM-42686 APEX Wake-on-Motion + Significant Motion Detection routed to INT2 (GPIO4, wired, unused).
 - Core 1 waits on GPIO4, confirms `INT_STATUS3.smd_int`, signals Core 0 → disarm + event + MotorStop. Only while armed; threshold in `elle-config` high enough to ignore flight loads.

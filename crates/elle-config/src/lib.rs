@@ -272,10 +272,14 @@ pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
 pub const FLASH_OP_WATCHDOG_MS: u64 = 6_000;
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
 
+// Eagle: was left 100 / right -50 (75 us nose-up, 25 us left roll). In level
+// Stabilized flight LOG_0082 held ~100 us nose-down and ~50 us left roll in
+// every phase, gliding included; this moves both neutrals there: 25 us
+// nose-down, 75 us left roll.
 #[cfg(not(feature = "platform-dart"))]
-pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
+pub const ELEVON_LEFT_TRIM_US: i32 = 50; // + raises left elevon
 #[cfg(not(feature = "platform-dart"))]
-pub const ELEVON_RIGHT_TRIM_US: i32 = -50;
+pub const ELEVON_RIGHT_TRIM_US: i32 = 100; // + lowers right elevon
 
 // Dart: +95 us nose-up on both (left +, right - on the output pulse) on top of
 // the original 5 us left. LOG_0052 held ~257 us nose-up in calm Stabilized
@@ -368,6 +372,12 @@ pub const MANUAL_MODE_THRESHOLD: u16 = 500; // Below this = Full Manual (~306)
 pub const STABILIZED_MODE_THRESHOLD: u16 = 1300; // Above this = Stabilized (~1000), above next = AltitudeHold
 
 // Stabilized mode: stick deflection maps to attitude angle
+// Eagle: 15°. At full throttle its nose rides 7-8° above the setpoint and full
+// nose-down elevon can't bring it back (LOG_0082); the three departures there
+// all started from a 22-25° setpoint at launch.
+#[cfg(not(feature = "platform-dart"))]
+pub const STABILIZED_MAX_PITCH_DEG: f32 = 15.0; // Full stick = ±15° pitch
+#[cfg(feature = "platform-dart")]
 pub const STABILIZED_MAX_PITCH_DEG: f32 = 25.0; // Full stick = ±25° pitch
 pub const STABILIZED_MAX_ROLL_DEG: f32 = 45.0; // Full stick = ±45° roll
 
