@@ -135,13 +135,16 @@ pub async fn run(pwm: PwmOutputs<'static>, watchdog: Watchdog<'static>, epoch_ms
             embassy_futures::select::Either::First(FlashResponse::MagCalLoaded { data }) => {
                 let [ox, oy, oz]: [f32; 3] = bytemuck::pod_read_unaligned(&data);
 
-                // Validate: finite and reasonable range (raw counts, max ~65535)
+                // Validate: finite and within the sensor's 20-bit range. The bound
+                // was 100 000 (written for a 16-bit sensor), which rejected the
+                // eagle's x offset (~242 000) on every boot.
+                let full_scale = elle_hardware::imu::MAG_FULL_SCALE_COUNTS;
                 if ox.is_finite()
                     && oy.is_finite()
                     && oz.is_finite()
-                    && ox.abs() < 100_000.0
-                    && oy.abs() < 100_000.0
-                    && oz.abs() < 100_000.0
+                    && ox.abs() < full_scale
+                    && oy.abs() < full_scale
+                    && oz.abs() < full_scale
                     && (ox != 0.0 || oy != 0.0 || oz != 0.0)
                 {
                     elle_hardware::imu::MAG_CALIBRATION_SIGNAL.signal((ox, oy, oz));
@@ -163,7 +166,10 @@ pub async fn run(pwm: PwmOutputs<'static>, watchdog: Watchdog<'static>, epoch_ms
                         "Mag cal loaded from flash"
                     );
                 } else {
-                    warn!("Mag cal: invalid data in flash, ignoring");
+                    warn!(
+                        "Mag cal: invalid data in flash ({}, {}, {}), ignoring",
+                        ox, oy, oz
+                    );
                 }
             }
             embassy_futures::select::Either::First(FlashResponse::MagCalEmpty) => {
