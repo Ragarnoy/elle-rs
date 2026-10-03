@@ -15,6 +15,15 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   mag exactly as before (`MAG_GATE_ENFORCED` off) until a proposal decides from
   flight logs.
 
+### Changed
+- Dart roll Kd 0.07 → 0.04 (tuning): 0.25 / 0.012 / 0.07 flew a ~4 Hz roll limit
+  cycle that grows with throttle (LOG_0050). It flew again at 0.04 (LOG_0052)
+  unchanged; see docs/DART_PID.md. Roll Kp 0.25 → 0.18 for the next flight
+  (0.125 flew without the oscillation). Pitch unchanged.
+- Dart elevon trim (tuning, operator behaviour): both elevons 95 µs more nose-up
+  at neutral, in every mode. LOG_0052 held ~257 µs nose-up in calm Stabilized
+  flight and was at the nose-up limit 43% of the time.
+
 ### Fixed
 - Mag calibration accepted a disturbed field: it now also requires the readings to
   sit on an earth-sized sphere (RMS radius 0.15–0.85 G) around the fitted centre,

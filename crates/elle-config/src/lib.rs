@@ -277,10 +277,13 @@ pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
 #[cfg(not(feature = "platform-dart"))]
 pub const ELEVON_RIGHT_TRIM_US: i32 = -50;
 
+// Dart: +95 us nose-up on both (left +, right - on the output pulse) on top of
+// the original 5 us left. LOG_0052 held ~257 us nose-up in calm Stabilized
+// flight, so half the throw went to trim; this takes MAX_TRIM_US's worth.
 #[cfg(feature = "platform-dart")]
-pub const ELEVON_LEFT_TRIM_US: i32 = 5; // New airframe — start at zero
+pub const ELEVON_LEFT_TRIM_US: i32 = 100; // Raises left elevon
 #[cfg(feature = "platform-dart")]
-pub const ELEVON_RIGHT_TRIM_US: i32 = 0;
+pub const ELEVON_RIGHT_TRIM_US: i32 = -95; // Raises right elevon
 
 // Individual servo center positions after trim
 pub const ELEVON_LEFT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_LEFT_TRIM_US) as u32;
@@ -301,12 +304,15 @@ pub const ROLL_KI: f32 = 0.012;
 #[cfg(not(feature = "platform-dart"))]
 pub const ROLL_KD: f32 = 0.07;
 
+// 0.25 flew a ~4 Hz roll limit cycle growing with throttle (LOG_0050/0052,
+// docs/DART_PID.md); 0.125 flew without it.
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KP: f32 = 0.25;
+pub const ROLL_KP: f32 = 0.18;
 #[cfg(feature = "platform-dart")]
 pub const ROLL_KI: f32 = 0.012;
+// 0.07 -> 0.04 did not change the limit cycle above; Kp was the cause.
 #[cfg(feature = "platform-dart")]
-pub const ROLL_KD: f32 = 0.07;
+pub const ROLL_KD: f32 = 0.04;
 
 #[cfg(not(feature = "platform-dart"))]
 pub const PITCH_KP: f32 = 0.45;
