@@ -43,6 +43,12 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 - MMC5616WA status masks: `MEAS_M_DONE` / `MEAS_T_DONE` named bits 0 and 1, which
   are the I3C `_int` flags (datasheet p12). Renamed to `*_INT` (one-shot polling
   unchanged); bits 4–7 added under their real names.
+- Mag cal ignored at boot (operator behaviour): stored hard-iron offsets were
+  accepted only below 100 000 counts, a 16-bit assumption, while the MMC5616WA
+  reads signed 20-bit counts (±524 288). The eagle's x offset (~242 000) was
+  rejected on every boot ("invalid data in flash"), so it ran without mag cal and
+  its yaw locked onto the uncorrected field. The bound is now the sensor's full
+  scale, and a rejection logs the values.
 - Eagle attitude signs (operator behaviour, proposal 0003): pitch and roll both read
   reversed because the eagle's controller is mounted turned round, and the firmware
   had one sensor mapping for both airframes. New per-platform `BOARD_YAW_DEG`
