@@ -18,6 +18,26 @@ pub struct MagData {
     pub z: i32,
 }
 
+/// Result of the saturation self-test ([`crate::asynch::Mmc5616waAsync::self_test`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SelfTest {
+    /// Factory self-test values (registers 0x27..0x29).
+    pub factory: [u8; 3],
+    /// Status1 read after the test measurement.
+    pub status: u8,
+    /// The test measurement reported done (`MEAS_M_DONE_INT`) within the wait.
+    pub completed: bool,
+}
+
+impl SelfTest {
+    /// `Sat_sensor` low: the device passed (datasheet p. 19).
+    #[must_use]
+    pub const fn passed(&self) -> bool {
+        self.status & crate::registers::SAT_SENSOR == 0
+    }
+}
+
 /// Measurement bandwidth setting, controlling the filter and measurement time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

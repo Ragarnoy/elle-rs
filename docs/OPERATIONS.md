@@ -142,8 +142,10 @@ armed**. Collection runs only while disarmed. Each is stored separately: clearin
 ### Magnetometer (hard iron)
 
 Removes the PCB's own magnetic offset. Collect 300 samples (~30 s at 10 Hz) while
-rotating the aircraft through every orientation; each axis must span ≥ 5000 counts or the
-result is rejected. The offsets are subtracted before the AHRS; the TUI mag panel keeps
+rotating the aircraft through every orientation. The result is rejected (event 112) if any
+axis spans less than 5000 counts (too little rotation), or if the readings don't sit on an
+earth-sized sphere around the fitted centre (RMS radius outside 0.15–0.85 G: a magnet or
+moving part nearby, or the engines' field). Single-sample spikes are filtered out first. The offsets are subtracted before the AHRS; the TUI mag panel keeps
 showing **raw** counts, so check the result with `mag cal` and by watching yaw.
 
 - TUI: `mag cal start` · `mag cal clear` · `mag cal` (status)
@@ -285,6 +287,7 @@ when built with `defmt-logging`.
 | 45 | IMU catch-up: more than one sample drained per wake-up |
 | 46 / 47 | Gyro bias measured / failed |
 | 48 | I2C bus failed: mag and baro both taken offline |
+| 49 | Mag self-test failed at boot: the mag is not used (AHRS 6-DOF) |
 | 50 / 51 | First CRSF frame / CRSF UART error |
 | 61 / 62 | ULog flash erase failed / flash write timeout |
 | 63 | Flash write refused while armed |
@@ -294,6 +297,8 @@ when built with `defmt-logging`.
 | 90–94 | Autotune started / complete / aborted / safety abort / rejected |
 | 100–103 | PID saved / save failed / loaded / nothing saved |
 | 110–116 | Mag cal started, complete, failed, saved, cleared, loaded, nothing saved |
+| 117 / 118 | Mag field implausible (corrected magnitude outside 0.15–0.85 G) or stale for 0.5 s / fit again for 5 s. Reported only: the AHRS keeps fusing it (`MAG_GATE_ENFORCED` off) |
+| 119 | Mag spikes rejected (median-of-3; at most one event per 10 s) |
 | 120 | Double-tap detected |
 | 130 / 131 / 132 | Heading hold engaged / disengaged / target set |
 | 140 / 141 | GNSS configuration timeout / partially accepted |

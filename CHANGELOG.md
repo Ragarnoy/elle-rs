@@ -6,7 +6,24 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 
 ## [Unreleased]
 
+### Added
+- Magnetometer health (operator behaviour, event codes): boot self-test (event 49,
+  mag not used on failure); median-of-3 spike filter (event 119) ahead of the
+  calibration and the health check;
+  `MagHealth` reports a corrected field outside 0.15–0.85 G or frozen for 2 s
+  (117) and its recovery (118). Reported only: the AHRS fuses the raw corrected
+  mag exactly as before (`MAG_GATE_ENFORCED` off) until a proposal decides from
+  flight logs.
+
 ### Fixed
+- Mag calibration accepted a disturbed field: it now also requires the readings to
+  sit on an earth-sized sphere (RMS radius 0.15–0.85 G) around the fitted centre,
+  and filters spikes first. Dart logs had four "successful" calibrations with a
+  3.3–7.6 G radius; the eagle's spikes (~(0, +5000, −6000) counts, 2–3 % of reads)
+  alone satisfied the old 5000-count span check.
+- MMC5616WA status masks: `MEAS_M_DONE` / `MEAS_T_DONE` named bits 0 and 1, which
+  are the I3C `_int` flags (datasheet p12). Renamed to `*_INT` (one-shot polling
+  unchanged); bits 4–7 added under their real names.
 - Eagle attitude signs (operator behaviour, proposal 0003): pitch and roll both read
   reversed because the eagle's controller is mounted turned round, and the firmware
   had one sensor mapping for both airframes. New per-platform `BOARD_YAW_DEG`

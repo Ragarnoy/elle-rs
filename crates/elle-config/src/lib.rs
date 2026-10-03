@@ -218,6 +218,45 @@ const _: () = assert!(
     MAG_ODR_HZ as u32 * MAG_READ_INTERVAL_TICKS >= 2 * IMU_UPDATE_FREQUENCY_HZ,
     "MAG_ODR_HZ must be at least twice the mag read rate"
 );
+/// Magnetometer reads per second (10 Hz).
+pub const MAG_READ_HZ: f32 = IMU_UPDATE_FREQUENCY_HZ as f32 / MAG_READ_INTERVAL_TICKS as f32;
+/// MMC5616WA sensitivity in 20-bit mode (datasheet p2). Tied to the driver's
+/// constant by an assert in `elle-hardware`.
+pub const MAG_COUNTS_PER_GAUSS: f32 = 16384.0;
+/// Plausible magnitude of the offset-corrected field, gauss. The earth's field
+/// is 0.25–0.65 G everywhere; outside this band the reading is dominated by
+/// something on the airframe and fusing it would steer yaw to that instead.
+pub const MAG_FIELD_MIN_G: f32 = 0.15;
+pub const MAG_FIELD_MAX_G: f32 = 0.85;
+/// How long the field must read implausible (or stale) before the AHRS stops
+/// fusing it, and plausible again before fusing resumes. Resuming is slow on
+/// purpose: Madgwick then swings yaw toward the mag heading, which heading hold
+/// sees as a heading change.
+pub const MAG_DROP_S: f32 = 0.5;
+pub const MAG_RESTORE_S: f32 = 5.0;
+/// Whether the AHRS stops fusing the mag while `MagHealth` finds the field
+/// implausible or stale. Off: the verdict is only reported (events 117/118),
+/// and the mag is fused as before. On the dart's older flight logs the
+/// corrected field leaves the plausible band for 30–40 % of armed time
+/// (engine fields), so enforcing it changes the estimator in flight; that
+/// waits for a proposal backed by logs with these events in them.
+pub const MAG_GATE_ENFORCED: bool = false;
+/// Identical raw readings for this long mean the sensor stopped converting.
+/// 20-bit readings never repeat exactly while it converts.
+pub const MAG_STALE_S: f32 = 2.0;
+/// A reading this far (counts, any axis) from the median of it and its two
+/// neighbours is a spike and is replaced by that median. Eagle logs show
+/// single-sample jumps of ~(0, +5000, -6000) counts on 2–3 % of reads.
+pub const MAG_SPIKE_COUNTS: f32 = 2000.0;
+/// Readings collected per hard-iron calibration (~30 s).
+pub const MAG_CAL_SAMPLES: u32 = 300;
+/// Smallest per-axis span a calibration accepts, counts: proof of rotation.
+/// The dart's good calibrations spanned 5 976–13 955 counts on their least
+/// covered axis.
+pub const MAG_CAL_MIN_SPAN_COUNTS: f32 = 5000.0;
+const _: () = assert!(MAG_FIELD_MIN_G > 0.0 && MAG_FIELD_MIN_G < MAG_FIELD_MAX_G);
+const _: () = assert!(MAG_DROP_S > 0.0 && MAG_RESTORE_S >= MAG_DROP_S && MAG_STALE_S > 0.0);
+const _: () = assert!(MAG_CAL_SAMPLES >= 10 && MAG_CAL_SAMPLES <= u16::MAX as u32);
 /// Barometer read interval in IMU ticks (50 = 20Hz at 1kHz IMU rate)
 pub const BARO_READ_INTERVAL_TICKS: u32 = 50;
 /// Most IMU FIFO samples fused per DATA_RDY wake-up (~250 µs each). Bounds how

@@ -8,12 +8,16 @@
 //! a timeout, so a stuck bus disables both sensors instead of hanging Core 1.
 //!
 //! Outputs: raw counts to [`MAG`], offset-corrected field (sensor frame) to
-//! [`MAG_FIELD`] for the AHRS, and [`BARO`]. Mag calibration runs here, on the
-//! raw readings.
+//! [`MAG_FIELD`] for the AHRS, and [`BARO`]. Mag calibration runs here. Each
+//! reading goes through a median-of-3 spike filter before calibration and the
+//! health check (and, with the gate enforced, before fusion). [`elle_control::mag::MagHealth`] judges the corrected field and
+//! reports when it turns implausible or stale (events 117/118); the AHRS only
+//! stops fusing it when `elle_config::MAG_GATE_ENFORCED` is on (off for now).
 
 use core::cell::Cell;
 
 use defmt::{Debug2Format, info, warn};
+use elle_control::mag::{CalStep, Calibration, Despike, MagChange, MagHealth};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_rp::i2c::I2c;
 use embassy_rp::mode::Async;
@@ -22,6 +26,7 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Instant, Ticker, with_timeout};
 use mmc5616wa::asynch::Mmc5616waAsync;
+use mmc5616wa::types::SelfTest;
 use static_cell::StaticCell;
 
 use super::{
@@ -30,16 +35,20 @@ use super::{
 };
 
 /// Latest offset-corrected magnetic field in the sensor frame, for the AHRS.
-/// `None` until the first reading, and again once the bus has failed (the AHRS
-/// then runs 6-DOF instead of fusing a frozen vector). The IMU task applies the
-/// level-cal mount when it fuses.
+/// `None` until the first reading and once the bus has failed (and, with
+/// `MAG_GATE_ENFORCED`, while the field is judged implausible or stale): the
+/// AHRS then runs 6-DOF instead of fusing a wrong or frozen vector. The IMU task applies the level-cal mount
+/// when it fuses.
 pub static MAG_FIELD: BlockingMutex<CriticalSectionRawMutex, Cell<Option<[f32; 3]>>> =
     BlockingMutex::new(Cell::new(None));
 
-/// Magnetometer samples collected per hard-iron calibration (~30 s at 10 Hz).
-const MAG_CAL_SAMPLES: u32 = 300;
-// The live count is published through an `AtomicU16`.
-const _: () = core::assert!(MAG_CAL_SAMPLES <= u16::MAX as u32);
+const _: () = core::assert!(
+    elle_config::MAG_COUNTS_PER_GAUSS == mmc5616wa::registers::COUNTS_PER_GAUSS,
+    "elle_config::MAG_COUNTS_PER_GAUSS out of step with the driver"
+);
+
+/// At most one spike event (119) per this long.
+const SPIKE_EVENT_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Longest a single register read or write may take. A 9-byte read is ~0.3 ms
 /// at 400 kHz; anything near this bound means the bus is stuck.
@@ -58,13 +67,6 @@ type Dev = I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>;
 
 static BUS: StaticCell<Bus> = StaticCell::new();
 
-/// Hard-iron calibration in progress: running min/max per axis of raw counts.
-struct MagCal {
-    min: [f32; 3],
-    max: [f32; 3],
-    samples: u32,
-}
-
 /// Run the I2C sensors forever. Call from a Core 1 task.
 pub async fn run(i2c: I2c<'static, Async>) -> ! {
     let bus: &'static Bus = BUS.init(Mutex::new(i2c));
@@ -74,7 +76,11 @@ pub async fn run(i2c: I2c<'static, Async>) -> ! {
     let mut baro = init_baro(bus).await;
 
     let mut mag_offset = [0.0f32; 3];
-    let mut mag_cal: Option<MagCal> = None;
+    let mut mag_cal: Option<Calibration> = None;
+    let mut despike = Despike::new();
+    let mut health = MagHealth::new();
+    let mut spikes: u32 = 0;
+    let mut last_spike_event: Option<Instant> = None;
     let mut prev_baro: Option<(f32, Instant)> = None;
     let mut vario_filtered = 0.0f32;
     let mut since_mag_us = MAG_PERIOD_US; // read the mag on the first pass
@@ -86,17 +92,14 @@ pub async fn run(i2c: I2c<'static, Async>) -> ! {
         // Offsets loaded or cleared by Core 0, and calibration requests.
         if let Some((ox, oy, oz)) = MAG_CALIBRATION_SIGNAL.try_take() {
             mag_offset = [ox, oy, oz];
+            health.reset();
             info!(
                 "Core1: Mag cal offsets applied: ({}, {}, {})",
                 ox as i32, oy as i32, oz as i32
             );
         }
         if MAG_CAL_START_SIGNAL.try_take().is_some() {
-            mag_cal = Some(MagCal {
-                min: [f32::MAX; 3],
-                max: [f32::MIN; 3],
-                samples: 0,
-            });
+            mag_cal = Some(Calibration::new());
             MAG_CAL_PROGRESS.store(0, core::sync::atomic::Ordering::Relaxed);
             info!("Core1: Mag calibration started — rotate board in all orientations");
         }
@@ -117,21 +120,64 @@ pub async fn run(i2c: I2c<'static, Async>) -> ! {
                         z: data.z,
                     });
                     let raw = [data.x as f32, data.y as f32, data.z as f32];
-                    if let Some(cal) = mag_cal.as_mut()
-                        && let Some(offsets) = mag_cal_step(cal, &raw)
-                    {
-                        if let Some(o) = offsets {
-                            mag_offset = o;
+                    let (reading, spike) = despike.push(raw);
+                    if spike {
+                        spikes += 1;
+                        if last_spike_event.is_none_or(|t| t.elapsed() >= SPIKE_EVENT_INTERVAL) {
+                            crate::elle_event!(
+                                warn,
+                                crate::event::EVT_MAG_SPIKES,
+                                "MMC5616WA: {} spike(s) rejected, latest raw ({}, {}, {})",
+                                spikes,
+                                data.x,
+                                data.y,
+                                data.z
+                            );
+                            spikes = 0;
+                            last_spike_event = Some(Instant::now());
                         }
-                        mag_cal = None;
+                    }
+                    if let Some(cal) = mag_cal.as_mut() {
+                        let step = cal.step(&reading);
+                        if let Some(o) = mag_cal_result(step) {
+                            mag_offset = o;
+                            health.reset();
+                        }
+                        if !matches!(step, CalStep::Collecting(_)) {
+                            mag_cal = None;
+                        }
                     }
                     // Hard-iron offsets are sensor-frame; the mount is applied at fusion.
-                    let field = [
-                        raw[0] - mag_offset[0],
-                        raw[1] - mag_offset[1],
-                        raw[2] - mag_offset[2],
-                    ];
-                    MAG_FIELD.lock(|c| c.set(Some(field)));
+                    let corrected = |v: &[f32; 3]| core::array::from_fn(|i| v[i] - mag_offset[i]);
+                    let field: [f32; 3] = corrected(&reading);
+                    match health.update(&raw, &field) {
+                        Some(MagChange::Dropped(reason)) => crate::elle_event!(
+                            warn,
+                            crate::event::EVT_MAG_DROPPED,
+                            "Mag field unfit: {} ({})",
+                            reason,
+                            if elle_config::MAG_GATE_ENFORCED {
+                                "dropped, AHRS 6-DOF"
+                            } else {
+                                "observed only, still fused"
+                            }
+                        ),
+                        Some(MagChange::Restored) => crate::elle_event!(
+                            info,
+                            crate::event::EVT_MAG_RESTORED,
+                            "Mag field fit again"
+                        ),
+                        None => {}
+                    }
+                    // Observing (gate off), the AHRS gets the reading exactly as
+                    // before: unfiltered. The despiked field, like dropping it,
+                    // is part of the enforced behaviour.
+                    let fused = if elle_config::MAG_GATE_ENFORCED {
+                        health.fused().then_some(field)
+                    } else {
+                        Some(corrected(&raw))
+                    };
+                    MAG_FIELD.lock(|c| c.set(fused));
                 }
                 Ok(Err(e)) => {
                     warn!("MMC5616WA: read error: {}", Debug2Format(&e));
@@ -205,40 +251,45 @@ pub async fn run(i2c: I2c<'static, Async>) -> ! {
     }
 }
 
-/// Feed one raw reading to a running calibration. `Some(result)` when it has
-/// finished: the new offsets on success, `None` if the rotation was too small.
-fn mag_cal_step(cal: &mut MagCal, raw: &[f32; 3]) -> Option<Option<[f32; 3]>> {
-    for (i, &v) in raw.iter().enumerate() {
-        cal.min[i] = cal.min[i].min(v);
-        cal.max[i] = cal.max[i].max(v);
-    }
-    cal.samples += 1;
-    MAG_CAL_PROGRESS.store(cal.samples as u16, core::sync::atomic::Ordering::Relaxed);
-    if cal.samples < MAG_CAL_SAMPLES {
-        return None;
-    }
-
-    const MIN_RANGE: f32 = 5000.0;
-    if (0..3).all(|i| cal.max[i] - cal.min[i] >= MIN_RANGE) {
-        let o = [
-            (cal.min[0] + cal.max[0]) / 2.0,
-            (cal.min[1] + cal.max[1]) / 2.0,
-            (cal.min[2] + cal.max[2]) / 2.0,
-        ];
-        info!(
-            "Core1: Mag cal complete: offsets ({}, {}, {})",
-            o[0] as i32, o[1] as i32, o[2] as i32
-        );
-        MAG_CAL_RESULT_SIGNAL.signal(Some((o[0], o[1], o[2])));
-        Some(Some(o))
-    } else {
-        warn!("Core1: Mag cal FAILED — insufficient rotation");
-        MAG_CAL_RESULT_SIGNAL.signal(None);
-        Some(None)
+/// Publish a calibration step: progress while collecting; the offsets (to
+/// apply) when done; `None` and a warning when it failed.
+fn mag_cal_result(step: CalStep) -> Option<[f32; 3]> {
+    match step {
+        CalStep::Collecting(n) => {
+            MAG_CAL_PROGRESS.store(n as u16, core::sync::atomic::Ordering::Relaxed);
+            None
+        }
+        CalStep::Done(o) => {
+            MAG_CAL_PROGRESS.store(
+                elle_config::MAG_CAL_SAMPLES as u16,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            info!(
+                "Core1: Mag cal complete: offsets ({}, {}, {})",
+                o[0] as i32, o[1] as i32, o[2] as i32
+            );
+            MAG_CAL_RESULT_SIGNAL.signal(Some((o[0], o[1], o[2])));
+            Some(o)
+        }
+        CalStep::Failed(why) => {
+            MAG_CAL_PROGRESS.store(
+                elle_config::MAG_CAL_SAMPLES as u16,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            warn!("Core1: Mag cal FAILED: {}", why);
+            MAG_CAL_RESULT_SIGNAL.signal(None);
+            None
+        }
     }
 }
 
-/// Reset, identify and start the magnetometer in continuous mode.
+/// How the magnetometer start-up ended, short of a bus error.
+enum MagInit {
+    Running { product_id: u8, self_test: SelfTest },
+    SelfTestFailed(SelfTest),
+}
+
+/// Reset, identify, self-test and start the magnetometer in continuous mode.
 async fn init_mag(mag: &mut Mmc5616waAsync<Dev>) -> bool {
     let mut delay = embassy_time::Delay;
     let step = async {
@@ -249,6 +300,15 @@ async fn init_mag(mag: &mut Mmc5616waAsync<Dev>) -> bool {
         mag.validate()
             .await
             .map_err(|e| ("chip ID validation", e))?;
+        let product_id = mag.product_id().await.map_err(|e| ("product ID", e))?;
+        // Before continuous mode: the test takes one measurement of its own.
+        let self_test = mag
+            .self_test(&mut delay)
+            .await
+            .map_err(|e| ("self-test", e))?;
+        if self_test.completed && !self_test.passed() {
+            return Ok(MagInit::SelfTestFailed(self_test));
+        }
         mag.start_continuous(elle_config::MAG_ODR_HZ)
             .await
             .map_err(|e| ("start continuous", e))?;
@@ -257,15 +317,46 @@ async fn init_mag(mag: &mut Mmc5616waAsync<Dev>) -> bool {
         if odr != elle_config::MAG_ODR_HZ {
             return Err(("ODR readback", mmc5616wa::error::Error::BadParam));
         }
-        Ok(())
+        Ok(MagInit::Running {
+            product_id,
+            self_test,
+        })
     };
     match with_timeout(Duration::from_millis(200), step).await {
-        Ok(Ok(())) => {
+        Ok(Ok(MagInit::Running {
+            product_id,
+            self_test,
+        })) => {
+            if product_id != mmc5616wa::registers::PRODUCT_ID_VALUE {
+                warn!(
+                    "MMC5616WA: product ID {=u8:#x}, expected {=u8:#x}",
+                    product_id,
+                    mmc5616wa::registers::PRODUCT_ID_VALUE
+                );
+            }
+            if !self_test.completed {
+                warn!(
+                    "MMC5616WA: self-test measurement never reported done (status {=u8:#x}); not judged",
+                    self_test.status
+                );
+            }
             info!(
-                "MMC5616WA: initialized, continuous mode at {} Hz (chip ID OK)",
-                elle_config::MAG_ODR_HZ
+                "MMC5616WA: initialized, continuous mode at {} Hz (chip ID OK, self-test factory {}, status {=u8:#x})",
+                elle_config::MAG_ODR_HZ,
+                self_test.factory,
+                self_test.status
             );
             true
+        }
+        Ok(Ok(MagInit::SelfTestFailed(st))) => {
+            crate::elle_event!(
+                error,
+                crate::event::EVT_MAG_SELFTEST_FAILED,
+                "MMC5616WA: self-test FAILED (Sat_sensor set; status {=u8:#x}, factory {}): mag not used",
+                st.status,
+                st.factory
+            );
+            false
         }
         Ok(Err((what, e))) => {
             crate::elle_event!(
