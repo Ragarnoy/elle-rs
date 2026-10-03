@@ -66,7 +66,7 @@ fn tilt_of(acc: &Vector3<f32>) -> (f32, f32) {
 /// Filter-frame quaternion → firmware-convention (pitch, roll, yaw).
 fn angles_of(q: &UnitQuaternion<f32>) -> [f32; 3] {
     let (roll, pitch, yaw) = q.euler_angles();
-    [pitch, -roll, yaw]
+    [pitch, -roll, -yaw]
 }
 
 /// The reference, aligned with `Replay::samples` (`None` where it is not
@@ -135,8 +135,9 @@ pub fn build(replay: &Replay) -> Vec<Option<[f32; 3]>> {
         let anchor = i + 1 >= anchor_n && level_over(i + 1 - anchor_n, i + 1 + guard_n);
         if anchor {
             let (roll_f, pitch_f) = tilt[i];
-            // Tilt from gravity; heading (not scored) from the firmware.
-            let anchored = UnitQuaternion::from_euler_angles(roll_f, pitch_f, a.yaw);
+            // Tilt from gravity; heading (not scored) from the firmware, back in
+            // the filter's sense (the firmware publishes it negated).
+            let anchored = UnitQuaternion::from_euler_angles(roll_f, pitch_f, -a.yaw);
             // A propagation arriving here: spread its end error back over it.
             if let (Some(start), Some(r)) = (run_start, q.as_ref())
                 && since_anchor > 0

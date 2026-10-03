@@ -75,8 +75,10 @@ yaw_diff = clamp(pilot_yaw + cmd, ±1)          // into the differential thrust 
   the left engine, a nose-left moment. The old comment in
   `generate_yaw_differential_lut` ("Right turn: reduce left engine") said the opposite;
   it is fixed. A positive `yaw_rate` is taken to be nose right, from heading hold's
-  convention (a right bank raises AHRS yaw). TEST_PLAN 6.5 hasn't confirmed that on
-  the hardware yet. With both conventions, opposing the motion is `cmd = +gain · r_hp`.
+  convention (a right bank raises AHRS yaw). On the hardware it was the opposite
+  (TEST_PLAN 0.1.4 on the eagle, 2026-10-02); proposal
+  [0004](0004-yaw-sign.md) made the published yaw rate nose right positive, so the
+  assumption now holds, with a host test on it. With both conventions, opposing the motion is `cmd = +gain · r_hp`.
   The host test `nose_right_rate_slows_left_engine` pins this through
   `apply_differential_thrust_lut`. Bench row 1.2a checks the gyro half on the
   hardware, and must pass before any flight with a gain above 0.

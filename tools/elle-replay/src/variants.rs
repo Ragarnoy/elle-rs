@@ -150,7 +150,8 @@ impl Running {
 
     /// One sample in the filter frame (gyro debiased and mounted, accel
     /// mounted, mag as fed; `mag_new` when it changed with this sample).
-    /// Returns (pitch, roll, yaw) in the firmware's convention (roll negated).
+    /// Returns (pitch, roll, yaw) in the firmware's convention (roll and yaw
+    /// negated).
     pub fn step(
         &mut self,
         gyro: Vector3<f32>,
@@ -197,7 +198,7 @@ impl Running {
             }
         };
         let (roll, pitch, yaw) = q.euler_angles();
-        [pitch, -roll, yaw]
+        [pitch, -roll, -yaw]
     }
 }
 

@@ -2,7 +2,7 @@
 
 | | |
 |-|-|
-| Status | Draft |
+| Status | Draft, implemented on branch `yaw-sign`: waiting for the dart sign check (0.1.4) before merging |
 | Airframes | both |
 | Date | 2026-10-02 |
 | Version impact | breaking ([rules](../VERSIONING.md#bump-rules)): 0.x minor |
@@ -93,6 +93,10 @@ does not change; it starts being true. No state machine changes.
 - **Events:** none
 - **RPC:** no type change; `AttitudeResp.yaw_cdeg` and `yaw_rate_cdeg` change sign
   (breaking in meaning). The TUI and `elle mcp` show the new values as they come.
+  The heading-hold angles are in the same frame and flip with it:
+  `SetHeadingHoldReq.heading_cdeg` (TUI `heading <deg>`) now counts clockwise from
+  the AHRS zero, and `ControllerOutputResp.heading_target_cdeg` /
+  `heading_error_cdeg` follow. The handler adds no sign of its own.
 - **Flash:** none
 - **ULog:** no layout change; `attitude_data.yaw` and `yaw_rate` change sign
   (breaking in meaning, named in `CHANGELOG.md`); new info entry `elle_yaw`.
@@ -110,6 +114,24 @@ does not change; it starts being true. No state machine changes.
 | Sensor loss, RC loss, Core 1 stall, flash write, reboot in the air | Unchanged: a sign in the published output, no state | — |
 
 ## Verification
+
+Done so far (2026-10-03):
+
+- **Heading-hold use in logs:** no event 130 or 131 in any log on hand: eagle
+  `LOG_0054`–`0065` (`logs/`) and `LOG_0000`, `LOG_0013`; dart `LOG_0001`–`0035`
+  (dart's card as last copied). Logs newer than those were not checked.
+- **Dart sign from flight logs:** inconclusive. No dart log has a moving GNSS fix,
+  so yaw rate cannot be checked against GNSS track. Bank against yaw rate in
+  sustained armed turns (2 s means, |roll| > 15°, |rate| > 8°/s) leans toward
+  opposite signs in the later logs (0026–0035, 2:1 to 4:1, the eagle's pre-fix
+  sign) but is about even in the earlier ones, and roll is unreliable in sustained
+  turns ([ATTITUDE.md](../ATTITUDE.md)). The bench check below stands.
+- **Host:** `elle-control` tests on both platforms (new: `nose_right_is_positive_yaw`,
+  `heading_hold_closes_the_loop`; both, plus the updated rate-sign tests, fail with
+  the old sign); `elle-replay` tests, including a synthetic legacy log replayed
+  exactly and the old sign under the new marker caught; `elle-ulog` header test.
+
+Still to do:
 
 - **Before code — bench (dart):** TEST_PLAN 0.1.4, a slow clockwise turn: confirm
   the yaw rate is negative on the dart too.
@@ -137,13 +159,13 @@ way.
 
 ## Doc updates
 
-- [ ] `docs/OPERATIONS.md`: yaw convention (positive nose right; where zero is,
-      once measured)
-- [ ] `STATE_DIAGRAMS.md`: none
-- [ ] `TEST_PLAN.md`: 0.1.4 expects `yaw_rate` > 0 for nose right; 1.2a note
-      updated (the sign was wrong and is fixed)
-- [ ] `CLAUDE.md`: IMU pipeline step 5 (roll **and yaw** negated)
-- [ ] `crates/elle-ulog/README.md`: `attitude_data` yaw convention; `elle_yaw` info
-- [ ] `CHANGELOG.md`: breaking, ULog and RPC meaning, operator behaviour
-- [ ] `docs/changes/0001-eagle-yaw-damper.md`: the sign assumption is now confirmed
+- [x] `docs/OPERATIONS.md`: yaw convention (positive nose right); where zero is,
+      once measured: **open**
+- [x] `STATE_DIAGRAMS.md`: none
+- [x] `TEST_PLAN.md`: 0.1.4 expects `yaw_rate` > 0 for nose right; 1.2a note
+      updated (the sign was wrong and is fixed); 6.5 row 2 made directional
+- [x] `CLAUDE.md`: IMU pipeline step 5 (roll **and yaw** negated)
+- [x] `crates/elle-ulog/README.md`: `attitude_data` yaw convention; `elle_yaw` info
+- [x] `CHANGELOG.md`: breaking, ULog and RPC meaning, operator behaviour
+- [x] `docs/changes/0001-eagle-yaw-damper.md`: the sign assumption is now confirmed
       and enforced

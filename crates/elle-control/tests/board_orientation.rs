@@ -96,8 +96,9 @@ fn turned_board_reads_right_wing_down_as_positive_roll() {
 fn turned_board_rates_follow_the_airframe() {
     let board = yaw180();
     // Airframe pitch rate +0.1 rad/s (nose coming up), roll rate +0.2 in the
-    // published sense (sensor-convention x is negated), yaw rate +0.05.
-    let airframe_gyro = Vector3::new(-0.2, 0.1, 0.05);
+    // published sense (sensor-convention x is negated), yaw rate +0.05 (nose
+    // right: z is up, so negated too).
+    let airframe_gyro = Vector3::new(-0.2, 0.1, -0.05);
     let sensor_gyro = board.inverse() * airframe_gyro;
     let mut p = AttitudePipeline::with_board(board);
     let mut last = None;

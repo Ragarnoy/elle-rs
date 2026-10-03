@@ -6,6 +6,25 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 
 ## [Unreleased]
 
+### Operator behaviour
+- **Breaking:** yaw is now positive nose right (proposal 0004). The firmware
+  published the AHRS's z-up yaw, where nose right is negative, while heading hold
+  and the yaw damper take nose right positive: heading hold banked *away* from its
+  captured heading, and the radio's heading (CRSF attitude) turned
+  counter-clockwise. `AttitudePipeline::fuse` now negates yaw and yaw rate, next to
+  roll. Heading hold banks back toward its target as documented. Manual and the
+  Stabilized pitch/roll loops are unchanged. **RPC ICD:** `AttitudeResp.yaw_cdeg`
+  and `yaw_rate_cdeg` change sign (layout unchanged), and so do the heading-hold
+  angles in the same frame: `SetHeadingHoldReq.heading_cdeg` (TUI `heading <deg>`)
+  now counts clockwise from the AHRS zero, and `ControllerOutputResp`
+  `heading_target_cdeg` / `heading_error_cdeg` follow.
+
+### ULog
+- **Breaking:** `attitude_data.yaw` and `yaw_rate` change sign, now positive nose
+  right. Every new log carries the info entry `char[] elle_yaw` =
+  `nose_right_positive`. A log without it predates the change, and `elle-replay`
+  negates its logged yaw to check faithfulness (`legacy_yaw_sign` in `--json`).
+
 ### Fixed
 - Eagle attitude signs (operator behaviour, proposal 0003): pitch and roll both read
   reversed because the eagle's controller is mounted turned round, and the firmware

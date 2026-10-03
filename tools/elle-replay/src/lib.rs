@@ -101,6 +101,9 @@ pub struct Faithfulness {
     /// For mismatches: the largest angle difference to the nearest-in-time
     /// replayed sample, degrees.
     pub worst_deg: f32,
+    /// The log predates proposal 0004 (no `elle_yaw` info): its yaw was
+    /// negated before matching.
+    pub legacy_yaw_sign: bool,
 }
 
 impl Faithfulness {
@@ -416,14 +419,23 @@ const MATCH_SLACK_US: u64 = 5_000;
 /// it is unchecked.
 #[must_use]
 pub fn faithfulness(log: &ULog, replay: &Replay) -> Faithfulness {
-    let mut out = Faithfulness::default();
+    let mut out = Faithfulness {
+        legacy_yaw_sign: log.legacy_yaw_sign(),
+        ..Faithfulness::default()
+    };
     let Some(att) = log.get("attitude_data") else {
         return out;
     };
+    // Negation is exact, so a legacy log still matches bit for bit.
+    let yaw_sign = if out.legacy_yaw_sign { -1.0 } else { 1.0 };
     let s = &replay.samples;
     for r in &att.records {
         let t = att.u64(r, "timestamp");
-        let want = (att.f32(r, "pitch"), att.f32(r, "roll"), att.f32(r, "yaw"));
+        let want = (
+            att.f32(r, "pitch"),
+            att.f32(r, "roll"),
+            yaw_sign * att.f32(r, "yaw"),
+        );
         let from = t.saturating_sub(MATCH_WINDOW_US + MATCH_SLACK_US);
         let lo = s.partition_point(|x| x.t_us < from);
         let hi = s.partition_point(|x| x.t_us <= t + MATCH_SLACK_US);

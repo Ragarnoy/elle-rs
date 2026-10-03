@@ -19,7 +19,8 @@ pub use elle_config::AhrsTurnComp;
 
 /// Attitude and rates after one sample, in the airframe frame.
 ///
-/// Board flat: pitch ≈ 0, roll ≈ 0; nose up: pitch > 0; right wing down: roll > 0.
+/// Board flat: pitch ≈ 0, roll ≈ 0; nose up: pitch > 0; right wing down: roll > 0;
+/// nose turning right (clockwise seen from above): yaw rising, yaw rate > 0.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Attitude {
     /// Radians.
@@ -279,13 +280,15 @@ impl AttitudePipeline {
 
         // Roll sign is inverted relative to the ICM-42686's raw frame on this PCB
         // orientation — field-confirmed rolling the wrong way with identity mapping.
+        // Yaw too: the AHRS frame is z-up, where positive yaw is nose left; heading
+        // hold and the yaw damper take nose right positive (proposal 0004).
         Attitude {
             pitch,
             roll: -roll,
-            yaw,
+            yaw: -yaw,
             pitch_rate: rates.y,
             roll_rate: -rates.x,
-            yaw_rate: rates.z,
+            yaw_rate: -rates.z,
         }
     }
 }

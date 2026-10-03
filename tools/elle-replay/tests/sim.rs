@@ -43,6 +43,9 @@ fn truth_reads_back_as_flown_in_the_firmware_convention() {
     assert!(deg(at(500).roll).abs() < 1e-9 && deg(at(500).pitch).abs() < 1e-9);
     // Right turn: right wing down reads positive roll, like the firmware.
     assert!((deg(at(2500).roll) - 30.0).abs() < 1e-6, "{:?}", at(2500));
+    // ... and the nose going right reads rising yaw.
+    let turned = (deg(at(3500).yaw) - deg(at(1500).yaw) + 180.0).rem_euclid(360.0) - 180.0;
+    assert!(turned > 10.0, "yaw moved {turned}° in a right turn");
     // Pull-up peaks at half its length: nose up reads positive pitch.
     assert!((deg(at(7000).pitch) - 20.0).abs() < 0.01, "{:?}", at(7000));
 }

@@ -68,6 +68,9 @@ pub struct FaithfulnessReport {
     pub unchecked: u64,
     pub worst_deg: f32,
     pub ok: bool,
+    /// The log predates the yaw sign change (proposal 0004); its yaw was
+    /// negated to compare.
+    pub legacy_yaw_sign: bool,
 }
 
 impl From<&Faithfulness> for FaithfulnessReport {
@@ -78,6 +81,7 @@ impl From<&Faithfulness> for FaithfulnessReport {
             unchecked: f.unchecked,
             worst_deg: f.worst_deg,
             ok: f.ok(),
+            legacy_yaw_sign: f.legacy_yaw_sign,
         }
     }
 }

@@ -96,6 +96,11 @@ fn print_report(r: &Report) {
         "  attitude_data: {} exact, {} mismatched, {} not checked (source sample may be unsynced or lost)",
         f.exact, f.mismatched, f.unchecked
     );
+    if f.legacy_yaw_sign {
+        println!(
+            "  logged before the yaw sign change (no elle_yaw info): its yaw was negated to compare"
+        );
+    }
     if let Some(cmp) = &r.comparison {
         println!(
             "\n  gyro reference: covers {:.0}% of the samples (needs straight-and-level stretches of {} s between manoeuvres)",

@@ -110,8 +110,8 @@ impl Default for Config {
 pub struct Truth {
     pub index: u32,
     pub t_us: u64,
-    /// Radians: pitch positive nose up, roll positive right wing down, yaw as
-    /// the filter reports it (from magnetic north in its own sense).
+    /// Radians: pitch positive nose up, roll positive right wing down, yaw
+    /// positive nose right, zero where the filter's is.
     pub pitch: f64,
     pub roll: f64,
     pub yaw: f64,
@@ -172,11 +172,11 @@ fn filter_quat(r: &Rotation3<f64>) -> UnitQuaternion<f64> {
 }
 
 /// Firmware-convention angles of a filter-frame quaternion: (pitch, roll, yaw)
-/// with roll negated, as `AttitudePipeline::fuse` reports them.
+/// with roll and yaw negated, as `AttitudePipeline::fuse` reports them.
 #[must_use]
 pub fn firmware_angles(q: &UnitQuaternion<f64>) -> (f64, f64, f64) {
     let (roll, pitch, yaw) = q.euler_angles();
-    (pitch, -roll, yaw)
+    (pitch, -roll, -yaw)
 }
 
 /// Collects ULog records into bytes.
