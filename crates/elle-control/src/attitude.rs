@@ -97,6 +97,12 @@ impl AttitudePipeline {
         p
     }
 
+    /// Use smooth accel weighting instead of the hard gate (the build's
+    /// `AHRS_ACCEL_GATE_SMOOTH` by default); for tests and comparisons.
+    pub fn set_gate_smooth(&mut self, smooth: bool) {
+        self.gate = self.gate.smooth(smooth);
+    }
+
     /// Apply a level calibration (`None` clears it): the mount becomes the board
     /// orientation after the level-cal tilt. The tilt is measured on raw sensor
     /// accel, so it is applied first.
@@ -127,7 +133,7 @@ impl AttitudePipeline {
             aid: GnssAid::default(),
             turn: TurnComp::new(),
             earth: TurnComp::new(),
-            gate: AccelGate::new(gate_g),
+            gate: AccelGate::new(gate_g).smooth(elle_config::AHRS_ACCEL_GATE_SMOOTH),
             index: 0,
         }
     }
@@ -267,7 +273,17 @@ impl AttitudePipeline {
                 }
             }
         }
-        let skip_accel = self.gate_g.is_some() && self.gate.skip(&accel);
+        let w = if self.gate_g.is_some() {
+            self.gate.weight(&accel)
+        } else {
+            1.0
+        };
+        let skip_accel = w <= 0.0;
+        if self.gate.smooth && !skip_accel {
+            self.ahrs.set_params(MadgwickParams {
+                beta: elle_config::AHRS_BETA * w,
+            });
+        }
         self.index = self.index.wrapping_add(1);
 
         let q = match (skip_accel, mag) {
@@ -451,6 +467,7 @@ impl TurnComp {
 #[derive(Clone, Copy, Debug)]
 pub struct AccelGate {
     threshold_ms2: Option<f32>,
+    smooth: bool,
     alpha: f32,
     norm_lp: Option<f32>,
 }
@@ -464,16 +481,41 @@ impl AccelGate {
         let rc = 1.0 / (2.0 * core::f32::consts::PI * elle_config::AHRS_ACCEL_GATE_LPF_HZ);
         Self {
             threshold_ms2: threshold_g.map(|g| g * G),
+            smooth: false,
             alpha: dt / (rc + dt),
             norm_lp: None,
         }
     }
 
-    /// Once per sample: `true` when the accel should be skipped.
-    pub fn skip(&mut self, accel: &Vector3<f32>) -> bool {
+    /// Smooth weighting instead of a hard skip (see [`Self::weight`]).
+    #[must_use]
+    pub const fn smooth(mut self, smooth: bool) -> Self {
+        self.smooth = smooth;
+        self
+    }
+
+    /// Once per sample: how much to trust the accel, 0 to 1. Hard gate: 1, or
+    /// 0 beyond the threshold. Smooth: falls linearly from 1 at 1 g to 0 at
+    /// the threshold. Always 1 with no threshold.
+    pub fn weight(&mut self, accel: &Vector3<f32>) -> f32 {
         let n = accel.norm();
         let lp = self.norm_lp.map_or(n, |p| p + self.alpha * (n - p));
         self.norm_lp = Some(lp);
-        self.threshold_ms2.is_some_and(|t| (lp - G).abs() > t)
+        let Some(t) = self.threshold_ms2 else {
+            return 1.0;
+        };
+        let dev = (lp - G).abs();
+        if self.smooth {
+            (1.0 - dev / t).clamp(0.0, 1.0)
+        } else if dev > t {
+            0.0
+        } else {
+            1.0
+        }
+    }
+
+    /// Once per sample: `true` when the accel should be skipped.
+    pub fn skip(&mut self, accel: &Vector3<f32>) -> bool {
+        self.weight(accel) <= 0.0
     }
 }

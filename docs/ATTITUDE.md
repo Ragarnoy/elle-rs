@@ -47,6 +47,7 @@ sign would show in a replay (and in the vehicle test, 7.2) as more error, not le
 | `AHRS_TURN_COMP_MAX_AGE_MS` | 300 ms | Older GNSS solutions are not used. The GNSS acceleration also needs two NAV-PVT fixes at most 500 ms apart. |
 | `AHRS_TURN_COMP_RAMP_S` | 1 s | Compensation fades in and out, never steps. |
 | `AHRS_ACCEL_GATE_G` | `None` | Skip the accel (gyro-only update) while its 5 Hz low-passed magnitude is further than this from 1 g. |
+| `AHRS_ACCEL_GATE_SMOOTH` | `false` | With the gate on: instead of skipping, scale the AHRS gain β linearly from full at 1 g to zero at the threshold (`Madgwick::set_params`). A replay uses the build's value; it is not in the log. |
 
 With `Off` and no gate the pipeline is the plain Madgwick update, bit for bit (a test
 checks it). With a mode on, the IMU task hands the pipeline each new GNSS solution from
@@ -149,9 +150,12 @@ axis) before changing anything.
 
 ## Open
 
-- **Smooth accel weighting** (β scaled with the accel error rather than on/off) needs
-  `set_params` in uf-ahrs: [jettify/uf-ahrs#48](https://github.com/jettify/uf-ahrs/pull/48),
-  pending.
+- **Smooth accel weighting** (`AHRS_ACCEL_GATE_SMOOTH`, uses `set_params` from
+  [jettify/uf-ahrs#48](https://github.com/jettify/uf-ahrs/pull/48), uf-ahrs 0.2.2) is in
+  and off. In the default simulation (`--compare`, gate 0.25 g) `madgwick-weighted` cuts
+  turn roll RMS from 7.2–7.8° to 5.5–6.1° and pitch from ~7.1° to ~3.3°, against ~7° for
+  the hard gate: better than gating, far short of `-cc` (0.1°). Not a replacement for
+  turn compensation; flight data decides.
 - **Airspeed sensor**: would make `Centripetal` right in wind.
 - **Magnetic declination** for `GnssAccel`.
 - **VQF in the firmware**: its mag handling (heading-only, disturbance rejection) is

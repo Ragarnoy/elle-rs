@@ -217,4 +217,47 @@ mod turn_comp {
         let mut off = AccelGate::new(None);
         assert!(!(0..100).any(|_| off.skip(&Vector3::new(0.0, 0.0, 3.0 * G))));
     }
+
+    #[test]
+    fn smooth_weight_falls_linearly_to_zero_at_the_threshold() {
+        let weight_at = |g: f32| {
+            let mut gate = AccelGate::new(Some(0.5)).smooth(true);
+            // Settle the low-pass on a steady magnitude.
+            (0..2000)
+                .map(|_| gate.weight(&Vector3::new(0.0, 0.0, g * G)))
+                .last()
+                .unwrap()
+        };
+        assert!((weight_at(1.0) - 1.0).abs() < 1e-4);
+        assert!((weight_at(1.25) - 0.5).abs() < 1e-3);
+        assert_eq!(weight_at(1.5), 0.0);
+        assert_eq!(weight_at(2.5), 0.0);
+        // The hard gate stays open until the threshold, then shuts at once.
+        let mut hard = AccelGate::new(Some(0.5));
+        assert_eq!(
+            (0..2000)
+                .map(|_| hard.weight(&Vector3::new(0.0, 0.0, 1.25 * G)))
+                .last(),
+            Some(1.0)
+        );
+    }
+}
+
+/// With the accel pulling 1.25 g, smooth weighting corrects the tilt towards
+/// the (wrong) accel direction more slowly than no gate, and more than a gate
+/// that has shut.
+#[test]
+fn smooth_weighting_corrects_between_full_and_none() {
+    let tilt = |gate: Option<f32>, smooth: bool| {
+        let mut p = AttitudePipeline::with_modes(elle_control::attitude::AhrsTurnComp::Off, gate);
+        p.set_gate_smooth(smooth);
+        // 1.25 g reaction, tilted 20° in roll.
+        let a = accel_for(20.0, 0.0) * 1.25;
+        settle(&mut p, a, 3000).roll.abs()
+    };
+    let ungated = tilt(None, false);
+    let smooth = tilt(Some(0.5), true);
+    let shut = tilt(Some(0.1), true);
+    assert!(smooth > 0.0 && smooth < ungated, "{smooth} vs {ungated}");
+    assert!(shut < smooth, "{shut} vs {smooth}");
 }
