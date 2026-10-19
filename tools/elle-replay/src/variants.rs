@@ -47,6 +47,9 @@ pub struct Spec {
     /// Skip the accelerometer (gyro-only update, plus mag for VQF) while the
     /// low-passed accel magnitude is further than this from 1 g, in g.
     pub gate_g: Option<f32>,
+    /// With a gate on a Madgwick filter: scale β down smoothly instead of
+    /// skipping the accel.
+    pub smooth: bool,
 }
 
 /// Default gate threshold, g.
@@ -65,10 +68,16 @@ pub fn default_specs() -> Vec<Spec> {
         kind,
         turn,
         gate_g,
+        smooth: false,
+    };
+    let weighted = Spec {
+        smooth: true,
+        ..spec("madgwick-weighted", fw, Turn::Off, g)
     };
     vec![
         spec("madgwick", fw, Turn::Off, None),
         spec("madgwick-gated", fw, Turn::Off, g),
+        weighted,
         spec("madgwick-cc", fw, Turn::Centripetal, None),
         spec("madgwick-cc-gated", fw, Turn::Centripetal, g),
         spec("madgwick-ce", fw, Turn::Earth, None),
@@ -127,7 +136,7 @@ impl Running {
     pub fn new(spec: Spec) -> Self {
         Self {
             filter: Filter::new(spec.kind),
-            gate: AccelGate::new(spec.gate_g),
+            gate: AccelGate::new(spec.gate_g).smooth(spec.smooth),
             turn: TurnComp::new(),
             earth_weight: TurnComp::new(),
             spec,
@@ -143,7 +152,7 @@ impl Running {
             Filter::Mahony(f) => f.set_orientation(q),
             Filter::Vqf(f) => f.set_orientation(q),
         }
-        self.gate = AccelGate::new(self.spec.gate_g);
+        self.gate = AccelGate::new(self.spec.gate_g).smooth(self.spec.smooth);
         self.turn = TurnComp::new();
         self.earth_weight = TurnComp::new();
     }
@@ -177,8 +186,16 @@ impl Running {
                 }
             }
         };
-        let gate = self.gate.skip(&accel);
+        let w = self.gate.weight(&accel);
+        let gate = w <= 0.0;
         self.gated += u64::from(gate);
+        if self.spec.smooth
+            && !gate
+            && let (Filter::Madgwick(f), Kind::Madgwick { beta }) =
+                (&mut self.filter, self.spec.kind)
+        {
+            f.set_params(MadgwickParams { beta: beta * w });
+        }
 
         let q = match &mut self.filter {
             Filter::Madgwick(f) => step_basic(f, gyro, accel, mag, gate),

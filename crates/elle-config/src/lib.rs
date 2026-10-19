@@ -196,6 +196,11 @@ pub const AHRS_TURN_COMP_RAMP_S: f32 = 1.0;
 /// Accel gate: the AHRS skips the accel (gyro-only update) while the low-passed
 /// accel magnitude is further than this from 1 g. `None` = never skip.
 pub const AHRS_ACCEL_GATE_G: Option<f32> = None;
+/// Shape of the accel gate: `false` skips the accel outright beyond the
+/// threshold; `true` scales the AHRS gain β linearly from full at 1 g to zero
+/// at the threshold (smooth weighting). Only matters with `AHRS_ACCEL_GATE_G`
+/// set. A replay does not read this from the log: it uses the build's value.
+pub const AHRS_ACCEL_GATE_SMOOTH: bool = false;
 /// Corner of the low-pass on the accel magnitude the gate reads, Hz: well
 /// below motor vibration, so that does not trip it.
 pub const AHRS_ACCEL_GATE_LPF_HZ: f32 = 5.0;
