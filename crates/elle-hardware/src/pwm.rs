@@ -50,20 +50,30 @@ impl<'a> PwmOutputs<'a> {
     }
 
     /// Latch both pulse widths; they take effect together at the next wrap.
-    fn write(&mut self, left_us: u32, right_us: u32) {
+    /// Returns the counter at the write (µs into the frame): the latch comes
+    /// `REFRESH_INTERVAL_US - counter` later.
+    fn write(&mut self, left_us: u32, right_us: u32) -> u16 {
         self.config.compare_b = left_us as u16;
         self.config.compare_a = right_us as u16;
+        let counter = self.slice.counter();
         self.slice.set_config(&self.config);
+        counter
     }
 
-    pub fn set_safe_positions(&mut self) {
+    /// Centre both elevons (trim included). Returns the PWM counter at the write.
+    pub fn set_safe_positions(&mut self) -> u16 {
         // Use individual trim-adjusted center positions
-        self.write(ELEVON_LEFT_CENTER_US, ELEVON_RIGHT_CENTER_US);
+        self.write(ELEVON_LEFT_CENTER_US, ELEVON_RIGHT_CENTER_US)
     }
 
     /// Set elevons with trim applied (recommended method). Returns the pulses
-    /// actually output, after trim and the right servo's inversion.
-    pub fn set_elevons_with_trim(&mut self, mut left_us: u32, mut right_us: u32) -> (u32, u32) {
+    /// actually output, after trim and the right servo's inversion, and the
+    /// PWM counter at the write (see `write`).
+    pub fn set_elevons_with_trim(
+        &mut self,
+        mut left_us: u32,
+        mut right_us: u32,
+    ) -> (u32, u32, u16) {
         // Store original values for debug output
         let orig_left = left_us;
         let orig_right = right_us;
@@ -77,7 +87,7 @@ impl<'a> PwmOutputs<'a> {
         let inverted_right_us = SERVO_MAX_PULSE_US + SERVO_MIN_PULSE_US - right_us;
         right_us = apply_elevon_trim(inverted_right_us, ELEVON_RIGHT_TRIM_US);
 
-        self.write(left_us, right_us);
+        let counter = self.write(left_us, right_us);
 
         // Debug output for trim monitoring
         if ELEVON_LEFT_TRIM_US != 0 || ELEVON_RIGHT_TRIM_US != 0 {
@@ -89,7 +99,7 @@ impl<'a> PwmOutputs<'a> {
                 right_us
             );
         }
-        (left_us, right_us)
+        (left_us, right_us, counter)
     }
 }
 

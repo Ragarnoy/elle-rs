@@ -7,6 +7,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- ULog timing fields (ULog): `attitude_data` is stamped when the IMU sample was
+  read (DATA_RDY wake) instead of when it was logged, so it now leads the tick's
+  `controller` record by `att_age_us`; `att_age_us` also counts the SPI read and the
+  AHRS (~0.1–0.4 ms more). `controller` gains `pwm_counter_us` (59 B): the PWM
+  counter at the write, so each tick's latch delay is `5000 − pwm_counter_us`.
 - Flight builds no longer count the legacy flash ULog queue ~5 s after boot
   (timing): the count held Core 0 for ~26 ms (LOG_0065, `dt_us` 26 ms at 5.0 s), in
   flight if armed and launched that early. RPC builds still count it for `ulog info`.

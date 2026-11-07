@@ -112,6 +112,9 @@ pub struct ControllerOutputSnapshot {
     /// Yaw damper command added to the differential thrust (normalized yaw,
     /// positive slows the left engine); 0 when the damper is not running.
     pub yaw_damp: f32,
+    /// Elevon PWM counter when this tick's pulses were written, µs into the
+    /// frame; they latch at the next wrap (`REFRESH_INTERVAL_US - counter` later).
+    pub pwm_counter_us: u16,
 }
 
 pub struct FlightController<'a> {
@@ -379,7 +382,7 @@ impl<'a> FlightController<'a> {
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
         self.last_saturation = elevon_outputs.saturation;
-        let (left_pulse, right_pulse) = self
+        let (left_pulse, right_pulse, pwm_counter_us) = self
             .pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
@@ -408,6 +411,7 @@ impl<'a> FlightController<'a> {
             elevon_left_pulse_us: left_pulse,
             elevon_right_pulse_us: right_pulse,
             yaw_damp: 0.0,
+            pwm_counter_us,
             ..self.last_output
         };
     }
@@ -636,7 +640,7 @@ impl<'a> FlightController<'a> {
         // Apply final outputs
         let elevon_outputs = mix_elevons(&final_inputs);
         self.last_saturation = elevon_outputs.saturation;
-        let (left_pulse, right_pulse) = self
+        let (left_pulse, right_pulse, pwm_counter_us) = self
             .pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
@@ -678,6 +682,7 @@ impl<'a> FlightController<'a> {
             elevon_left_pulse_us: left_pulse,
             elevon_right_pulse_us: right_pulse,
             yaw_damp,
+            pwm_counter_us,
         };
     }
 
@@ -738,7 +743,7 @@ impl<'a> FlightController<'a> {
     fn hold_failsafe(&mut self) {
         self.attitude_controller.enabled = false;
         self.yaw_damper.reset();
-        self.pwm.set_safe_positions();
+        let pwm_counter_us = self.pwm.set_safe_positions();
         self.last_output = ControllerOutputSnapshot {
             pitch_correction: 0.0,
             roll_correction: 0.0,
@@ -753,6 +758,7 @@ impl<'a> FlightController<'a> {
             elevon_left_pulse_us: ELEVON_LEFT_CENTER_US,
             elevon_right_pulse_us: ELEVON_RIGHT_CENTER_US,
             yaw_damp: 0.0,
+            pwm_counter_us,
             ..self.last_output
         };
     }

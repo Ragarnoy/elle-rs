@@ -119,6 +119,11 @@ same minutes in each mode) and say which files are which only after checking wit
   is rate-limited to once per second; events 2 and 7 (and 23) are periodic
   re-announcements, not state changes; a stale mag/baro value shows as a low
   value-change rate, not a gap.
+- **Timing fields.** Newer logs stamp `attitude_data` at the IMU read (DATA_RDY
+  wake), not at logging, so it leads the same tick's `controller` stamp by about
+  `att_age_us`; older logs stamped it at logging, ~60 µs before `controller`.
+  `controller.pwm_counter_us` (newer logs) is where in the 5 ms PWM frame the
+  pulses were written: they reach the servo `5000 − pwm_counter_us` µs later.
 - **Modes.** `commands.attitude_mode`: 0 Manual, 1 Stabilized, 2 AltitudeHold.
 
 ## 5. Report

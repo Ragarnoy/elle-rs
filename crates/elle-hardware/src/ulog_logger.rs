@@ -281,28 +281,21 @@ impl ULogLogger {
         Ok(())
     }
 
-    /// Log attitude data
-    pub fn log_attitude(
-        &mut self,
-        pitch: f32,
-        roll: f32,
-        yaw: f32,
-        pitch_rate: f32,
-        roll_rate: f32,
-        yaw_rate: f32,
-    ) -> Result<(), ULogError> {
+    /// Log one attitude sample, stamped with its `timestamp` (when the IMU
+    /// sample was read), not the time of logging.
+    pub fn log_attitude(&mut self, att: &crate::imu::AttitudeData) -> Result<(), ULogError> {
         if !self.initialized {
             return Err(ULogError::NotInitialized);
         }
 
         let msg = elle_ulog::AttitudeMessage::new(
-            Instant::now(),
-            pitch,
-            roll,
-            yaw,
-            pitch_rate,
-            roll_rate,
-            yaw_rate,
+            att.timestamp,
+            att.pitch,
+            att.roll,
+            att.yaw,
+            att.pitch_rate,
+            att.roll_rate,
+            att.yaw_rate,
         );
 
         self.writer.clear_buffer();

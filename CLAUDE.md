@@ -305,7 +305,7 @@ constants and their ranges are in `elle-hardware/src/event.rs`. ULog goes
 and sizes in [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md). `commands`
 logs the pre-filter setpoint; `controller` logs what the PID used and did each tick
 (dt, attitude age, filtered setpoint, scaled P/I/D per axis, saturation bits, final
-elevon pulses); `pid_gains` is written per file and whenever
+elevon pulses, and `pwm_counter_us`, the PWM counter at the write: the pulses latch `5000 − pwm_counter_us` µs later); `attitude_data` is stamped with the sample's read time (the IMU's DATA_RDY wake), not the log time; `pid_gains` is written per file and whenever
 `FlightController::gains_version()` changes. `loop_stages` (flight loop only,
 `elle-app/src/stages.rs`) splits the tick into stages with mean/max per ~10 ticks,
 next to the DShot executor's interrupt time (`timing::DSHOT_EXEC_TIME`, recorded in
