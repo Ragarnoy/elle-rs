@@ -7,6 +7,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- Held-attitude limit 100 → 20 ms (operator behaviour, event codes): when no new
+  IMU sample arrives, Stabilized and AltitudeHold keep flying on the last one for
+  20 ms instead of 100 ms, then fall back to the sticks. New event 83 when a
+  sample is held for 2 ticks; event 80 now also fires once when the held sample
+  expires.
 - Anti-windup sees trim-limited elevon travel (tuning, both airframes): the mixer
   clamps each elevon and sets the saturation flags at the mix value where its
   trimmed pulse reaches 1000/2000 µs (eagle: left 0.9, right −0.8; dart: left 0.8,

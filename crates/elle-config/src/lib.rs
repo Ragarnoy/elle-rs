@@ -161,6 +161,13 @@ pub const YAW_DAMPER_MAX: f32 = 0.5;
 // IMU parameters
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C fast mode (MMC5616WA + BMP390)
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
+/// How long the controller keeps flying on the last attitude sample when no new
+/// one arrives. Core 1 publishes every 1 ms (longest wake seen 0.9 ms), so 20 ms
+/// (4 control ticks) only runs out when the IMU has really stopped; then the
+/// attitude controller falls back to the pilot's inputs (events 83, then 80).
+pub const ATTITUDE_HOLD_MAX_MS: u64 = 20;
+const _: () = assert!(ATTITUDE_HOLD_MAX_MS <= IMU_MAX_AGE_MS);
+const _: () = assert!(ATTITUDE_HOLD_MAX_MS >= 2 * CONTROL_LOOP_PERIOD_MS);
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
 // IMU SPI parameters (ICM-42686-P)
