@@ -68,7 +68,7 @@ so the TUI shows no satellites and no GNSS log lines at all, which looks exactly
 a hardware or reception failure.
 
 Feature flags (both binaries; they forward to `elle-app`):
-- `rpc-control` — postcard-RPC server over RTT. **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`), enforced by `compile_error!` in each `main.rs`.
+- `rpc-control` — postcard-RPC server over RTT. **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`), enforced by `compile_error!` in each `main.rs`. Also enables `elle-hardware/ulog-flash-count`: the one-off legacy flash ULog count ~5 s after boot that `ulog info` reports. It holds Core 0 for ~26 ms, so flight builds don't run it.
 - `rpc-rc` — in RPC mode, pilot commands come from the RC receiver (gesture arming, kill switch, RC failsafe) while the TUI monitors. **Requires `rpc-control`** (`compile_error!` in `elle-app`).
 - `defmt-logging` — defmt over RTT (default). The macros are always compiled; without this feature they are no-ops.
 - `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss` and the navigator (`elle-nav`, observation mode). `rpc-control` also enables `gnss-gsv` (satellites in view).

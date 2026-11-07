@@ -7,6 +7,9 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- Flight builds no longer count the legacy flash ULog queue ~5 s after boot
+  (timing): the count held Core 0 for ~26 ms (LOG_0065, `dt_us` 26 ms at 5.0 s), in
+  flight if armed and launched that early. RPC builds still count it for `ulog info`.
 - Held-attitude limit 100 → 20 ms (operator behaviour, event codes): when no new
   IMU sample arrives, Stabilized and AltitudeHold keep flying on the last one for
   20 ms instead of 100 ms, then fall back to the sticks. New event 83 when a

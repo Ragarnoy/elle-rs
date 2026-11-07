@@ -31,7 +31,7 @@ heapless = { workspace = true, optional = true }
 defmt = { workspace = true }
 
 [features]
-rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "heapless", "elle-hardware/gnss-gsv"]
+rpc-control = ["elle-system/rpc-control", "elle-rpc-icd", "postcard-rpc", "heapless", "elle-hardware/gnss-gsv", "elle-hardware/ulog-flash-count"]
 # RC/CRSF pilot commands in RPC mode (TUI keeps monitoring).
 rpc-rc = []
 # GNSS task, and the navigator that runs on it (observation mode).

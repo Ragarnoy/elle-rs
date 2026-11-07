@@ -70,7 +70,9 @@ pub static FLASH_RESPONSE_SIGNAL: Signal<CriticalSectionRawMutex, FlashResponse>
 /// ULog storage usage counters (readable from any context for `ulog info`).
 /// Nothing writes to the legacy flash ULog region any more (recordings go to
 /// SD), so these are counted once when the flash manager starts and only go
-/// down as `ulog extract` pops items; erase zeroes them.
+/// down as `ulog extract` pops items; erase zeroes them. The count runs in
+/// `ulog-flash-count` (RPC) builds only; elsewhere they stay 0, and nothing
+/// reads them.
 pub static ULOG_BYTES_USED: AtomicU32 = AtomicU32::new(0);
 pub static ULOG_ITEMS_STORED: AtomicU32 = AtomicU32::new(0);
 
@@ -157,7 +159,10 @@ impl<'a> SequentialFlashManager<'a> {
         // Count the legacy ULog queue once, but only after the boot-time loads
         // (PID profile, mag cal, level cal) are done: they wait on this task with
         // a 2 s timeout, and a long count ahead of them would drop the saved gains.
-        let mut ulog_counted = false;
+        // RPC builds only (`ulog-flash-count`): the count holds Core 0 for ~26 ms,
+        // and in a flight build, armed and launched within ~6 s of power-up, that
+        // would land in flight with nothing to read the result.
+        let mut ulog_counted = !cfg!(feature = "ulog-flash-count");
         loop {
             let request = if ulog_counted {
                 FLASH_REQUEST_SIGNAL.wait().await
