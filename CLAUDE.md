@@ -154,8 +154,11 @@ cal from flash, builds the `FlightController`, then hands it by `&mut` to the lo
 200 Hz: `CONTROL_LOOP_PERIOD_MS = 5` (matching the 5 ms servo frame) is the source of
 truth; `CONTROL_LOOP_FREQUENCY_HZ` and `CONTROL_LOOP_DT` derive from it, and so must
 anything time-based (ULog divisors, debounces, filter weights: write them in seconds or
-Hz, not ticks). The tick counter runs free (wrapping), so any divisor keeps a steady cadence. After a stall (flash write) the ticker resyncs
-instead of bursting (`support::resync_after_stall`).
+Hz, not ticks). The tick counter runs free (wrapping), so any divisor keeps a steady cadence. The ticker is phase-locked to the elevon PWM:
+`support::align_ticker_to_pwm` starts it so every tick falls `CONTROL_PWM_LEAD_US`
+(1.5 ms) before a PWM wrap, and the pulses a tick writes latch at that wrap (both run
+from the crystal at the same period, so the phase holds). After a stall (flash write)
+the ticker realigns instead of bursting (`support::resync_after_stall`).
 
 Each tick: read commands (CRSF in flight mode, `RPC_CMD_CHANNEL` + accumulated RPC state
 in RPC mode), kill switch, `FlightController::update` with the latest attitude, publish
@@ -181,7 +184,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 - PID outputs are scaled by `PID_SCALE` (5.0). `mix_elevons` reports `MixSaturation`; the PID freezes an axis's integral when its error would push further into a saturated direction (previous tick's flags) and always lets it unwind. Each elevon saturates at its **trimmed** stop (`ELEVON_LEFT_MIX_MAX` etc. in `elle-config`: where trim plus the 1000–2000 µs clamp ends its travel, eagle left 0.9 / right −0.8), not at ±1.
 - `PITCH_INVERT` / `ROLL_INVERT` apply to **stick input only** (`elle-control/src/commands.rs`); the PID compares against raw attitude. Anything fed to the autotuner must use raw attitude too.
 - Autotune (`elle-control/src/autotune.rs`): `update(pitch_deg, roll_deg, tick)` measures its own axis and enforces the ±20° envelope on both from settling on. Both loops call `support::guard_autotune` before it every tick; it aborts and restores gains once the run loses the aircraft (`check_run_conditions`: kill, disarm/failsafe, attitude controller off, no attitude). A run never changes axis. Crossings and relay flips use `AUTOTUNE_HYSTERESIS_DEG`; `validate_result` also caps the tuned axis's Kp/Kd change at `AUTOTUNE_MAX_GAIN_RATIO` (Ki is exempt, see its doc).
-- Elevons are on hardware PWM slice 6 at a 1 MHz count (`elle-hardware/src/pwm.rs`), 200 Hz frames (`REFRESH_INTERVAL_US` = 5 000; digital servos on both airframes); the compare latches at wrap, so output is always the latest command, ≤ 1 frame (5 ms) old.
+- Elevons are on hardware PWM slice 6 at a 1 MHz count (`elle-hardware/src/pwm.rs`), 200 Hz frames (`REFRESH_INTERVAL_US` = 5 000; digital servos on both airframes); the compare latches at wrap, so output is always the latest command, ≤ 1 frame (5 ms) old; with the tick phase-locked to the wrap it is ~1.3 ms (ULog `controller.pwm_counter_us`).
 
 ### IMU pipeline (`elle-hardware/src/imu/driver.rs`, `elle-control/src/attitude.rs`)
 

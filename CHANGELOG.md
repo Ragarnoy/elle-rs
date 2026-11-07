@@ -7,6 +7,10 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- Control tick phase-locked to the elevon PWM (timing): ticks start 1.5 ms
+  (`CONTROL_PWM_LEAD_US`) before a PWM wrap, so a command reaches the servos ~1.3 ms
+  after it is written on every boot, instead of anywhere from 0 to 5 ms (fixed per
+  boot, re-drawn at each stall resync). The ticker realigns after a stall.
 - ULog timing fields (ULog): `attitude_data` is stamped when the IMU sample was
   read (DATA_RDY wake) instead of when it was logged, so it now leads the tick's
   `controller` record by `att_age_us`; `att_age_us` also counts the SPI read and the

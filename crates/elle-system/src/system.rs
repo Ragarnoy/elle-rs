@@ -875,6 +875,12 @@ impl<'a> FlightController<'a> {
     }
 
     /// Get the last controller output snapshot
+    /// When the elevon PWM next latches its pulses (see `PwmOutputs::next_wrap`).
+    #[must_use]
+    pub fn next_pwm_wrap(&self) -> Instant {
+        self.pwm.next_wrap()
+    }
+
     #[must_use]
     pub const fn last_output(&self) -> &ControllerOutputSnapshot {
         &self.last_output

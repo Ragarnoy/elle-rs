@@ -161,6 +161,17 @@ pub const YAW_DAMPER_MAX: f32 = 0.5;
 // IMU parameters
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C fast mode (MMC5616WA + BMP390)
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
+
+/// The control tick is phase-locked to the elevon PWM: each tick starts this
+/// long before a PWM wrap, so the pulses it writes latch at that wrap instead of
+/// anywhere 0–5 ms later. It covers the ideal tick to the PWM write: ~0.2 ms
+/// typical, ~0.8 ms for the slowest intake + update seen, plus up to ~1 ms of
+/// late tick start (LOG_0065). A write after the wrap waits one more frame;
+/// ULog `controller.pwm_counter_us` shows those as small values.
+pub const CONTROL_PWM_LEAD_US: u64 = 1_500;
+const _: () = assert!(CONTROL_PWM_LEAD_US < REFRESH_INTERVAL_US as u64);
+// The lock holds only while the tick and the PWM frame have the same period.
+const _: () = assert!(CONTROL_LOOP_PERIOD_MS * 1000 == REFRESH_INTERVAL_US as u64);
 /// How long the controller keeps flying on the last attitude sample when no new
 /// one arrives. Core 1 publishes every 1 ms (longest wake seen 0.9 ms), so 20 ms
 /// (4 control ticks) only runs out when the IMU has really stopped; then the

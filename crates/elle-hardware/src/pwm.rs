@@ -9,11 +9,14 @@ use elle_config::*;
 use embassy_rp::Peri;
 use embassy_rp::peripherals::{PIN_12, PIN_13, PWM_SLICE6};
 use embassy_rp::pwm::{Config, Pwm};
+use embassy_time::{Duration, Instant};
 use fixed::FixedU16;
 use fixed::types::extra::U4;
 
 /// PWM counter rate: one count per microsecond, so compare values are pulse µs.
 const PWM_TICK_HZ: u32 = 1_000_000;
+// `next_wrap` reads the counter as microseconds.
+const _: () = assert!(PWM_TICK_HZ == 1_000_000);
 
 // The slice counter is 16-bit, and a pulse must fit inside its frame.
 const _: () = assert!(REFRESH_INTERVAL_US >= 1 && REFRESH_INTERVAL_US <= 1 << 16);
@@ -58,6 +61,15 @@ impl<'a> PwmOutputs<'a> {
         let counter = self.slice.counter();
         self.slice.set_config(&self.config);
         counter
+    }
+
+    /// When the counter next wraps, which is when pulses written now reach the
+    /// servos. The counter and the clock are read with interrupts off so the
+    /// DShot executor can't split them; one count is 1 µs.
+    #[must_use]
+    pub fn next_wrap(&self) -> Instant {
+        let (counter, now) = cortex_m::interrupt::free(|_| (self.slice.counter(), Instant::now()));
+        now + Duration::from_micros(u64::from(REFRESH_INTERVAL_US - u32::from(counter)))
     }
 
     /// Centre both elevons (trim included). Returns the PWM counter at the write.
