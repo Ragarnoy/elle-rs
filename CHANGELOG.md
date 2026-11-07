@@ -7,6 +7,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- Anti-windup sees trim-limited elevon travel (tuning, both airframes): the mixer
+  clamps each elevon and sets the saturation flags at the mix value where its
+  trimmed pulse reaches 1000/2000 µs (eagle: left 0.9, right −0.8; dart: left 0.8,
+  right 0.81) instead of at ±1, so the I term stops winding while an elevon sits on
+  its stop. Output pulses are unchanged (within the LUT's 1 µs step).
 - Eagle Stabilized pitch limit ±25° → ±15° (operator behaviour, tuning): full pitch
   stick now asks for 15°. LOG_0082's three departures all began from a 22–25°
   setpoint at a full-throttle launch, where the nose rides above the setpoint and
