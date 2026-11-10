@@ -72,6 +72,16 @@ today to that wall.
 | **0032** | **0.25** | 0.125 | 1 stab + Manual | First 0.25 hop |
 | **0033** | **0.25** | 0.125 | 4 hops | Longest air time, +16.7 m baro |
 | **0035** | **0.25** | 0.125 | 10 hops | Cleanest hold is the last one |
+| 0049 | 0.45 | 0.25 (Kd 0.07) | 21 s Stabilized | 2026-10-03. Quiet: roll-rate 3–40 Hz RMS 22–51 dps, > 100 dps 0–4% of the time |
+| 0050 | 0.45 | 0.25 (Kd 0.07) | 40 s Stabilized | ~4 Hz roll limit cycle, worse with throttle: 51 / 92 / 120 dps by throttle band (0.25 / 0.5 / 0.75+), > 100 dps 16% at high throttle |
+| 0052 | 0.45 | 0.25 (Kd **0.04**) | 123 s Stabilized | Level cal applied (pitch 9.2°). Same limit cycle: 54 / 82 / 101 dps, > 100 dps 7 / 12 / 15%. Pitch-up blocked 43% of the time, 12° pitch sag, roll-left blocked 36% |
+
+0050 → 0052: cutting roll Kd 0.07 → 0.04 did not remove the 3.9 Hz roll
+oscillation. In an episode the summed roll command passes ±1 and the elevons
+go stop to stop every ~125 ms; while they sit at the stops a smaller gain
+changes nothing, which may be why the cut had so little effect. The logs at roll Kp 0.125 / Kd 0.03 (0032–0035) stayed at 34–53 dps
+with > 100 dps under 4% of the time; the oscillation appeared with Kp 0.25.
+No GNSS fix in any of these logs, so throttle is the only speed proxy.
 
 0032 / 0033 / 0035 confirm the compiled 0.25 / 0.125 defaults flew.
 `IGNORE_PID_FLASH` did its job.

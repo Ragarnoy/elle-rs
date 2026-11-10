@@ -48,7 +48,7 @@ fn fly(corrupt_one: bool) -> Flown {
 }
 
 /// The header records (16 bytes, then `size: u16, type: u8, body`) minus the
-/// `elle_yaw` info: a log as firmware from before proposal 0004 wrote it.
+/// `elle_yaw` info: a log as firmware from before proposal 0006 wrote it.
 fn without_yaw_info(header: &[u8]) -> Vec<u8> {
     let mut out = header[..16].to_vec();
     let mut at = 16;
@@ -67,7 +67,7 @@ fn without_yaw_info(header: &[u8]) -> Vec<u8> {
 }
 
 /// `marker`: the header carries the `elle_yaw` info; `old_sign`: yaw is
-/// logged nose left positive. A log from before proposal 0004 has neither.
+/// logged nose left positive. A log from before proposal 0006 has neither.
 fn fly_with(corrupt_one: bool, marker: bool, old_sign: bool) -> Flown {
     let mut w = ULogWriter::new();
     w.initialize(Instant::from_micros(0)).unwrap();

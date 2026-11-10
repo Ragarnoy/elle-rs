@@ -101,7 +101,7 @@ pub struct Faithfulness {
     /// For mismatches: the largest angle difference to the nearest-in-time
     /// replayed sample, degrees.
     pub worst_deg: f32,
-    /// The log predates proposal 0004 (no `elle_yaw` info): its yaw was
+    /// The log predates proposal 0006 (no `elle_yaw` info): its yaw was
     /// negated before matching.
     pub legacy_yaw_sign: bool,
 }

@@ -82,7 +82,7 @@ stateDiagram-v2
 
 - The mode follows CH6 armed or not. In RPC mode it comes from `mode` commands and
   heading hold from `SetHeadingHold` (explicit target, event 132).
-- Manual: PID off. Stabilized: sticks set attitude (±25° pitch, ±45° roll). AltitudeHold:
+- Manual: PID off. Stabilized: sticks set attitude (pitch ±25° dart / ±15° eagle, ±45° roll). AltitudeHold:
   0°/0° setpoint, throttle manual.
 - Heading hold replaces the roll stick with a heading controller (bank ≤ 25°).
 

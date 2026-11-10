@@ -244,7 +244,7 @@ impl ULog {
             .and_then(|v| std::str::from_utf8(v).ok())
     }
 
-    /// Logged before proposal 0004: `attitude_data.yaw` and `yaw_rate` are
+    /// Logged before proposal 0006: `attitude_data.yaw` and `yaw_rate` are
     /// nose left positive, the opposite of what the pipeline now publishes.
     #[must_use]
     pub fn legacy_yaw_sign(&self) -> bool {

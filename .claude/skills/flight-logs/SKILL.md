@@ -81,7 +81,7 @@ Messages were added over time, so their presence dates a log:
 | `esc_health` | DShot timing work: idle telemetry, ESC re-configuration |
 | `core1_load` | Core 1 load logging (and the async mag/baro task) |
 | `nav` | navigation observation mode; `gnss_data` then comes once per solution (~5/s) with integer `lat_e7`/`lon_e7` and `pvt_active` (older logs: ~1/s, float `latitude`/`longitude`) |
-| info `elle_yaw` | yaw and yaw rate positive nose right (proposal 0004); without it they are nose left positive, so negate before comparing yaw across builds (`elle_log.py` does not) |
+| info `elle_yaw` | yaw and yaw rate positive nose right (proposal 0006); without it they are nose left positive, so negate before comparing yaw across builds (`elle_log.py` does not) |
 | mag value changes ≈ 10/s | the MMC5616WA `Cmm_freq_en` fix; ≈ 1/s means before it |
 
 When comparing two builds, ask the user to run both under the same procedure

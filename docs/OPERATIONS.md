@@ -106,17 +106,30 @@ Radio-side setup (LiteRadio 3 Pro / EdgeTX) is not in the repo.
 ## Flight modes
 
 - **Manual** — sticks drive the elevons directly; attitude controller off.
-- **Stabilized** — sticks command an attitude: up to ±25° pitch
-  (`STABILIZED_MAX_PITCH_DEG`) and ±45° roll (`STABILIZED_MAX_ROLL_DEG`). Setpoints are
+- **Stabilized** — sticks command an attitude: up to ±25° pitch on the dart, ±15° on
+  the eagle (`STABILIZED_MAX_PITCH_DEG`) and ±45° roll (`STABILIZED_MAX_ROLL_DEG`). Setpoints are
   smoothed and slewed at no more than 90°/s.
 - **AltitudeHold** — currently a **level hold** (0° pitch, 0° roll), throttle stays
   manual. There is no barometric altitude loop yet.
+
+### Launch (eagle)
+
+The eagle pitches up with power: at full throttle the nose rides 7–8° above the
+setpoint, and once it is high and slow the elevons can't bring it down (LOG_0082:
+three departures in five launches, each from full throttle with up-stick).
+
+- Launch at **60–70% throttle with the pitch stick centred**. Let it accelerate in
+  level flight before climbing, then climb gently and add throttle.
+- If a wing drops while slow, **centre the roll stick and lower the nose**. More
+  opposite roll on a stalled wing can deepen the stall.
+- There is no airspeed or stall protection; GNSS ground speed isn't available
+  either while GNSS has no fix (TODO, *Pending verification*).
 
 ### Heading hold (CH5, Stabilized only)
 
 Yaw is positive nose right: turning clockwise seen from above raises it, like a
 compass (pitch is positive nose up, roll positive right wing down). Before 0.4.0 it was
-the other way round, and heading hold banked away from its target (proposal 0004).
+the other way round, and heading hold banked away from its target (proposal 0006).
 
 Switching CH5 on while in Stabilized captures the current yaw as the target (event 130)
 and replaces the roll stick with a P heading controller: bank limited to ±25°
@@ -146,8 +159,10 @@ armed**. Collection runs only while disarmed. Each is stored separately: clearin
 ### Magnetometer (hard iron)
 
 Removes the PCB's own magnetic offset. Collect 300 samples (~30 s at 10 Hz) while
-rotating the aircraft through every orientation; each axis must span ≥ 5000 counts or the
-result is rejected. The offsets are subtracted before the AHRS; the TUI mag panel keeps
+rotating the aircraft through every orientation. The result is rejected (event 112) if any
+axis spans less than 5000 counts (too little rotation), or if the readings don't sit on an
+earth-sized sphere around the fitted centre (RMS radius outside 0.15–0.85 G: a magnet or
+moving part nearby, or the engines' field). Single-sample spikes are filtered out first. The offsets are subtracted before the AHRS; the TUI mag panel keeps
 showing **raw** counts, so check the result with `mag cal` and by watching yaw.
 
 - TUI: `mag cal start` · `mag cal clear` · `mag cal` (status)
@@ -289,6 +304,7 @@ when built with `defmt-logging`.
 | 45 | IMU catch-up: more than one sample drained per wake-up |
 | 46 / 47 | Gyro bias measured / failed |
 | 48 | I2C bus failed: mag and baro both taken offline |
+| 49 | Mag self-test failed at boot: the mag is not used (AHRS 6-DOF) |
 | 50 / 51 | First CRSF frame / CRSF UART error |
 | 61 / 62 | ULog flash erase failed / flash write timeout |
 | 63 | Flash write refused while armed |
@@ -298,6 +314,8 @@ when built with `defmt-logging`.
 | 90–94 | Autotune started / complete / aborted / safety abort / rejected |
 | 100–103 | PID saved / save failed / loaded / nothing saved |
 | 110–116 | Mag cal started, complete, failed, saved, cleared, loaded, nothing saved |
+| 117 / 118 | Mag field implausible (corrected magnitude outside 0.15–0.85 G) for 0.5 s, or the raw reading frozen for 2 s and still frozen 0.5 s later / fit again for 5 s. Reported only: the AHRS keeps fusing it (`MAG_GATE_ENFORCED` off) |
+| 119 | Mag spikes rejected (median-of-3; at most one event per 10 s) |
 | 120 | Double-tap detected |
 | 130 / 131 / 132 | Heading hold engaged / disengaged / target set |
 | 140 / 141 | GNSS configuration timeout / partially accepted |

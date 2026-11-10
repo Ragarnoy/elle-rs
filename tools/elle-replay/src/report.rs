@@ -68,7 +68,7 @@ pub struct FaithfulnessReport {
     pub unchecked: u64,
     pub worst_deg: f32,
     pub ok: bool,
-    /// The log predates the yaw sign change (proposal 0004); its yaw was
+    /// The log predates the yaw sign change (proposal 0006); its yaw was
     /// negated to compare.
     pub legacy_yaw_sign: bool,
 }

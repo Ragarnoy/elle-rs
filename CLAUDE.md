@@ -174,7 +174,7 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 
 ### Controller (`elle-system/src/system.rs`, `elle-control`)
 
-- Stabilized: stick → attitude setpoint (±25° pitch, ±45° roll), EMA with time constant `SETPOINT_FILTER_TAU_S` (68 ms; `SETPOINT_FILTER_ALPHA` is derived per tick) with each step capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). The autotune override bypasses both.
+- Stabilized: stick → attitude setpoint (pitch ±25° dart / ±15° eagle, ±45° roll), EMA with time constant `SETPOINT_FILTER_TAU_S` (68 ms; `SETPOINT_FILTER_ALPHA` is derived per tick) with each step capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). The autotune override bypasses both.
 - AltitudeHold is a 0°/0° level hold for now.
 - Heading hold (`elle-control/src/heading.rs`) replaces the roll setpoint in Stabilized.
 - Yaw damper (`elle-control/src/yaw_damper.rs`, proposal [0001](docs/changes/0001-eagle-yaw-damper.md)): in Stabilized and AltitudeHold, the yaw rate goes through a washout (`YAW_DAMPER_WASHOUT_S`) and a gain, is clamped to `YAW_DAMPER_MAX`, and is added to the **differential thrust** yaw only, never to `mix_elevons`. It resets whenever the PID is off, at low throttle, and with no attitude. `YAW_DAMPER_GAIN` is 0 on both airframes (inert) until the proposal's gate 1.
@@ -197,10 +197,11 @@ on: [`docs/ATTITUDE.md`](docs/ATTITUDE.md), TEST_PLAN Part 7.
 2. Gyro bias (`elle_control::gyro_bias`) is measured over the first still second and subtracted from every sample. `IMU_STATUS.calibrated` means "bias measured".
 3. Level-cal mount quaternion, then the per-airframe board orientation (`BOARD_YAW_DEG`: eagle 180°, dart 0°; proposal 0003), rotate accel, gyro and (offset-corrected) mag into the airframe frame before the AHRS. The pipeline holds the composed rotation (`mount` = board × level; `set_level_mount`); the stored level cal is the raw-sensor tilt alone.
 4. Madgwick AHRS (uf-ahrs) at 1 kHz, 9-DOF once a mag reading exists; a zero accel or mag vector falls back to fewer sensors, so every sample is integrated; on a mag I2C error `has_mag` is cleared so a stale vector is never fused.
-5. **Roll, roll rate, yaw and yaw rate are negated** after the quaternion → Euler conversion: roll for this PCB orientation; yaw because the AHRS frame is z-up (nose left positive) and the firmware publishes nose right positive (proposal 0004). Each ULog carries the info entry `elle_yaw` = `nose_right_positive`; logs without it have the old yaw sign.
+5. **Roll, roll rate, yaw and yaw rate are negated** after the quaternion → Euler conversion: roll for this PCB orientation; yaw because the AHRS frame is z-up (nose left positive) and the firmware publishes nose right positive (proposal 0006). Each ULog carries the info entry `elle_yaw` = `nose_right_positive`; logs without it have the old yaw sign.
 6. Rates published for the PID pass through a 2nd-order Butterworth low-pass (`GYRO_RATE_LPF_HZ` = 30); the AHRS integrates unfiltered gyro.
 
 Any I2C error on mag or baro takes **both** off the bus (`i2c_bus_failed`, event 48).
+Mag health (`elle_control::mag`, in the mag task before `MAG_FIELD`): a median-of-3 spike filter (event 119) feeding the hard-iron calibration (rejects too little rotation or a non-earth-sized field), and `MagHealth`, which judges the corrected field (0.15–0.85 G, not frozen) and reports 117/118. Only with `MAG_GATE_ENFORCED` (off until a proposal) does the AHRS get the despiked field and lose it when unfit; off, it fuses the raw corrected reading as before: the dart's field leaves the band for much of its flights. The boot runs the MMC5616WA's saturation self-test (datasheet p19); a failure keeps the mag off (event 49).
 Mag ~10 Hz, baro ~20 Hz (`MAG_READ_INTERVAL_TICKS` / `BARO_READ_INTERVAL_TICKS` at 1 kHz). The MMC5616WA runs in continuous mode at `MAG_ODR_HZ` (50; datasheet maximum 75 Hz at the default bandwidth with auto SET/RESET), checked by reading ODR back at init.
 They run in their own task, so bus transfers never hold up a 1 kHz sample, and every I2C operation has a 20 ms timeout (a stuck bus disables both instead of hanging Core 1). `elle_hardware::timing::CORE1_LOAD` accumulates IMU busy time per wake, the longest mag and baro read durations and the largest FIFO drain; the control loop logs and resets it about once a second as ULog `core1_load`.
 

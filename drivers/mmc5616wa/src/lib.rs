@@ -92,7 +92,7 @@ impl<I: I2c> Mmc5616wa<I> {
     /// Check whether a magnetic measurement is ready by reading Status1.
     pub fn data_ready(&mut self) -> Result<bool, Error<I::Error>> {
         let status = interface::read_reg(&mut self.i2c, self.addr, STATUS1)?;
-        Ok(status & MEAS_M_DONE != 0)
+        Ok(status & MEAS_M_DONE_INT != 0)
     }
 
     /// Perform a one-shot magnetic measurement with automatic SET/RESET.
@@ -113,7 +113,7 @@ impl<I: I2c> Mmc5616wa<I> {
         )?;
 
         // Poll for measurement done
-        self.poll_status(MEAS_M_DONE, delay)?;
+        self.poll_status(MEAS_M_DONE_INT, delay)?;
 
         // Burst-read output registers
         let raw = self.read_raw_mag()?;
@@ -139,16 +139,16 @@ impl<I: I2c> Mmc5616wa<I> {
 
         // Measure after SET
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, TM_M, 0)?;
-        self.poll_status(MEAS_M_DONE, delay)?;
+        self.poll_status(MEAS_M_DONE_INT, delay)?;
         let set_raw = self.read_raw_mag()?;
 
         // RESET pulse
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, DO_RESET, 0)?;
         delay.delay_ms(1); // tSR
 
-        // Measure after RESET (MEAS_M_DONE was cleared by set_raw read above)
+        // Measure after RESET (MEAS_M_DONE_INT was cleared by set_raw read above)
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, TM_M, 0)?;
-        self.poll_status(MEAS_M_DONE, delay)?;
+        self.poll_status(MEAS_M_DONE_INT, delay)?;
         let reset_raw = self.read_raw_mag()?;
 
         // H = (SET - RESET) / 2
@@ -168,7 +168,7 @@ impl<I: I2c> Mmc5616wa<I> {
         interface::modify_ctrl0(&mut self.i2c, self.addr, &mut self.cache, TM_T, 0)?;
 
         // Poll for temperature done
-        self.poll_status(MEAS_T_DONE, delay)?;
+        self.poll_status(MEAS_T_DONE_INT, delay)?;
 
         interface::read_reg(&mut self.i2c, self.addr, TOUT)
     }
@@ -415,7 +415,7 @@ mod tests {
             // Poll status: first poll returns not done
             I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![0x00]),
             // Second poll returns done
-            I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![MEAS_M_DONE]),
+            I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![MEAS_M_DONE_INT]),
             // Burst read 9 bytes from XOUT0
             I2cTrans::write_read(
                 DEFAULT_ADDRESS,
@@ -442,7 +442,7 @@ mod tests {
         // Y and Z at null
         let expectations = [
             I2cTrans::write(DEFAULT_ADDRESS, vec![CTRL0, TM_M | AUTO_SR_EN]),
-            I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![MEAS_M_DONE]),
+            I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![MEAS_M_DONE_INT]),
             I2cTrans::write_read(
                 DEFAULT_ADDRESS,
                 vec![XOUT0],
@@ -467,7 +467,7 @@ mod tests {
             // Trigger: write ctrl0 = TM_T = 0x02
             I2cTrans::write(DEFAULT_ADDRESS, vec![CTRL0, TM_T]),
             // Poll status done
-            I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![MEAS_T_DONE]),
+            I2cTrans::write_read(DEFAULT_ADDRESS, vec![STATUS1], vec![MEAS_T_DONE_INT]),
             // Read Tout
             I2cTrans::write_read(DEFAULT_ADDRESS, vec![TOUT], vec![125]),
         ];

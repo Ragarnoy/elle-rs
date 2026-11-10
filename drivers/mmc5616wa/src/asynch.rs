@@ -69,6 +69,58 @@ impl<I: I2c> Mmc5616waAsync<I> {
         Ok(())
     }
 
+    /// Read Product ID 1 (0x11 on this part).
+    pub async fn product_id(&mut self) -> Result<u8, Error<I::Error>> {
+        let mut id = [0u8];
+        self.read_regs(PRODUCT_ID, &mut id).await?;
+        Ok(id[0])
+    }
+
+    /// Read Status1.
+    pub async fn status(&mut self) -> Result<u8, Error<I::Error>> {
+        let mut s = [0u8];
+        self.read_regs(STATUS1, &mut s).await?;
+        Ok(s[0])
+    }
+
+    /// Saturation self-test (datasheet v1.6 p. 19): thresholds at 80 % of the
+    /// factory values, one measurement with Auto_st_en, then `Sat_sensor` low
+    /// means pass. Run it before continuous mode. Waits up to ~20 ms for the
+    /// measurement; [`SelfTest::completed`] says whether it reported done.
+    pub async fn self_test(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<SelfTest, Error<I::Error>> {
+        let mut factory = [0u8; 3];
+        self.read_regs(ST_X, &mut factory).await?;
+        for (i, v) in factory.iter().enumerate() {
+            let threshold = (u16::from(*v) * 4 / 5) as u8;
+            self.write_reg(ST_X_TH + i as u8, threshold).await?;
+        }
+        // TM_M and Auto_st_en both self-clear; the shadow keeps neither.
+        self.write_reg(CTRL0, self.cache.ctrl0 | TM_M | AUTO_ST_EN)
+            .await?;
+        // One measurement is 6.6 ms at BW00; reading Status1 clears the
+        // done flag, so the read that sees it also gives Sat_sensor.
+        let mut status = 0;
+        for _ in 0..10 {
+            delay.delay_ms(2).await;
+            status = self.status().await?;
+            if status & MEAS_M_DONE_INT != 0 {
+                return Ok(SelfTest {
+                    factory,
+                    status,
+                    completed: true,
+                });
+            }
+        }
+        Ok(SelfTest {
+            factory,
+            status,
+            completed: false,
+        })
+    }
+
     /// Start continuous measurement mode: write the ODR, enable CMM_FREQ_EN and
     /// AUTO_SR_EN in Ctrl0, then CMM_EN in Ctrl2. Returns `BadParam` for an ODR
     /// of 0 or above what the current bandwidth sustains with automatic

@@ -96,6 +96,8 @@ pub(crate) const EVT_GYRO_BIAS_DONE: u16 = 46;
 pub(crate) const EVT_GYRO_BIAS_FAILED: u16 = 47;
 /// An I2C0 error: the bus is assumed stuck, so mag and baro are both disabled.
 pub(crate) const EVT_I2C_BUS_FAILED: u16 = 48;
+/// The magnetometer failed its saturation self-test at boot: it is not used.
+pub(crate) const EVT_MAG_SELFTEST_FAILED: u16 = 49;
 
 // CRSF receiver (50–59)
 pub(crate) const EVT_CRSF_RX_FIRST_FRAME: u16 = 50;
@@ -133,7 +135,7 @@ pub const EVT_PID_SAVE_FAILED: u16 = 101;
 pub const EVT_PID_LOADED: u16 = 102;
 pub const EVT_PID_LOAD_EMPTY: u16 = 103;
 
-// Mag calibration (110–119)
+// Magnetometer calibration and health (110–119)
 pub const EVT_MAG_CAL_STARTED: u16 = 110;
 pub const EVT_MAG_CAL_COMPLETE: u16 = 111;
 pub const EVT_MAG_CAL_FAILED: u16 = 112;
@@ -141,6 +143,13 @@ pub const EVT_MAG_CAL_SAVED: u16 = 113;
 pub const EVT_MAG_CAL_CLEARED: u16 = 114;
 pub const EVT_MAG_CAL_LOADED: u16 = 115;
 pub const EVT_MAG_CAL_LOAD_EMPTY: u16 = 116;
+/// Corrected mag field implausible or stale for `MAG_DROP_S`. The AHRS stops
+/// fusing it only with `MAG_GATE_ENFORCED` (off: reported only).
+pub const EVT_MAG_DROPPED: u16 = 117;
+/// The field is fit again after a 117 (`MAG_RESTORE_S` plausible).
+pub const EVT_MAG_RESTORED: u16 = 118;
+/// Single-sample mag spikes were replaced by the median (at most every 10 s).
+pub const EVT_MAG_SPIKES: u16 = 119;
 
 // Tap detection (120–129)
 pub(crate) const EVT_DOUBLE_TAP: u16 = 120;

@@ -7,7 +7,7 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Operator behaviour
-- **Breaking:** yaw is now positive nose right (proposal 0004). The firmware
+- **Breaking:** yaw is now positive nose right (proposal 0006). The firmware
   published the AHRS's z-up yaw, where nose right is negative, while heading hold
   and the yaw damper take nose right positive: heading hold banked *away* from its
   captured heading, and the radio's heading (CRSF attitude) turned
@@ -32,6 +32,44 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   rejected on every boot ("invalid data in flash"), so it ran without mag cal and
   its yaw locked onto the uncorrected field. The bound is now the sensor's full
   scale, and a rejection logs the values.
+
+### Changed
+- Eagle Stabilized pitch limit ±25° → ±15° (operator behaviour, tuning): full pitch
+  stick now asks for 15°. LOG_0082's three departures all began from a 22–25°
+  setpoint at a full-throttle launch, where the nose rides above the setpoint and
+  full nose-down elevon can't recover it. The dart keeps ±25°.
+- Eagle elevon trim (tuning, operator behaviour, every mode): left 100 → 50 µs,
+  right −50 → 100 µs, so neutral is 25 µs nose-down and 75 µs left roll instead of
+  75 µs nose-up. LOG_0082 held ~100 µs nose-down and ~50 µs left roll in level
+  flight, gliding included.
+
+### Added
+- Magnetometer health (operator behaviour, event codes): boot self-test (event 49,
+  mag not used on failure); median-of-3 spike filter (event 119) ahead of the
+  calibration and the health check;
+  `MagHealth` reports a corrected field outside 0.15–0.85 G or frozen for 2.5 s
+  (117) and its recovery (118). Reported only: the AHRS fuses the raw corrected
+  mag exactly as before (`MAG_GATE_ENFORCED` off) until a proposal decides from
+  flight logs.
+
+### Changed
+- Dart roll Kd 0.07 → 0.04 (tuning): 0.25 / 0.012 / 0.07 flew a ~4 Hz roll limit
+  cycle that grows with throttle (LOG_0050). It flew again at 0.04 (LOG_0052)
+  unchanged; see docs/DART_PID.md. Roll Kp 0.25 → 0.18 for the next flight
+  (0.125 flew without the oscillation). Pitch unchanged.
+- Dart elevon trim (tuning, operator behaviour): both elevons 95 µs more nose-up
+  at neutral, in every mode. LOG_0052 held ~257 µs nose-up in calm Stabilized
+  flight and was at the nose-up limit 43% of the time.
+
+### Fixed
+- Mag calibration accepted a disturbed field: it now also requires the readings to
+  sit on an earth-sized sphere (RMS radius 0.15–0.85 G) around the fitted centre,
+  and filters spikes first. Dart logs had four "successful" calibrations with a
+  3.3–7.6 G radius; the eagle's spikes (~(0, +5000, −6000) counts, 2–3 % of reads)
+  alone satisfied the old 5000-count span check.
+- MMC5616WA status masks: `MEAS_M_DONE` / `MEAS_T_DONE` named bits 0 and 1, which
+  are the I3C `_int` flags (datasheet p12). Renamed to `*_INT` (one-shot polling
+  unchanged); bits 4–7 added under their real names.
 - Eagle attitude signs (operator behaviour, proposal 0003): pitch and roll both read
   reversed because the eagle's controller is mounted turned round, and the firmware
   had one sensor mapping for both airframes. New per-platform `BOARD_YAW_DEG`

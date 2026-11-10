@@ -1,4 +1,4 @@
-# 0004: Yaw sign: positive nose right
+# 0006: Yaw sign: positive nose right
 
 | | |
 |-|-|

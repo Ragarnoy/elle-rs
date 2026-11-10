@@ -122,7 +122,7 @@ PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
 | 1 | Power up flat and still, leave it 10 min disarmed | Pitch and roll within ±0.5° of the pre-change reading on the same surface, drift < 0.5° over the 10 min (`$PY $LOG sensors`) | | [ ] |
 | 2 | Tilt nose up, nose down, right wing down, left wing down, ~20° each, on **each airframe** | Pitch positive nose up, roll positive right wing down (CRSF attitude on the radio, then `attitude_data`). Eagle 2026-10-02 before proposal 0003: pitch and roll both reversed (board turned round) | | [ ] |
 | 3 | Part 1.3 in full (Stabilized, armed, in hand) | All seven rows as before: corrects against the tilt, D damps quick rotations | | [ ] |
-| 4 | Rotate 360° in yaw on the bench, slowly, **clockwise seen from above** (nose right); then stop facing N, E, S, W by a phone compass | Yaw rate positive and yaw rising through the turn (proposal 0004; before it, the eagle read −368.6° on 2026-10-02); returns to within ~5° of the start; no jump when the mag reading updates. Note the yaw at each compass heading (where zero is) | | [ ] |
+| 4 | Rotate 360° in yaw on the bench, slowly, **clockwise seen from above** (nose right); then stop facing N, E, S, W by a phone compass | Yaw rate positive and yaw rising through the turn (proposal 0006; before it, the eagle read −368.6° on 2026-10-02); returns to within ~5° of the start; no jump when the mag reading updates. Note the yaw at each compass heading (where zero is) | | [ ] |
 
 ### 0.2 Timing and logging (normal flight build)
 
@@ -218,7 +218,7 @@ targets, or the `yaw_damp` column of ULog `controller`.
 If rows 1 and 2 are reversed, the yaw-rate sign is wrong. **Do not fly.** That is
 positive feedback. The sign is set in `AttitudePipeline::fuse`
 (`crates/elle-control/src/attitude.rs`), not in the damper; it was wrong before
-proposal 0004 and is checked by 0.1 row 4. Check heading hold (6.5) too, since it
+proposal 0006 and is checked by 0.1 row 4. Check heading hold (6.5) too, since it
 uses the same yaw convention.
 
 ### 1.3 Stabilized PID Direction (Stabilized mode, armed)
@@ -274,8 +274,8 @@ Hold board in hand, armed.
 | # | Stick input                           | Expected servo response                         | Pass |
 |---|---------------------------------------|-------------------------------------------------|------|
 | 1 | CH6 mid (Stabilized), sticks centered | Elevons hold trim, PID corrects for hand tilt   | [x]  |
-| 2 | Full pitch stick forward              | Elevons deflect to nose-down attitude (~25°)    | [x]  |
-| 3 | Full pitch stick back                 | Elevons deflect to nose-up (~25°)               | [x]  |
+| 2 | Full pitch stick forward              | Elevons deflect to nose-down attitude (~25°; eagle ~15°) | [x]  |
+| 3 | Full pitch stick back                 | Elevons deflect to nose-up (~25°; eagle ~15°)   | [x]  |
 | 4 | Full roll stick left                  | Elevons split for left roll (~45°)              | [x]  |
 | 5 | Full roll stick right                 | Elevons split for right roll (~45°)             | [x]  |
 | 6 | Release sticks (center)               | Elevons return to level hold (0°/0°)            | [x]  |
@@ -474,7 +474,7 @@ Flash `--no-default-features --features rpc-control,gnss`, launch TUI.
 |---|---------------------------|-------------------------------------------|------|
 | 1 | `mode stab`, `arm`        | Attitude controller active                | [ ]  |
 | 2 | `elevon 0 0`              | Setpoint near 0/0, PID corrections small  | [ ]  |
-| 3 | `elevon 50 0`             | Pitch setpoint ~12.5° (50% of 25°)        | [ ]  |
+| 3 | `elevon 50 0`             | Pitch setpoint ~12.5° (50% of 25°; eagle ~7.5°) | [ ]  |
 | 4 | `elevon 0 50`             | Roll setpoint ~22.5° (50% of 45°)         | [ ]  |
 | 5 | `elevon 0 0` → tilt board | PID corrections respond to attitude error | [ ]  |
 
@@ -630,6 +630,18 @@ does nothing there):
 | 2 | Yaw the nose ~30° right by hand, then ~30° left | Nose right: left bank commanded (roll setpoint < 0 in ULog `controller`); nose left: right bank. Back toward the captured heading, ≤ 25° | [ ]  |
 | 3 | Switch CH6 to Manual                     | Event 131, direct control                                    | [ ]  |
 | 4 | Back to Stabilized with CH5 still on     | Event 130 again, new heading captured                        | [ ]  |
+
+### 6.5a Magnetometer Health (rows 1–2: flight build, defmt log; rows 3–6: RPC build, events)
+
+| # | Action | Expected | Pass |
+|---|--------|----------|------|
+| 1 | Boot the **dart** | defmt: `MMC5616WA: initialized … self-test factory […], status 0x..` with Sat_sensor (bit 5) clear; no event 49. Record the status byte | [x] 2026-10-03: factory [95, 117, 121], status 0x51 |
+| 2 | Boot the **eagle** | Self-test result recorded (pass or event 49): it sits in a ~15 G field | [ ] |
+| 3 | Dart, calibrated, still on the bench | No event 117 within 10 s | [x] 2026-10-03: none in ~4 min (RPC build) |
+| 4 | Eagle, only if row 2 passed | Event 117 within ~1 s of boot ("implausible"; ~1–3 G with the boot cal-bound fix from `yaw-sign` merged, ~17 G without it), still fused (gate observing) | [ ] |
+| 5 | Mag cal with the aircraft only tilted, not rotated | Event 112 (rotation) | [ ] |
+| 6 | Mag cal with a magnet (phone, tool) moved near the board throughout | Event 112 (field) | [ ] |
+| 7 | Bench: does Status1 bit 6 (`Meas_m_done`) toggle in continuous mode? | Recorded, for reading only completed conversions (spike root cause) | [ ] |
 
 ### 6.6 I2C Fault
 

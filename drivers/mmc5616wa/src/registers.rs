@@ -21,16 +21,38 @@ pub const ODR: u8 = 0x1A;
 pub const CTRL0: u8 = 0x1B;
 pub const CTRL1: u8 = 0x1C;
 pub const CTRL2: u8 = 0x1D;
+/// Self-test thresholds, X/Y/Z (write-only, p. 15).
+pub const ST_X_TH: u8 = 0x1E;
+/// Factory self-test values, X/Y/Z (p. 16).
+pub const ST_X: u8 = 0x27;
 
 // --- Identity ---
 pub const CHIP_ID: u8 = 0x21;
 /// Expected value for Chip ID register (Rev I).
 pub const CHIP_ID_VALUE: u8 = 0xD2;
 pub const PRODUCT_ID: u8 = 0x39;
+/// Product ID 1 reset value (p. 16).
+pub const PRODUCT_ID_VALUE: u8 = 0x11;
 
-// --- Status1 bit masks ---
-pub const MEAS_M_DONE: u8 = 0x01;
-pub const MEAS_T_DONE: u8 = 0x02;
+// --- Status1 bit masks (datasheet v1.6 p. 12) ---
+/// Magnetic measurement done (I3C IBI flag). Cleared by a new Take Measurement
+/// command, by reading the data registers, or by reading Status1: the right
+/// flag for polling a one-shot measurement.
+pub const MEAS_M_DONE_INT: u8 = 1 << 0;
+/// Temperature measurement done (I3C IBI flag), cleared like
+/// [`MEAS_M_DONE_INT`].
+pub const MEAS_T_DONE_INT: u8 = 1 << 1;
+/// OTP memory read successfully (power-up, software reset).
+pub const OTP_READ_DONE: u8 = 1 << 4;
+/// Self-test signal: stays low once the device passes the self-test.
+pub const SAT_SENSOR: u8 = 1 << 5;
+/// A magnetic measurement is done and unread; cleared only by reading the
+/// data registers. (These masks used to name bits 0 and 1 `MEAS_M_DONE` /
+/// `MEAS_T_DONE`.)
+pub const MEAS_M_DONE: u8 = 1 << 6;
+/// A temperature measurement is done and unread; cleared only by reading the
+/// temperature register.
+pub const MEAS_T_DONE: u8 = 1 << 7;
 
 // --- Ctrl0 (Internal Control 0) bit masks ---
 // Datasheet v1.7 (2025-12-22), p. 13. Bit 2 (Start_MDT) is factory use only.
