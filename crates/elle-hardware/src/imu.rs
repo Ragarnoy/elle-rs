@@ -78,6 +78,10 @@ pub fn is_attitude_valid(attitude: &AttitudeData, max_age: embassy_time::Duratio
     attitude.timestamp != Instant::from_ticks(0) && attitude.timestamp.elapsed() < max_age
 }
 
+/// Largest raw magnetometer count either way: the MMC5616WA's 20-bit output,
+/// signed about its null field (2^19). A hard-iron offset can be anywhere in it.
+pub const MAG_FULL_SCALE_COUNTS: f32 = mmc5616wa::registers::NULL_FIELD_OUTPUT as f32;
+
 /// Magnetometer data (populated by MMC5616WA).
 pub static MAG: SignalCache<MagReading> = SignalCache::new(MagReading { x: 0, y: 0, z: 0 });
 
