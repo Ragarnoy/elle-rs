@@ -112,6 +112,9 @@ pub struct ControllerOutputSnapshot {
     /// Yaw damper command added to the differential thrust (normalized yaw,
     /// positive slows the left engine); 0 when the damper is not running.
     pub yaw_damp: f32,
+    /// Elevon PWM counter when this tick's pulses were written, µs into the
+    /// frame; they latch at the next wrap (`REFRESH_INTERVAL_US - counter` later).
+    pub pwm_counter_us: u16,
 }
 
 pub struct FlightController<'a> {
@@ -122,6 +125,10 @@ pub struct FlightController<'a> {
     yaw_damper: YawDamper,
     last_packet_time: Instant,
     last_attitude: Option<AttitudeData>,
+    /// Consecutive ticks flown on `last_attitude` because no new sample came.
+    held_ticks: u32,
+    /// The held sample expired (EVT_ATTITUDE_STALE sent); cleared by a new sample.
+    attitude_dropped: bool,
     // Smoothed setpoints for attitude hold (in radians for consistency)
     filtered_pitch_setpoint_rad: f32,
     filtered_roll_setpoint_rad: f32,
@@ -176,6 +183,8 @@ impl<'a> FlightController<'a> {
             yaw_damper: YawDamper::from_config(),
             last_packet_time: Instant::now(),
             last_attitude: None,
+            held_ticks: 0,
+            attitude_dropped: false,
             filtered_pitch_setpoint_rad: 0.0,
             filtered_roll_setpoint_rad: 0.0,
             last_saturation: MixSaturation::default(),
@@ -373,7 +382,7 @@ impl<'a> FlightController<'a> {
 
         let elevon_outputs = mix_elevons_direct_lut(channels);
         self.last_saturation = elevon_outputs.saturation;
-        let (left_pulse, right_pulse) = self
+        let (left_pulse, right_pulse, pwm_counter_us) = self
             .pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
@@ -402,8 +411,43 @@ impl<'a> FlightController<'a> {
             elevon_left_pulse_us: left_pulse,
             elevon_right_pulse_us: right_pulse,
             yaw_damp: 0.0,
+            pwm_counter_us,
             ..self.last_output
         };
+    }
+
+    /// Report flying on a held attitude sample: once when it lasts a second
+    /// tick (EVT_ATTITUDE_HELD), once when it expires and the attitude
+    /// controller falls back to the pilot's inputs (EVT_ATTITUDE_STALE). Only
+    /// while the controller is on: in Manual or disarmed nothing uses it.
+    fn track_attitude_hold(&mut self, fresh: bool, cached: Option<&AttitudeData>, held: bool) {
+        if fresh {
+            self.held_ticks = 0;
+            self.attitude_dropped = false;
+            return;
+        }
+        let age_ms = cached.map_or(0, |a| a.timestamp.elapsed().as_millis());
+        if held {
+            self.held_ticks = self.held_ticks.saturating_add(1);
+            if self.held_ticks == 2 && self.attitude_controller.enabled {
+                elle_hardware::elle_event!(
+                    warn,
+                    elle_hardware::event::EVT_ATTITUDE_HELD,
+                    "No new attitude for 2 ticks; holding a {} ms old sample",
+                    age_ms
+                );
+            }
+        } else if cached.is_some() && !self.attitude_dropped {
+            self.attitude_dropped = true;
+            if self.attitude_controller.enabled {
+                elle_hardware::elle_event!(
+                    warn,
+                    elle_hardware::event::EVT_ATTITUDE_STALE,
+                    "Held attitude expired ({} ms); attitude control off until IMU returns",
+                    age_ms
+                );
+            }
+        }
     }
 
     fn update_normalized(&mut self, norm: &NormalizedCommands, attitude: Option<&AttitudeData>) {
@@ -423,14 +467,15 @@ impl<'a> FlightController<'a> {
             && self.core1_health.is_healthy;
 
         // The cached sample covers ticks where no new attitude arrived, but only
-        // within the same freshness limit the caller applies. Without the age
-        // check a dead IMU would leave the PID flying on a frozen attitude (the
-        // IMU's own failure marker is rejected upstream, and this fallback would
-        // quietly bring back the last good sample instead).
+        // for `ATTITUDE_HOLD_MAX_MS`. Without the age check a dead IMU would
+        // leave the PID flying on a frozen attitude (the IMU's own failure
+        // marker is rejected upstream, and this fallback would quietly bring
+        // back the last good sample instead).
         let cached = self.last_attitude;
         let fresh_cached = cached
             .as_ref()
-            .filter(|a| is_attitude_valid(a, Duration::from_millis(IMU_MAX_AGE_MS)));
+            .filter(|a| is_attitude_valid(a, Duration::from_millis(ATTITUDE_HOLD_MAX_MS)));
+        self.track_attitude_hold(attitude.is_some(), cached.as_ref(), fresh_cached.is_some());
 
         // Compute setpoint from mode, with autotune override taking precedence
         let mut heading_target_deg = 0.0f32;
@@ -595,7 +640,7 @@ impl<'a> FlightController<'a> {
         // Apply final outputs
         let elevon_outputs = mix_elevons(&final_inputs);
         self.last_saturation = elevon_outputs.saturation;
-        let (left_pulse, right_pulse) = self
+        let (left_pulse, right_pulse, pwm_counter_us) = self
             .pwm
             .set_elevons_with_trim(elevon_outputs.left_us, elevon_outputs.right_us);
 
@@ -637,6 +682,7 @@ impl<'a> FlightController<'a> {
             elevon_left_pulse_us: left_pulse,
             elevon_right_pulse_us: right_pulse,
             yaw_damp,
+            pwm_counter_us,
         };
     }
 
@@ -697,7 +743,7 @@ impl<'a> FlightController<'a> {
     fn hold_failsafe(&mut self) {
         self.attitude_controller.enabled = false;
         self.yaw_damper.reset();
-        self.pwm.set_safe_positions();
+        let pwm_counter_us = self.pwm.set_safe_positions();
         self.last_output = ControllerOutputSnapshot {
             pitch_correction: 0.0,
             roll_correction: 0.0,
@@ -712,6 +758,7 @@ impl<'a> FlightController<'a> {
             elevon_left_pulse_us: ELEVON_LEFT_CENTER_US,
             elevon_right_pulse_us: ELEVON_RIGHT_CENTER_US,
             yaw_damp: 0.0,
+            pwm_counter_us,
             ..self.last_output
         };
     }
@@ -828,6 +875,12 @@ impl<'a> FlightController<'a> {
     }
 
     /// Get the last controller output snapshot
+    /// When the elevon PWM next latches its pulses (see `PwmOutputs::next_wrap`).
+    #[must_use]
+    pub fn next_pwm_wrap(&self) -> Instant {
+        self.pwm.next_wrap()
+    }
+
     #[must_use]
     pub const fn last_output(&self) -> &ControllerOutputSnapshot {
         &self.last_output

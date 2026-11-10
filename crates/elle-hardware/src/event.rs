@@ -119,6 +119,8 @@ pub const EVT_CORE1_RESTORED: u16 = 71;
 pub const EVT_ATTITUDE_STALE: u16 = 80;
 pub const EVT_ULOG_RC_ON: u16 = 81;
 // 82 retired: ULog RC switch off (recording runs until power-off, no RC switch)
+/// The attitude controller is flying on a held sample: no new attitude for 2 ticks.
+pub const EVT_ATTITUDE_HELD: u16 = 83;
 
 // Autotune (90–99)
 pub const EVT_AUTOTUNE_STARTED: u16 = 90;

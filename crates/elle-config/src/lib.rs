@@ -161,6 +161,24 @@ pub const YAW_DAMPER_MAX: f32 = 0.5;
 // IMU parameters
 pub const IMU_I2C_FREQ: u32 = 400_000; // 400kHz I2C fast mode (MMC5616WA + BMP390)
 pub const IMU_MAX_AGE_MS: u64 = 100; // Max age for valid attitude data
+
+/// The control tick is phase-locked to the elevon PWM: each tick starts this
+/// long before a PWM wrap, so the pulses it writes latch at that wrap instead of
+/// anywhere 0–5 ms later. It covers the ideal tick to the PWM write: ~0.2 ms
+/// typical, ~0.8 ms for the slowest intake + update seen, plus up to ~1 ms of
+/// late tick start (LOG_0065). A write after the wrap waits one more frame;
+/// ULog `controller.pwm_counter_us` shows those as small values.
+pub const CONTROL_PWM_LEAD_US: u64 = 1_500;
+const _: () = assert!(CONTROL_PWM_LEAD_US < REFRESH_INTERVAL_US as u64);
+// The lock holds only while the tick and the PWM frame have the same period.
+const _: () = assert!(CONTROL_LOOP_PERIOD_MS * 1000 == REFRESH_INTERVAL_US as u64);
+/// How long the controller keeps flying on the last attitude sample when no new
+/// one arrives. Core 1 publishes every 1 ms (longest wake seen 0.9 ms), so 20 ms
+/// (4 control ticks) only runs out when the IMU has really stopped; then the
+/// attitude controller falls back to the pilot's inputs (events 83, then 80).
+pub const ATTITUDE_HOLD_MAX_MS: u64 = 20;
+const _: () = assert!(ATTITUDE_HOLD_MAX_MS <= IMU_MAX_AGE_MS);
+const _: () = assert!(ATTITUDE_HOLD_MAX_MS >= 2 * CONTROL_LOOP_PERIOD_MS);
 pub const IMU_CALIBRATION_TIMEOUT_S: u64 = 120; // Calibration timeout
 
 // IMU SPI parameters (ICM-42686-P)
@@ -300,6 +318,25 @@ pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_T
 
 // Safety bounds for trim values
 pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
+
+/// Half the servo range: one unit of mixer output in µs.
+const SERVO_HALF_RANGE_US: f32 = (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US) as f32 / 2.0;
+
+// Mixer-output range each elevon can reach once its trim is added and the pulse
+// is clamped to the servo range. With mixer output m in [-1, 1]:
+//   left pulse  = 1500 + 500·m + left trim
+//   right pulse = 1500 - 500·m + right trim   (the right servo is inverted)
+// so a trim moves one end of the range inside ±1, where the pulse stops at its
+// clamp. The mixer limits and judges saturation here, so anti-windup sees the
+// stop where the servo actually reaches it (eagle: left 0.9, right -0.8).
+pub const ELEVON_LEFT_MIX_MAX: f32 =
+    (1.0 - ELEVON_LEFT_TRIM_US as f32 / SERVO_HALF_RANGE_US).min(1.0);
+pub const ELEVON_LEFT_MIX_MIN: f32 =
+    (-1.0 - ELEVON_LEFT_TRIM_US as f32 / SERVO_HALF_RANGE_US).max(-1.0);
+pub const ELEVON_RIGHT_MIX_MAX: f32 =
+    (1.0 + ELEVON_RIGHT_TRIM_US as f32 / SERVO_HALF_RANGE_US).min(1.0);
+pub const ELEVON_RIGHT_MIX_MIN: f32 =
+    (-1.0 + ELEVON_RIGHT_TRIM_US as f32 / SERVO_HALF_RANGE_US).max(-1.0);
 
 // Eagle: the dart's flown gains (below) as a starting point. The previous
 // 1.0/0.1/0.25 pitch and 0.5/0.03/0.12 roll were the original shared defaults;
@@ -658,6 +695,10 @@ const _: () = assert!(ELEVON_RIGHT_CENTER_US <= SERVO_MAX_PULSE_US);
 // Trim within its declared safety bound
 const _: () = assert!(ELEVON_LEFT_TRIM_US.abs() <= MAX_TRIM_US);
 const _: () = assert!(ELEVON_RIGHT_TRIM_US.abs() <= MAX_TRIM_US);
+
+// Trimmed mixer limits keep center inside the travel on both sides
+const _: () = assert!(ELEVON_LEFT_MIX_MIN < 0.0 && ELEVON_LEFT_MIX_MAX > 0.0);
+const _: () = assert!(ELEVON_RIGHT_MIX_MIN < 0.0 && ELEVON_RIGHT_MIX_MAX > 0.0);
 
 // ESC range: MIN < START < MAX
 const _: () = assert!(ENGINE_MIN_PULSE_US < ENGINE_START_PULSE_US);

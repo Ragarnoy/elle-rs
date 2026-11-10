@@ -56,6 +56,74 @@ fn left_roll_saturates_through_the_left_elevon() {
     assert!(!s.roll_right);
 }
 
+#[test]
+fn trimmed_upper_stop_saturates_before_one() {
+    use elle_config::ELEVON_LEFT_MIX_MAX;
+    // Both platforms trim the left elevon up, so its upper stop is inside ±1.
+    assert!(ELEVON_LEFT_MIX_MAX < 1.0);
+    let pitch = f32::midpoint(ELEVON_LEFT_MIX_MAX, 1.0);
+    let s = sat(pitch, 0.0);
+    assert!(s.pitch_up && s.roll_left, "left elevon is on its stop");
+    assert!(!s.pitch_down);
+}
+
+#[test]
+fn trimmed_lower_stop_saturates_before_minus_one() {
+    use elle_config::{ELEVON_LEFT_MIX_MIN, ELEVON_RIGHT_MIX_MIN};
+    // Whichever elevon has its lower stop inside -1 (eagle: right at -0.8).
+    let stop = ELEVON_LEFT_MIX_MIN.max(ELEVON_RIGHT_MIX_MIN);
+    if stop <= -1.0 {
+        return; // no trim moves a lower stop on this platform
+    }
+    let s = sat(f32::midpoint(stop, -1.0), 0.0);
+    assert!(s.pitch_down);
+    assert!(!s.pitch_up);
+    if ELEVON_RIGHT_MIX_MIN > -1.0 {
+        assert!(s.roll_left, "right elevon down blocks more left roll");
+    }
+}
+
+/// The pulse each servo gets: trim added and clamped, the right one inverted,
+/// as `PwmOutputs::set_elevons_with_trim` does.
+fn trimmed(left_us: u32, right_us: u32) -> (i32, i32) {
+    use elle_config::{
+        ELEVON_LEFT_TRIM_US, ELEVON_RIGHT_TRIM_US, SERVO_MAX_PULSE_US, SERVO_MIN_PULSE_US,
+    };
+    let (lo, hi) = (SERVO_MIN_PULSE_US as i32, SERVO_MAX_PULSE_US as i32);
+    let left = (left_us as i32 + ELEVON_LEFT_TRIM_US).clamp(lo, hi);
+    let right = (hi + lo - right_us as i32 + ELEVON_RIGHT_TRIM_US).clamp(lo, hi);
+    (left, right)
+}
+
+/// The mixer before the trimmed limits: clamp to ±1, convert, trim, clamp.
+fn old_pulses(pitch: f32, roll: f32) -> (i32, i32) {
+    let to_us = |n: f32| {
+        elle_config::rc_to_pulse_lut(
+            (n.clamp(-1.0, 1.0) * 1023.5 + 1023.5).clamp(0.0, 2047.0) as u16
+        )
+    };
+    let (p, r) = (pitch.clamp(-1.0, 1.0), roll.clamp(-1.0, 1.0));
+    trimmed(to_us(p - r), to_us(p + r))
+}
+
+#[test]
+fn trimmed_limits_leave_the_pulses_unchanged() {
+    // Clamping at the trimmed stops moves the clamp, not the output: every
+    // pulse matches the old path to the LUT's 1 µs quantization.
+    for i in -30..=30 {
+        for j in -30..=30 {
+            let (pitch, roll) = (i as f32 / 20.0, j as f32 / 20.0);
+            let out = mix_elevons(&inputs(pitch, roll));
+            let new = trimmed(out.left_us, out.right_us);
+            let old = old_pulses(pitch, roll);
+            assert!(
+                (new.0 - old.0).abs() <= 1 && (new.1 - old.1).abs() <= 1,
+                "pitch {pitch} roll {roll}: new {new:?} old {old:?}"
+            );
+        }
+    }
+}
+
 /// Integral-only controller: output == scale * ki * integral.
 const fn integrator() -> AttitudeController {
     let mut c = AttitudeController::with_config(PidConfig {

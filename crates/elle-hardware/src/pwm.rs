@@ -9,11 +9,14 @@ use elle_config::*;
 use embassy_rp::Peri;
 use embassy_rp::peripherals::{PIN_12, PIN_13, PWM_SLICE6};
 use embassy_rp::pwm::{Config, Pwm};
+use embassy_time::{Duration, Instant};
 use fixed::FixedU16;
 use fixed::types::extra::U4;
 
 /// PWM counter rate: one count per microsecond, so compare values are pulse µs.
 const PWM_TICK_HZ: u32 = 1_000_000;
+// `next_wrap` reads the counter as microseconds.
+const _: () = assert!(PWM_TICK_HZ == 1_000_000);
 
 // The slice counter is 16-bit, and a pulse must fit inside its frame.
 const _: () = assert!(REFRESH_INTERVAL_US >= 1 && REFRESH_INTERVAL_US <= 1 << 16);
@@ -50,20 +53,39 @@ impl<'a> PwmOutputs<'a> {
     }
 
     /// Latch both pulse widths; they take effect together at the next wrap.
-    fn write(&mut self, left_us: u32, right_us: u32) {
+    /// Returns the counter at the write (µs into the frame): the latch comes
+    /// `REFRESH_INTERVAL_US - counter` later.
+    fn write(&mut self, left_us: u32, right_us: u32) -> u16 {
         self.config.compare_b = left_us as u16;
         self.config.compare_a = right_us as u16;
+        let counter = self.slice.counter();
         self.slice.set_config(&self.config);
+        counter
     }
 
-    pub fn set_safe_positions(&mut self) {
+    /// When the counter next wraps, which is when pulses written now reach the
+    /// servos. The counter and the clock are read with interrupts off so the
+    /// DShot executor can't split them; one count is 1 µs.
+    #[must_use]
+    pub fn next_wrap(&self) -> Instant {
+        let (counter, now) = cortex_m::interrupt::free(|_| (self.slice.counter(), Instant::now()));
+        now + Duration::from_micros(u64::from(REFRESH_INTERVAL_US - u32::from(counter)))
+    }
+
+    /// Centre both elevons (trim included). Returns the PWM counter at the write.
+    pub fn set_safe_positions(&mut self) -> u16 {
         // Use individual trim-adjusted center positions
-        self.write(ELEVON_LEFT_CENTER_US, ELEVON_RIGHT_CENTER_US);
+        self.write(ELEVON_LEFT_CENTER_US, ELEVON_RIGHT_CENTER_US)
     }
 
     /// Set elevons with trim applied (recommended method). Returns the pulses
-    /// actually output, after trim and the right servo's inversion.
-    pub fn set_elevons_with_trim(&mut self, mut left_us: u32, mut right_us: u32) -> (u32, u32) {
+    /// actually output, after trim and the right servo's inversion, and the
+    /// PWM counter at the write (see `write`).
+    pub fn set_elevons_with_trim(
+        &mut self,
+        mut left_us: u32,
+        mut right_us: u32,
+    ) -> (u32, u32, u16) {
         // Store original values for debug output
         let orig_left = left_us;
         let orig_right = right_us;
@@ -77,7 +99,7 @@ impl<'a> PwmOutputs<'a> {
         let inverted_right_us = SERVO_MAX_PULSE_US + SERVO_MIN_PULSE_US - right_us;
         right_us = apply_elevon_trim(inverted_right_us, ELEVON_RIGHT_TRIM_US);
 
-        self.write(left_us, right_us);
+        let counter = self.write(left_us, right_us);
 
         // Debug output for trim monitoring
         if ELEVON_LEFT_TRIM_US != 0 || ELEVON_RIGHT_TRIM_US != 0 {
@@ -89,7 +111,7 @@ impl<'a> PwmOutputs<'a> {
                 right_us
             );
         }
-        (left_us, right_us)
+        (left_us, right_us, counter)
     }
 }
 

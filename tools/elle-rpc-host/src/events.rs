@@ -62,6 +62,7 @@ pub const fn label(code: u16) -> &'static str {
         // Flight state (80–89)
         80 => "Attitude data stale",
         81 => "ULog: recording started (auto, SD)",
+        83 => "Attitude held: no new IMU sample for 2 ticks",
         // Autotune (90–99)
         90 => "Autotune: started",
         91 => "Autotune: complete",

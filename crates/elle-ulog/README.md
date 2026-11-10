@@ -21,9 +21,9 @@ still target it, but new recordings go to the SD card.
 
 | Name | Size (B) | Rate | Content |
 |------|---------:|------|---------|
-| `attitude_data` | 32 | 200 Hz | pitch/roll/yaw (rad), rates (rad/s, filtered as the PID sees them) |
+| `attitude_data` | 32 | 200 Hz | pitch/roll/yaw (rad), rates (rad/s, filtered as the PID sees them); timestamp = when the sample was read (the IMU's DATA_RDY wake), not when it was logged |
 | `commands` | 49 | 100 Hz | pilot inputs, mode, **pre-filter** setpoints, PID corrections, elevon µs |
-| `controller` | 57 | 200 Hz | loop `dt_us`, attitude age, filtered setpoints, scaled P/I/D per axis, `saturation` bits (pitch_up, pitch_down, roll_right, roll_left, LSB first), final elevon pulses, `yaw_damp` (yaw damper command into the differential thrust, normalized yaw, positive slows the left engine; 0 when off) |
+| `controller` | 59 | 200 Hz | loop `dt_us`, attitude age, filtered setpoints, scaled P/I/D per axis, `saturation` bits (pitch_up, pitch_down, roll_right, roll_left, LSB first), final elevon pulses, `yaw_damp` (yaw damper command into the differential thrust, normalized yaw, positive slows the left engine; 0 when off), `pwm_counter_us` (elevon PWM counter at the write, µs into the 5 ms frame: the pulses latch `5000 − pwm_counter_us` later) |
 | `engine_data` | 46 | 100 Hz | per engine: eRPM, DShot throttle, target eRPM, EDT temperature/voltage/current |
 | `system_status` | 24 | 8 Hz | loop time, IMU errors, calibrated, armed, CPU load, RC age |
 | `magnetometer_data` | 20 | ~10 Hz | raw counts |

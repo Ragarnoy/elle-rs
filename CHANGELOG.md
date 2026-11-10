@@ -7,6 +7,28 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- Control tick phase-locked to the elevon PWM (timing): ticks start 1.5 ms
+  (`CONTROL_PWM_LEAD_US`) before a PWM wrap, so a command reaches the servos ~1.3 ms
+  after it is written on every boot, instead of anywhere from 0 to 5 ms (fixed per
+  boot, re-drawn at each stall resync). The ticker realigns after a stall.
+- ULog timing fields (ULog): `attitude_data` is stamped when the IMU sample was
+  read (DATA_RDY wake) instead of when it was logged, so it now leads the tick's
+  `controller` record by `att_age_us`; `att_age_us` also counts the SPI read and the
+  AHRS (~0.1–0.4 ms more). `controller` gains `pwm_counter_us` (59 B): the PWM
+  counter at the write, so each tick's latch delay is `5000 − pwm_counter_us`.
+- Flight builds no longer count the legacy flash ULog queue ~5 s after boot
+  (timing): the count held Core 0 for ~26 ms (LOG_0065, `dt_us` 26 ms at 5.0 s), in
+  flight if armed and launched that early. RPC builds still count it for `ulog info`.
+- Held-attitude limit 100 → 20 ms (operator behaviour, event codes): when no new
+  IMU sample arrives, Stabilized and AltitudeHold keep flying on the last one for
+  20 ms instead of 100 ms, then fall back to the sticks. New event 83 when a
+  sample is held for 2 ticks; event 80 now also fires once when the held sample
+  expires.
+- Anti-windup sees trim-limited elevon travel (tuning, both airframes): the mixer
+  clamps each elevon and sets the saturation flags at the mix value where its
+  trimmed pulse reaches 1000/2000 µs (eagle: left 0.9, right −0.8; dart: left 0.8,
+  right 0.81) instead of at ±1, so the I term stops winding while an elevon sits on
+  its stop. Output pulses are unchanged (within the LUT's 1 µs step).
 - Eagle Stabilized pitch limit ±25° → ±15° (operator behaviour, tuning): full pitch
   stick now asks for 15°. LOG_0082's three departures all began from a 22–25°
   setpoint at a full-throttle launch, where the nose rides above the setpoint and

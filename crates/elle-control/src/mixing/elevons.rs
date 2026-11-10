@@ -74,16 +74,25 @@ pub fn mix_elevons(inputs: &ControlInputs) -> ElevonOutputs {
     let right_raw =
         (pitch * ELEVON_PITCH_GAIN) + (roll * ELEVON_ROLL_GAIN) - (yaw * YAW_TO_ELEVON_GAIN);
 
+    // Each elevon stops where its trimmed pulse reaches the servo range, which
+    // can be inside ±1 (see `ELEVON_LEFT_MIX_MAX`). Judging saturation at that
+    // stop keeps the PID from integrating into an elevon that can't move.
+    let left_up = left_raw >= ELEVON_LEFT_MIX_MAX;
+    let left_down = left_raw <= ELEVON_LEFT_MIX_MIN;
+    let right_up = right_raw >= ELEVON_RIGHT_MIX_MAX;
+    let right_down = right_raw <= ELEVON_RIGHT_MIX_MIN;
     let saturation = MixSaturation {
-        pitch_up: inputs.pitch >= 1.0 || left_raw >= 1.0 || right_raw >= 1.0,
-        pitch_down: inputs.pitch <= -1.0 || left_raw <= -1.0 || right_raw <= -1.0,
-        roll_right: inputs.roll >= 1.0 || left_raw <= -1.0 || right_raw >= 1.0,
-        roll_left: inputs.roll <= -1.0 || left_raw >= 1.0 || right_raw <= -1.0,
+        pitch_up: inputs.pitch >= 1.0 || left_up || right_up,
+        pitch_down: inputs.pitch <= -1.0 || left_down || right_down,
+        roll_right: inputs.roll >= 1.0 || left_down || right_up,
+        roll_left: inputs.roll <= -1.0 || left_up || right_down,
     };
 
-    // Convert to servo pulse widths using LUT
-    let left_us = normalized_to_servo_us(left_raw.clamp(-1.0, 1.0));
-    let right_us = normalized_to_servo_us(right_raw.clamp(-1.0, 1.0));
+    // Convert to servo pulse widths using LUT. The trim added downstream
+    // (`PwmOutputs::set_elevons_with_trim`) lands these exactly on the stops.
+    let left_us = normalized_to_servo_us(left_raw.clamp(ELEVON_LEFT_MIX_MIN, ELEVON_LEFT_MIX_MAX));
+    let right_us =
+        normalized_to_servo_us(right_raw.clamp(ELEVON_RIGHT_MIX_MIN, ELEVON_RIGHT_MIX_MAX));
 
     ElevonOutputs {
         left_us,

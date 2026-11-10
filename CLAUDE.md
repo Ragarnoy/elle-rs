@@ -68,7 +68,7 @@ so the TUI shows no satellites and no GNSS log lines at all, which looks exactly
 a hardware or reception failure.
 
 Feature flags (both binaries; they forward to `elle-app`):
-- `rpc-control` — postcard-RPC server over RTT. **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`), enforced by `compile_error!` in each `main.rs`.
+- `rpc-control` — postcard-RPC server over RTT. **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`), enforced by `compile_error!` in each `main.rs`. Also enables `elle-hardware/ulog-flash-count`: the one-off legacy flash ULog count ~5 s after boot that `ulog info` reports. It holds Core 0 for ~26 ms, so flight builds don't run it.
 - `rpc-rc` — in RPC mode, pilot commands come from the RC receiver (gesture arming, kill switch, RC failsafe) while the TUI monitors. **Requires `rpc-control`** (`compile_error!` in `elle-app`).
 - `defmt-logging` — defmt over RTT (default). The macros are always compiled; without this feature they are no-ops.
 - `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss` and the navigator (`elle-nav`, observation mode). `rpc-control` also enables `gnss-gsv` (satellites in view).
@@ -154,8 +154,11 @@ cal from flash, builds the `FlightController`, then hands it by `&mut` to the lo
 200 Hz: `CONTROL_LOOP_PERIOD_MS = 5` (matching the 5 ms servo frame) is the source of
 truth; `CONTROL_LOOP_FREQUENCY_HZ` and `CONTROL_LOOP_DT` derive from it, and so must
 anything time-based (ULog divisors, debounces, filter weights: write them in seconds or
-Hz, not ticks). The tick counter runs free (wrapping), so any divisor keeps a steady cadence. After a stall (flash write) the ticker resyncs
-instead of bursting (`support::resync_after_stall`).
+Hz, not ticks). The tick counter runs free (wrapping), so any divisor keeps a steady cadence. The ticker is phase-locked to the elevon PWM:
+`support::align_ticker_to_pwm` starts it so every tick falls `CONTROL_PWM_LEAD_US`
+(1.5 ms) before a PWM wrap, and the pulses a tick writes latch at that wrap (both run
+from the crystal at the same period, so the phase holds). After a stall (flash write)
+the ticker realigns instead of bursting (`support::resync_after_stall`).
 
 Each tick: read commands (CRSF in flight mode, `RPC_CMD_CHANNEL` + accumulated RPC state
 in RPC mode), kill switch, `FlightController::update` with the latest attitude, publish
@@ -178,10 +181,10 @@ the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 - AltitudeHold is a 0°/0° level hold for now.
 - Heading hold (`elle-control/src/heading.rs`) replaces the roll setpoint in Stabilized.
 - Yaw damper (`elle-control/src/yaw_damper.rs`, proposal [0001](docs/changes/0001-eagle-yaw-damper.md)): in Stabilized and AltitudeHold, the yaw rate goes through a washout (`YAW_DAMPER_WASHOUT_S`) and a gain, is clamped to `YAW_DAMPER_MAX`, and is added to the **differential thrust** yaw only, never to `mix_elevons`. It resets whenever the PID is off, at low throttle, and with no attitude. `YAW_DAMPER_GAIN` is 0 on both airframes (inert) until the proposal's gate 1.
-- PID outputs are scaled by `PID_SCALE` (5.0). `mix_elevons` reports `MixSaturation`; the PID freezes an axis's integral when its error would push further into a saturated direction (previous tick's flags) and always lets it unwind.
+- PID outputs are scaled by `PID_SCALE` (5.0). `mix_elevons` reports `MixSaturation`; the PID freezes an axis's integral when its error would push further into a saturated direction (previous tick's flags) and always lets it unwind. Each elevon saturates at its **trimmed** stop (`ELEVON_LEFT_MIX_MAX` etc. in `elle-config`: where trim plus the 1000–2000 µs clamp ends its travel, eagle left 0.9 / right −0.8), not at ±1.
 - `PITCH_INVERT` / `ROLL_INVERT` apply to **stick input only** (`elle-control/src/commands.rs`); the PID compares against raw attitude. Anything fed to the autotuner must use raw attitude too.
 - Autotune (`elle-control/src/autotune.rs`): `update(pitch_deg, roll_deg, tick)` measures its own axis and enforces the ±20° envelope on both from settling on. Both loops call `support::guard_autotune` before it every tick; it aborts and restores gains once the run loses the aircraft (`check_run_conditions`: kill, disarm/failsafe, attitude controller off, no attitude). A run never changes axis. Crossings and relay flips use `AUTOTUNE_HYSTERESIS_DEG`; `validate_result` also caps the tuned axis's Kp/Kd change at `AUTOTUNE_MAX_GAIN_RATIO` (Ki is exempt, see its doc).
-- Elevons are on hardware PWM slice 6 at a 1 MHz count (`elle-hardware/src/pwm.rs`), 200 Hz frames (`REFRESH_INTERVAL_US` = 5 000; digital servos on both airframes); the compare latches at wrap, so output is always the latest command, ≤ 1 frame (5 ms) old.
+- Elevons are on hardware PWM slice 6 at a 1 MHz count (`elle-hardware/src/pwm.rs`), 200 Hz frames (`REFRESH_INTERVAL_US` = 5 000; digital servos on both airframes); the compare latches at wrap, so output is always the latest command, ≤ 1 frame (5 ms) old; with the tick phase-locked to the wrap it is ~1.3 ms (ULog `controller.pwm_counter_us`).
 
 ### IMU pipeline (`elle-hardware/src/imu/driver.rs`, `elle-control/src/attitude.rs`)
 
@@ -305,7 +308,7 @@ constants and their ranges are in `elle-hardware/src/event.rs`. ULog goes
 and sizes in [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md). `commands`
 logs the pre-filter setpoint; `controller` logs what the PID used and did each tick
 (dt, attitude age, filtered setpoint, scaled P/I/D per axis, saturation bits, final
-elevon pulses); `pid_gains` is written per file and whenever
+elevon pulses, and `pwm_counter_us`, the PWM counter at the write: the pulses latch `5000 − pwm_counter_us` µs later); `attitude_data` is stamped with the sample's read time (the IMU's DATA_RDY wake), not the log time; `pid_gains` is written per file and whenever
 `FlightController::gains_version()` changes. `loop_stages` (flight loop only,
 `elle-app/src/stages.rs`) splits the tick into stages with mean/max per ~10 ticks,
 next to the DShot executor's interrupt time (`timing::DSHOT_EXEC_TIME`, recorded in
