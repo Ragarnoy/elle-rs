@@ -2,7 +2,7 @@
 
 | | |
 |-|-|
-| Status | Draft |
+| Status | Accepted |
 | Airframes | both (identical bit for bit by intent) |
 | Date | 2026-11-11 |
 | Version impact | patch ([rules](../VERSIONING.md#bump-rules)) |
