@@ -8,7 +8,7 @@ use elle_config::IMU_MAX_AGE_MS;
 use elle_control::autotune::{Autotuner, check_run_conditions};
 use elle_hardware::imu::{AttitudeData, is_attitude_valid};
 use elle_system::FlightController;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 
 /// How long a flash save or erase may take before the control loop gives up
 /// waiting for the flash manager's answer.
@@ -25,22 +25,41 @@ pub(crate) const RC_DEBUG_LOG_DIVISOR: u32 = elle_config::CONTROL_LOOP_FREQUENCY
 /// reverting to Off (~3 s).
 pub(crate) const AUTOTUNE_DISPLAY_DURATION: u32 = elle_config::CONTROL_LOOP_FREQUENCY_HZ * 3;
 
+/// Re-phase the ticker so its ticks fall `CONTROL_PWM_LEAD_US` before a PWM
+/// wrap. Tick and PWM frame share a period and both run from the crystal, so
+/// the phase then holds until the next call. The next tick is the first such
+/// instant still ahead (at most one period away); nothing waits here, so the
+/// phase carries no wake-up latency.
+pub(crate) fn align_ticker_to_pwm(ticker: &mut Ticker, fc: &FlightController<'_>) {
+    let period = Duration::from_millis(elle_config::CONTROL_LOOP_PERIOD_MS);
+    let lead = Duration::from_micros(elle_config::CONTROL_PWM_LEAD_US);
+    let now = Instant::now();
+    let mut next_tick = fc.next_pwm_wrap() - lead;
+    while next_tick <= now {
+        next_tick += period;
+    }
+    // `reset_at(d)` makes the next tick fire at `d + period`.
+    ticker.reset_at(next_tick - period);
+}
+
 /// Stop the control-loop ticker from replaying missed ticks after a stall.
 ///
 /// `Ticker::next()` returns immediately while it is behind schedule, so after a
 /// long stall the loop would run every missed tick back to back — the PID
 /// integrating the same stale attitude over and over at a fixed dt. When the
-/// gap since the previous tick exceeds two periods, restart the ticker from now.
+/// gap since the previous tick exceeds two periods, restart the ticker, phased
+/// to the PWM again (`align_ticker_to_pwm`).
 pub(crate) fn resync_after_stall(
-    ticker: &mut embassy_time::Ticker,
-    previous_tick: &mut Option<embassy_time::Instant>,
-    now: embassy_time::Instant,
+    ticker: &mut Ticker,
+    fc: &FlightController<'_>,
+    previous_tick: &mut Option<Instant>,
+    now: Instant,
 ) {
     let period = Duration::from_millis(elle_config::CONTROL_LOOP_PERIOD_MS);
     if let Some(prev) = *previous_tick {
         let gap = now.saturating_duration_since(prev);
         if gap > period * 2 {
-            ticker.reset();
+            align_ticker_to_pwm(ticker, fc);
             warn!(
                 "Control loop stalled {} ms; ticker resynced",
                 gap.as_millis()

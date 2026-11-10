@@ -7,9 +7,9 @@ use crate::logging::log_flight_data;
 #[cfg(feature = "rpc-rc")]
 use crate::support::RC_DEBUG_LOG_DIVISOR;
 use crate::support::{
-    AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, clear_pid_from_flash,
-    guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
-    validate_attitude,
+    AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, align_ticker_to_pwm,
+    clear_pid_from_flash, guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed,
+    tap_selects_level_cal, validate_attitude,
 };
 use crate::{flight_state, rc_signal, rpc_app, rpc_handlers};
 
@@ -91,6 +91,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
 
     // Ticker for consistent control loop timing
     let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
+    align_ticker_to_pwm(&mut ticker, fc);
     let mut previous_tick = None;
 
     // RPC commands accumulator (updated by RPC handlers, unused when rc feature is active)
@@ -119,7 +120,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
     loop {
         ticker.next().await;
         let loop_start = Instant::now();
-        resync_after_stall(&mut ticker, &mut previous_tick, loop_start);
+        resync_after_stall(&mut ticker, fc, &mut previous_tick, loop_start);
         // Close the Core 1 load window (~1 Hz) for ULog and the RPC query.
         if loop_counter.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR) {
             elle_hardware::timing::take_core1_window();

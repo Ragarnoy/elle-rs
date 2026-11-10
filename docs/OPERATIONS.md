@@ -309,8 +309,9 @@ when built with `defmt-logging`.
 | 61 / 62 | ULog flash erase failed / flash write timeout |
 | 63 | Flash write refused while armed |
 | 70 / 71 | Core 1 (IMU) unhealthy / restored |
-| 80 | Attitude data stale |
+| 80 | Attitude data stale: a sample older than 100 ms, or the held sample expired after 20 ms with no new one (attitude control falls back to the sticks until the IMU returns) |
 | 81 | ULog auto-started on SD (flight mode) |
+| 83 | Attitude held: no new IMU sample for 2 control ticks; the controller flies on the last one for up to 20 ms |
 | 90–94 | Autotune started / complete / aborted / safety abort / rejected |
 | 100–103 | PID saved / save failed / loaded / nothing saved |
 | 110–116 | Mag cal started, complete, failed, saved, cleared, loaded, nothing saved |

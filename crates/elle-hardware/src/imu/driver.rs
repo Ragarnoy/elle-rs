@@ -242,7 +242,12 @@ impl<'a> Imu<'a> {
                 crate::timing::IMU_TIMING.record(busy_us);
             }
             self.int1.wait_for_high().await;
-            wake_started = Some(Instant::now());
+            // DATA_RDY: the newest sample in the FIFO was taken just before this.
+            // The published attitude carries this instant, not the time it was
+            // fused, so its age (`att_age_us`, ULog `attitude_data`) counts the
+            // SPI read and the AHRS too.
+            let woke_at = Instant::now();
+            wake_started = Some(woke_at);
 
             // 1. Drain the ICM-42686 FIFO. Every queued sample goes through the
             // AHRS in order (it integrates at a fixed 1 kHz step, so none may be
@@ -357,7 +362,8 @@ impl<'a> Imu<'a> {
                 }
             }
 
-            if let Some(attitude) = latest {
+            if let Some(mut attitude) = latest {
+                attitude.timestamp = woke_at;
                 ATTITUDE.publish(attitude);
                 crate::crsf::TELEMETRY_ATTITUDE.signal(attitude);
 

@@ -87,6 +87,9 @@ performance-monitoring = []
 # exactly on the host (tools/elle-replay) and to size GYRO_RATE_LPF_HZ from a
 # real vibration spectrum. ~20 kB/s extra: bench and test flights only.
 imu-raw-log = ["elle-config/imu-raw-log"]
+# Count the legacy flash ULog queue ~5 s after boot, for the RPC `ulog info`
+# query. Holds Core 0 for ~26 ms, so flight builds leave it out.
+ulog-flash-count = []
 single-engine = []  # Single-engine platform (dart) — uses dshot_single_task instead of dshot_task
 
 [lib]

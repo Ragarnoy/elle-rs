@@ -33,14 +33,7 @@ pub(crate) fn log_flight_data(
     if let Some(att) = attitude
         && loop_counter.is_multiple_of(elle_config::ULOG_ATTITUDE_DIVISOR)
     {
-        let _ = logger.log_attitude(
-            att.pitch,
-            att.roll,
-            att.yaw,
-            att.pitch_rate,
-            att.roll_rate,
-            att.yaw_rate,
-        );
+        let _ = logger.log_attitude(att);
     }
 
     // Log commands at ULOG_COMMANDS_DIVISOR (100 Hz)
@@ -86,6 +79,7 @@ pub(crate) fn log_flight_data(
         elevon_left_pulse_us: last_out.elevon_left_pulse_us as u16,
         elevon_right_pulse_us: last_out.elevon_right_pulse_us as u16,
         yaw_damp: last_out.yaw_damp,
+        pwm_counter_us: last_out.pwm_counter_us,
     });
     let gains = fc.pid_config();
     let _ = logger.log_pid_gains(

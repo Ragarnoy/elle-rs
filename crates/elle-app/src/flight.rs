@@ -5,8 +5,8 @@ use crate::logging::log_flight_data;
 use crate::stages::{Stage, StageClock, StageWindow};
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, RC_DEBUG_LOG_DIVISOR,
-    guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed, tap_selects_level_cal,
-    validate_attitude,
+    align_ticker_to_pwm, guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed,
+    tap_selects_level_cal, validate_attitude,
 };
 
 use defmt::{debug, info};
@@ -68,6 +68,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
 
     // Create ticker for the control loop period (CONTROL_LOOP_PERIOD_MS)
     let mut ticker = Ticker::every(Duration::from_millis(CONTROL_LOOP_PERIOD_MS));
+    align_ticker_to_pwm(&mut ticker, fc);
     let mut previous_tick = None;
     // Per-stage tick timing, logged as `loop_stages` every ULOG_STATUS_DIVISOR ticks.
     let mut stages = StageWindow::new();
@@ -80,7 +81,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
     loop {
         ticker.next().await; // Wait for next tick BEFORE processing
         let loop_start = Instant::now();
-        resync_after_stall(&mut ticker, &mut previous_tick, loop_start);
+        resync_after_stall(&mut ticker, fc, &mut previous_tick, loop_start);
         // Close the Core 1 load window (~1 Hz) for ULog and the RPC query.
         if loop_counter.is_multiple_of(ULOG_CORE1_LOAD_DIVISOR) {
             elle_hardware::timing::take_core1_window();
