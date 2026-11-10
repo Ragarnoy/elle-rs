@@ -127,6 +127,10 @@ three departures in five launches, each from full throttle with up-stick).
 
 ### Heading hold (CH5, Stabilized only)
 
+Yaw is positive nose right: turning clockwise seen from above raises it, like a
+compass (pitch is positive nose up, roll positive right wing down). Before 0.4.0 it was
+the other way round, and heading hold banked away from its target (proposal 0006).
+
 Switching CH5 on while in Stabilized captures the current yaw as the target (event 130)
 and replaces the roll stick with a P heading controller: bank limited to ±25°
 (`HEADING_HOLD_MAX_ROLL_DEG`), bank command slewed at 15°/s. Leaving Stabilized or

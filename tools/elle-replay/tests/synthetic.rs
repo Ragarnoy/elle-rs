@@ -44,19 +44,48 @@ struct Flown {
 }
 
 fn fly(corrupt_one: bool) -> Flown {
+    fly_with(corrupt_one, true, false)
+}
+
+/// The header records (16 bytes, then `size: u16, type: u8, body`) minus the
+/// `elle_yaw` info: a log as firmware from before proposal 0006 wrote it.
+fn without_yaw_info(header: &[u8]) -> Vec<u8> {
+    let mut out = header[..16].to_vec();
+    let mut at = 16;
+    while at < header.len() {
+        let size = usize::from(u16::from_le_bytes([header[at], header[at + 1]]));
+        let rec = &header[at..at + 3 + size];
+        let is_yaw_info = rec[2] == b'I'
+            && rec[3..].starts_with(&[elle_ulog::YAW_INFO_KEY.len() as u8])
+            && rec[4..].starts_with(elle_ulog::YAW_INFO_KEY.as_bytes());
+        if !is_yaw_info {
+            out.extend_from_slice(rec);
+        }
+        at += 3 + size;
+    }
+    out
+}
+
+/// `marker`: the header carries the `elle_yaw` info; `old_sign`: yaw is
+/// logged nose left positive. A log from before proposal 0006 has neither.
+fn fly_with(corrupt_one: bool, marker: bool, old_sign: bool) -> Flown {
     let mut w = ULogWriter::new();
-    let mut out = Vec::new();
-    let mut flush = |w: &mut ULogWriter| {
-        out.extend_from_slice(w.buffer());
-        w.clear_buffer();
-    };
     w.initialize(Instant::from_micros(0)).unwrap();
     w.write_definitions("ELLE-RS", "test", "0", 0).unwrap();
     let att_id = w.add_subscription(AttitudeMessage::NAME).unwrap();
     let raw_id = w.add_subscription(ImuRawMessage::NAME).unwrap();
     let mag_id = w.add_subscription(ImuRawMagMessage::NAME).unwrap();
     let ctx_id = w.add_subscription(ImuRawCtxMessage::NAME).unwrap();
-    flush(&mut w);
+    let mut out = if marker {
+        w.buffer().to_vec()
+    } else {
+        without_yaw_info(w.buffer())
+    };
+    w.clear_buffer();
+    let mut flush = |w: &mut ULogWriter| {
+        out.extend_from_slice(w.buffer());
+        w.clear_buffer();
+    };
 
     let mut p = AttitudePipeline::new();
     let mut rec = Recorder::new();
@@ -139,10 +168,14 @@ fn fly(corrupt_one: bool) -> Flown {
                     Instant::from_micros(t_us + LOG_DELAY_US),
                     att.pitch,
                     roll,
-                    att.yaw,
+                    if old_sign { -att.yaw } else { att.yaw },
                     att.pitch_rate,
                     att.roll_rate,
-                    att.yaw_rate,
+                    if old_sign {
+                        -att.yaw_rate
+                    } else {
+                        att.yaw_rate
+                    },
                 ),
             )
             .unwrap();
@@ -176,6 +209,30 @@ fn replay_reproduces_every_synced_attitude() {
     assert_eq!(f.mismatched, 0, "{f:?}");
     assert_eq!(f.exact, expect_exact, "{f:?}");
     assert!(f.ok());
+    assert!(!f.legacy_yaw_sign);
+}
+
+#[test]
+fn a_log_from_before_the_yaw_sign_change_replays_exactly() {
+    let flown = fly_with(false, false, true);
+    let log = ULog::parse(&flown.ulog).unwrap();
+    assert!(log.legacy_yaw_sign());
+    let replay = elle_replay::replay(&log).unwrap();
+    let f = elle_replay::faithfulness(&log, &replay);
+    assert!(f.legacy_yaw_sign);
+    assert_eq!(f.mismatched, 0, "{f:?}");
+    assert!(f.ok(), "{f:?}");
+}
+
+#[test]
+fn the_old_sign_under_the_new_marker_is_caught() {
+    // The old sign in a log that claims the new one: every yaw mismatches.
+    let flown = fly_with(false, true, true);
+    let log = ULog::parse(&flown.ulog).unwrap();
+    assert!(!log.legacy_yaw_sign());
+    let replay = elle_replay::replay(&log).unwrap();
+    let f = elle_replay::faithfulness(&log, &replay);
+    assert!(f.mismatched > 0, "{f:?}");
 }
 
 #[test]

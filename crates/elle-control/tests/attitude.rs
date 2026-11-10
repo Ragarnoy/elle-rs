@@ -3,6 +3,7 @@
 //!   cargo test -p elle-control --target x86_64-unknown-linux-gnu --test attitude
 
 use elle_control::attitude::AttitudePipeline;
+use elle_control::heading::HeadingController;
 use nalgebra::{UnitQuaternion, Vector3};
 
 const G: f32 = 9.81;
@@ -64,7 +65,8 @@ fn rates_are_filtered_and_signed_like_attitude() {
     let mut p = AttitudePipeline::new();
     let mut last = None;
     for _ in 0..500 {
-        // Sensor +x rate: roll rate reads negative, like roll; +y is pitch rate.
+        // Sensor +x rate: roll rate reads negative, like roll; +y is pitch rate;
+        // +z (nose left, z up) reads negative yaw rate.
         last = Some(p.fuse(
             p.debias(Vector3::new(0.2, 0.1, 0.05)),
             accel_for(0.0, 0.0),
@@ -74,7 +76,7 @@ fn rates_are_filtered_and_signed_like_attitude() {
     let a = last.unwrap();
     assert!((a.roll_rate + 0.2).abs() < 1e-3, "{a:?}");
     assert!(
-        (a.pitch_rate - 0.1).abs() < 1e-3 && (a.yaw_rate - 0.05).abs() < 1e-3,
+        (a.pitch_rate - 0.1).abs() < 1e-3 && (a.yaw_rate + 0.05).abs() < 1e-3,
         "{a:?}"
     );
     // The filter lags: from rest, the first sample of a step is far below it.
@@ -260,4 +262,76 @@ fn smooth_weighting_corrects_between_full_and_none() {
     let shut = tilt(Some(0.1), true);
     assert!(smooth > 0.0 && smooth < ungated, "{smooth} vs {ungated}");
     assert!(shut < smooth, "{shut} vs {smooth}");
+}
+
+/// Wrap an angle difference to (-180°, 180°].
+fn wrap_deg(d: f32) -> f32 {
+    (d + 180.0).rem_euclid(360.0) - 180.0
+}
+
+#[test]
+fn nose_right_is_positive_yaw() {
+    // Clockwise seen from above (nose right) is a negative rotation about the
+    // sensor's z, which points up when the board is flat.
+    let mut p = AttitudePipeline::new();
+    let start = settle(&mut p, accel_for(0.0, 0.0), 500).yaw;
+    let mut last = None;
+    // 0.3 rad/s for 1 s: about 17° to the right.
+    for _ in 0..1000 {
+        last = Some(p.fuse(
+            p.debias(Vector3::new(0.0, 0.0, -0.3)),
+            accel_for(0.0, 0.0),
+            None,
+        ));
+    }
+    let a = last.unwrap();
+    assert!((a.yaw_rate - 0.3).abs() < 1e-3, "{a:?}");
+    let turned = wrap_deg((a.yaw - start).to_degrees());
+    assert!(
+        (turned - 0.3f32.to_degrees()).abs() < 0.5,
+        "turned {turned}°: {a:?}"
+    );
+    assert!(a.pitch.abs() < 1e-3 && a.roll.abs() < 1e-3, "{a:?}");
+}
+
+/// Heading hold around the real pipeline: bank right turns the nose right
+/// (coordinated turn, rate = g·tan(bank)/V), the gyro sees it, and the
+/// published yaw has to close the loop. With yaw the other way round the
+/// controller banks away from its target until it hits the bank limit.
+#[test]
+fn heading_hold_closes_the_loop() {
+    const AIRSPEED_M_S: f32 = 15.0;
+    let mut p = AttitudePipeline::new();
+    let start = settle(&mut p, accel_for(0.0, 0.0), 500).yaw;
+    // Aircraft 30° left of the target.
+    let target = start + 30f32.to_radians();
+    let mut hh = HeadingController::new(
+        elle_config::HEADING_HOLD_KP,
+        elle_config::HEADING_HOLD_KI,
+        elle_config::HEADING_HOLD_I_LIMIT_DEG,
+        elle_config::HEADING_HOLD_MAX_ROLL_DEG,
+        elle_config::HEADING_HOLD_MAX_ROLL_RATE_DEG_S,
+    );
+    let per_tick =
+        (elle_config::CONTROL_LOOP_PERIOD_MS * 1000 / elle_config::AHRS_SAMPLE_PERIOD_US) as usize;
+    let mut bank_deg = 0.0f32;
+    let mut yaw = start;
+    let mut max_err = 0.0f32;
+    for i in 0..20_000usize {
+        if i.is_multiple_of(per_tick) {
+            // The roll loop assumed perfect: bank follows the setpoint.
+            bank_deg = hh.update(target, yaw);
+        }
+        let turn_rate = G * bank_deg.to_radians().tan() / AIRSPEED_M_S;
+        let a = p.fuse(
+            p.debias(Vector3::new(0.0, 0.0, -turn_rate)),
+            accel_for(0.0, 0.0),
+            None,
+        );
+        yaw = a.yaw;
+        max_err = max_err.max(wrap_deg((target - yaw).to_degrees()).abs());
+    }
+    let err = wrap_deg((target - yaw).to_degrees());
+    assert!(err.abs() < 1.0, "{err}° off after 20 s");
+    assert!(max_err < 31.0, "error grew to {max_err}° before closing");
 }

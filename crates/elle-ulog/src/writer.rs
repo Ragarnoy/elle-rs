@@ -11,6 +11,7 @@ use crate::messages::{
     ImuRawFixMessage, ImuRawMagMessage, ImuRawMessage, LogEventMessage, LoopStagesMessage,
     MagnetometerMessage, MessageType, NavMessage, PidGainsMessage, StatusMessage,
 };
+use crate::{YAW_INFO_KEY, YAW_NOSE_RIGHT_POSITIVE};
 use embassy_time::Instant;
 use heapless::Vec;
 
@@ -156,6 +157,7 @@ impl ULogWriter {
         self.write_info("char[] ver_hw", ver_hw)?;
         self.write_info("char[] ver_sw", ver_sw)?;
         self.write_info_u64("uint64_t sys_start_time_utc_ms", epoch_ms)?;
+        self.write_info(YAW_INFO_KEY, YAW_NOSE_RIGHT_POSITIVE)?;
 
         self.definitions_written = true;
         Ok(())

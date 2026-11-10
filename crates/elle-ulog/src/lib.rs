@@ -24,3 +24,10 @@ pub use messages::{
     MagnetometerMessage, MessageType, NavMessage, PidGainsMessage, StatusMessage,
 };
 pub use writer::{ULogWriter, WriteError};
+
+/// Info entry naming the sign of `attitude_data.yaw` and `yaw_rate`. Logs
+/// written before proposal 0006 lack it and have nose **left** positive.
+pub const YAW_INFO_KEY: &str = "char[] elle_yaw";
+/// [`YAW_INFO_KEY`]'s value: yaw rises as the nose turns right (clockwise
+/// seen from above).
+pub const YAW_NOSE_RIGHT_POSITIVE: &str = "nose_right_positive";

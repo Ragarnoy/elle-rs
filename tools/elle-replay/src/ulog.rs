@@ -162,6 +162,8 @@ impl Series {
 #[derive(Debug, Default)]
 pub struct ULog {
     pub series: HashMap<String, Series>,
+    /// Info records: field name (the key without its type) → raw value.
+    pub info: HashMap<String, Vec<u8>>,
     /// Dropout records: milliseconds lost in each.
     pub dropouts: Vec<u16>,
     /// The file ended inside a record (common after a power cut).
@@ -211,6 +213,15 @@ impl ULog {
                         s.records.push(body[2..].to_vec());
                     }
                 }
+                b'I' if !body.is_empty() => {
+                    let key_len = usize::from(body[0]);
+                    if let Some(key) = body.get(1..1 + key_len) {
+                        let key = std::str::from_utf8(key)?;
+                        let name = key.rsplit(' ').next().unwrap_or(key);
+                        log.info
+                            .insert(name.to_string(), body[1 + key_len..].to_vec());
+                    }
+                }
                 b'O' if body.len() >= 2 => {
                     log.dropouts.push(u16::from_le_bytes([body[0], body[1]]));
                 }
@@ -223,5 +234,20 @@ impl ULog {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&Series> {
         self.series.get(name)
+    }
+
+    /// A `char[]` info record's value.
+    #[must_use]
+    pub fn info_str(&self, name: &str) -> Option<&str> {
+        self.info
+            .get(name)
+            .and_then(|v| std::str::from_utf8(v).ok())
+    }
+
+    /// Logged before proposal 0006: `attitude_data.yaw` and `yaw_rate` are
+    /// nose left positive, the opposite of what the pipeline now publishes.
+    #[must_use]
+    pub fn legacy_yaw_sign(&self) -> bool {
+        self.info_str("elle_yaw") != Some(elle_ulog::YAW_NOSE_RIGHT_POSITIVE)
     }
 }

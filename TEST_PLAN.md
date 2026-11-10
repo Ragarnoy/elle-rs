@@ -122,7 +122,7 @@ PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
 | 1 | Power up flat and still, leave it 10 min disarmed | Pitch and roll within ±0.5° of the pre-change reading on the same surface, drift < 0.5° over the 10 min (`$PY $LOG sensors`) | | [ ] |
 | 2 | Tilt nose up, nose down, right wing down, left wing down, ~20° each, on **each airframe** | Pitch positive nose up, roll positive right wing down (CRSF attitude on the radio, then `attitude_data`). Eagle 2026-10-02 before proposal 0003: pitch and roll both reversed (board turned round) | | [ ] |
 | 3 | Part 1.3 in full (Stabilized, armed, in hand) | All seven rows as before: corrects against the tilt, D damps quick rotations | | [ ] |
-| 4 | Rotate 360° in yaw on the bench, slowly | Yaw follows and returns to within ~5° of the start; no jump when the mag reading updates | | [ ] |
+| 4 | Rotate 360° in yaw on the bench, slowly, **clockwise seen from above** (nose right); then stop facing N, E, S, W by a phone compass | Yaw rate positive and yaw rising through the turn (proposal 0006; before it, the eagle read −368.6° on 2026-10-02); returns to within ~5° of the start; no jump when the mag reading updates. Note the yaw at each compass heading (where zero is) | | [ ] |
 
 ### 0.2 Timing and logging (normal flight build)
 
@@ -216,9 +216,10 @@ targets, or the `yaw_damp` column of ULog `controller`.
 | 5 | Stabilized, throttle under 5 %: same twists | `yaw_damp` = 0 | [ ] |
 
 If rows 1 and 2 are reversed, the yaw-rate sign is wrong. **Do not fly.** That is
-positive feedback. Fix the sign in `AttitudePipeline::fuse`
-(`crates/elle-control/src/attitude.rs`), not in the damper, and check heading hold
-(6.5) too, since it uses the same yaw convention.
+positive feedback. The sign is set in `AttitudePipeline::fuse`
+(`crates/elle-control/src/attitude.rs`), not in the damper; it was wrong before
+proposal 0006 and is checked by 0.1 row 4. Check heading hold (6.5) too, since it
+uses the same yaw convention.
 
 ### 1.3 Stabilized PID Direction (Stabilized mode, armed)
 
@@ -626,7 +627,7 @@ does nothing there):
 | # | Action                                   | Expected                                                     | Pass |
 |---|------------------------------------------|--------------------------------------------------------------|------|
 | 1 | Stabilized, CH5 on                       | Event 130 after ~0.5 s; LED pulses blue when armed           | [ ]  |
-| 2 | Yaw the aircraft by hand ~30°            | Elevons command a bank back toward the captured heading (≤ 25°) | [ ]  |
+| 2 | Yaw the nose ~30° right by hand, then ~30° left | Nose right: left bank commanded (roll setpoint < 0 in ULog `controller`); nose left: right bank. Back toward the captured heading, ≤ 25° | [ ]  |
 | 3 | Switch CH6 to Manual                     | Event 131, direct control                                    | [ ]  |
 | 4 | Back to Stabilized with CH5 still on     | Event 130 again, new heading captured                        | [ ]  |
 
