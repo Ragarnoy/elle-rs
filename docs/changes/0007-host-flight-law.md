@@ -272,17 +272,18 @@ golden file: a regression test that later changes update on purpose.
 - **Flight:** none required by this change. The first flight after it reads the
   usual `controller` fields; nothing new to look for.
 
-## Open questions
+## Decisions
 
-1. **What counts as "recorded".** Existing ULogs can't give the exact per-tick input
-   stream: `commands` is 100 Hz, and the 16 raw channels the fast path reads aren't
-   logged. The options are (a)+(b) above, or an on-target capture: a feature that logs
-   every `update()` call's arguments and the between-tick calls. That capture is extra
-   firmware and a ULog surface change. **Recommendation: (a)+(b).** The scripted
-   stream is what covers the branches, and (b) adds realistic values.
-2. **Base commit.** The oracle copies `system.rs` from the commit the refactor starts
-   on. PR #45 (proposal 0006, yaw sign) doesn't touch `system.rs`, so its merge order
-   doesn't matter to the proof, but the base hash must be recorded.
+Both questions were settled on 2026-11-11.
+
+1. **What counts as "recorded":** (a)+(b). The scripted stream covers the branches,
+   and the stream rebuilt from a flight ULog adds realistic values. There is no
+   on-target capture, so no new firmware and no ULog surface change.
+2. **Base commit:** `3438ced` (master after this proposal merged). The oracle copies
+   `crates/elle-system/src/system.rs` from it: blob `4d3f845f`, SHA-256
+   `992eef7f5f758edd03a78b329143460d08ee5d522840757f2d0105ce5de2783d`. If master's
+   `system.rs` changes before the refactor starts, the base moves to that commit
+   and both hashes are taken again.
 
 ## Rollback
 
