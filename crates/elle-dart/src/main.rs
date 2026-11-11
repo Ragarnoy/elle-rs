@@ -103,6 +103,12 @@ async fn main(spawner: Spawner) {
         alarm_wake_mode: AlarmWakeMode::Disabled,
     };
     let mut aon = AonTimer::new(p.POWMAN, Irqs, aon_config);
+    // POWMAN is in the always-on domain: the timer keeps running through a
+    // watchdog reset (ESC-config mode switch, watchdog timeout), and
+    // `set_counter` panics on a running timer. Stop it first.
+    if aon.is_running() {
+        aon.stop();
+    }
     aon.set_counter(epoch_ms);
     aon.start();
     info!("AON: seeded with epoch {}ms", epoch_ms);

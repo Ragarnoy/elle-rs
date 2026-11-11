@@ -72,6 +72,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight and was at the nose-up limit 43% of the time.
 
 ### Fixed
+- A watchdog reset no longer leaves the FC dead (operator behaviour): the AON
+  timer survives it, and the boot's `set_counter` on a running timer panicked
+  into HardFault (no RTT, no DShot, no elevons) until a power cycle. Any watchdog
+  reset hit it, a watchdog timeout included; the ESC-config mode switch made it
+  show. The boot now stops the timer before reseeding it.
 - ULog keeps its last data on `ulog stop` (ULog): the SD writer now writes the
   chunks still queued for the session before closing the file instead of
   discarding them.
