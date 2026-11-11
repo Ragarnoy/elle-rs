@@ -539,8 +539,10 @@ pub struct EscSetReq {
     pub engine: EngineParam,
     /// Setting name → value, e.g. `{"beep_volume": 5}`. Names and numeric
     /// values as `esc_read` shows them (or the esc-config-rs CLI's). The enum
-    /// fields (`brake_mode`, `signal_type`, `timing_advance`,
-    /// `variable_pwm_mode`) take the CLI's value syntax, not the variant name.
+    /// fields (`brake_mode`, `signal_type`, `variable_pwm_mode`) take the CLI's
+    /// value syntax, not the variant name. `timing_advance` is degrees (0-30, in
+    /// 0.9375° steps); firmware with EEPROM version below 3 (AM32 up to 2.18)
+    /// only takes 0, 7.5, 15 or 22.5 and refuses anything else.
     pub fields: std::collections::BTreeMap<String, Value>,
 }
 

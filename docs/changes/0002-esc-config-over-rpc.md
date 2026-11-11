@@ -193,7 +193,7 @@ questions 1):
   a plain FC reset should release the ESCs too. To confirm on the bench (Open
   questions 2).
 - **Dependencies** (by git rev from esc-config-rs, like `icm426xx`: branch
-  `elle-integration` @ `4a9a150`; switch to a tag once one exists): `esc-session`,
+  `elle-integration` @ `1dcff3f`; switch to a tag once one exists): `esc-session`,
   `esc-onewire-rp` (`rp235xa`), `esc-config-icd` (`session` in firmware, `use-std` on
   the host), `esc-protocol` (no default features in firmware; `std,serde` on the host).
   All behind the `elle-hardware/esc-config` feature, which `rpc-control` enables. Versions
@@ -365,7 +365,7 @@ calibration save in flight when the switch reboots is cut as by any reset, which
   the signal-timeout case: ESC app running, line driven high with no DShot →
   bootloader within ~2 s.
 - Done: the host policy is pure functions in `esc_protocol::policy`, on
-  esc-config-rs branch `elle-integration` (`4a9a150`), which Elle pins by rev. That
+  esc-config-rs branch `elle-integration` (`1dcff3f`), which Elle pins by rev. That
   branch must not be rebased or deleted until it is merged or tagged; then Elle pins
   the tag (REVAMP Phase 4).
 

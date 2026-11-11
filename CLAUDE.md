@@ -359,4 +359,4 @@ the binaries' SWI handler).
 | embedded-fatfs / sdspi (git `MabezDev/embedded-fatfs` rev `919e569f`) | yes | - | FAT32 on the SD card |
 | embedded-hal-bus 0.3 | yes | - | I2C/SPI bus sharing |
 | bmp390 (`drivers/bmp390`) | yes | - | Barometer, local fork patched over crates.io |
-| esc-session · esc-onewire-rp · esc-config-icd · esc-protocol (git `Ragarnoy/esc-config-rs` rev `4a9a150`, branch `elle-integration`) | yes (`esc-config`) | esc-protocol (`std,serde`), esc-config-icd (`use-std`) | AM32 bootloader session, PIO one-wire UART, ESC RPC types, settings decoding and host policy. Switch to a tag once esc-config-rs releases; don't rebase or delete the branch until then. |
+| esc-session · esc-onewire-rp · esc-config-icd · esc-protocol (git `Ragarnoy/esc-config-rs` rev `1dcff3f`, branch `elle-integration`) | yes (`esc-config`) | esc-protocol (`std,serde`), esc-config-icd (`use-std`) | AM32 bootloader session, PIO one-wire UART, ESC RPC types, settings decoding and host policy. Switch to a tag once esc-config-rs releases; don't rebase or delete the branch until then. |

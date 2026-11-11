@@ -77,10 +77,10 @@ embassy-dshot = { version = "0.5.1", default-features = false, features = ["rp23
 # AM32 ESC configuration (proposal 0002), from esc-config-rs: the bootloader
 # session, the PIO one-wire UART, the typed operations and the settings layout.
 # One rev for all four, so firmware, ICD and host agree on the types.
-esc-protocol = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "4a9a150", default-features = false }
-esc-session = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "4a9a150" }
-esc-onewire-rp = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "4a9a150", features = ["rp235xa"] }
-esc-config-icd = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "4a9a150" }
+esc-protocol = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "1dcff3f", default-features = false }
+esc-session = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "1dcff3f" }
+esc-onewire-rp = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "1dcff3f", features = ["rp235xa"] }
+esc-config-icd = { git = "https://github.com/Ragarnoy/esc-config-rs.git", rev = "1dcff3f" }
 
 [patch.crates-io]
 embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "340bf1de" }
