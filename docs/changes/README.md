@@ -48,7 +48,7 @@ doesn't apply gets "None", not padding.
 | # | Title | Status |
 |---|-------|--------|
 | [0001](0001-eagle-yaw-damper.md) | Yaw damper on the eagle | Accepted: code inert (gain 0); enabling waits for an eagle flight log (gate 1) |
-| [0002](0002-esc-config-over-rpc.md) | AM32 ESC configuration from the TUI and MCP | Draft: waits on the esc-config-rs bench regression; bootloader entry to confirm |
+| [0002](0002-esc-config-over-rpc.md) | AM32 ESC configuration from the TUI and MCP | Accepted: implementation on `esc-config`; esc-config-rs bench regression and TEST_PLAN 6.11 due |
 | [0003](0003-board-orientation.md) | Per-airframe board orientation | Implemented: eagle 0.1.2 passed; Part 1.3 on the eagle due |
 | [0004](0004-throttle-gain-schedule.md) | Throttle-scheduled attitude gains | Draft: waits on the dart's roll Kp 0.18 flight (gate 1) |
 | [0005](0005-dual-imu-cross-check.md) | Dual-IMU cross-check | Draft: hardware (Rev B second ICM-45686) ahead of this firmware proposal |

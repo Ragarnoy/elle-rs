@@ -2,7 +2,7 @@
 
 | | |
 |-|-|
-| Status | Draft |
+| Status | Accepted |
 | Airframes | both (eagle: two ESCs; dart: one) |
 | Date | 2026-10-02, rewritten 2026-11-11 |
 | Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): additive only (new endpoints, new event codes, a new RPC-build mode); no existing type or code changes; flight builds unchanged |
