@@ -81,8 +81,8 @@ pub fn parse_engine(s: &str) -> Result<EscEngine> {
     }
 }
 
-/// This boot's mode. Firmware without the endpoint (older, or a flight build
-/// seen through RPC) never answers: read that as `Normal`.
+/// This boot's mode. Firmware without the endpoint (older, or a flight build)
+/// never answers, which comes back as an `Err` after a short wait.
 pub async fn mode(client: &HostClient<WireError>) -> Result<EscBootMode> {
     call::<EscModeEndpoint>(client, &(), SHORT_TIMEOUT).await
 }
@@ -254,7 +254,9 @@ pub struct Change {
 }
 
 /// Field-by-field differences between two settings blocks (decoded), plus
-/// any raw byte difference the decoding does not show (melody, CAN, spare).
+/// the raw bytes that differ where no decoded field shows them: always for
+/// the melody and CAN bytes (48..192), and for the settings bytes when no
+/// decoded field changed.
 #[must_use]
 pub fn diff(before: &[u8], after: &[u8]) -> Vec<Change> {
     let pad = |b: &[u8]| {
@@ -278,26 +280,41 @@ pub fn diff(before: &[u8], after: &[u8]) -> Vec<Change> {
             }
         }
     }
-    let bytes: Vec<usize> = (0..policy::EEPROM_SIZE).filter(|&i| a[i] != b[i]).collect();
-    // Only report raw bytes when no decoded field already explains them.
-    if out.is_empty() && !bytes.is_empty() {
+    let from = if out.is_empty() {
+        0
+    } else {
+        policy::SETTINGS.end
+    };
+    let bytes: Vec<usize> = (from..policy::EEPROM_SIZE)
+        .filter(|&i| a[i] != b[i])
+        .collect();
+    if !bytes.is_empty() {
+        let show = |x: &Block| {
+            json!(
+                bytes
+                    .iter()
+                    .map(|&i| format!("{i}:{:02X}", x[i]))
+                    .collect::<Vec<_>>()
+            )
+        };
         out.push(Change {
             field: "raw_bytes".to_string(),
-            before: json!(
-                bytes
-                    .iter()
-                    .map(|&i| format!("{i}:{:02X}", a[i]))
-                    .collect::<Vec<_>>()
-            ),
-            after: json!(
-                bytes
-                    .iter()
-                    .map(|&i| format!("{i}:{:02X}", b[i]))
-                    .collect::<Vec<_>>()
-            ),
+            before: show(&a),
+            after: show(&b),
         });
     }
     out
+}
+
+/// A setting by its CLI name or its decoded (`esc_read`) name; two decoded
+/// names carry a unit or kind suffix the CLI names lack.
+fn setting(name: &str) -> Option<Setting> {
+    Setting::parse(name).or_else(|| {
+        ["_khz", "_mode"]
+            .iter()
+            .find_map(|suffix| name.strip_suffix(suffix))
+            .and_then(Setting::parse)
+    })
 }
 
 /// Apply `name = value` edits to `current` under the host policy: only
@@ -308,7 +325,7 @@ pub fn edit(current: &Block, edits: &[(String, String)]) -> Result<Block> {
     }
     let mut cfg = config(current);
     for (name, value) in edits {
-        let setting = Setting::parse(name).ok_or_else(|| {
+        let setting = setting(name).ok_or_else(|| {
             anyhow!(
                 "unknown setting {name:?}; one of: {}",
                 Setting::all_names().join(", ")
@@ -450,6 +467,30 @@ mod tests {
                 .any(|c| c.field == "raw_bytes" || c.field.contains("melody")),
             "{d:?}"
         );
+    }
+
+    #[test]
+    fn melody_changes_show_next_to_a_setting_change() {
+        let a = block();
+        let mut b = edit(&a, &[("beep_volume".into(), "5".into())]).unwrap();
+        b[100] = 0x42;
+        let d = diff(&a, &b);
+        assert!(d.iter().any(|c| c.field == "beep_volume"), "{d:?}");
+        assert!(d.iter().any(|c| c.field == "raw_bytes"), "{d:?}");
+    }
+
+    #[test]
+    fn decoded_names_are_setting_names() {
+        // `esc_set` takes the names `esc_read` shows.
+        let Value::Object(m) = decoded(&block()) else {
+            panic!("decoded settings are an object");
+        };
+        let meta = ["firmware_version", "bootloader_version", "eeprom_version"];
+        let bad: Vec<&String> = m
+            .keys()
+            .filter(|k| !meta.contains(&k.as_str()) && setting(k).is_none())
+            .collect();
+        assert!(bad.is_empty(), "not settable by name: {bad:?}");
     }
 
     #[test]

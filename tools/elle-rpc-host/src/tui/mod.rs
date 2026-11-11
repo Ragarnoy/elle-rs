@@ -91,6 +91,9 @@ pub async fn run() -> Result<()> {
     let mut rc_interval = tokio::time::interval(Duration::from_millis(50)); // 20Hz RC poll
     let mut ctrl_interval = tokio::time::interval(Duration::from_millis(100)); // 10Hz controller poll
     let mut engine_interval = tokio::time::interval(Duration::from_millis(200)); // 5Hz engine poll
+    // ESC-config boot: the flight polls stop, so ping to keep the host link
+    // fresh (the pure-RPC failsafe warns after 200 ms of silence).
+    let mut esc_ping_interval = tokio::time::interval(Duration::from_millis(100));
     let mut event_stream = crossterm::event::EventStream::new();
 
     let mut log_sub_closed = false;
@@ -278,6 +281,15 @@ pub async fn run() -> Result<()> {
                     client.send_resp::<GetPerformanceEndpoint>(&()),
                 ).await {
                     state.performance = Some(p);
+                }
+            }
+
+            _ = esc_ping_interval.tick(), if state.background_task.is_none() && state.esc_config() => {
+                if let Ok(Ok(())) = tokio::time::timeout(
+                    Duration::from_millis(200),
+                    client.send_resp::<PingEndpoint>(&()),
+                ).await {
+                    state.mark_poll_success();
                 }
             }
 
