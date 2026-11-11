@@ -902,7 +902,7 @@ async fn cmd_esc(args: &[&str], client: &HostClient<WireError>) -> CommandResult
                         dir.join(esc::backup_name(engine, &c.info))
                     }
                 };
-                std::fs::write(&path, &data)?;
+                esc::save_backup(&path, &data)?;
                 CommandResult::Ok(format!("{name} backup saved to {}", path.display()))
             }
             "restore" => {

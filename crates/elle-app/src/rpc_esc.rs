@@ -99,14 +99,21 @@ pub(crate) fn handle_esc_enter(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) 
     }
 }
 
-/// Leave ESC-config mode: start each ESC's app (Run), then reboot normally.
+/// Leave ESC-config mode: start each ESC's app (Run; connecting it first if
+/// this boot never did), then reboot normally.
 pub(crate) async fn handle_esc_exit(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     if !boot_mode::is_esc_config() {
         return AckResp::ok();
     }
     for e in [EscEngine::Left, EscEngine::Right] {
-        // NotConnected (never connected) and Link (no such engine) are fine.
-        let _ = run(e, EscOp::Run).await;
+        // An ESC not connected this boot may still wait in its bootloader:
+        // connect it first, so it gets Run too. A failed connect (no such
+        // engine, or an ESC already in its app) is fine.
+        if let Some(EscReply::Ack(Err(EscError::NotConnected))) = run(e, EscOp::Run).await
+            && let Some(EscReply::Connect(Ok(_))) = run(e, EscOp::Connect).await
+        {
+            let _ = run(e, EscOp::Run).await;
+        }
     }
     match ctx
         .cmd_sender

@@ -256,7 +256,8 @@ Nothing here has run on hardware yet (TEST_PLAN 6.11).
    shows `ESC CONFIG` and its flight panels give way to an ESC panel. Arming is
    refused (event 172). Flash writes and level cal are refused (event 63). Elevons
    still move, as in any RPC build. The battery stays connected: the FC runs off the
-   ESCs' 5 V.
+   ESCs' 5 V. With `direct` or `elle mcp` (nothing sent between commands) the host
+   failsafe events 13/14/15 appear between commands; expected here, the TUI pings.
 3. **Wait ~2 s.** An AM32 ESC without DShot resets itself and, with the line held
    high, stays in its bootloader. A `NoReply` right after entering is the ESC still
    timing out: try again.
@@ -264,7 +265,7 @@ Nothing here has run on hardware yet (TEST_PLAN 6.11).
    and the ESC's id and firmware name; `esc show` prints the settings.
 5. **Back up before any change:** `esc backup left [file]` saves the 256 bytes at the
    EEPROM base (default `logs/esc/left-<id>-<time>.bin`), the same format as the
-   esc-config-rs relay CLI's `backup`.
+   esc-config-rs relay CLI's `backup`. An existing file is never overwritten.
 6. **Change:** `esc set left beep_volume=5 …` (names as `esc show` / `esc_read` print
    them, or the CLI's short names). Only the settings bytes (5..48) change; the
    firmware writes, reads back and compares (event 177; a failure is 175/176). The
@@ -272,7 +273,8 @@ Nothing here has run on hardware yet (TEST_PLAN 6.11).
 7. **Restore:** `esc restore left <file>`: settings, melody and CAN from the backup;
    boot and version bytes from the ESC. A backup from another EEPROM layout version is
    refused.
-8. **Exit:** `esc exit` starts each ESC's app (Run) and reboots normally. Check that
+8. **Exit:** `esc exit` starts each ESC's app (Run; it connects first any ESC not
+   connected this boot) and reboots normally. Check that
    events 160–165 stay absent and the governor behaves (TEST_PLAN 6.8). `esc run`
    alone is transient: without DShot the app drops back into its bootloader ~2 s
    later. A plain FC reset also gives a normal boot.

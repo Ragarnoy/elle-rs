@@ -168,8 +168,14 @@ questions 1):
   before anything can arm; every arm path (RPC `Arm`, the `rpc-rc` gesture) then
   refuses with event 172 (`take_arm_refused`). The loop still publishes eRPM targets;
   nothing reads them.
-- **Exit.** `elle/esc/mode/exit`: the handler sends Run to each ESC through the task,
-  then `SwitchBootMode(Normal)`, and the loop resets normally. On any other reset the RP2350 pads fall back to their
+- **Exit.** `elle/esc/mode/exit`: the handler sends Run to each ESC through the task
+  (connecting first any ESC this boot never connected, so one left waiting in its
+  bootloader is released too), then `SwitchBootMode(Normal)`, and the loop resets
+  normally. Up to six ESC operations: the host waits up to ~31 s.
+- **Host link in this mode.** The TUI pings every 100 ms. `direct` and `elle mcp`
+  send nothing between calls, so the pure-RPC host failsafe raises its events
+  (13/14/15) between them. Harmless here (disarmed, arming locked); the orange double
+  blink takes precedence over the failsafe flash. On any other reset the RP2350 pads fall back to their
   pull-down default, and the boot holds them there well past 20 ms before PIO setup.
   By REVAMP P1, a line held low for 20 ms makes a waiting bootloader start its app, so
   a plain FC reset should release the ESCs too. To confirm on the bench (Open
@@ -220,7 +226,7 @@ the host policy all stay on the host:
   [-e left|right]`.
 - **`backup`** writes the raw 256 bytes at the EEPROM base, the esc-config-rs CLI's
   backup format, so relay and Elle backups compare byte for byte (default
-  `logs/esc/<engine>-<device id>-<time>.bin`). The CLI's TOML export/import stays a
+  `logs/esc/<engine>-<device id>-<time>.bin`), never over an existing file. The CLI's TOML export/import stays a
   separate, human-readable format; `esc_read` shows the same field names. The
   `governor-calibration` skill gains a step: save an ESC backup next to the new
   table, and `esc_compare` against it before trusting an old table.
@@ -356,7 +362,8 @@ calibration save in flight when the switch reboots is cut as by any reset, which
    `esc connect` keeps failing with `NoReply`.
 2. **Exit by FC reset**, also source-derived and bench-tested (step 8): after a plain
    FC reset the pads pull low, and a bootloader waiting for a byte jumps to its app
-   after 20 ms of low line. `esc exit` does not depend on it (it sends Run first).
+   after 20 ms of low line. `esc exit` does not depend on it: it sends Run to each ESC, connecting first one this
+   boot never connected (an ESC still in its app just fails the connect).
 
 ## Rollback
 

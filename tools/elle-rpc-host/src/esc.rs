@@ -28,9 +28,10 @@ use crate::link::Link;
 /// One ESC operation: the firmware gives up after `ESC_OP_TIMEOUT_MS` and
 /// answers `NoReply`; the host waits a little longer for that answer.
 pub const OP_TIMEOUT: Duration = Duration::from_millis(elle_config::ESC_HOST_TIMEOUT_MS);
-/// `exit` sends Run to both ESCs before it answers.
+/// `exit` runs up to three operations per ESC (Run, and for an ESC this boot
+/// never connected, Connect and Run again) on both ESCs before it answers.
 pub const EXIT_TIMEOUT: Duration =
-    Duration::from_millis(2 * elle_config::ESC_HOST_TIMEOUT_MS + 1_000);
+    Duration::from_millis(6 * elle_config::ESC_HOST_TIMEOUT_MS + 1_000);
 /// Plain requests (mode, enter).
 const SHORT_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long a reboot plus probe attach plus first reply may take.
@@ -400,6 +401,27 @@ pub fn info_json(c: &Connected) -> Value {
     })
 }
 
+/// Write a backup file, never over an existing one (a later backup to the
+/// same path would destroy the restore source).
+pub fn save_backup(path: &std::path::Path, data: &[u8]) -> Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| {
+            format!(
+                "{} (an existing backup is never overwritten)",
+                path.display()
+            )
+        })?;
+    f.write_all(data)?;
+    Ok(())
+}
+
 /// Where backups go by default: `logs/esc/`, next to the flight logs.
 #[must_use]
 pub fn backup_dir() -> std::path::PathBuf {
@@ -491,6 +513,57 @@ mod tests {
             .filter(|k| !meta.contains(&k.as_str()) && setting(k).is_none())
             .collect();
         assert!(bad.is_empty(), "not settable by name: {bad:?}");
+    }
+
+    #[test]
+    fn decoded_values_round_trip_through_edit() {
+        // Feeding a decoded value back through `edit` must not change the
+        // byte: `esc_set` takes the values `esc_read` shows.
+        let mut cfg = Am32Config::with_defaults();
+        cfg.as_bytes_mut()[0] = 0x01;
+        cfg.as_bytes_mut()[1] = Am32Config::CURRENT_EEPROM_VERSION;
+        let mut block: Block = [0; policy::EEPROM_SIZE];
+        block.copy_from_slice(&cfg.as_bytes()[..policy::EEPROM_SIZE]);
+        let Value::Object(m) = decoded(&block) else {
+            panic!("decoded settings are an object");
+        };
+        let meta = ["firmware_version", "bootloader_version", "eeprom_version"];
+        let (mut changed, mut rejected, mut accepted) = (Vec::new(), Vec::new(), 0);
+        for (k, v) in &m {
+            if meta.contains(&k.as_str()) {
+                continue;
+            }
+            let value = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            match edit(&block, &[(k.clone(), value.clone())]) {
+                Ok(new) if new != block => changed.push(format!("{k}={value}")),
+                Ok(_) => accepted += 1,
+                Err(_) => rejected.push(format!("{k}={value}")),
+            }
+        }
+        assert!(
+            changed.is_empty(),
+            "values that change the byte: {changed:?}"
+        );
+        // Enum fields show their variant name, which `apply_setting` does not
+        // take (it wants the CLI's syntax): refused, never written wrong.
+        assert!(rejected.len() <= 4, "rejected: {rejected:?}");
+        assert!(
+            accepted >= 30,
+            "accepted only {accepted}; rejected {rejected:?}"
+        );
+    }
+
+    #[test]
+    fn backups_are_never_overwritten() {
+        let dir = std::env::temp_dir().join(format!("elle-esc-bak-{}", std::process::id()));
+        let path = dir.join("x.bin");
+        save_backup(&path, &[1, 2, 3]).unwrap();
+        assert!(save_backup(&path, &[4]).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), vec![1, 2, 3]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

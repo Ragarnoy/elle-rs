@@ -168,7 +168,10 @@ pub async fn run() -> Result<()> {
                                             Err(e) => break Err(e.context("reattach after the reboot")),
                                         };
                                         client = new.client.clone();
-                                        log_sub = client.subscribe_multi::<LogTopic>(64).await?;
+                                        log_sub = match client.subscribe_multi::<LogTopic>(64).await {
+                                            Ok(sub) => sub,
+                                            Err(e) => break Err(anyhow::anyhow!("event subscription after the reboot: {e:?}")),
+                                        };
                                         log_sub_closed = false;
                                         link = Some(new);
                                         state.esc_mode = Some(mode);

@@ -109,7 +109,7 @@ bootloader first. The engine is `left` (default) or `right` (eagle only).
 | `esc connect [l\|r]` | `esc connect -e l` | `esc_connect` | Bootloader handshake: id, layout, firmware name |
 | `esc show [l\|r]` | `esc show -e l` | `esc_read` | Decoded settings (`esc_read`: plus raw hex) |
 | `esc set [l\|r] k=v …` | `esc set -e l k=v …` | `esc_set` (gated) | Edit settings bytes 5..48, write, verify, print the changes |
-| `esc backup [l\|r] [file]` | `esc backup -e l [-o file]` | `esc_backup` | Raw 256 bytes at the EEPROM base (relay CLI format), default `logs/esc/` |
+| `esc backup [l\|r] [file]` | `esc backup -e l [-o file]` | `esc_backup` | Raw 256 bytes at the EEPROM base (relay CLI format), default `logs/esc/`; never overwrites a file |
 | — | — | `esc_compare` | Diff an ESC against a backup |
 | `esc restore [l\|r] <file>` | `esc restore -e l <file>` | `esc_restore` (gated) | Settings, melody, CAN from a backup; boot and version bytes kept |
 | `esc run [l\|r]` | `esc run -e l` | `esc_run` | Start the ESC's app (transient: back in the bootloader ~2 s later without DShot) |

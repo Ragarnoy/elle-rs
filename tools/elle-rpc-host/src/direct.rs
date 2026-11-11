@@ -232,7 +232,7 @@ async fn run_esc(link: Link, action: EscAction) -> Result<Link> {
                     dir.join(esc::backup_name(engine, &c.info))
                 }
             };
-            std::fs::write(&path, &data)?;
+            esc::save_backup(&path, &data)?;
             println!("Backup saved to {}", path.display());
         }
         EscAction::Restore { engine, file } => {

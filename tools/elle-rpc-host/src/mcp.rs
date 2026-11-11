@@ -531,8 +531,10 @@ pub struct EscFileReq {
 #[derive(Deserialize, JsonSchema)]
 pub struct EscSetReq {
     pub engine: EngineParam,
-    /// Setting name → value, e.g. `{"beep_volume": 5, "timing": "15"}`.
-    /// Names as in `esc_read`'s decoded fields or the esc-config-rs CLI.
+    /// Setting name → value, e.g. `{"beep_volume": 5}`. Names and numeric
+    /// values as `esc_read` shows them (or the esc-config-rs CLI's). The enum
+    /// fields (`brake_mode`, `signal_type`, `timing_advance`,
+    /// `variable_pwm_mode`) take the CLI's value syntax, not the variant name.
     pub fields: std::collections::BTreeMap<String, Value>,
 }
 
@@ -1610,7 +1612,7 @@ impl ElleMcp {
                 dir.join(crate::esc::backup_name(engine, &c.info))
             }
         };
-        std::fs::write(&path, &data).map_err(|e| format!("{}: {e}", path.display()))?;
+        crate::esc::save_backup(&path, &data).map_err(|e| format!("{e:#}"))?;
         self.inner
             .esc_backups
             .lock()
@@ -1832,7 +1834,9 @@ impl ServerHandler for ElleMcp {
              Use `read`, `sample`, `wait_for`, `events` and `wait_event` to run TEST_PLAN.md rows: \
              ask the operator for physical actions (tilt, switches, TX off), then verify. \
              Engines are off limits unless link_status says motors_allowed; never spin engines \
-             without the operator confirming props are off.",
+             without the operator confirming props are off. ESC EEPROM writes (`esc_set`, \
+             `esc_restore`) are off limits unless link_status says esc_write_allowed; take an \
+             `esc_backup` first.",
             )
     }
 }

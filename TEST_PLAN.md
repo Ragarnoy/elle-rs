@@ -704,14 +704,14 @@ ESC first, and keep a relay backup of each ESC for rows 2–3. Procedure:
 
 | # | Test | Expected | Pass |
 |---|------|----------|------|
-| 1 | Armed (or throttle up): `esc enter`. Then disarmed: `esc enter` | Refused, event 171, no reboot (host: "did not take"). Then 170, reboot, the TUI reattaches and `esc` reports `ESC CONFIG` (confirm the mode after the reattach, not only the event); header `ESC CONFIG`, ESC panel; LED double blink orange; CRSF `ESCCFG`; `arm` → 172 | [ ] |
+| 1 | Armed (or throttle up): `esc enter`. Then disarmed: `esc enter` | Refused, event 171, no reboot (host: "did not take"). Then 170, reboot, the TUI reattaches and `esc` reports `ESC CONFIG` (confirm the mode after the reattach, not only the event); header `ESC CONFIG`, ESC panel; LED double blink orange; CRSF `ESCCFG`; `arm` → 172. With `direct` / MCP, host failsafe events 13/14/15 between commands are expected | [ ] |
 | 2 | Wait ≥ 2 s, `esc connect left` (and `right` on the eagle) | 173 / 174; id and firmware name as the relay reads them. A `NoReply` in the first ~2 s is the ESC app still timing out: retry. Once with a logic analyser: last DShot frame to first bootloader answer | [ ] |
-| 3 | `esc backup left` | 256-byte file, byte-identical to the relay's backup of the same ESC | [ ] |
+| 3 | `esc backup left`; then the same again with that file name | 256-byte file, byte-identical to the relay's backup of the same ESC; the second backup refuses to overwrite it | [ ] |
 | 4 | `esc set left beep_volume=<other>`, then `esc exit`, `esc enter`, `esc show left` | 177; the host lists only `beep_volume` changed; the change survives; melody and CAN bytes unchanged (`esc_compare` against row 3 shows only `beep_volume`) | [ ] |
 | 5 | `esc restore left <row 3 file>` | 177; `esc_compare` against row 3: identical | [ ] |
 | 6 | Rows 2–5 through `elle mcp` | `esc_set` / `esc_restore` refused without `--dangerously-allow-esc-write`; `esc_set` refused before an `esc_backup` of that ESC; with both, as rows 4–5 | [ ] |
 | 7 | Pull the battery once in the middle of a write (on an ESC with a backup) | After repower: normal boot, 160/161 for that ESC (it stays in its bootloader); `esc enter`, `esc restore` recovers it | [ ] |
-| 8 | `esc exit`; once more with a plain FC reset (`reset_target`) instead, ESC connected | Normal boot, `esc` reports normal; events 160–165 absent; governor as before (6.8 row 3). After the plain reset the ESC starts its app on its own | [ ] |
+| 8 | `esc exit`; on the eagle once with only `left` connected this boot; once more with a plain FC reset (`reset_target`) instead, ESC connected | Normal boot, `esc` reports normal; events 160–165 absent for **both** ESCs (exit connects and runs the one never connected); governor as before (6.8 row 3). After the plain reset the ESC starts its app on its own | [ ] |
 | 9 | Probe reset in ESC-config mode | Normal boot (flag cleared) | [ ] |
 | 10 | In ESC-config mode: `mag cal clear`, `savepid`, `level cal` | Each refused, event 63 | [ ] |
 | 11 | `esc set` and `esc restore` (192-byte requests, the largest host-to-FC frames) | Both answer within ~1 s; no RPC timeouts while reads work | [ ] |
