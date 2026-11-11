@@ -116,6 +116,11 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
     let mut was_killed = false;
     let mut autotune_display = elle_hardware::crsf::AutotuneDisplay::Off;
     let mut autotune_display_timer: u32 = 0;
+    // ESC-config boot (proposal 0002): no engine output path, no flash writes.
+    let esc_config = elle_hardware::boot_mode::is_esc_config();
+    // A mode switch accepted: reboot at this instant into this mode, once the
+    // answer and the event have had time to reach the host.
+    let mut reboot_at: Option<(Instant, elle_hardware::boot_mode::BootMode)> = None;
 
     loop {
         ticker.next().await;
@@ -135,6 +140,19 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
 
         // Process all pending RPC commands
         while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
+            // ESC-config boot: a flash operation would pause the ESC session
+            // (interrupts off) mid-frame. Level cal saves when it completes.
+            if esc_config && (writes_flash(&cmd) || matches!(cmd, RpcCommand::StartLevelCal)) {
+                if matches!(cmd, RpcCommand::PopAndPeekULog) {
+                    ULOG_STATE.store(ULogState::Empty as u8, Ordering::Release);
+                }
+                elle_hardware::elle_event!(
+                    warn,
+                    elle_hardware::event::EVT_FLASH_REFUSED_ARMED,
+                    "RPC: flash command refused in ESC-config mode"
+                );
+                continue;
+            }
             if fc.is_armed() && writes_flash(&cmd) {
                 if matches!(cmd, RpcCommand::PopAndPeekULog) {
                     // End the extraction cleanly rather than leave the host waiting.
@@ -189,12 +207,19 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                     );
                 }
                 RpcCommand::Arm => {
-                    fc.arm();
-                    elle_hardware::elle_event!(
-                        info,
-                        elle_hardware::event::EVT_MOTORS_ARMED,
-                        "Motors ARMED via RPC"
-                    );
+                    if fc.arm() {
+                        elle_hardware::elle_event!(
+                            info,
+                            elle_hardware::event::EVT_MOTORS_ARMED,
+                            "Motors ARMED via RPC"
+                        );
+                    } else {
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_ARM_REFUSED_ESC_CONFIG,
+                            "RPC: arm refused, ESC-config boot"
+                        );
+                    }
                 }
                 RpcCommand::Disarm => {
                     // Drop the commanded throttle too: otherwise the next Arm
@@ -448,6 +473,35 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                 RpcCommand::ClearLevelCal => {
                     elle_hardware::imu::level_cal::clear().await;
                 }
+                RpcCommand::SwitchBootMode(mode) => {
+                    let (left, right) = fc.engine_output();
+                    if fc.is_armed() || left != 0 || right != 0 {
+                        elle_hardware::elle_event!(
+                            warn,
+                            elle_hardware::event::EVT_ESC_CONFIG_REFUSED,
+                            "Boot mode switch refused: armed or engine commanded"
+                        );
+                    } else if reboot_at.is_none() {
+                        if mode == elle_hardware::boot_mode::BootMode::EscConfig {
+                            elle_hardware::elle_event!(
+                                info,
+                                elle_hardware::event::EVT_ESC_CONFIG_ENTER,
+                                "Rebooting into ESC-config mode"
+                            );
+                        }
+                        // Close the SD file before the reset.
+                        if ULOG_ENABLED.load(Ordering::Acquire) {
+                            ULOG_ENABLED.store(false, Ordering::Release);
+                            let _ = ulog_logger.flush();
+                            elle_hardware::sd_writer::SD_CMD_SIGNAL
+                                .signal(elle_hardware::sd_writer::SdCommand::Stop);
+                        }
+                        reboot_at = Some((
+                            Instant::now() + Duration::from_millis(ESC_REBOOT_DELAY_MS),
+                            mode,
+                        ));
+                    }
+                }
                 RpcCommand::SetHeadingHold {
                     enabled,
                     target_cdeg,
@@ -558,6 +612,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         // CH7 out of its off position selects level cal, as in flight mode.
         let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
         if tapped
+            && !esc_config
             && !fc.is_armed()
             && kill_active
             && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != rpc_app::MAG_CAL_COLLECTING
@@ -584,6 +639,13 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             && !kill_active
         {
             fc.update(commands, valid_attitude.as_ref());
+        }
+        if fc.take_arm_refused() {
+            elle_hardware::elle_event!(
+                warn,
+                elle_hardware::event::EVT_ARM_REFUSED_ESC_CONFIG,
+                "Arming gesture refused, ESC-config boot"
+            );
         }
 
         // Send engine commands via DShot (governor converts eRPM target to DShot)
@@ -881,7 +943,10 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
 
         if loop_counter.is_multiple_of(LED_UPDATE_INTERVAL) {
             let imu_status = IMU_STATUS.read().await;
-            let led_pattern = if fc.is_failsafe() {
+            let led_pattern = if esc_config {
+                // ESC-config boot: never mistaken for a flight-ready board.
+                LedPattern::DoubleBlink(colors::ORANGE)
+            } else if fc.is_failsafe() {
                 LedPattern::RapidFlash(colors::ORANGE)
             } else if elle_hardware::imu::level_cal::is_collecting() {
                 LedPattern::FastBlink(colors::CYAN)
@@ -901,6 +966,18 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
 
             let _ = LED_COMMAND_CHANNEL.try_send(led_pattern);
             drop(imu_status);
+        }
+
+        // An accepted mode switch: still disarmed (nothing can arm in between
+        // without a refusal above), the answer and event are out. Reboot.
+        if let Some((at, mode)) = reboot_at
+            && Instant::now() >= at
+        {
+            if fc.is_armed() {
+                reboot_at = None;
+            } else {
+                elle_hardware::watchdog::reboot_into(mode);
+            }
         }
     }
 }

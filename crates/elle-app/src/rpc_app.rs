@@ -14,6 +14,10 @@ use embassy_sync::channel::Sender;
 use embassy_sync::signal::Signal;
 use postcard_rpc::header::VarHeader;
 
+use crate::rpc_esc::{
+    handle_esc_connect, handle_esc_enter, handle_esc_exit, handle_esc_mode, handle_esc_name,
+    handle_esc_read, handle_esc_read_eeprom, handle_esc_run, handle_esc_write_eeprom,
+};
 use crate::rpc_handlers::RpcCommand;
 
 /// Radians to centidegrees: (180/PI) * 100
@@ -673,6 +677,15 @@ postcard_rpc::define_dispatch! {
         | GetBuildInfoEndpoint      | blocking  | handle_get_build_info       |
         | GetNavEndpoint            | blocking  | handle_get_nav              |
         | GetCore1LoadEndpoint      | blocking  | handle_get_core1_load       |
+        | EscModeEndpoint           | blocking  | handle_esc_mode             |
+        | EscEnterEndpoint          | blocking  | handle_esc_enter            |
+        | EscExitEndpoint           | async     | handle_esc_exit             |
+        | EscConnectEndpoint        | async     | handle_esc_connect          |
+        | EscReadEepromEndpoint     | async     | handle_esc_read_eeprom      |
+        | EscWriteEepromEndpoint    | async     | handle_esc_write_eeprom     |
+        | EscNameEndpoint           | async     | handle_esc_name             |
+        | EscReadEndpoint           | async     | handle_esc_read             |
+        | EscRunEndpoint            | async     | handle_esc_run              |
     };
     topics_in: {
         list: TOPICS_IN_LIST;

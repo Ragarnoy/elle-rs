@@ -31,6 +31,8 @@ mod flight_state;
 #[cfg(feature = "rpc-control")]
 mod rpc_app;
 #[cfg(feature = "rpc-control")]
+mod rpc_esc;
+#[cfg(feature = "rpc-control")]
 mod rpc_handlers;
 
 /// Latest raw RC channels, for the `GetRcChannels` RPC handler.
