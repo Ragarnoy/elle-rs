@@ -38,8 +38,9 @@ Ask the user to confirm, and do not flash until they have:
   PWM frequency, motor KV/poles and direction. Before the sweep, with an RPC build
   and **props off** (refit them after `esc exit`, before the sweep), save a backup of
   each ESC (`elle direct esc enter`, `esc backup -e left [-o
-  file]`, `esc exit`; or `elle mcp` `esc_backup`) and name the files in the table's
-  doc comment. Before trusting an existing table, `esc_compare` the ESC against the
+  file]`, `esc exit`; or `elle mcp` `esc_backup`). Backups land in `logs/esc/`,
+  which git ignores: copy them to `docs/esc/<airframe>-<engine>-<date>.bin` and name
+  those files in the table's doc comment. Before trusting an existing table, `esc_compare` the ESC against the
   backup taken at its sweep: any difference in those fields means re-sweep.
 
 ## 2. Run the sweep

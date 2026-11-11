@@ -226,6 +226,13 @@ pub fn apply_differential_thrust_lut(base_thrust: u16, yaw_rc: u16) -> (u16, u16
 /// The right engine flattens out from ~1400 at ~20,340 RPM, so full stick is
 /// capped at what it can reach: the last row is pinned to `MAX_ERPM`, and the
 /// averaged 1448 row (145,050, beyond the right engine's reach) is left out.
+///
+/// ESC settings: no backup was taken at the sweep. The reference is the backup
+/// taken on 2026-11-11 (`docs/esc/eagle-left-20261111.bin`, `…-right-…`, the two
+/// byte-identical), on the assumption that nothing changed since; `esc_compare`
+/// against it before trusting this table. AM32 2.20, 14 poles, KV 5000, normal
+/// direction, 25 kHz variable PWM, timing byte 26 = 15° with auto-timing on
+/// (esc-config-rs before PR #2 shows that byte as 30°).
 #[cfg(not(feature = "platform-dart"))]
 const GOVERNOR_FF_TABLE: [(u32, u16); 15] = [
     (6_321, 48),     // avg(910,896) RPM × 7
