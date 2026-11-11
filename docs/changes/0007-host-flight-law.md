@@ -39,9 +39,10 @@ None.
 |-----------|--------|-------|
 | Any pilot input, mode, arming, failsafe, autotune or heading-hold sequence | `update()` output | Same elevon command, engine output, `ControllerOutputSnapshot` and events, bit for bit (see Verification) |
 
-The only intended difference is the clock-read timing described under Design →
-Clock. It shows in ULog `controller.att_age_us` and never in a control output. No
-section of `OPERATIONS.md` or `STATE_DIAGRAMS.md` changes.
+The only intended differences are two timing shifts of a few µs on target, described
+under Design → Clock: the clock read (ULog `controller.att_age_us`, the hold-expiry
+edge) and the moment of the PWM write (`controller.pwm_counter_us`). Neither reaches a
+control output. No section of `OPERATIONS.md` or `STATE_DIAGRAMS.md` changes.
 
 ## Design
 
@@ -55,9 +56,8 @@ elle-system::FlightController              hardware and supervisor
     update(commands, attitude):
         stamp dt_us, read now
         out = law.step(inputs, CONTROL_LOOP_DT)
-        PWM write per out.elevons -> pulses, pwm_counter_us
-        emit out.events
-        fill ControllerOutputSnapshot
+        log the mode change, emit out.events
+        last_output = out.write(&mut pwm, dt_us)   // PWM write, snapshot completed
 ```
 
 ### `FlightLaw` (new, `crates/elle-control/src/flight_law.rs`)
@@ -70,8 +70,10 @@ elle-system::FlightController              hardware and supervisor
 - `last_attitude`, `held_ticks`, `attitude_dropped`
 - `current_control_mode`, `setpoint_override`, `explicit_arming_only`, `gains_version`
 
-`ControlMode` moves to `elle-control`, and `elle-system` re-exports it so existing
-callers are unaffected.
+`ControlMode` and `ControllerOutputSnapshot` move to `elle-control`, and `elle-system`
+re-exports both so existing callers are unaffected. The law also keeps the previous
+tick's snapshot, because the fast path and the failsafe hold carry unset fields over
+from it.
 
 Inputs, per tick:
 
@@ -84,10 +86,11 @@ pub struct LawInputs<'a> {
 }
 ```
 
-`Attitude` is the pure half of `elle_hardware::imu::AttitudeData`: the angles, the
-rates and the `Instant` timestamp. `elle-control` already depends on `embassy-time`.
-`AttitudeData` becomes a re-export or a `From`, so Core 1 and `ATTITUDE` don't change.
-`is_attitude_valid` gets a pure twin that takes `now`.
+`Attitude` is `elle_hardware::imu::AttitudeData` moved to `elle-control`: the angles,
+the rates and the `Instant` timestamp, with `zero()`. `elle-control` already depends on
+`embassy-time`. `elle_hardware::imu::AttitudeData` is now a re-export of it, so Core 1
+and `ATTITUDE` don't change. `is_attitude_valid` gets a pure twin,
+`is_attitude_valid_at(attitude, max_age, now)`.
 
 Outputs, per tick:
 
@@ -98,17 +101,26 @@ pub enum ElevonCommand {
 }
 pub struct LawOutputs {
     pub elevons: ElevonCommand,
-    pub engines: (u16, u16),
-    pub snapshot: LawSnapshot,   // every ControllerOutputSnapshot field the law computes
-    pub events: LawEvents,       // attitude_held, attitude_stale (with age), mode_changed(from, to)
+    pub snapshot: ControllerOutputSnapshot, // engines included; pulses, counter, dt_us not yet
+    pub events: LawEvents,       // mode_change(from, to), attitude_held_ms, attitude_stale_ms
+}
+pub trait ElevonOutput {         // implemented by elle_hardware::pwm::PwmOutputs
+    fn set_elevons_with_trim(&mut self, left_us: u32, right_us: u32) -> (u32, u32, u16);
+    fn set_safe_positions(&mut self) -> u16;
+}
+impl LawOutputs {
+    // Make the write, fill elevon_*_pulse_us, pwm_counter_us and dt_us.
+    pub fn write<O: ElevonOutput>(&self, out: &mut O, dt_us: u32) -> ControllerOutputSnapshot;
 }
 ```
 
+`write` lives in `elle-control`, so the step from law output to the published
+snapshot is shared code: the firmware and the oracle both run it.
+
 `FlightController` keeps these jobs:
 
-- the PWM write: trim, right-servo inversion, `pwm_counter_us`;
-- the snapshot fields that come from that write (`elevon_*_pulse_us`,
-  `pwm_counter_us`) and the measured `dt_us`;
+- the PWM hardware (`PwmOutputs`: trim, right-servo inversion, `pwm_counter_us`),
+  driven through `out.write`, and the measured `dt_us` it passes in;
 - emitting `EVT_ATTITUDE_HELD` and `EVT_ATTITUDE_STALE`, and logging the mode change;
 - the watchdog, `check_core1_health` and the supervisor;
 - `check_failsafe` and `RcLinkState`, with events `EVT_RC_*`. On loss it calls
@@ -154,10 +166,19 @@ maths: that would change behaviour and needs its own proposal.
 `update()` reads the clock four times. `Instant::now()` is read once for the `dt_us`
 stamp and again for `att_age_us`. `elapsed()` is called in `is_attitude_valid` (hold
 validity) and in the event text. After the move, `now` is read once and passed as
-`inputs.now`. On target, `att_age_us` and the 50 ms hold-expiry edge can therefore
-shift by the few µs the old body took between reads. That is the only expected
-difference. The oracle runs on a mock clock that doesn't advance within a tick, so
-it can't see this; it is stated here instead.
+`inputs.now`. On target, `att_age_us` and the 20 ms (`ATTITUDE_HOLD_MAX_MS`)
+hold-expiry edge can therefore shift by the few µs the old body took between reads.
+
+The PWM write also moves. The old body wrote the elevons right after mixing, then
+computed the thrust and the snapshot. Now the law computes all of that, the events
+are emitted, and then `write` makes the PWM write. The write therefore lands a few
+µs later in the tick, which shows in `controller.pwm_counter_us`. The pulses latch
+at the frame wrap 1.5 ms later either way (`CONTROL_PWM_LEAD_US`), so they reach the
+servos at the same moment.
+
+These two are the only expected differences. The oracle runs on a mock clock that
+doesn't advance within a tick, and its PWM stub returns counter 0, so it can't see
+either one; they are stated here instead.
 
 ### Timing
 
@@ -180,8 +201,8 @@ from `boot::run` (Conventions: lend large structs).
   still emitted by `FlightController`, with the same conditions and text.
 - **RPC:** none.
 - **Flash:** none.
-- **ULog:** none. `controller` and `commands` keep their fields. Only the clock note
-  above applies.
+- **ULog:** none. `controller` and `commands` keep their fields. Only the timing
+  notes above apply.
 - **CRSF telemetry / LED:** none.
 
 ## Flight-safety risks
@@ -209,11 +230,12 @@ It compiles `tests/flight_law_equivalence/legacy_system.rs`, a **byte-identical 
 `crates/elle-system/src/system.rs` from the base commit. The base commit's hash is
 written in the test. A test checks the copy's SHA-256 against a constant taken from
 `git show <base>:crates/elle-system/src/system.rs`, so the copy can't be edited into
-agreement. The copy builds on the host against shim modules with the original paths:
+agreement. It also includes today's `crates/elle-system/src/system.rs` (as `current`).
+Both build on the host against the same shim modules, under the original paths:
 
 - `elle_hardware::pwm::PwmOutputs`: the same trim and inversion arithmetic, recording
   each write and which path took it;
-- `elle_hardware::elle_event!`: records the event codes;
+- `elle_hardware::elle_event!`: records the level, code and formatted message;
 - `elle_hardware::imu::{AttitudeData, CORE1_HEARTBEAT, is_attitude_valid}`;
 - `elle_hardware::watchdog`, `embassy_rp::watchdog::Watchdog`: no-ops.
 
@@ -245,10 +267,17 @@ There are two sources:
   doesn't reproduce exactly what flew, because `commands` runs at half the tick rate.
   It gives realistic inputs, and both implementations get the same ones.
 
-**Compare.** Every tick compares the elevon write (value and path), the engine output,
-the whole `ControllerOutputSnapshot`, the event codes with their counts, and the
-queries (`is_armed`, `is_failsafe`, `is_attitude_enabled`, `current_control_mode`,
-`is_heading_hold_active`). Floats are compared with `to_bits()`, with no tolerance.
+**Compare.** After every operation, not only ticks, it compares:
+
+- the elevon writes (values, path and output pulses), in order;
+- the events (level, code, message), in order;
+- the whole `ControllerOutputSnapshot`, destructured field by field so a missed field
+  doesn't compile;
+- `engine_output()`;
+- the queries: `is_armed`, `is_failsafe`, `is_attitude_enabled`,
+  `current_control_mode`, `is_heading_hold_active`, `rc_link_state`,
+  `rc_signal_age_ms`, `gains_version`, `pid_config`;
+- `supervisor_check`'s return value. Floats are compared with `to_bits()`, with no tolerance.
 It runs for both configs:
 
 - `cargo test -p elle-control --target x86_64-unknown-linux-gnu`
@@ -284,6 +313,83 @@ Both questions were settled on 2026-11-11.
    `992eef7f5f758edd03a78b329143460d08ee5d522840757f2d0105ce5de2783d`. If master's
    `system.rs` changes before the refactor starts, the base moves to that commit
    and both hashes are taken again.
+
+## As implemented
+
+Implementation (branch `flight-law`) departs from the accepted text in these
+ways. The sections above are corrected to match.
+
+- **The oracle runs the new `system.rs` too.** The accepted design compared the old
+  file with the new `FlightLaw`, which would have needed a hand-written copy of the
+  new controller's glue in the test. Instead, `current` includes
+  `crates/elle-system/src/system.rs` itself (the file the firmware builds) through the
+  same shims as `legacy`. Both real files run every operation of the stream through
+  their public API.
+- **`ElevonOutput` and `LawOutputs::write` are in `elle-control`,** so the PWM write
+  and the snapshot completion are shared code. There is no `engines` field: the
+  engine values are in the snapshot, as `engine_output()` reads them.
+- **`dt` plumbing is its own commit.** `AttitudeController::update_dt` and
+  `HeadingController::update_dt` take `dt`; `update` passes `CONTROL_LOOP_DT`. The
+  legacy copy calls `update` and so runs the same component code as the new law. The
+  oracle therefore proves the wiring, not this change. The change only replaces the
+  constant with a parameter, and the existing anti-windup tests cover the PID.
+  Heading hold has no host test.
+- **Event messages are compared,** not only their codes: the shim formats each
+  `elle_event!` message, so the held/stale ages the law now computes are checked.
+- **The streams.**
+  - `scripted.stream`: 1,675 ticks written by `scenario.rs`. A test fails if the
+    file and the scenario disagree. The run asserts that the stream reaches every
+    event (13, 14, 15, 70, 71, 80, 83), the failsafe hold, mixer saturation, heading
+    hold and running integrators.
+  - `flight.stream`: 4,000 ticks (20 s) of dart `LOG_0052.ulg` from 1015 s, armed and
+    flying in Stabilized. The converter that writes it is
+    `tools/elle-replay/examples/law_stream.rs`. That log carries no raw RC channels,
+    so this stream drives the normalized path only.
+- **The oracle can fail.** `tests/flight_law_equivalence/mutate.py` applies 25 single
+  mutations, one at a time, to the new law (`flight_law.rs`, including
+  `LawOutputs::write`) and to the new `system.rs`, and runs the oracle on each. 24
+  fail the test, on both airframe configs. Two groups:
+  - **In the law:**
+    - the resets on leaving Manual and on signal loss;
+    - ignoring the Core 1 verdict, and `disable_attitude` doing nothing;
+    - heading hold kept through normalized Manual or disarm;
+    - the hold counters and the stale latch;
+    - the override going through the filter;
+    - the failsafe hold leaving the PID on or the engines running;
+    - the low-throttle threshold;
+    - the cached-attitude fallback;
+    - explicit arming;
+    - the damper reset;
+    - wrong pulses for the Safe write, and `write` dropping `dt_us`.
+  - **In `system.rs`:**
+    - restore not clearing the failsafe;
+    - loss not centring the elevons;
+    - the Core 1 verdict not passed in;
+    - the events emitted after the write instead of before;
+    - the measured dt not passed;
+    - the held event dropped.
+
+  The 25th, the fast path not storing its mixer saturation, is equivalent: every way
+  out of Manual resets that value before anything reads it. Writing the mutations
+  exposed three gaps in the first scripted stream, now closed:
+  - a re-arm by command at cruise throttle after a link loss;
+  - normalized Manual with heading hold on;
+  - throttle between 0.04 and 0.05.
+- **The scenario uses `libm`'s `sinf`/`cosf`,** not std's (the system libm), so the
+  committed stream regenerates bit for bit on any machine.
+- **The flight window is the log's own:** the firmware logged `saturation = 9` (pitch-up
+  and roll-left blocked) on all 4,000 ticks. The dart was holding a 20–54° bank with
+  the left elevon at its 2000 µs stop. The oracle's runs show the same saturation.
+- **Fixtures:** `scripted.stream` ~320 KB, `flight.stream` ~640 KB.
+- **Limits.**
+  - `YAW_DAMPER_GAIN` is 0 on both airframes (asserted), so the damper's state is
+    invisible: its output is always ±0. The damper-reset mutation was caught only
+    through the sign of that zero.
+  - The mode-change message is a defmt log, not an event, so it isn't compared. The
+    mode itself is, through `current_control_mode()`.
+- **Observed, unchanged:** on the RC fast path (raw commands in Manual), heading hold
+  stays engaged; only the normalized Manual path disengages it. This was already the
+  behaviour, and the move keeps it.
 
 ## Rollback
 

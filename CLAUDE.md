@@ -35,9 +35,9 @@ Cargo workspace:
 - **`crates/elle-eagle/`** — twin-engine flying wing binary
 - **`crates/elle-dart/`** — single-engine binary (same stack, `platform-dart` config)
 - **`crates/elle-app/`** — the application both binaries run: boot sequence, flight and RPC control loops, RPC dispatch, ULog per-tick logging, shared tasks. The binaries keep only pins, engine setup, `bind_interrupts!`, `led_task` and `main()` — **make behaviour changes here, once**, not in a binary.
-- **`crates/elle-system/`** — `FlightController` (arming, failsafe, modes, PID, mixing, heading hold) and the RPC transport
+- **`crates/elle-system/`** — `FlightController` (the flight law plus PWM, watchdog, supervisor, RC link state, events) and the RPC transport
 - **`crates/elle-hardware/`** — drivers and tasks: `crsf`, `dshot`, `event`, `flash`, `gnss`, `imu`, `led`, `pwm`, `sd_writer`, `timing`, `watchdog`, the ULog logger
-- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `attitude`, `autotune`, `commands`, `filter`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`
+- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `attitude`, `autotune`, `commands`, `filter`, `flight_law`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`
 - **`crates/elle-config/`** — every tunable constant and per-platform value (`lib.rs`, `lut.rs`, `profile.rs`)
 - **`crates/elle-rpc-icd/`** — shared RPC Interface Control Document
 - **`crates/elle-ulog/`** — `no_std` ULog encoder
@@ -45,7 +45,7 @@ Cargo workspace:
 - **`crates/elle-nav/`** — navigation, hardware-independent and host-tested: home frame (sguaba NED), estimator, L1 guidance. Runs in **observation mode** only (logged, never applied); see [`docs/NAVIGATION_PLAN.md`](docs/NAVIGATION_PLAN.md)
 - **`drivers/`** — vendored sensor drivers: `mmc5616wa` (mag), `sam-m10q` (GNSS), `bmp390` (baro, local fork patched over crates.io)
 - **`tools/elle-rpc-host/`** — host CLI (TUI dashboard + `direct` commands) and `elle mcp`, an MCP server on stdio that holds the probe for an agent (engines only with `--dangerously-allow-motors`; see its README)
-- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv] [--compare] [--json]`; `report.rs` holds the analysis as a value, which `--json` prints and `elle mcp`'s `replay` tool reads). `--compare` also runs Madgwick, Mahony and VQF from uf-ahrs with and without turn compensation and accel gating on the same inputs, and scores all of them against a gyro-only reference through turns (`reference.rs`: anchored on the accel's gravity direction in straight and level flight, drift closed at the next anchor). `--simulate out.ulg [--wind-north/--wind-east/--vibration/--gyro-bias-dps]` writes a simulated flight (`sim.rs`) and analyses it, adding a score against the simulated truth; `--score-by-rate` scores by turn rate instead of bank, for the vehicle ground test (TEST_PLAN 7.2)
+- **`tools/elle-replay/`** — replays an `imu-raw-log` ULog through the firmware's attitude pipeline on the host and checks it reproduces the logged attitude exactly (`elle-replay LOG.ulg [--csv out.csv] [--compare] [--json]`; `report.rs` holds the analysis as a value, which `--json` prints and `elle mcp`'s `replay` tool reads). `--compare` also runs Madgwick, Mahony and VQF from uf-ahrs with and without turn compensation and accel gating on the same inputs, and scores all of them against a gyro-only reference through turns (`reference.rs`: anchored on the accel's gravity direction in straight and level flight, drift closed at the next anchor). `--simulate out.ulg [--wind-north/--wind-east/--vibration/--gyro-bias-dps]` writes a simulated flight (`sim.rs`) and analyses it, adding a score against the simulated truth; `--score-by-rate` scores by turn rate instead of bank, for the vehicle ground test (TEST_PLAN 7.2). `examples/law_stream.rs` rebuilds a flight-law input stream from a flight ULog for the 0007 equivalence oracle
 
 ## Building
 
@@ -175,7 +175,18 @@ Arming, failsafe and kill-switch *behaviour* is described in
 `flight.rs` / `rpc.rs`. In pure RPC mode `explicit_arming_only` disables the gesture and
 the failsafe ages `elle_system::rpc::HOST_LAST_RX_MS` instead of RC frames.
 
-### Controller (`elle-system/src/system.rs`, `elle-control`)
+### Controller (`elle-control/src/flight_law.rs`, `elle-system/src/system.rs`)
+
+The control law is `elle_control::flight_law::FlightLaw::step(&LawInputs, dt)`
+(proposal [0007](docs/changes/0007-host-flight-law.md)): commands, attitude, the tick's
+`now` and the Core 1 verdict in; an `ElevonCommand`, the output snapshot and the
+held/stale/mode-change events out. It reads no clock and touches no hardware, so it
+runs on the host. `FlightController` owns it and does the rest: the clock, the PWM
+write (`LawOutputs::write` through `ElevonOutput`), emitting events, the watchdog and
+supervisor, and the RC link state machine (`check_failsafe`). The firmware passes
+`dt = CONTROL_LOOP_DT`. `crates/elle-control/tests/flight_law_equivalence.rs` runs the
+pre-0007 `system.rs` (a hashed copy) and today's file side by side on recorded streams
+until 0007 is Implemented.
 
 - Stabilized: stick → attitude setpoint (pitch ±25° dart / ±15° eagle, ±45° roll), EMA with time constant `SETPOINT_FILTER_TAU_S` (68 ms; `SETPOINT_FILTER_ALPHA` is derived per tick) with each step capped at `MAX_SETPOINT_RATE_DEG_S` (90°/s). The autotune override bypasses both.
 - AltitudeHold is a 0°/0° level hold for now.
