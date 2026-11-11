@@ -47,6 +47,10 @@ pub static SD_CMD_SIGNAL: Signal<CriticalSectionRawMutex, SdCommand> = Signal::n
 /// Check this before starting ULog recording to avoid writing into a dead channel.
 pub static SD_READY: AtomicBool = AtomicBool::new(false);
 
+/// A ULog file is open (recording, or closing after a Stop). A deliberate
+/// reboot waits for it to clear, so the file is flushed and closed first.
+pub static SD_FILE_OPEN: AtomicBool = AtomicBool::new(false);
+
 static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, Spi<'static, Async>>> = StaticCell::new();
 
 /// SPI device that yields to the executor after every transaction.
@@ -321,6 +325,7 @@ pub async fn sd_writer_task(
             }
         };
 
+        SD_FILE_OPEN.store(true, Ordering::Release);
         info!("SD: recording to {}", filename.as_str());
         let mut bytes_written: u32 = 0;
         let mut last_flush = Instant::now();
@@ -339,6 +344,18 @@ pub async fn sd_writer_task(
             .await
             {
                 embassy_futures::select::Either::First(cmd) => {
+                    // Stop: the session's last chunks may still be queued (the
+                    // logger flushed them just before). Write them out before
+                    // closing; a Start's queued data belongs to the next file.
+                    if matches!(cmd, SdCommand::Stop) {
+                        while let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() {
+                            let elen = extra.len;
+                            if file.write_all(&extra.data[..elen]).await.is_err() {
+                                break;
+                            }
+                            bytes_written += elen as u32;
+                        }
+                    }
                     let _ = file.flush().await;
                     info!(
                         "SD: {} bytes to {}, closing",
@@ -347,6 +364,7 @@ pub async fn sd_writer_task(
                     );
                     // Start while recording = begin a new file right away.
                     start_pending = matches!(cmd, SdCommand::Start);
+                    SD_FILE_OPEN.store(false, Ordering::Release);
                     break 'recording;
                 }
                 embassy_futures::select::Either::Second(req) => req,
@@ -381,6 +399,7 @@ pub async fn sd_writer_task(
             if write_failed && card_detect.is_high() {
                 error!("SD: card ejected during recording!");
                 SD_READY.store(false, Ordering::Release);
+                SD_FILE_OPEN.store(false, Ordering::Release);
                 drain_channel();
                 break 'recording;
             }

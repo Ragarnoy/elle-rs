@@ -43,11 +43,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
   into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each
   ESC's bootloader, arming is locked (172), flash writes and level cal are refused
-  (63), LED double blink orange, CRSF `ESCCFG`. New endpoints `elle/esc/mode`,
+  (new event 178), LED double blink orange, CRSF `ESCCFG`. New endpoints `elle/esc/mode`,
   `elle/esc/mode/enter`, `elle/esc/mode/exit`, `elle/esc/connect`,
   `elle/esc/eeprom/read`, `elle/esc/eeprom/write` (verified by read-back),
   `elle/esc/name`, `elle/esc/read`, `elle/esc/run`, with `ESC_MODE_REFUSED_ARMED` /
-  `ESC_MODE_BUSY` ack codes; events 170–177. Host: settings decoding and the
+  `ESC_MODE_BUSY` ack codes; events 170–178. Host: settings decoding and the
   esc-config-rs host policy, raw 256-byte backups in the relay CLI's format, a TUI
   ESC panel, and MCP tools `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`,
   `esc_compare`, `esc_set`, `esc_restore`, `esc_run` (writes need
@@ -72,6 +72,9 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight and was at the nose-up limit 43% of the time.
 
 ### Fixed
+- ULog keeps its last data on `ulog stop` (ULog): the SD writer now writes the
+  chunks still queued for the session before closing the file instead of
+  discarding them.
 - Mag calibration accepted a disturbed field: it now also requires the readings to
   sit on an earth-sized sphere (RMS radius 0.15–0.85 G) around the fitted centre,
   and filters spikes first. Dart logs had four "successful" calibrations with a

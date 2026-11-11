@@ -838,11 +838,26 @@ async fn cmd_esc(args: &[&str], client: &HostClient<WireError>) -> CommandResult
             Err(e) => CommandResult::Err(format!("{e:#}")),
         };
     };
-    // Optional engine (default left), then the rest.
+    // Optional engine (default left), then the rest. A word that is neither an
+    // engine nor what the subcommand takes next is an error, never "left":
+    // `esc run rigth` must not run the left ESC.
     let (engine, rest) = match rest.first().map(|s| esc::parse_engine(s)) {
         Some(Ok(e)) => (e, &rest[1..]),
         _ => (EscEngine::Left, rest),
     };
+    let looks_like_path = |a: &str| a.contains('/') || a.contains('.');
+    let bad = match sub {
+        "connect" | "show" | "run" | "enter" | "exit" => rest.first().copied(),
+        "set" => rest.iter().copied().find(|a| !a.contains('=')),
+        "backup" => rest.first().copied().filter(|a| !looks_like_path(a)),
+        "restore" => rest.first().copied().filter(|a| !looks_like_path(a)),
+        _ => None,
+    };
+    if let Some(a) = bad {
+        return CommandResult::Err(format!(
+            "unexpected {a:?} (engine is left or right; files need a / or .). Usage: {ESC_USAGE}"
+        ));
+    }
     let name = esc::engine_name(engine);
     let r: anyhow::Result<CommandResult> = async {
         Ok(match sub {
@@ -925,6 +940,7 @@ async fn cmd_esc(args: &[&str], client: &HostClient<WireError>) -> CommandResult
                 )
             }
             "run" => {
+                esc::connect(client, engine).await?;
                 esc::run(client, engine).await?;
                 CommandResult::Esc(
                     engine,

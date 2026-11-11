@@ -45,14 +45,10 @@ stateDiagram-v2
     state "Normal boot (DShot)" as N
     state "ESC-config boot (one-wire UART, arming locked)" as E
 
-    [*] --> N: power on, probe reset,
-watchdog timeout
-    N --> E: elle/esc/mode/enter, disarmed, eRPM targets 0
-(event 170, reboot)
-    N --> N: same, armed or engine commanded
-(event 171, no reboot)
-    E --> N: elle/esc/mode/exit (Run sent to the ESCs, reboot)
-or any other reset
+    [*] --> N: power on, probe reset,\nwatchdog timeout
+    N --> E: elle/esc/mode/enter, disarmed, eRPM targets 0\n(event 170, reboot)
+    N --> N: same, armed or engine commanded\n(event 171, no reboot)
+    E --> N: elle/esc/mode/exit (Run sent to the ESCs, reboot)\nor any other reset
 ```
 
 - The only way in is a reboot the firmware forces itself, with the watchdog scratch

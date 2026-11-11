@@ -103,8 +103,14 @@ struct Inner {
     defmt: Mutex<Option<crate::target::DefmtReader>>,
     /// The last build flashed (its ELF decodes the defmt log).
     last_build: Mutex<Option<(crate::target::Build, std::path::PathBuf)>>,
-    /// ESCs backed up by this server (engine, device id): `esc_set` needs one.
+    /// ESCs backed up on the current link (engine, device id): `esc_set` needs
+    /// one. Cleared whenever the link ends (disconnect, reset, mode switch):
+    /// a device id names an ESC model, not one ESC, so a backup only counts
+    /// for the session it was taken in.
     esc_backups: std::sync::Mutex<std::collections::HashSet<(u8, u16)>>,
+    /// Held across a whole `esc_set` / `esc_restore` read-modify-write, so
+    /// overlapping calls cannot overwrite each other's edits.
+    esc_write: Mutex<()>,
 }
 
 struct ArmedGuard {
@@ -711,6 +717,7 @@ impl ElleMcp {
                 defmt: Mutex::new(None),
                 last_build: Mutex::new(None),
                 esc_backups: std::sync::Mutex::default(),
+                esc_write: Mutex::new(()),
             }),
             tool_router: Self::tool_router(),
         }
@@ -764,6 +771,11 @@ impl ElleMcp {
     /// Disarm (if this server armed) and release the probe. Called on exit.
     pub async fn shutdown(&self) {
         let _ = self.stop_engines().await;
+        self.inner
+            .esc_backups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         if let Some(mut d) = self.inner.defmt.lock().await.take() {
             let _ = tokio::task::spawn_blocking(move || d.stop()).await;
         }
@@ -1657,6 +1669,7 @@ impl ElleMcp {
                 (k, v)
             })
             .collect();
+        let _write = self.inner.esc_write.lock().await;
         let (client, c) = self.esc_connected(engine).await?;
         if !self.esc_backed_up(engine, c.info.device_id) {
             return Err("refused: take an esc_backup of this ESC first (this session)".to_string());
@@ -1676,6 +1689,7 @@ impl ElleMcp {
         self.esc_write_gate()?;
         let engine = r.engine.into();
         let file = std::fs::read(&r.path).map_err(|e| format!("{}: {e}", r.path))?;
+        let _write = self.inner.esc_write.lock().await;
         let (client, _) = self.esc_connected(engine).await?;
         let changes = crate::esc::restore(&client, engine, &file)
             .await
@@ -1684,13 +1698,14 @@ impl ElleMcp {
     }
 
     #[tool(
-        description = "Leave one ESC's bootloader and start its app. Transient in ESC-config \
-        mode: with no DShot the app resets back into the bootloader after ~2 s. To leave for \
-        good, use esc_mode exit."
+        description = "Connect to one ESC's bootloader, then leave it and start the app. \
+        Transient in ESC-config mode: with no DShot the app resets back into the bootloader \
+        after ~2 s. To leave for good, use esc_mode exit."
     )]
     async fn esc_run(&self, Parameters(r): Parameters<EscEngineReq>) -> ToolResult {
-        let client = self.client().await?;
-        crate::esc::run(&client, r.engine.into())
+        let engine = r.engine.into();
+        let (client, _) = self.esc_connected(engine).await?;
+        crate::esc::run(&client, engine)
             .await
             .map(|()| "run sent".to_string())
             .map_err(|e| format!("{e:#}"))

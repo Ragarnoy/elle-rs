@@ -314,6 +314,16 @@ pub const ESC_HOST_STAMP_MS: u64 = 100;
 /// Delay between accepting a mode switch and the reboot, so the RPC answer and
 /// the event reach the host first.
 pub const ESC_REBOOT_DELAY_MS: u64 = 200;
+/// Bytes of the AM32 settings structure (asserted equal to esc-config-icd's
+/// and esc-protocol's where those are used).
+pub const ESC_EEPROM_SIZE: usize = 192;
+/// Settings byte the AM32 bootloader overwrites with its own version on every
+/// write at the EEPROM base; the write verify skips it.
+pub const ESC_BOOTLOADER_VERSION_OFFSET: usize = 2;
+const _: () = assert!(ESC_BOOTLOADER_VERSION_OFFSET < ESC_EEPROM_SIZE);
+/// After `ESC_REBOOT_DELAY_MS`, how much longer the mode-switch reboot waits
+/// for the SD writer to close the ULog file before resetting anyway.
+pub const ESC_REBOOT_SD_WAIT_MS: u64 = 2_000;
 const _: () = assert!(ESC_HOST_STAMP_MS < RC_WARNING_MS);
 const _: () = assert!(ESC_OP_TIMEOUT_MS < ESC_HOST_TIMEOUT_MS);
 

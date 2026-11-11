@@ -35,7 +35,8 @@ fn words_are_complements() {
 
 #[test]
 fn esc_write_mismatch_ignores_the_bootloader_version_byte() {
-    use elle_control::boot_mode::{ESC_EEPROM_SIZE, esc_write_mismatch};
+    use elle_config::ESC_EEPROM_SIZE;
+    use elle_control::esc::esc_write_mismatch;
     let written = [0x11u8; ESC_EEPROM_SIZE];
     let mut read = written;
     read[2] = 0x99;

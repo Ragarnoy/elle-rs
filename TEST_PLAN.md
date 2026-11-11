@@ -86,7 +86,7 @@ their rows are assisted through the defmt log (`log`, `wait_log`) or checked fro
 | 6.8 | rows 1–2 manual (scope); 3, 6 log; 4–5 assisted | `wait_event` 160–163, `analyse_log esc` |
 | 6.9 | rows 1–3 assisted outdoors (laptop and probe on the aircraft); 4–5 log | `read nav`, `read gnss`, `analyse_log nav` |
 | 6.10 | log; row 5 manual | `replay`, `analyse_log timing` |
-| 6.11 | rows 1–6, 9–11 auto / assisted; 7–8 manual | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` / `esc_restore` (`--dangerously-allow-esc-write`), `wait_event` 170–177, 63; row 8 with `reset_target` |
+| 6.11 | rows 1–6, 9–11 auto / assisted; 7–8 manual | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` / `esc_restore` (`--dangerously-allow-esc-write`), `wait_event` 170–178; row 8 with `reset_target` |
 | 7.1 | auto | `cargo test` from a shell; `replay simulate` |
 | 7.2–7.4 | log | `replay compare score_by_rate` (7.2), `replay compare` (7.3) |
 | 7.5–7.7 | as the rows they repeat; flight manual | |
@@ -711,9 +711,9 @@ ESC first, and keep a relay backup of each ESC for rows 2–3. Procedure:
 | 5 | `esc restore left <row 3 file>` | 177; `esc_compare` against row 3: identical | [ ] |
 | 6 | Rows 2–5 through `elle mcp` | `esc_set` / `esc_restore` refused without `--dangerously-allow-esc-write`; `esc_set` refused before an `esc_backup` of that ESC; with both, as rows 4–5 | [ ] |
 | 7 | Pull the battery once in the middle of a write (on an ESC with a backup) | After repower: normal boot, 160/161 for that ESC (it stays in its bootloader); `esc enter`, `esc restore` recovers it | [ ] |
-| 8 | `esc exit`; on the eagle once with only `left` connected this boot; once more with a plain FC reset (`reset_target`) instead, ESC connected | Normal boot, `esc` reports normal; events 160–165 absent for **both** ESCs (exit connects and runs the one never connected); governor as before (6.8 row 3). After the plain reset the ESC starts its app on its own | [ ] |
+| 8 | `esc exit`; on the eagle once with only `left` connected this boot; once more with a plain FC reset (`reset_target`) instead, ESC connected | Normal boot, `esc` reports normal; events 160–165 absent for **both** ESCs (exit connects both, then runs both back to back); governor as before (6.8 row 3). After the plain reset the ESC starts its app on its own | [ ] |
 | 9 | Probe reset in ESC-config mode | Normal boot (flag cleared) | [ ] |
-| 10 | In ESC-config mode: `mag cal clear`, `savepid`, `level cal` | Each refused, event 63 | [ ] |
+| 10 | In ESC-config mode: `mag cal clear`, `savepid`, `level cal`, `ulog extract` | Each refused, event 178 | [ ] |
 | 11 | `esc set` and `esc restore` (192-byte requests, the largest host-to-FC frames) | Both answer within ~1 s; no RPC timeouts while reads work | [ ] |
 
 ## Part 7: Attitude Estimation and Turn Compensation

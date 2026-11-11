@@ -32,7 +32,7 @@ use esc_protocol::packet::ConnectResponse;
 use esc_session::{Esc, Link, Timing};
 
 // The settings block size the verify compare assumes is esc-config-icd's.
-const _: () = assert!(EEPROM_SIZE == elle_control::boot_mode::ESC_EEPROM_SIZE);
+const _: () = assert!(EEPROM_SIZE == elle_config::ESC_EEPROM_SIZE);
 
 /// Left engine UART: PIO1, TX on SM0, RX on SM1 (`PIN_14`).
 pub type LeftUart = OneWireUart<'static, PIO1, 0, 1>;
@@ -199,8 +199,8 @@ impl<U: Link> Port<U> {
         Ok(Eeprom::from_slice(&data).unwrap_or_default())
     }
 
-    /// Write, then read back: everything but byte 2 must match (the bootloader
-    /// writes its own version there).
+    /// Write, then read back: everything but `ESC_BOOTLOADER_VERSION_OFFSET`
+    /// must match (the bootloader writes its own version there).
     async fn write_eeprom(&mut self, data: &Eeprom) -> AckResp {
         let block: [u8; EEPROM_SIZE] = data
             .as_slice()
@@ -209,7 +209,7 @@ impl<U: Link> Port<U> {
         let mut esc = self.esc()?;
         esc.write_eeprom(&block).await?;
         let back = esc.read_eeprom().await?;
-        match elle_control::boot_mode::esc_write_mismatch(&block, &back) {
+        match elle_control::esc::esc_write_mismatch(&block, &back) {
             None => Ok(()),
             Some(offset) => Err(EscError::Verify {
                 offset: offset as u32,

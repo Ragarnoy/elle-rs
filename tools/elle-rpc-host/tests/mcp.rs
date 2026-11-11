@@ -190,6 +190,9 @@ async fn run_fc(
                 Ok::<_, EscError>(EscEeprom::from_slice(&e).unwrap())
             );
         } else if key_is::<EscReadEndpoint>(&k) {
+            // The EEPROM at its base address (0x7C00 in the fake's layout),
+            // 0xFF past the settings; anything else is a wrong request.
+            let r: EscRawReadReq = postcard::from_bytes(&frame.body).unwrap();
             let mut e = {
                 let mut f = fc.lock().unwrap();
                 if f.esc_eeprom.is_empty() {
@@ -198,10 +201,13 @@ async fn run_fc(
                 f.esc_eeprom.clone()
             };
             e.resize(ESC_MAX_BLOCK, 0xFF);
-            reply!(
-                EscReadEndpoint,
-                Ok::<_, EscError>(EscBlock::from_slice(&e).unwrap())
-            );
+            let len = usize::from(r.read.len);
+            let resp = if r.read.address == 0x7C00 && (1..=ESC_MAX_BLOCK).contains(&len) {
+                Ok(EscBlock::from_slice(&e[..len]).unwrap())
+            } else {
+                Err(EscError::BadAddress)
+            };
+            reply!(EscReadEndpoint, resp);
         } else if key_is::<EscWriteEepromEndpoint>(&k) {
             let r: EscWriteReq = postcard::from_bytes(&frame.body).unwrap();
             {
@@ -596,6 +602,27 @@ async fn defmt_tools_explain_what_is_missing() {
     assert_eq!(s["defmt_log"], json!(null));
 }
 
+/// A fresh directory under the system temp dir, removed on drop (also when an
+/// assertion fails), named so no two runs or tests share one.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new(tag: &str) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let p = std::env::temp_dir().join(format!("elle-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&p).unwrap();
+        Self(p)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn esc_write() -> Options {
     Options {
         allow_esc_write: true,
@@ -651,9 +678,8 @@ async fn esc_set_needs_a_backup_then_writes_settings_only() {
     assert!(e.contains("esc_backup"), "{e}");
     assert_eq!(r.fc.lock().unwrap().esc_writes, 0);
 
-    let dir = std::env::temp_dir().join(format!("elle-esc-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("left.bin");
+    let dir = TempDir::new("esc-test");
+    let path = dir.0.join("left.bin");
     let b = r
         .json(
             "esc_backup",
@@ -693,5 +719,4 @@ async fn esc_set_needs_a_backup_then_writes_settings_only() {
     )
     .await;
     assert_eq!(r.fc.lock().unwrap().esc_eeprom, before[..ESC_EEPROM_SIZE]);
-    let _ = std::fs::remove_dir_all(&dir);
 }

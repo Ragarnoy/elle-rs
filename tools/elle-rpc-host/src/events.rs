@@ -117,6 +117,7 @@ pub const fn label(code: u16) -> &'static str {
         175 => "ESC config: left ESC write failed",
         176 => "ESC config: right ESC write failed",
         177 => "ESC config: write committed and verified",
+        178 => "Flash: command refused in ESC-config mode (exit ESC config first)",
         _ => "unknown",
     }
 }

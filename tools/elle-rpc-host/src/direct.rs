@@ -242,6 +242,7 @@ async fn run_esc(link: Link, action: EscAction) -> Result<Link> {
             print_changes(&changes);
         }
         EscAction::Run { engine } => {
+            esc::connect(client, engine).await?;
             esc::run(client, engine).await?;
             println!(
                 "Run sent: the {} ESC's app is starting.",

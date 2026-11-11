@@ -198,6 +198,8 @@ pub const EVT_ESC_LEFT_WRITE_FAILED: u16 = 175;
 pub const EVT_ESC_RIGHT_WRITE_FAILED: u16 = 176;
 /// A settings write was committed and read back identical.
 pub const EVT_ESC_WRITE_OK: u16 = 177;
+/// A flash-touching RPC (or level cal) refused: this is an ESC-config boot.
+pub const EVT_FLASH_REFUSED_ESC_CONFIG: u16 = 178;
 
 // ---------------------------------------------------------------------------
 // Macro

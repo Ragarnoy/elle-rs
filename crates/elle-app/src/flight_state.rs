@@ -11,6 +11,12 @@ pub(crate) struct FlightState {
     pub(crate) autotune_state: u8,
 }
 
+/// The RPC control loop is running: boot (IMU wait, flash profile loads) is
+/// over. ESC operations and mode switches wait for it, so no boot-time flash
+/// access overlaps an ESC frame and an accepted switch reboots within a tick.
+pub(crate) static RPC_LOOP_RUNNING: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 pub(crate) static FLIGHT_STATE: SignalCache<FlightState> = SignalCache::new(FlightState {
     armed: false,
     failsafe: false,

@@ -28,6 +28,9 @@ use elle_rpc_host::link::Link;
 use self::commands::CommandResult;
 use self::state::AppState;
 
+/// How many status polls retry an unanswered ESC-mode query.
+const ESC_MODE_TRIES: u8 = 5;
+
 pub async fn run() -> Result<()> {
     // Connect to probe and set up RTT
     let mut link = Some(Link::connect()?);
@@ -80,6 +83,8 @@ pub async fn run() -> Result<()> {
     // Firmware without ESC configuration never answers: don't wait long.
     if let Ok(Ok(m)) = tokio::time::timeout(Duration::from_millis(500), esc::mode(&client)).await {
         state.esc_mode = Some(m);
+    } else {
+        state.esc_mode_tries = 1;
     }
 
     let mut tick_interval = tokio::time::interval(Duration::from_millis(100)); // 10Hz UI refresh
@@ -176,6 +181,8 @@ pub async fn run() -> Result<()> {
                                         link = Some(new);
                                         state.esc_mode = Some(mode);
                                         state.esc = Default::default();
+                                        state.esc_scroll = 0;
+                                        state.esc_mode_tries = 0;
                                         state.set_status_message(if mode == want {
                                             match mode {
                                                 EscBootMode::EscConfig => "ESC CONFIG: esc connect left|right".into(),
@@ -191,6 +198,12 @@ pub async fn run() -> Result<()> {
                         (KeyCode::Char(c), _) => {
                             state.command_input.push(c);
                             state.history_index = None;
+                        }
+                        (KeyCode::PageDown, _) if state.esc_config() => {
+                            state.esc_scroll = state.esc_scroll.saturating_add(10);
+                        }
+                        (KeyCode::PageUp, _) if state.esc_config() => {
+                            state.esc_scroll = state.esc_scroll.saturating_sub(10);
                         }
                         (KeyCode::Tab, _) => {
                             state.command_input = commands::tab_complete(&state.command_input);
@@ -266,6 +279,15 @@ pub async fn run() -> Result<()> {
                 ).await {
                     state.status = Some(s);
                     state.mark_poll_success();
+                }
+                // Mode unknown (the first query failed): retry a few times, at
+                // the status rate, so an ESC-config boot is still noticed. Firmware
+                // without the endpoint stops being asked after the last try.
+                if state.esc_mode.is_none() && (1..=ESC_MODE_TRIES).contains(&state.esc_mode_tries) {
+                    match tokio::time::timeout(Duration::from_millis(500), esc::mode(&client)).await {
+                        Ok(Ok(m)) => state.esc_mode = Some(m),
+                        _ => state.esc_mode_tries += 1,
+                    }
                 }
                 if let Ok(Ok(info)) = tokio::time::timeout(
                     Duration::from_secs(1),

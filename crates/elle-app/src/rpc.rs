@@ -121,6 +121,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
     // A mode switch accepted: reboot at this instant into this mode, once the
     // answer and the event have had time to reach the host.
     let mut reboot_at: Option<(Instant, elle_hardware::boot_mode::BootMode)> = None;
+    flight_state::RPC_LOOP_RUNNING.store(true, Ordering::Release);
 
     loop {
         ticker.next().await;
@@ -141,14 +142,18 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         // Process all pending RPC commands
         while let Ok(cmd) = RPC_CMD_CHANNEL.try_receive() {
             // ESC-config boot: a flash operation would pause the ESC session
-            // (interrupts off) mid-frame. Level cal saves when it completes.
-            if esc_config && (writes_flash(&cmd) || matches!(cmd, RpcCommand::StartLevelCal)) {
-                if matches!(cmd, RpcCommand::PopAndPeekULog) {
+            // (interrupts off) mid-frame. Level cal saves when it completes; a
+            // ULog peek can erase while repairing a corrupt queue.
+            if esc_config
+                && (writes_flash(&cmd)
+                    || matches!(cmd, RpcCommand::StartLevelCal | RpcCommand::ReadULogChunk))
+            {
+                if matches!(cmd, RpcCommand::PopAndPeekULog | RpcCommand::ReadULogChunk) {
                     ULOG_STATE.store(ULogState::Empty as u8, Ordering::Release);
                 }
                 elle_hardware::elle_event!(
                     warn,
-                    elle_hardware::event::EVT_FLASH_REFUSED_ARMED,
+                    elle_hardware::event::EVT_FLASH_REFUSED_ESC_CONFIG,
                     "RPC: flash command refused in ESC-config mode"
                 );
                 continue;
@@ -969,13 +974,20 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         }
 
         // An accepted mode switch: still disarmed (nothing can arm in between
-        // without a refusal above), the answer and event are out. Reboot.
+        // without a refusal above), the answer and event are out, and the SD
+        // writer has closed the ULog file (or had `ESC_REBOOT_SD_WAIT_MS`). Reboot.
         if let Some((at, mode)) = reboot_at
             && Instant::now() >= at
         {
+            let sd_busy = elle_hardware::sd_writer::SD_FILE_OPEN.load(Ordering::Acquire);
             if fc.is_armed() {
                 reboot_at = None;
-            } else {
+            } else if !sd_busy
+                || Instant::now() >= at + Duration::from_millis(ESC_REBOOT_SD_WAIT_MS)
+            {
+                if sd_busy {
+                    defmt::warn!("Reboot: ULog file still open after the wait");
+                }
                 elle_hardware::watchdog::reboot_into(mode);
             }
         }

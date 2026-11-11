@@ -37,6 +37,9 @@ const SHORT_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long a reboot plus probe attach plus first reply may take.
 pub const REATTACH_LIMIT: Duration = Duration::from_secs(30);
 
+// The settings size the firmware's write verify uses is the host policy's.
+const _: () = assert!(policy::EEPROM_SIZE == elle_config::ESC_EEPROM_SIZE);
+
 /// The 192-byte settings structure.
 pub type Block = [u8; policy::EEPROM_SIZE];
 
@@ -443,6 +446,27 @@ pub fn backup_name(engine: EscEngine, info: &EscInfo) -> String {
 mod tests {
     use super::*;
 
+    /// A fresh directory under the system temp dir, removed on drop (also when an
+    /// assertion fails), named so no two runs or tests share one.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let p = std::env::temp_dir().join(format!("elle-{tag}-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     fn block() -> Block {
         let mut b = [0u8; policy::EEPROM_SIZE];
         b[0] = 0x01;
@@ -558,12 +582,11 @@ mod tests {
 
     #[test]
     fn backups_are_never_overwritten() {
-        let dir = std::env::temp_dir().join(format!("elle-esc-bak-{}", std::process::id()));
-        let path = dir.join("x.bin");
+        let dir = TempDir::new("esc-bak");
+        let path = dir.0.join("x.bin");
         save_backup(&path, &[1, 2, 3]).unwrap();
         assert!(save_backup(&path, &[4]).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), vec![1, 2, 3]);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

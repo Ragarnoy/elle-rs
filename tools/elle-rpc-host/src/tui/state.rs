@@ -76,6 +76,10 @@ pub struct AppState {
     pub esc_mode: Option<EscBootMode>,
     /// The ESC panel, per engine (left, right).
     pub esc: [EscView; 2],
+    /// ESC panel scroll offset, lines (PageUp / PageDown).
+    pub esc_scroll: u16,
+    /// Failed ESC-mode queries so far (`esc_mode` unknown): retried a few times.
+    pub esc_mode_tries: u8,
 }
 
 /// What the ESC panel shows for one engine.
@@ -112,6 +116,8 @@ impl AppState {
             background_task: None,
             esc_mode: None,
             esc: Default::default(),
+            esc_scroll: 0,
+            esc_mode_tries: 0,
         }
     }
 

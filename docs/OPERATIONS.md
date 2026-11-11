@@ -254,7 +254,7 @@ Nothing here has run on hardware yet (TEST_PLAN 6.11).
 2. **In ESC-config mode** the engine pins carry a one-wire UART instead of DShot. The
    LED double-blinks orange, the CRSF flight-mode text is `ESCCFG`, the TUI header
    shows `ESC CONFIG` and its flight panels give way to an ESC panel. Arming is
-   refused (event 172). Flash writes and level cal are refused (event 63). Elevons
+   refused (event 172). Flash writes, level cal and ULog peeks are refused (event 178). Elevons
    still move, as in any RPC build. The battery stays connected: the FC runs off the
    ESCs' 5 V. With `direct` or `elle mcp` (nothing sent between commands) the host
    failsafe events 13/14/15 appear between commands; expected here, the TUI pings.
@@ -273,20 +273,23 @@ Nothing here has run on hardware yet (TEST_PLAN 6.11).
 7. **Restore:** `esc restore left <file>`: settings, melody and CAN from the backup;
    boot and version bytes from the ESC. A backup from another EEPROM layout version is
    refused.
-8. **Exit:** `esc exit` starts each ESC's app (Run; it connects first any ESC not
-   connected this boot) and reboots normally. Check that
-   events 160–165 stay absent and the governor behaves (TEST_PLAN 6.8). `esc run`
+8. **Exit:** `esc exit` connects each ESC, sends each Run and reboots normally.
+   This is best effort: an ESC that missed its Run stays in its bootloader although
+   the exit succeeded. Check that events 160–165 stay absent and the governor
+   behaves (TEST_PLAN 6.8) before flying. `esc run`
    alone is transient: without DShot the app drops back into its bootloader ~2 s
    later. A plain FC reset also gives a normal boot.
 
 After any change to timing, PWM frequency, motor KV, poles or direction, the
-governor table may no longer fit: re-sweep it (the `governor-calibration` skill) or
-at least compare the ESC with the backup taken at the last sweep.
+governor table may no longer fit. Compare the ESC with the backup taken at the last
+sweep (`esc_compare`): if any of those fields differ, re-sweep (the
+`governor-calibration` skill) before flying. Only an identical comparison keeps the
+old table.
 
 `elle mcp` can read (`esc_connect`, `esc_read`, `esc_backup`, `esc_compare`) without
 any flag. `esc_set` and `esc_restore` need the server started with
 `--dangerously-allow-esc-write`, and `esc_set` a backup of that ESC taken by the same
-server.
+server on the current link (it forgets them on disconnect, reset or mode switch).
 
 ## Flight recording (ULog)
 
@@ -378,5 +381,6 @@ when built with `defmt-logging`.
 | 173 / 174 | Left / right ESC bootloader connected |
 | 175 / 176 | Left / right ESC settings write failed (NACK, CRC, no reply, or read-back mismatch) |
 | 177 | ESC settings write committed and read back identical |
+| 178 | Flash command (PID save, calibration, ULog peek/erase) or level cal refused: this is an ESC-config boot (exit it first) |
 
 Codes 32, 60 and 82 are retired and never sent.

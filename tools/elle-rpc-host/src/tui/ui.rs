@@ -260,7 +260,7 @@ fn draw_esc(f: &mut Frame, area: Rect, state: &AppState) {
                 "esc connect|show|set|backup|restore|run [left|right] ...   \
                  e.g. esc set left beep_volume=5",
             ),
-            muted_line("esc exit: start the ESCs and reboot normally"),
+            muted_line("esc exit: start the ESCs and reboot normally   PgUp/PgDn: scroll"),
         ]),
         rows[0],
     );
@@ -294,7 +294,8 @@ fn draw_esc(f: &mut Frame, area: Rect, state: &AppState) {
                     .title(format!(" {name} "))
                     .borders(Borders::ALL),
             )
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((state.esc_scroll, 0));
         f.render_widget(p, cols[i]);
     }
 }

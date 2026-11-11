@@ -75,7 +75,7 @@ and the connected firmware's build info) to `logs/test-runs/<date>.jsonl`;
 **ESC EEPROM writes are off limits by default too.** The `esc_*` tools read
 freely; `esc_set` and `esc_restore` refuse unless the server is started with
 `--dangerously-allow-esc-write` (add it to `args` in `.mcp.json` yourself), and
-`esc_set` also needs an `esc_backup` of that ESC taken by this server.
+`esc_set` also needs an `esc_backup` of that ESC taken on the current link (forgotten on disconnect, reset or mode switch); `esc_set` and `esc_restore` run one at a time.
 `link_status` reports `esc_write_allowed`.
 
 Tools:
@@ -112,10 +112,12 @@ bootloader first. The engine is `left` (default) or `right` (eagle only).
 | `esc backup [l\|r] [file]` | `esc backup -e l [-o file]` | `esc_backup` | Raw 256 bytes at the EEPROM base (relay CLI format), default `logs/esc/`; never overwrites a file |
 | — | — | `esc_compare` | Diff an ESC against a backup |
 | `esc restore [l\|r] <file>` | `esc restore -e l <file>` | `esc_restore` (gated) | Settings, melody, CAN from a backup; boot and version bytes kept |
-| `esc run [l\|r]` | `esc run -e l` | `esc_run` | Start the ESC's app (transient: back in the bootloader ~2 s later without DShot) |
+| `esc run [l\|r]` | `esc run -e l` | `esc_run` | Connect, then start the ESC's app (transient: back in the bootloader ~2 s later without DShot) |
 
 In ESC-config mode the TUI header shows `ESC CONFIG`, an ESC panel replaces the
-telemetry and RC panels, the flight polls stop and a 100 ms ping keeps the link.
+telemetry and RC panels (PgUp / PgDn scroll it), the flight polls stop and a
+100 ms ping keeps the link. If the first mode query fails the TUI retries it on the
+next few status polls.
 ESC operations take up to ~5 s (`ESC_HOST_TIMEOUT_MS`). The logic is in
 `src/esc.rs`, on `esc_protocol`'s settings decoding and host policy.
 

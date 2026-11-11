@@ -10,6 +10,8 @@
 use core::sync::atomic::Ordering;
 
 use elle_config::{ESC_HOST_STAMP_MS, ESC_OP_TIMEOUT_MS};
+
+use crate::flight_state::RPC_LOOP_RUNNING;
 use elle_hardware::boot_mode::{self, BootMode};
 use elle_hardware::esc_config::{self, Engine, EscOp, EscReply, EscRequest};
 use elle_rpc_icd::{
@@ -39,7 +41,8 @@ fn stamp_host() {
 /// Run one ESC operation and wait for its reply. `None` in a normal boot, on a
 /// timeout, or if the task is busy.
 async fn run(engine: EscEngine, op: EscOp) -> Option<EscReply> {
-    if !boot_mode::is_esc_config() {
+    // Not before boot is over: its flash loads must not overlap an ESC frame.
+    if !boot_mode::is_esc_config() || !RPC_LOOP_RUNNING.load(Ordering::Acquire) {
         return None;
     }
     let req = EscRequest {
@@ -80,6 +83,11 @@ pub(crate) fn handle_esc_enter(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) 
     if boot_mode::is_esc_config() {
         return AckResp::ok();
     }
+    // Until the loop runs (boot: IMU wait, flash loads) the command would sit
+    // in the queue and the reboot come seconds after this answer.
+    if !RPC_LOOP_RUNNING.load(Ordering::Acquire) {
+        return AckResp::error(ESC_MODE_BUSY);
+    }
     // The loop checks again (engine targets too) before it reboots; refusing
     // here as well gives the host an answer it can show.
     if crate::flight_state::FLIGHT_STATE.read_cached().armed {
@@ -99,21 +107,26 @@ pub(crate) fn handle_esc_enter(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) 
     }
 }
 
-/// Leave ESC-config mode: start each ESC's app (Run; connecting it first if
-/// this boot never did), then reboot normally.
+/// Leave ESC-config mode: connect each ESC, start each one's app (Run), then
+/// reboot normally. Best effort: a failed Run is not reported.
 pub(crate) async fn handle_esc_exit(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     if !boot_mode::is_esc_config() {
         return AckResp::ok();
     }
-    for e in [EscEngine::Left, EscEngine::Right] {
-        // An ESC not connected this boot may still wait in its bootloader:
-        // connect it first, so it gets Run too. A failed connect (no such
-        // engine, or an ESC already in its app) is fine.
-        if let Some(EscReply::Ack(Err(EscError::NotConnected))) = run(e, EscOp::Run).await
-            && let Some(EscReply::Connect(Ok(_))) = run(e, EscOp::Connect).await
-        {
-            let _ = run(e, EscOp::Run).await;
-        }
+    if !RPC_LOOP_RUNNING.load(Ordering::Acquire) {
+        return AckResp::error(ESC_MODE_BUSY);
+    }
+    // Connect every ESC first (an ESC this boot never connected may still wait
+    // in its bootloader; reconnecting one is harmless; a failed connect, no
+    // such engine or an ESC already in its app, is fine), then Run them back
+    // to back and reboot. Running one before a slow connect of the other would
+    // let it drop back into its bootloader (~2 s without DShot) before the reset.
+    let engines = [EscEngine::Left, EscEngine::Right];
+    for e in engines {
+        let _ = run(e, EscOp::Connect).await;
+    }
+    for e in engines {
+        let _ = run(e, EscOp::Run).await;
     }
     match ctx
         .cmd_sender

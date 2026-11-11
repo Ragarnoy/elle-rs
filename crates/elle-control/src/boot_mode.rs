@@ -47,16 +47,3 @@ pub fn decide(scratch0: u32, scratch1: u32, cause: ResetCause) -> BootMode {
         BootMode::Normal
     }
 }
-
-/// Bytes of the AM32 settings structure.
-pub const ESC_EEPROM_SIZE: usize = 192;
-
-/// First offset where a written ESC settings block and its read-back differ,
-/// ignoring byte 2: the bootloader writes its own version there on every write
-/// at the EEPROM base.
-pub fn esc_write_mismatch(
-    written: &[u8; ESC_EEPROM_SIZE],
-    read: &[u8; ESC_EEPROM_SIZE],
-) -> Option<usize> {
-    (0..ESC_EEPROM_SIZE).find(|&i| i != 2 && written[i] != read[i])
-}

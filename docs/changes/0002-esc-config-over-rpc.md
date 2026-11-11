@@ -6,7 +6,7 @@
 | Airframes | both (eagle: two ESCs; dart: one) |
 | Date | 2026-10-02, rewritten 2026-11-11 |
 | Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): additive only (new endpoints, new event codes, a new RPC-build mode); no existing type or code changes; flight builds unchanged |
-| Surfaces | operator behaviour (ESC-config mode in RPC builds), RPC ICD (endpoints added), event codes (170–177 added) |
+| Surfaces | operator behaviour (ESC-config mode in RPC builds), RPC ICD (endpoints added), event codes (170–178 added) |
 
 The first draft (2026-10-02) used a separate `esc-config` build. This rewrite uses the
 normal `rpc-control` build, rebooted into an ESC-config mode, and builds on the
@@ -45,7 +45,7 @@ snapshot ESC settings too, for example next to a governor sweep.
 | `elle/esc/mode/enter` while disarmed, both eRPM targets 0 | — | Event 170, ULog file closed, MCU reboots ~200 ms later into ESC-config mode; the host reattaches |
 | `elle/esc/mode/enter` while armed, or a target ≠ 0 | — | Refused (event 171), nothing happens |
 | ESC-config mode, boot | — | No DShot program is loaded and no DShot is ever sent. The engine pins idle high (one-wire UART). The LED double-blinks orange; CRSF flight-mode text `ESCCFG`. About 2 s later each ESC, seeing no signal, resets itself into its bootloader and stays there because the line is high (see [Bootloader entry](#bootloader-entry)). No power cycle: the battery stays connected (it also powers the FC through the ESCs' 5 V). |
-| ESC-config mode, flash-writing RPCs (PID save, calibration clears, ULog erase) and level cal | — | Refused (event 63, as when armed), so no flash operation can pause the ESC link |
+| ESC-config mode, flash-writing RPCs (PID save, calibration clears, ULog erase) and level cal | — | Refused (event 178), so no flash operation can pause the ESC link |
 | ESC-config mode, `Arm` / RC arming gesture / throttle | — | Arming refused (event 172); throttle has no output path |
 | ESC-config mode, elevons | — | As in any RPC build: `SetElevons` and Stabilized still move surfaces disarmed. Not changed. |
 | ESC-config mode, `elle/esc/mode/exit` | — | Each connected ESC is sent Run (app starts), then the MCU reboots normally |
@@ -140,7 +140,8 @@ questions 1):
   server itself) would starve it; the interrupt executor preempts them all.
 - **Flash stays out of the way.** A flash operation pauses even the interrupt
   executor (interrupts off). In ESC-config mode the loop refuses every
-  `writes_flash()` RPC and level cal (event 63, the armed refusal), and the boot skips the
+  `writes_flash()` RPC, level cal and ULog peeks (a peek can erase while repairing
+  a corrupt queue; event 178), and the boot skips the
   `ulog-flash-count` legacy count (~26 ms, ~5 s after boot). No other flash operation
   runs in this mode.
 - **`elle-hardware/src/esc_config.rs`**: `esc_config_task(uarts)` owns the UARTs and,
@@ -168,10 +169,19 @@ questions 1):
   before anything can arm; every arm path (RPC `Arm`, the `rpc-rc` gesture) then
   refuses with event 172 (`take_arm_refused`). The loop still publishes eRPM targets;
   nothing reads them.
-- **Exit.** `elle/esc/mode/exit`: the handler sends Run to each ESC through the task
-  (connecting first any ESC this boot never connected, so one left waiting in its
-  bootloader is released too), then `SwitchBootMode(Normal)`, and the loop resets
-  normally. Up to six ESC operations: the host waits up to ~31 s.
+- **Exit.** `elle/esc/mode/exit`: the handler connects both ESCs (one this boot never
+  connected may still wait in its bootloader), then sends Run to both back to back,
+  then `SwitchBootMode(Normal)`, and the loop resets normally. Running one before a
+  slow connect of the other would let it drop back into its bootloader first. Best
+  effort: a failed Run is not reported; check events 160–165 after the normal boot.
+  At most four ESC operations: the host waits up to ~31 s.
+- **Not during boot.** ESC operations and the mode switch wait until the RPC loop
+  runs (`RPC_LOOP_RUNNING`): before that, boot's flash profile loads (which can
+  repair, so erase) could overlap an ESC frame, and an accepted switch would sit
+  queued for seconds. `enter` answers `ESC_MODE_BUSY` until then.
+- **ULog closed before the reboot.** The loop reboots once the SD writer has
+  written the session's queued chunks and closed the file (`SD_FILE_OPEN`), or
+  after `ESC_REBOOT_SD_WAIT_MS` (2 s) at most.
 - **Host link in this mode.** The TUI pings every 100 ms. `direct` and `elle mcp`
   send nothing between calls, so the pure-RPC host failsafe raises its events
   (13/14/15) between them. Harmless here (disarmed, arming locked); the orange double
@@ -235,7 +245,9 @@ the host policy all stay on the host:
 
 Reading is always allowed. **Writing ESC EEPROM is not**, mirroring the motors flag: it
 needs `--dangerously-allow-esc-write` in `.mcp.json` (a human decision); `esc_set` also
-needs a backup of that ESC (engine and device id) taken by the same server.
+needs a backup of that ESC (engine and device id) taken on the current link: a
+device id names an ESC model, so the server forgets its backups whenever the link
+ends (disconnect, reset, mode switch). `esc_set` and `esc_restore` are serialized.
 `link_status` reports `esc_write_allowed`.
 
 | Tool | Gate | Does |
@@ -245,9 +257,9 @@ needs a backup of that ESC (engine and device id) taken by the same server.
 | `esc_read` `{ engine }` | ESC-config mode | Decoded settings as JSON (`Am32ConfigData` names), plus the raw 192 bytes as hex |
 | `esc_backup` `{ engine, path? }` | ESC-config mode | Raw 256-byte backup (default under `logs/esc/`); returns the path. Unlocks `esc_set` for that ESC. |
 | `esc_compare` `{ engine, path }` | ESC-config mode | Field-by-field diff of the ESC against a backup (for the governor-table check) |
-| `esc_set` `{ engine, fields: {name: value} }` | `--dangerously-allow-esc-write` + same-session backup | Read-modify-write of settings bytes 5..48, read back, return the diff |
+| `esc_set` `{ engine, fields: {name: value} }` | `--dangerously-allow-esc-write` + a backup on the current link | Read-modify-write of settings bytes 5..48, read back, return the diff |
 | `esc_restore` `{ engine, path }` | `--dangerously-allow-esc-write` | Restore a backup (host policy), read back, return the diff |
-| `esc_run` `{ engine }` | ESC-config mode | Leave the bootloader, start the app. Transient: with no DShot the app resets back into the bootloader ~2 s later. `esc_mode exit` is how to leave. |
+| `esc_run` `{ engine }` | ESC-config mode | Connect, then leave the bootloader and start the app. Transient: with no DShot the app resets back into the bootloader ~2 s later. `esc_mode exit` is how to leave. |
 
 Phase 2 adds `esc_flash` behind its own `--dangerously-allow-esc-flash`.
 
@@ -267,6 +279,7 @@ with its read-back is ~0.35 s on the wire.
   - 173 / 174 `EVT_ESC_LEFT_CONNECTED` / `EVT_ESC_RIGHT_CONNECTED`: bootloader handshake answered
   - 175 / 176 `EVT_ESC_LEFT_WRITE_FAILED` / `EVT_ESC_RIGHT_WRITE_FAILED`: NACK, CRC, no reply or verify mismatch on a write
   - 177 `EVT_ESC_WRITE_OK`: a write was committed and read back identical
+  - 178 `EVT_FLASH_REFUSED_ESC_CONFIG`: a flash-touching RPC or level cal refused in ESC-config mode
 - **RPC** (all added, `rpc-control` only; no existing type changes). Elle's endpoints
   carry an `engine` and reuse the `esc-config-icd` request and response types and
   `EscError`:
@@ -296,7 +309,7 @@ with its read-back is ~0.35 s on the wire.
 | Mode entered with engines running | Engines cut by the reboot | The switch is refused unless disarmed with both eRPM targets 0 (171); the check runs in the loop, which owns the state |
 | Stale flag reboots a later session into the mode | Unexpected silent engines on the bench | Flag cleared on read, valid only with the magic pair **and** a forced watchdog reset |
 | Engine spins during configuration | Injury | No DShot program is loaded in this boot; an AM32 bootloader does not drive the motor. Props off for every session regardless. |
-| Bad settings written (direction, timing, KV) | Engines misbehave, or the governor table no longer fits | Writes only through the host policy (bytes 5..48); read-back after every write; MCP writes need the flag, `esc_set` also a same-session backup; boot-time direction assert still overrides direction; the governor-table backup compare |
+| Bad settings written (direction, timing, KV) | Engines misbehave, or the governor table no longer fits | Writes only through the host policy (bytes 5..48); read-back after every write; MCP writes need the flag, `esc_set` also a backup on the current link; boot-time direction assert still overrides direction; the governor-table backup compare |
 | ESC left in its bootloader at the next normal boot | Silent ESC | `exit` sends Run first. A plain reset should release it too (pads pulled low > 20 ms, REVAMP P1; bench step 8). Otherwise events 160/161 report the silent ESC. |
 | Frame split by a scheduling stall | Bootloader stuck in payload mode | Session on the interrupt executor; flash operations refused in this mode; one `Link::send` per frame (esc-session F10); `esc-session` resends the payload (F8); last resort a battery cycle, which also reboots the FC into a normal boot |
 | Battery unplugged during a session | FC and ESCs both reset; normal boot | Harmless for the FC. An ESC cut mid-write is the row below. |
@@ -337,7 +350,7 @@ calibration save in flight when the switch reboots is cut as by any reset, which
      6.8). Once more with a plain FC reset instead of `esc exit`, the ESC connected:
      does it start its app on its own (expected, from the pull-down)?
   9. Probe reset in ESC-config mode → normal boot (flag cleared).
-  10. In ESC-config mode: `mag cal clear` / PID save / `level cal` → refused, event 63.
+  10. In ESC-config mode: `mag cal clear` / PID save / `level cal` → refused, event 178.
   11. A large write over RTT: `esc set` and `esc restore` answer (the 192-byte
       request is the largest host-to-FC frame Elle sends).
 - **Flight:** none for Phase 1; the next flight after a settings change runs 6.8 first.
@@ -373,7 +386,7 @@ changed during a session is restored from its backup.
 
 ## Doc updates
 
-- [x] `docs/OPERATIONS.md`: "ESC configuration (bench)" section, events 170–177
+- [x] `docs/OPERATIONS.md`: "ESC configuration (bench)" section, events 170–178
 - [x] `STATE_DIAGRAMS.md`: boot-mode note; arming note for ESC-config mode
 - [x] `TEST_PLAN.md`: section 6.11
 - [x] `CLAUDE.md`: boot modes, `esc_config` task on `EXECUTOR_DSHOT`, ESC RPC endpoints, dependency table
