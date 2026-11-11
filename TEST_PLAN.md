@@ -86,6 +86,7 @@ their rows are assisted through the defmt log (`log`, `wait_log`) or checked fro
 | 6.8 | rows 1–2 manual (scope); 3, 6 log; 4–5 assisted | `wait_event` 160–163, `analyse_log esc` |
 | 6.9 | rows 1–3 assisted outdoors (laptop and probe on the aircraft); 4–5 log | `read nav`, `read gnss`, `analyse_log nav` |
 | 6.10 | log; row 5 manual | `replay`, `analyse_log timing` |
+| 6.11 | rows 1–6, 9–11 auto / assisted; 7–8 manual | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` / `esc_restore` (`--dangerously-allow-esc-write`), `wait_event` 170–177, 63; row 8 with `reset_target` |
 | 7.1 | auto | `cargo test` from a shell; `replay simulate` |
 | 7.2–7.4 | log | `replay compare score_by_rate` (7.2), `replay compare` (7.3) |
 | 7.5–7.7 | as the rows they repeat; flight manual | |
@@ -694,6 +695,26 @@ differently; the build records more and logs `attitude_data` at 50 Hz.
 | 3 | Same log | `core1_load` busy mean/max within a few µs of a normal build's | [ ] |
 | 4 | Same log, `elle-replay FILE` | Every `attitude_data` sample while synced matches the replay exactly | [ ] |
 | 5 | Stabilized on the stand, stick steps and disturbances | Feels and responds as before (the fusion code moved, bit-identical on the host) | [ ] |
+
+### 6.11 ESC Configuration from the TUI (RPC build, props off; proposal 0002)
+
+Not run on hardware yet. Run the esc-config-rs relay's bench regression on the same
+ESC first, and keep a relay backup of each ESC for rows 2–3. Procedure:
+[OPERATIONS.md](docs/OPERATIONS.md#esc-configuration-bench).
+
+| # | Test | Expected | Pass |
+|---|------|----------|------|
+| 1 | Armed (or throttle up): `esc enter`. Then disarmed: `esc enter` | Refused, event 171, no reboot (host: "did not take"). Then 170, reboot, the TUI reattaches and `esc` reports `ESC CONFIG` (confirm the mode after the reattach, not only the event); header `ESC CONFIG`, ESC panel; LED double blink orange; CRSF `ESCCFG`; `arm` → 172 | [ ] |
+| 2 | Wait ≥ 2 s, `esc connect left` (and `right` on the eagle) | 173 / 174; id and firmware name as the relay reads them. A `NoReply` in the first ~2 s is the ESC app still timing out: retry. Once with a logic analyser: last DShot frame to first bootloader answer | [ ] |
+| 3 | `esc backup left` | 256-byte file, byte-identical to the relay's backup of the same ESC | [ ] |
+| 4 | `esc set left beep_volume=<other>`, then `esc exit`, `esc enter`, `esc show left` | 177; the host lists only `beep_volume` changed; the change survives; melody and CAN bytes unchanged (`esc_compare` against row 3 shows only `beep_volume`) | [ ] |
+| 5 | `esc restore left <row 3 file>` | 177; `esc_compare` against row 3: identical | [ ] |
+| 6 | Rows 2–5 through `elle mcp` | `esc_set` / `esc_restore` refused without `--dangerously-allow-esc-write`; `esc_set` refused before an `esc_backup` of that ESC; with both, as rows 4–5 | [ ] |
+| 7 | Pull the battery once in the middle of a write (on an ESC with a backup) | After repower: normal boot, 160/161 for that ESC (it stays in its bootloader); `esc enter`, `esc restore` recovers it | [ ] |
+| 8 | `esc exit`; once more with a plain FC reset (`reset_target`) instead, ESC connected | Normal boot, `esc` reports normal; events 160–165 absent; governor as before (6.8 row 3). After the plain reset the ESC starts its app on its own | [ ] |
+| 9 | Probe reset in ESC-config mode | Normal boot (flag cleared) | [ ] |
+| 10 | In ESC-config mode: `mag cal clear`, `savepid`, `level cal` | Each refused, event 63 | [ ] |
+| 11 | `esc set` and `esc restore` (192-byte requests, the largest host-to-FC frames) | Both answer within ~1 s; no RPC timeouts while reads work | [ ] |
 
 ## Part 7: Attitude Estimation and Turn Compensation
 

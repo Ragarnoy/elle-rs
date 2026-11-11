@@ -18,7 +18,8 @@ Two modes:
 - **`elle direct <cmd>`** — one RPC call and exit, for scripting.
   `ping`, `version`, `status`, `attitude`, `throttle`, `elevon`, `arm`, `disarm`,
   `stop`, `perf`, `mag`, `gnss`, `engine`, `mag-cal {start|clear|status}`,
-  `level-cal {start|clear|status}`.
+  `level-cal {start|clear|status}`, `esc {mode|enter|exit|connect|show|set|backup|restore|run}`
+  (see [ESC configuration](#esc-configuration)).
 
 Arming, calibration, autotune and the event codes shown in the Logs panel are explained
 in [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md).
@@ -71,6 +72,12 @@ appends a TEST_PLAN result (pass / fail / skip / inconclusive, note, evidence,
 and the connected firmware's build info) to `logs/test-runs/<date>.jsonl`;
 `test_report` gives the latest outcome per row.
 
+**ESC EEPROM writes are off limits by default too.** The `esc_*` tools read
+freely; `esc_set` and `esc_restore` refuse unless the server is started with
+`--dangerously-allow-esc-write` (add it to `args` in `.mcp.json` yourself), and
+`esc_set` also needs an `esc_backup` of that ESC taken by this server.
+`link_status` reports `esc_write_allowed`.
+
 Tools:
 
 | Group | Tools |
@@ -81,9 +88,36 @@ Tools:
 | Engines (gated) | `arm`, `extend_armed`, `set_throttle`, `disarm`, `emergency_stop` |
 | Commands | `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`, `level_cal`, `ulog`, `autotune` |
 | Logs and results | `card_logs`, `copy_logs`, `analyse_log`, `replay`, `test_record`, `test_report` |
+| ESC configuration | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` (gated), `esc_restore` (gated), `esc_run` |
 
 Tests (`tests/mcp.rs`) run the RPC tools against a fake flight controller on the
 real RPC client path; `src/analysis.rs` tests the card copy and the results file.
+
+## ESC configuration
+
+AM32 ESC settings through the FC ([proposal 0002](../../docs/changes/0002-esc-config-over-rpc.md);
+operator steps in [OPERATIONS.md](../../docs/OPERATIONS.md#esc-configuration-bench)).
+`enter` reboots the FC into ESC-config mode (disarmed, throttle 0; no DShot, arming
+locked), `exit` starts the ESCs and reboots normally; both reattach by themselves
+and report if the switch did not take. Every other command connects to the ESC's
+bootloader first. The engine is `left` (default) or `right` (eagle only).
+
+| TUI | `direct` | MCP | Does |
+|-----|----------|-----|------|
+| `esc` | `esc mode` | `esc_mode get` | This boot's mode |
+| `esc enter` / `esc exit` | `esc enter` / `esc exit` | `esc_mode enter` / `exit` | Switch mode (reboot, reattach) |
+| `esc connect [l\|r]` | `esc connect -e l` | `esc_connect` | Bootloader handshake: id, layout, firmware name |
+| `esc show [l\|r]` | `esc show -e l` | `esc_read` | Decoded settings (`esc_read`: plus raw hex) |
+| `esc set [l\|r] k=v …` | `esc set -e l k=v …` | `esc_set` (gated) | Edit settings bytes 5..48, write, verify, print the changes |
+| `esc backup [l\|r] [file]` | `esc backup -e l [-o file]` | `esc_backup` | Raw 256 bytes at the EEPROM base (relay CLI format), default `logs/esc/` |
+| — | — | `esc_compare` | Diff an ESC against a backup |
+| `esc restore [l\|r] <file>` | `esc restore -e l <file>` | `esc_restore` (gated) | Settings, melody, CAN from a backup; boot and version bytes kept |
+| `esc run [l\|r]` | `esc run -e l` | `esc_run` | Start the ESC's app (transient: back in the bootloader ~2 s later without DShot) |
+
+In ESC-config mode the TUI header shows `ESC CONFIG`, an ESC panel replaces the
+telemetry and RC panels, the flight polls stop and a 100 ms ping keeps the link.
+ESC operations take up to ~5 s (`ESC_HOST_TIMEOUT_MS`). The logic is in
+`src/esc.rs`, on `esc_protocol`'s settings decoding and host policy.
 
 ## Link keepalive
 

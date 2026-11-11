@@ -35,6 +35,31 @@ stateDiagram-v2
 - The gesture cannot progress while the failsafe is active.
 - Pure RPC mode has no gesture: `arm` / `disarm` / `stop` over RPC, and `arm` is refused
   while the commanded throttle is above zero (event 18).
+- In an ESC-config boot (below) arming is locked for the whole boot: the gesture and
+  RPC `arm` never leave Disarmed (event 172).
+
+## Boot mode (RPC builds)
+
+```mermaid
+stateDiagram-v2
+    state "Normal boot (DShot)" as N
+    state "ESC-config boot (one-wire UART, arming locked)" as E
+
+    [*] --> N: power on, probe reset,
+watchdog timeout
+    N --> E: elle/esc/mode/enter, disarmed, eRPM targets 0
+(event 170, reboot)
+    N --> N: same, armed or engine commanded
+(event 171, no reboot)
+    E --> N: elle/esc/mode/exit (Run sent to the ESCs, reboot)
+or any other reset
+```
+
+- The only way in is a reboot the firmware forces itself, with the watchdog scratch
+  flag set (`elle_control::boot_mode::decide`); the flag is cleared as the next boot
+  reads it. Flight builds have no ESC-config mode.
+- Code: `elle-hardware/src/boot_mode.rs`, `watchdog::reboot_into`, the
+  `SwitchBootMode` command in `crates/elle-app/src/rpc.rs`.
 
 ## Link state and failsafe
 

@@ -34,6 +34,12 @@ Ask the user to confirm, and do not flash until they have:
 - **Which platform, which prop.** This goes into the table's doc comment.
 - The probe is connected to the flight controller. The sweep **replaces the elle
   firmware**, so it has to be reflashed afterwards (step 6).
+- **The ESC settings the table belongs to.** The curve depends on the ESC's timing,
+  PWM frequency, motor KV/poles and direction. Before the sweep, with an RPC build,
+  save a backup of each ESC (`elle direct esc enter`, `esc backup -e left [-o
+  file]`, `esc exit`; or `elle mcp` `esc_backup`) and name the files in the table's
+  doc comment. Before trusting an existing table, `esc_compare` the ESC against the
+  backup taken at its sweep: any difference in those fields means re-sweep.
 
 ## 2. Run the sweep
 

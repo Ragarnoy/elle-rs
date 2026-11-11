@@ -39,6 +39,21 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
+  (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
+  into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each
+  ESC's bootloader, arming is locked (172), flash writes and level cal are refused
+  (63), LED double blink orange, CRSF `ESCCFG`. New endpoints `elle/esc/mode`,
+  `elle/esc/mode/enter`, `elle/esc/mode/exit`, `elle/esc/connect`,
+  `elle/esc/eeprom/read`, `elle/esc/eeprom/write` (verified by read-back),
+  `elle/esc/name`, `elle/esc/read`, `elle/esc/run`, with `ESC_MODE_REFUSED_ARMED` /
+  `ESC_MODE_BUSY` ack codes; events 170–177. Host: settings decoding and the
+  esc-config-rs host policy, raw 256-byte backups in the relay CLI's format, a TUI
+  ESC panel, and MCP tools `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`,
+  `esc_compare`, `esc_set`, `esc_restore`, `esc_run` (writes need
+  `--dangerously-allow-esc-write`). Depends on esc-config-rs by git rev. Not yet run
+  on hardware (TEST_PLAN 6.11).
+
 - Magnetometer health (operator behaviour, event codes): boot self-test (event 49,
   mag not used on failure); median-of-3 spike filter (event 119) ahead of the
   calibration and the health check;
