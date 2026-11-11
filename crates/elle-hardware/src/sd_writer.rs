@@ -360,13 +360,16 @@ pub async fn sd_writer_task(
                                 break;
                             };
                             let elen = extra.len;
-                            if file.write_all(&extra.data[..elen]).await.is_err() {
+                            if let Err(e) = file.write_all(&extra.data[..elen]).await {
+                                warn!("SD: write error on close: {}", defmt::Debug2Format(&e));
                                 break;
                             }
                             bytes_written += elen as u32;
                         }
                     }
-                    let _ = file.flush().await;
+                    if let Err(e) = file.flush().await {
+                        warn!("SD: flush error on close: {}", defmt::Debug2Format(&e));
+                    }
                     info!(
                         "SD: {} bytes to {}, closing",
                         bytes_written,

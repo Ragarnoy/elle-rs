@@ -715,6 +715,7 @@ ESC first, and keep a relay backup of each ESC for rows 2–3. Procedure:
 | 9 | Probe reset in ESC-config mode | Normal boot (flag cleared) | [ ] |
 | 10 | In ESC-config mode: `mag cal clear`, `savepid`, `level cal`, `ulog extract` | Each refused, event 178 | [ ] |
 | 11 | `esc set` and `esc restore` (192-byte requests, the largest host-to-FC frames) | Both answer within ~1 s; no RPC timeouts while reads work | [ ] |
+| 12 | Normal boot, `ulog start`, ~10 s, then `esc enter` (SD card in) | 170, then the reboot within ~2 s; the host reattaches (about 3 s) and reports `ESC CONFIG`. On the card, that log file ends cleanly: its last seconds are present (`flight-logs` skill), and no later file starts with its data | [ ] |
 
 ## Part 7: Attitude Estimation and Turn Compensation
 

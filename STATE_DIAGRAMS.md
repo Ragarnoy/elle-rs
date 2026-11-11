@@ -47,7 +47,7 @@ stateDiagram-v2
 
     [*] --> N: power on, probe reset,\nwatchdog timeout
     N --> E: elle/esc/mode/enter, disarmed, eRPM targets 0\n(event 170, reboot)
-    N --> N: same, armed or engine commanded\n(event 171, no reboot)
+    N --> N: same, armed or engine commanded, or the ULog file\nstill open 2 s later (event 171, no reboot)
     E --> N: elle/esc/mode/exit (Run sent to the ESCs, reboot)\nor any other reset
 ```
 
