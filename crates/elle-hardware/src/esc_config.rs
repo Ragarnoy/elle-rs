@@ -31,6 +31,9 @@ use esc_protocol::layout::Layout;
 use esc_protocol::packet::ConnectResponse;
 use esc_session::{Esc, Link, Timing};
 
+// The settings block size the verify compare assumes is esc-config-icd's.
+const _: () = assert!(EEPROM_SIZE == elle_control::boot_mode::ESC_EEPROM_SIZE);
+
 /// Left engine UART: PIO1, TX on SM0, RX on SM1 (`PIN_14`).
 pub type LeftUart = OneWireUart<'static, PIO1, 0, 1>;
 /// Right engine UART (eagle): PIO2, TX on SM0, RX on SM1 (`PIN_11`).
@@ -206,7 +209,7 @@ impl<U: Link> Port<U> {
         let mut esc = self.esc()?;
         esc.write_eeprom(&block).await?;
         let back = esc.read_eeprom().await?;
-        match first_difference(&block, &back) {
+        match elle_control::boot_mode::esc_write_mismatch(&block, &back) {
             None => Ok(()),
             Some(offset) => Err(EscError::Verify {
                 offset: offset as u32,
@@ -235,12 +238,6 @@ impl<U: Link> Port<U> {
         self.connected = None;
         result
     }
-}
-
-/// First offset where `written` and `read` differ, ignoring byte 2 (the
-/// bootloader version, which the bootloader writes itself).
-fn first_difference(written: &[u8; EEPROM_SIZE], read: &[u8; EEPROM_SIZE]) -> Option<usize> {
-    (0..EEPROM_SIZE).find(|&i| i != 2 && written[i] != read[i])
 }
 
 /// The ESC session task (ESC-config boots only). `right` is `None` on the dart.

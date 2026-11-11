@@ -32,3 +32,16 @@ fn words_are_complements() {
     let (a, b) = esc_config_words();
     assert_eq!(a, !b);
 }
+
+#[test]
+fn esc_write_mismatch_ignores_the_bootloader_version_byte() {
+    use elle_control::boot_mode::{ESC_EEPROM_SIZE, esc_write_mismatch};
+    let written = [0x11u8; ESC_EEPROM_SIZE];
+    let mut read = written;
+    read[2] = 0x99;
+    assert_eq!(esc_write_mismatch(&written, &read), None);
+    read[40] = 0;
+    assert_eq!(esc_write_mismatch(&written, &read), Some(40));
+    read[0] = 0;
+    assert_eq!(esc_write_mismatch(&written, &read), Some(0));
+}
