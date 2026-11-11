@@ -28,6 +28,19 @@ struct Fc {
     pings: u32,
     disarms: u32,
     heading_cdeg: Option<i16>,
+    /// The fake ESC's 192-byte settings, and how often it was written.
+    esc_eeprom: Vec<u8>,
+    esc_writes: u32,
+}
+
+fn esc_eeprom() -> Vec<u8> {
+    let mut e = vec![0u8; ESC_EEPROM_SIZE];
+    e[0] = 0x01;
+    e[1] = 4; // layout version
+    e[2] = 7;
+    e[3] = 2;
+    e[4] = 19;
+    e
 }
 
 type Shared = Arc<Mutex<Fc>>;
@@ -144,6 +157,59 @@ async fn run_fc(
             let r: SetElevonsReq = postcard::from_bytes(&frame.body).unwrap();
             fc.lock().unwrap().elevons = (r.left, r.right);
             reply!(SetElevonsEndpoint, ok);
+        } else if key_is::<EscModeEndpoint>(&k) {
+            reply!(EscModeEndpoint, EscBootMode::EscConfig);
+        } else if key_is::<EscConnectEndpoint>(&k) {
+            let info = EscInfo {
+                device_id: 0x1F06,
+                pin_code: 0x06,
+                flash_code: 0x1F,
+                protocol_version: 1,
+                layout: EscLayoutInfo {
+                    address_shift: 0,
+                    firmware_start: 0x1000,
+                    filename_start: 0x7C00,
+                    eeprom_start: 0x7C00,
+                },
+                max_firmware_size: 0x6C00,
+            };
+            reply!(EscConnectEndpoint, Ok::<_, EscError>(info));
+        } else if key_is::<EscNameEndpoint>(&k) {
+            let name = EscBlock::from_slice(b"AM32_TEST\0").unwrap();
+            reply!(EscNameEndpoint, Ok::<_, EscError>(name));
+        } else if key_is::<EscReadEepromEndpoint>(&k) {
+            let e = {
+                let mut f = fc.lock().unwrap();
+                if f.esc_eeprom.is_empty() {
+                    f.esc_eeprom = esc_eeprom();
+                }
+                f.esc_eeprom.clone()
+            };
+            reply!(
+                EscReadEepromEndpoint,
+                Ok::<_, EscError>(EscEeprom::from_slice(&e).unwrap())
+            );
+        } else if key_is::<EscReadEndpoint>(&k) {
+            let mut e = {
+                let mut f = fc.lock().unwrap();
+                if f.esc_eeprom.is_empty() {
+                    f.esc_eeprom = esc_eeprom();
+                }
+                f.esc_eeprom.clone()
+            };
+            e.resize(ESC_MAX_BLOCK, 0xFF);
+            reply!(
+                EscReadEndpoint,
+                Ok::<_, EscError>(EscBlock::from_slice(&e).unwrap())
+            );
+        } else if key_is::<EscWriteEepromEndpoint>(&k) {
+            let r: EscWriteReq = postcard::from_bytes(&frame.body).unwrap();
+            {
+                let mut f = fc.lock().unwrap();
+                f.esc_eeprom = r.data.to_vec();
+                f.esc_writes += 1;
+            }
+            reply!(EscWriteEepromEndpoint, Ok::<(), EscError>(()));
         } else if key_is::<SetHeadingHoldEndpoint>(&k) {
             let r: SetHeadingHoldReq = postcard::from_bytes(&frame.body).unwrap();
             fc.lock().unwrap().heading_cdeg = r.enabled.then_some(r.heading_cdeg);
@@ -246,6 +312,14 @@ async fn lists_the_tools() {
         "connect_defmt",
         "log",
         "wait_log",
+        "esc_mode",
+        "esc_connect",
+        "esc_read",
+        "esc_backup",
+        "esc_compare",
+        "esc_set",
+        "esc_restore",
+        "esc_run",
     ] {
         assert!(names.iter().any(|n| n == t), "missing tool {t}: {names:?}");
     }
@@ -373,6 +447,7 @@ fn motors(max_armed_ms: u64) -> Options {
         allow_motors: true,
         max_armed: Duration::from_millis(max_armed_ms),
         max_throttle_pct: 30,
+        allow_esc_write: false,
     }
 }
 
@@ -519,4 +594,104 @@ async fn defmt_tools_explain_what_is_missing() {
     assert!(e.contains("no ELF"), "{e}");
     let s = r.json("link_status", json!({})).await;
     assert_eq!(s["defmt_log"], json!(null));
+}
+
+fn esc_write() -> Options {
+    Options {
+        allow_esc_write: true,
+        ..Options::default()
+    }
+}
+
+#[tokio::test]
+async fn esc_reads_are_always_allowed() {
+    let r = rig(Options::default()).await;
+    let m = r.json("esc_mode", json!({"action": "get"})).await;
+    assert_eq!(m["mode"], json!("EscConfig"));
+    let c = r.json("esc_connect", json!({"engine": "left"})).await;
+    assert_eq!(c["device_id"], json!("0x1F06"));
+    assert_eq!(c["firmware_name"], json!("AM32_TEST"));
+    let s = r.json("esc_read", json!({"engine": "left"})).await;
+    assert_eq!(s["raw_hex"].as_str().unwrap().len(), 2 * ESC_EEPROM_SIZE);
+    assert!(s["settings"].is_object(), "{s}");
+}
+
+#[tokio::test]
+async fn esc_writes_need_the_flag() {
+    let r = rig(Options::default()).await;
+    let e = r
+        .call(
+            "esc_set",
+            json!({"engine": "left", "fields": {"beep_volume": 5}}),
+        )
+        .await
+        .unwrap_err();
+    assert!(e.contains("--dangerously-allow-esc-write"), "{e}");
+    let e = r
+        .call(
+            "esc_restore",
+            json!({"engine": "left", "path": "/nonexistent"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(e.contains("--dangerously-allow-esc-write"), "{e}");
+    assert_eq!(r.fc.lock().unwrap().esc_writes, 0);
+}
+
+#[tokio::test]
+async fn esc_set_needs_a_backup_then_writes_settings_only() {
+    let r = rig(esc_write()).await;
+    let e = r
+        .call(
+            "esc_set",
+            json!({"engine": "left", "fields": {"beep_volume": 5}}),
+        )
+        .await
+        .unwrap_err();
+    assert!(e.contains("esc_backup"), "{e}");
+    assert_eq!(r.fc.lock().unwrap().esc_writes, 0);
+
+    let dir = std::env::temp_dir().join(format!("elle-esc-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("left.bin");
+    let b = r
+        .json(
+            "esc_backup",
+            json!({"engine": "left", "path": path.display().to_string()}),
+        )
+        .await;
+    assert_eq!(b["bytes"], json!(256));
+    let before = std::fs::read(&path).unwrap();
+
+    let s = r
+        .json(
+            "esc_set",
+            json!({"engine": "left", "fields": {"beep_volume": 5}}),
+        )
+        .await;
+    assert_eq!(s["changes"][0]["field"], json!("beep_volume"), "{s}");
+    let after = r.fc.lock().unwrap().esc_eeprom.clone();
+    assert_eq!(&after[..5], &before[..5], "boot and version bytes kept");
+    assert_eq!(
+        &after[48..],
+        &before[48..ESC_EEPROM_SIZE],
+        "melody and CAN kept"
+    );
+
+    let c = r
+        .json(
+            "esc_compare",
+            json!({"engine": "left", "path": path.display().to_string()}),
+        )
+        .await;
+    assert_eq!(c["identical"], json!(false));
+
+    // Restoring the backup undoes the edit.
+    r.json(
+        "esc_restore",
+        json!({"engine": "left", "path": path.display().to_string()}),
+    )
+    .await;
+    assert_eq!(r.fc.lock().unwrap().esc_eeprom, before[..ESC_EEPROM_SIZE]);
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -22,6 +22,7 @@ use postcard_rpc::host_client::MultiSubRxError;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+use elle_rpc_host::esc;
 use elle_rpc_host::link::Link;
 
 use self::commands::CommandResult;
@@ -29,8 +30,11 @@ use self::state::AppState;
 
 pub async fn run() -> Result<()> {
     // Connect to probe and set up RTT
-    let link = Link::connect()?;
-    let client = &link.client;
+    let mut link = Some(Link::connect()?);
+    let mut client = link
+        .as_ref()
+        .map(|l| l.client.clone())
+        .expect("just connected");
 
     // Subscribe to topics
     let mut log_sub = client.subscribe_multi::<LogTopic>(64).await?;
@@ -54,7 +58,7 @@ pub async fn run() -> Result<()> {
     state.connected = true;
 
     // Fetch initial version
-    let client_ref = client;
+    let client_ref = &client;
     if let Ok(Ok(v)) = tokio::time::timeout(
         Duration::from_secs(2),
         client_ref.send_resp::<GetVersionEndpoint>(&()),
@@ -72,6 +76,10 @@ pub async fn run() -> Result<()> {
     .await
     {
         state.status = Some(s);
+    }
+    // Firmware without ESC configuration never answers: don't wait long.
+    if let Ok(Ok(m)) = tokio::time::timeout(Duration::from_millis(500), esc::mode(&client)).await {
+        state.esc_mode = Some(m);
     }
 
     let mut tick_interval = tokio::time::interval(Duration::from_millis(100)); // 10Hz UI refresh
@@ -118,7 +126,12 @@ pub async fn run() -> Result<()> {
                             state.command_input.clear();
                             if !input.trim().is_empty() {
                                 state.push_command_history(input.clone());
-                                match commands::execute(&input, client).await {
+                                if input.trim_start().starts_with("esc") {
+                                    // ESC operations take up to a few seconds: say so first.
+                                    state.set_status_message(format!("{}...", input.trim()));
+                                    terminal.draw(|f| ui::draw(f, &state))?;
+                                }
+                                match commands::execute(&input, &client).await {
                                     CommandResult::Ok(msg) => {
                                         if !msg.is_empty() {
                                             state.set_status_message(msg);
@@ -136,6 +149,35 @@ pub async fn run() -> Result<()> {
                                     CommandResult::Background(msg, handle) => {
                                         state.set_status_message(msg);
                                         state.background_task = Some(handle);
+                                    }
+                                    CommandResult::Esc(engine, view, msg) => {
+                                        state.esc[engine as usize] = *view;
+                                        state.set_status_message(msg);
+                                    }
+                                    CommandResult::Reboot(want) => {
+                                        state.set_status_message(
+                                            "Rebooting the flight controller, reattaching...".into(),
+                                        );
+                                        terminal.draw(|f| ui::draw(f, &state))?;
+                                        let old = link.take().expect("link held");
+                                        let (new, mode) = match esc::reconnect(old).await {
+                                            Ok(v) => v,
+                                            Err(e) => break Err(e.context("reattach after the reboot")),
+                                        };
+                                        client = new.client.clone();
+                                        log_sub = client.subscribe_multi::<LogTopic>(64).await?;
+                                        log_sub_closed = false;
+                                        link = Some(new);
+                                        state.esc_mode = Some(mode);
+                                        state.esc = Default::default();
+                                        state.set_status_message(if mode == want {
+                                            match mode {
+                                                EscBootMode::EscConfig => "ESC CONFIG: esc connect left|right".into(),
+                                                EscBootMode::Normal => "Normal boot".into(),
+                                            }
+                                        } else {
+                                            "ERROR: the switch did not take (armed, or an engine commanded?)".into()
+                                        });
                                     }
                                 }
                             }
@@ -201,7 +243,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic attitude poll (paused during background tasks to avoid RTT congestion)
-            _ = attitude_interval.tick(), if state.background_task.is_none() => {
+            _ = attitude_interval.tick(), if state.background_task.is_none() && !state.esc_config() => {
                 if let Ok(Ok(a)) = tokio::time::timeout(
                     Duration::from_millis(200),
                     client.send_resp::<GetAttitudeEndpoint>(&()),
@@ -240,7 +282,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic magnetometer poll
-            _ = mag_interval.tick(), if state.background_task.is_none() => {
+            _ = mag_interval.tick(), if state.background_task.is_none() && !state.esc_config() => {
                 if let Ok(Ok(m)) = tokio::time::timeout(
                     Duration::from_millis(500),
                     client.send_resp::<GetMagnetometerEndpoint>(&()),
@@ -251,7 +293,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic barometer poll
-            _ = baro_interval.tick(), if state.background_task.is_none() => {
+            _ = baro_interval.tick(), if state.background_task.is_none() && !state.esc_config() => {
                 if let Ok(Ok(b)) = tokio::time::timeout(
                     Duration::from_secs(1),
                     client.send_resp::<GetBarometerEndpoint>(&()),
@@ -262,7 +304,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic GNSS poll
-            _ = gnss_interval.tick(), if state.background_task.is_none() => {
+            _ = gnss_interval.tick(), if state.background_task.is_none() && !state.esc_config() => {
                 if let Ok(Ok(g)) = tokio::time::timeout(
                     Duration::from_secs(1),
                     client.send_resp::<GetGnssEndpoint>(&()),
@@ -273,7 +315,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic RC channels poll
-            _ = rc_interval.tick(), if state.background_task.is_none() => {
+            _ = rc_interval.tick(), if state.background_task.is_none() && !state.esc_config() => {
                 if let Ok(Ok(rc)) = tokio::time::timeout(
                     Duration::from_millis(100),
                     client.send_resp::<GetRcChannelsEndpoint>(&()),
@@ -284,7 +326,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic controller output poll
-            _ = ctrl_interval.tick(), if state.background_task.is_none() => {
+            _ = ctrl_interval.tick(), if state.background_task.is_none() && !state.esc_config() => {
                 if let Ok(Ok(c)) = tokio::time::timeout(
                     Duration::from_millis(200),
                     client.send_resp::<GetControllerOutputEndpoint>(&()),
@@ -295,7 +337,7 @@ pub async fn run() -> Result<()> {
             }
 
             // Periodic engine telemetry poll
-            _ = engine_interval.tick(), if state.background_task.is_none() => {
+            _ = engine_interval.tick(), if state.background_task.is_none() && !state.esc_config() => {
                 if let Ok(Ok(e)) = tokio::time::timeout(
                     Duration::from_millis(200),
                     client.send_resp::<GetEngineEndpoint>(&()),
@@ -315,7 +357,9 @@ pub async fn run() -> Result<()> {
     io::stdout().execute(LeaveAlternateScreen)?;
 
     // Signal the RTT worker to stop and wait for it to release the probe
-    link.close();
+    if let Some(link) = link {
+        link.close();
+    }
 
     result
 }

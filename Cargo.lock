@@ -1331,6 +1331,7 @@ dependencies = [
  "defmt-decoder",
  "elle-config",
  "elle-rpc-icd",
+ "esc-protocol",
  "futures",
  "postcard",
  "postcard-rpc",
@@ -1769,6 +1770,7 @@ version = "0.1.0"
 source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=4a9a150#4a9a1502e1494c4ec1098cf0ae1d3efbe403ad7f"
 dependencies = [
  "rtttl-rs",
+ "serde",
 ]
 
 [[package]]

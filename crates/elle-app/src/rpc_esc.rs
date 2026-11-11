@@ -13,8 +13,8 @@ use elle_config::{ESC_HOST_STAMP_MS, ESC_OP_TIMEOUT_MS};
 use elle_hardware::boot_mode::{self, BootMode};
 use elle_hardware::esc_config::{self, Engine, EscOp, EscReply, EscRequest};
 use elle_rpc_icd::{
-    AckResp, ESC_MODE_REFUSED_ARMED, EscAckResp, EscBlockResp, EscBootMode, EscConnectResp,
-    EscEepromResp, EscEngine, EscError, EscRawReadReq, EscWriteReq,
+    AckResp, ESC_MODE_BUSY, ESC_MODE_REFUSED_ARMED, EscAckResp, EscBlockResp, EscBootMode,
+    EscConnectResp, EscEepromResp, EscEngine, EscError, EscRawReadReq, EscWriteReq,
 };
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant, Ticker};
@@ -95,7 +95,7 @@ pub(crate) fn handle_esc_enter(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) 
         .try_send(RpcCommand::SwitchBootMode(BootMode::EscConfig))
     {
         Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
+        Err(_) => AckResp::error(ESC_MODE_BUSY),
     }
 }
 
@@ -113,7 +113,7 @@ pub(crate) async fn handle_esc_exit(ctx: &mut RpcContext, _hdr: VarHeader, _req:
         .try_send(RpcCommand::SwitchBootMode(BootMode::Normal))
     {
         Ok(()) => AckResp::ok(),
-        Err(_) => AckResp::error(1),
+        Err(_) => AckResp::error(ESC_MODE_BUSY),
     }
 }
 

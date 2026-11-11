@@ -1,6 +1,9 @@
 //! TUI command parsing and execution
 
+use elle_rpc_host::esc;
 use elle_rpc_icd::*;
+
+use super::state::EscView;
 use postcard_rpc::host_client::HostClient;
 use postcard_rpc::standard_icd::WireError;
 use std::time::Duration;
@@ -51,6 +54,13 @@ const COMMANDS: &[CmdDef] = &[
         name: "elevon",
         aliases: &["elv"],
         subs: &[],
+    },
+    CmdDef {
+        name: "esc",
+        aliases: &[],
+        subs: &[
+            "enter", "exit", "connect", "show", "set", "backup", "restore", "run",
+        ],
     },
     CmdDef {
         name: "estop",
@@ -187,6 +197,11 @@ pub enum CommandResult {
     Unknown(String),
     /// Long-running task spawned in background (status message, join handle)
     Background(String, tokio::task::JoinHandle<String>),
+    /// The flight controller is rebooting (ESC-config mode switch): reattach
+    /// and expect this mode.
+    Reboot(EscBootMode),
+    /// New ESC panel contents for one engine, and a status message.
+    Esc(EscEngine, Box<EscView>, String),
 }
 
 pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResult {
@@ -201,6 +216,7 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
     match canonical {
         Some("quit") => CommandResult::Quit,
         Some("arm") => cmd_arm(client).await,
+        Some("esc") => cmd_esc(&parts[1..], client).await,
         Some("disarm") => cmd_disarm(client).await,
         Some("estop") => cmd_estop(client).await,
         Some("throttle") => {
@@ -806,4 +822,119 @@ pub fn format_level_cal(cal: &LevelCalResp) -> String {
         "Level cal: {status} | Board offset: roll {:+.2}° pitch {:+.2}°",
         cal.roll_deg, cal.pitch_deg
     )
+}
+
+const ESC_USAGE: &str = "esc [enter|exit|connect|show|set|backup|restore|run] [left|right] ...";
+
+/// `esc ...`: ESC configuration (proposal 0002). Every operation on one ESC
+/// starts with the bootloader handshake, which also identifies it.
+async fn cmd_esc(args: &[&str], client: &HostClient<WireError>) -> CommandResult {
+    let Some((&sub, rest)) = args.split_first() else {
+        return match esc::mode(client).await {
+            Ok(EscBootMode::EscConfig) => CommandResult::Ok("ESC CONFIG boot".into()),
+            Ok(EscBootMode::Normal) => {
+                CommandResult::Ok("normal boot (esc enter: reboot into ESC config)".into())
+            }
+            Err(e) => CommandResult::Err(format!("{e:#}")),
+        };
+    };
+    // Optional engine (default left), then the rest.
+    let (engine, rest) = match rest.first().map(|s| esc::parse_engine(s)) {
+        Some(Ok(e)) => (e, &rest[1..]),
+        _ => (EscEngine::Left, rest),
+    };
+    let name = esc::engine_name(engine);
+    let r: anyhow::Result<CommandResult> = async {
+        Ok(match sub {
+            "enter" => {
+                esc::enter(client).await?;
+                CommandResult::Reboot(EscBootMode::EscConfig)
+            }
+            "exit" => {
+                esc::exit(client).await?;
+                CommandResult::Reboot(EscBootMode::Normal)
+            }
+            "connect" | "show" => {
+                let c = esc::connect(client, engine).await?;
+                let block = esc::read(client, engine).await?;
+                let msg = format!("{name} ESC 0x{:04X} {}", c.info.device_id, c.name);
+                CommandResult::Esc(
+                    engine,
+                    Box::new(EscView {
+                        connected: Some(c),
+                        settings: Some(block),
+                    }),
+                    msg,
+                )
+            }
+            "set" => {
+                let owned: Vec<String> = rest.iter().map(|s| (*s).to_string()).collect();
+                let edits = esc::parse_edits(&owned)?;
+                let c = esc::connect(client, engine).await?;
+                let changes = esc::set(client, engine, &edits).await?;
+                let block = esc::read(client, engine).await?;
+                let msg = if changes.is_empty() {
+                    format!("{name}: no change")
+                } else {
+                    let list: Vec<String> = changes
+                        .iter()
+                        .map(|c| format!("{} {} -> {}", c.field, c.before, c.after))
+                        .collect();
+                    format!("{name}: {} (written, verified)", list.join(", "))
+                };
+                CommandResult::Esc(
+                    engine,
+                    Box::new(EscView {
+                        connected: Some(c),
+                        settings: Some(block),
+                    }),
+                    msg,
+                )
+            }
+            "backup" => {
+                let c = esc::connect(client, engine).await?;
+                let data = esc::read_backup(client, engine, &c.info).await?;
+                let path = match rest.first() {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => {
+                        let dir = esc::backup_dir();
+                        std::fs::create_dir_all(&dir)?;
+                        dir.join(esc::backup_name(engine, &c.info))
+                    }
+                };
+                std::fs::write(&path, &data)?;
+                CommandResult::Ok(format!("{name} backup saved to {}", path.display()))
+            }
+            "restore" => {
+                let Some(file) = rest.first() else {
+                    return Ok(CommandResult::Err(
+                        "Usage: esc restore <left|right> <file>".into(),
+                    ));
+                };
+                let data = std::fs::read(file)?;
+                let c = esc::connect(client, engine).await?;
+                let changes = esc::restore(client, engine, &data).await?;
+                let block = esc::read(client, engine).await?;
+                CommandResult::Esc(
+                    engine,
+                    Box::new(EscView {
+                        connected: Some(c),
+                        settings: Some(block),
+                    }),
+                    format!("{name}: restored, {} field(s) changed", changes.len()),
+                )
+            }
+            "run" => {
+                esc::run(client, engine).await?;
+                CommandResult::Esc(
+                    engine,
+                    Box::default(),
+                    format!("{name}: app started (it resets into the bootloader without DShot)"),
+                )
+            }
+            _ => CommandResult::Err(format!("Usage: {ESC_USAGE}")),
+        })
+    }
+    .await;
+    r.unwrap_or_else(|e| CommandResult::Err(format!("{e:#}")))
 }

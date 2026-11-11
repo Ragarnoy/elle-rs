@@ -522,6 +522,8 @@ pub struct EscRawReadReq {
 /// `AckResp::error_code` for an ESC-config switch refused while armed (or an
 /// engine still commanded).
 pub const ESC_MODE_REFUSED_ARMED: u8 = 1;
+/// `AckResp::error_code` when the control loop's command queue is full: try again.
+pub const ESC_MODE_BUSY: u8 = 2;
 
 // ============================================================================
 // Endpoint Definitions

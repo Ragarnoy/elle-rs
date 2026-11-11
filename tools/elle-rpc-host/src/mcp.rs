@@ -53,6 +53,8 @@ pub struct Options {
     pub max_armed: Duration,
     /// Highest throttle `set_throttle` accepts, percent.
     pub max_throttle_pct: u8,
+    /// `--dangerously-allow-esc-write`: `esc_set` and `esc_restore` work at all.
+    pub allow_esc_write: bool,
 }
 
 impl Default for Options {
@@ -61,6 +63,7 @@ impl Default for Options {
             allow_motors: false,
             max_armed: Duration::from_secs(60),
             max_throttle_pct: 30,
+            allow_esc_write: false,
         }
     }
 }
@@ -100,6 +103,8 @@ struct Inner {
     defmt: Mutex<Option<crate::target::DefmtReader>>,
     /// The last build flashed (its ELF decodes the defmt log).
     last_build: Mutex<Option<(crate::target::Build, std::path::PathBuf)>>,
+    /// ESCs backed up by this server (engine, device id): `esc_set` needs one.
+    esc_backups: std::sync::Mutex<std::collections::HashSet<(u8, u16)>>,
 }
 
 struct ArmedGuard {
@@ -468,6 +473,69 @@ pub struct TestReportReq {
     pub date: Option<String>,
 }
 
+/// Which ESC.
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineParam {
+    /// `PIN_14`; the dart's only engine.
+    Left,
+    /// `PIN_11`; eagle only.
+    Right,
+}
+
+impl From<EngineParam> for EscEngine {
+    fn from(e: EngineParam) -> Self {
+        match e {
+            EngineParam::Left => Self::Left,
+            EngineParam::Right => Self::Right,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EscModeAction {
+    /// Report the mode only.
+    Get,
+    /// Reboot into ESC-config mode (disarmed, throttle 0).
+    Enter,
+    /// Start the ESCs' apps and reboot normally.
+    Exit,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EscModeReq {
+    pub action: EscModeAction,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EscEngineReq {
+    pub engine: EngineParam,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EscBackupReq {
+    pub engine: EngineParam,
+    /// Output file (default `logs/esc/<engine>-<id>-<time>.bin`).
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EscFileReq {
+    pub engine: EngineParam,
+    /// A backup file (256 or 192 bytes, as `esc_backup` writes).
+    pub path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EscSetReq {
+    pub engine: EngineParam,
+    /// Setting name → value, e.g. `{"beep_volume": 5, "timing": "15"}`.
+    /// Names as in `esc_read`'s decoded fields or the esc-config-rs CLI.
+    pub fields: std::collections::BTreeMap<String, Value>,
+}
+
 // ---------------------------------------------------------------------------
 
 type ToolResult = Result<String, String>;
@@ -640,6 +708,7 @@ impl ElleMcp {
                 armed: Mutex::new(None),
                 defmt: Mutex::new(None),
                 last_build: Mutex::new(None),
+                esc_backups: std::sync::Mutex::default(),
             }),
             tool_router: Self::tool_router(),
         }
@@ -777,6 +846,57 @@ impl ElleMcp {
         }
     }
 
+    /// Drop the link after a mode switch and attach again once the firmware
+    /// has rebooted; this boot's mode.
+    async fn reattach_after_reboot(&self) -> Result<EscBootMode, String> {
+        self.shutdown().await;
+        // The reboot comes ESC_REBOOT_DELAY_MS after the answer.
+        tokio::time::sleep(Duration::from_millis(
+            elle_config::ESC_REBOOT_DELAY_MS + 800,
+        ))
+        .await;
+        self.open_link(crate::esc::REATTACH_LIMIT)
+            .await
+            .map_err(|e| format!("rebooted, but could not reattach: {e}"))?;
+        let client = self.client().await?;
+        crate::esc::mode(&client)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    /// Connect to an ESC (every ESC tool starts with this: the handshake is
+    /// cheap, and it identifies the ESC the tool acts on).
+    async fn esc_connected(
+        &self,
+        engine: EscEngine,
+    ) -> Result<(HostClient<WireError>, crate::esc::Connected), String> {
+        let client = self.client().await?;
+        let c = crate::esc::connect(&client, engine)
+            .await
+            .map_err(|e| format!("{e:#} (is the FC in ESC-config mode? esc_mode get)"))?;
+        Ok((client, c))
+    }
+
+    fn esc_backed_up(&self, engine: EscEngine, device_id: u16) -> bool {
+        self.inner
+            .esc_backups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&(engine as u8, device_id))
+    }
+
+    fn esc_write_gate(&self) -> Result<(), String> {
+        if self.inner.opts.allow_esc_write {
+            Ok(())
+        } else {
+            Err(
+                "refused: ESC EEPROM writes are off limits; the server must be started with \
+                 --dangerously-allow-esc-write (a human decision, in .mcp.json)"
+                    .to_string(),
+            )
+        }
+    }
+
     /// Throttle 0 and disarm, cancelling the armed timer.
     async fn stop_engines(&self) -> Result<(), String> {
         if let Some(g) = self.inner.armed.lock().await.take() {
@@ -883,6 +1003,7 @@ impl ElleMcp {
             "connected": connected,
             "defmt_log": defmt,
             "motors_allowed": self.inner.opts.allow_motors,
+            "esc_write_allowed": self.inner.opts.allow_esc_write,
             "max_throttle_pct": self.inner.opts.max_throttle_pct,
             "max_armed_s": self.inner.opts.max_armed.as_secs_f64(),
             "armed_by_server": self.inner.armed.lock().await.is_some(),
@@ -1397,6 +1518,182 @@ impl ElleMcp {
             }
         }
     }
+    // --- AM32 ESC configuration (proposal 0002) -------------------------------
+
+    #[tool(
+        description = "ESC-config mode: get, enter (reboots the FC with the engine pins on a \
+        one-wire UART to each ESC's bootloader; disarmed and throttle 0 only, arming is locked \
+        in that boot) or exit (starts the ESCs' apps, reboots normally). Reattaches after the \
+        reboot (~5-20 s) and returns the mode. The FC must stay powered (USB or the ESC 5 V)."
+    )]
+    async fn esc_mode(&self, Parameters(r): Parameters<EscModeReq>) -> ToolResult {
+        let client = self.client().await?;
+        let want = match r.action {
+            EscModeAction::Get => {
+                let m = crate::esc::mode(&client)
+                    .await
+                    .map_err(|e| format!("{e:#}"))?;
+                return to_text(&json!({ "mode": jv(&m) }));
+            }
+            EscModeAction::Enter => {
+                crate::esc::enter(&client)
+                    .await
+                    .map_err(|e| format!("{e:#}"))?;
+                EscBootMode::EscConfig
+            }
+            EscModeAction::Exit => {
+                crate::esc::exit(&client)
+                    .await
+                    .map_err(|e| format!("{e:#}"))?;
+                EscBootMode::Normal
+            }
+        };
+        let mode = self.reattach_after_reboot().await?;
+        if mode != want {
+            return Err(format!(
+                "the switch did not take: the FC is in {mode:?} mode (the control loop \
+                 refuses it while armed or with an engine commanded; see events 171)"
+            ));
+        }
+        to_text(&json!({
+            "mode": jv(&mode),
+            "next": if mode == EscBootMode::EscConfig {
+                "esc_connect each engine; the ESCs wait in their bootloader"
+            } else {
+                "normal boot: check events 160-165 are absent"
+            },
+        }))
+    }
+
+    #[tool(
+        description = "Bootloader handshake with one ESC (ESC-config mode): device id, layout, \
+        firmware file name. The dart has only `left`."
+    )]
+    async fn esc_connect(&self, Parameters(r): Parameters<EscEngineReq>) -> ToolResult {
+        let (_, c) = self.esc_connected(r.engine.into()).await?;
+        to_text(&crate::esc::info_json(&c))
+    }
+
+    #[tool(
+        description = "Read one ESC's settings (ESC-config mode): decoded fields (the \
+        esc-config-rs TOML export names) and the raw 192 bytes as hex."
+    )]
+    async fn esc_read(&self, Parameters(r): Parameters<EscEngineReq>) -> ToolResult {
+        let engine = r.engine.into();
+        let (client, c) = self.esc_connected(engine).await?;
+        let block = crate::esc::read(&client, engine)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let hex: String = block.iter().map(|b| format!("{b:02X}")).collect();
+        to_text(&json!({
+            "esc": crate::esc::info_json(&c),
+            "settings": crate::esc::decoded(&block),
+            "raw_hex": hex,
+        }))
+    }
+
+    #[tool(
+        description = "Save one ESC's 256 bytes at the EEPROM base (the esc-config-rs backup \
+        format) to a file, default logs/esc/. Required before `esc_set` on that ESC."
+    )]
+    async fn esc_backup(&self, Parameters(r): Parameters<EscBackupReq>) -> ToolResult {
+        let engine = r.engine.into();
+        let (client, c) = self.esc_connected(engine).await?;
+        let data = crate::esc::read_backup(&client, engine, &c.info)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let path = match r.path {
+            Some(p) => std::path::PathBuf::from(p),
+            None => {
+                let dir = crate::esc::backup_dir();
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                dir.join(crate::esc::backup_name(engine, &c.info))
+            }
+        };
+        std::fs::write(&path, &data).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.inner
+            .esc_backups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((engine as u8, c.info.device_id));
+        to_text(&json!({ "path": path.display().to_string(), "bytes": data.len() }))
+    }
+
+    #[tool(
+        description = "Compare one ESC's settings with a backup file, field by field (e.g. \
+        before trusting a governor table swept with that backup's settings). Empty: identical."
+    )]
+    async fn esc_compare(&self, Parameters(r): Parameters<EscFileReq>) -> ToolResult {
+        let engine = r.engine.into();
+        let file = std::fs::read(&r.path).map_err(|e| format!("{}: {e}", r.path))?;
+        let (client, _) = self.esc_connected(engine).await?;
+        let block = crate::esc::read(&client, engine)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        // Compare the backup (before) against the ESC now (after).
+        let changes = crate::esc::diff(&file, &block);
+        to_text(&json!({ "identical": changes.is_empty(), "differences": changes }))
+    }
+
+    #[tool(
+        description = "Change ESC settings (ESC-config mode): read, apply the fields (settings \
+        bytes 5..48 only), write, read back, return what changed. Refused unless the server \
+        runs with --dangerously-allow-esc-write and this server took an `esc_backup` of this \
+        ESC. Props off."
+    )]
+    async fn esc_set(&self, Parameters(r): Parameters<EscSetReq>) -> ToolResult {
+        self.esc_write_gate()?;
+        let engine = r.engine.into();
+        let edits: Vec<(String, String)> = r
+            .fields
+            .into_iter()
+            .map(|(k, v)| {
+                let v = match v {
+                    Value::String(s) => s,
+                    other => other.to_string(),
+                };
+                (k, v)
+            })
+            .collect();
+        let (client, c) = self.esc_connected(engine).await?;
+        if !self.esc_backed_up(engine, c.info.device_id) {
+            return Err("refused: take an esc_backup of this ESC first (this session)".to_string());
+        }
+        let changes = crate::esc::set(&client, engine, &edits)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        to_text(&json!({ "changes": changes }))
+    }
+
+    #[tool(
+        description = "Restore an ESC from a backup file (settings, melody, CAN; the ESC's boot \
+        and version bytes are kept, another EEPROM layout is refused), read back, return what \
+        changed. Refused unless the server runs with --dangerously-allow-esc-write."
+    )]
+    async fn esc_restore(&self, Parameters(r): Parameters<EscFileReq>) -> ToolResult {
+        self.esc_write_gate()?;
+        let engine = r.engine.into();
+        let file = std::fs::read(&r.path).map_err(|e| format!("{}: {e}", r.path))?;
+        let (client, _) = self.esc_connected(engine).await?;
+        let changes = crate::esc::restore(&client, engine, &file)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        to_text(&json!({ "changes": changes }))
+    }
+
+    #[tool(
+        description = "Leave one ESC's bootloader and start its app. Transient in ESC-config \
+        mode: with no DShot the app resets back into the bootloader after ~2 s. To leave for \
+        good, use esc_mode exit."
+    )]
+    async fn esc_run(&self, Parameters(r): Parameters<EscEngineReq>) -> ToolResult {
+        let client = self.client().await?;
+        crate::esc::run(&client, r.engine.into())
+            .await
+            .map(|()| "run sent".to_string())
+            .map_err(|e| format!("{e:#}"))
+    }
+
     // --- Logs, analysis, results -----------------------------------------------
 
     #[tool(
