@@ -103,3 +103,27 @@ fn restore_requires_a_new_gesture() {
     gesture(&mut a);
     assert!(a.armed);
 }
+
+#[test]
+fn locked_arming_refuses_gesture_and_explicit_arm() {
+    let mut a = ArmingState::default();
+    a.lock();
+    assert!(a.is_locked());
+    gesture(&mut a);
+    assert!(!a.armed, "gesture must not arm when locked");
+    assert!(a.take_refused(), "refused gesture is reported");
+    assert!(!a.take_refused(), "reported once");
+    assert!(!a.arm(), "explicit arm refused");
+    assert!(!a.armed);
+    // Throttle held low after the refusal: no repeated reports.
+    a.update(THROTTLE_LOW);
+    assert!(!a.take_refused());
+}
+
+#[test]
+fn lock_disarms_an_armed_state() {
+    let mut a = ArmingState::default();
+    assert!(a.arm());
+    a.lock();
+    assert!(!a.armed);
+}

@@ -799,9 +799,22 @@ impl<'a> FlightController<'a> {
         self.explicit_arming_only = enabled;
     }
 
-    /// Manual arm (for RTT/debug control)
-    pub fn arm(&mut self) {
-        self.arming.arm();
+    /// Manual arm (for RTT/debug control). Returns false when arming is locked
+    /// (ESC-config boot); the caller reports it.
+    #[must_use]
+    pub fn arm(&mut self) -> bool {
+        self.arming.arm()
+    }
+
+    /// Refuse every arm for the rest of this boot: an ESC-config boot has no
+    /// engine output path. Covers the explicit arm and the throttle gesture.
+    pub fn lock_arming(&mut self) {
+        self.arming.lock();
+    }
+
+    /// True once after the throttle gesture was refused by [`lock_arming`](Self::lock_arming).
+    pub fn take_arm_refused(&mut self) -> bool {
+        self.arming.take_refused()
     }
 
     /// Manual disarm (for RTT/debug control)
