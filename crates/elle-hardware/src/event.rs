@@ -181,6 +181,24 @@ pub(crate) const EVT_ESC_RIGHT_RECONFIGURED: u16 = 163;
 pub(crate) const EVT_ESC_LEFT_NO_EDT: u16 = 164;
 pub(crate) const EVT_ESC_RIGHT_NO_EDT: u16 = 165;
 
+// ESC configuration (170–179), proposal 0002.
+/// Rebooting into ESC-config mode.
+pub const EVT_ESC_CONFIG_ENTER: u16 = 170;
+/// ESC-config mode refused: armed or an engine target not zero.
+pub const EVT_ESC_CONFIG_REFUSED: u16 = 171;
+/// Arming refused: this is an ESC-config boot (no engine output).
+pub const EVT_ARM_REFUSED_ESC_CONFIG: u16 = 172;
+/// Left ESC's bootloader answered the connect handshake.
+pub const EVT_ESC_LEFT_CONNECTED: u16 = 173;
+/// Right ESC's bootloader answered the connect handshake.
+pub const EVT_ESC_RIGHT_CONNECTED: u16 = 174;
+/// A settings write to the left ESC failed (NACK, CRC, no reply, verify).
+pub const EVT_ESC_LEFT_WRITE_FAILED: u16 = 175;
+/// A settings write to the right ESC failed (NACK, CRC, no reply, verify).
+pub const EVT_ESC_RIGHT_WRITE_FAILED: u16 = 176;
+/// A settings write was committed and read back identical.
+pub const EVT_ESC_WRITE_OK: u16 = 177;
+
 // ---------------------------------------------------------------------------
 // Macro
 // ---------------------------------------------------------------------------

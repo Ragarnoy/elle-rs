@@ -1275,6 +1275,10 @@ dependencies = [
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
  "embedded-storage-async",
+ "esc-config-icd",
+ "esc-onewire-rp",
+ "esc-protocol",
+ "esc-session",
  "fixed",
  "heapless 0.9.3",
  "icm426xx",
@@ -1343,6 +1347,7 @@ dependencies = [
 name = "elle-rpc-icd"
 version = "0.3.0"
 dependencies = [
+ "esc-config-icd",
  "heapless 0.9.3",
  "postcard",
  "postcard-rpc",
@@ -1730,6 +1735,48 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "esc-config-icd"
+version = "0.1.0"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=4a9a150#4a9a1502e1494c4ec1098cf0ae1d3efbe403ad7f"
+dependencies = [
+ "esc-protocol",
+ "esc-session",
+ "heapless 0.9.3",
+ "postcard",
+ "postcard-rpc",
+ "postcard-schema",
+ "serde",
+]
+
+[[package]]
+name = "esc-onewire-rp"
+version = "0.1.0"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=4a9a150#4a9a1502e1494c4ec1098cf0ae1d3efbe403ad7f"
+dependencies = [
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
+ "embassy-rp",
+ "embassy-time",
+ "esc-session",
+ "fixed",
+]
+
+[[package]]
+name = "esc-protocol"
+version = "0.1.0"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=4a9a150#4a9a1502e1494c4ec1098cf0ae1d3efbe403ad7f"
+dependencies = [
+ "rtttl-rs",
+]
+
+[[package]]
+name = "esc-session"
+version = "0.1.0"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=4a9a150#4a9a1502e1494c4ec1098cf0ae1d3efbe403ad7f"
+dependencies = [
+ "esc-protocol",
 ]
 
 [[package]]
@@ -3636,6 +3683,11 @@ dependencies = [
  "portable-atomic",
  "ufmt-write",
 ]
+
+[[package]]
+name = "rtttl-rs"
+version = "0.1.0"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=4a9a150#4a9a1502e1494c4ec1098cf0ae1d3efbe403ad7f"
 
 [[package]]
 name = "rustc_version"

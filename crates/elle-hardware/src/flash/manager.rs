@@ -162,7 +162,11 @@ impl<'a> SequentialFlashManager<'a> {
         // RPC builds only (`ulog-flash-count`): the count holds Core 0 for ~26 ms,
         // and in a flight build, armed and launched within ~6 s of power-up, that
         // would land in flight with nothing to read the result.
-        let mut ulog_counted = !cfg!(feature = "ulog-flash-count");
+        // Not in an ESC-config boot either: a flash operation pauses the DShot
+        // interrupt executor, where the ESC session runs, and a pause mid-frame
+        // can leave the bootloader in payload mode (proposal 0002).
+        let mut ulog_counted =
+            !cfg!(feature = "ulog-flash-count") || crate::boot_mode::is_esc_config();
         loop {
             let request = if ulog_counted {
                 FLASH_REQUEST_SIGNAL.wait().await
