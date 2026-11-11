@@ -585,19 +585,25 @@ pub const SETPOINT_FILTER_ALPHA: f32 = setpoint_filter_alpha(CONTROL_LOOP_DT);
 /// initial jump on a stick step (several hundred °/s otherwise): full bank in 0.5 s.
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;
 
-// Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
+// Motor specs (eagle): XFly 1413 5000KV, 6-pole (9N6P, 18 cogging steps per turn,
+// measured 2026-11-11; agrees with a 59 Hz bench vibration line at eRPM/3 and with
+// the throttle/eRPM fit), so mechanical rpm = eRPM / 3. 3S/4S, rated
+// 20A/500g/330W (manufacturer test prop).
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
 // rpm_range sweep 26 Sep 2026, 4S at 16.25 V under load: left engine peaks at
-// 21,389 RPM (DShot 1498) and falls above; right flattens out at ~20,340 RPM
-// from DShot ~1400. MAX_RPM is capped at the slower engine (right) to avoid
-// asymmetric thrust. The engines are ~5% apart at the top (the previous
-// sweep had them ~2% apart), so the right side lost more top-end.
+// ~149,700 eRPM (DShot 1498) and falls above; right flattens out at ~142,400 eRPM
+// from DShot ~1400. (The sweep printed these as 21,389 / 20,340 "RPM", eRPM/7 for
+// a 14-pole motor; the real mechanical rpm is ~49,900 / ~47,460.) The ceiling is
+// capped at the slower engine (right) to avoid asymmetric thrust. The engines are
+// ~5% apart at the top (the previous sweep had them ~2% apart), so the right side
+// lost more top-end.
+//
+// The ceiling is defined in eRPM, the measured quantity: 142,100 eRPM is
+// ~47,366 rpm, which is not a whole rpm at 3 pole pairs.
 #[cfg(not(feature = "platform-dart"))]
-const MOTOR_POLES: u8 = 14;
+const MOTOR_POLES: u8 = 6;
 #[cfg(not(feature = "platform-dart"))]
-const MAX_RPM: u32 = 20_300; // right engine plateau, rpm_range sweep 2026-09-26
-#[cfg(not(feature = "platform-dart"))]
-pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 142,100
+pub const MAX_ERPM: u32 = 142_100; // right engine plateau, rpm_range sweep 2026-09-26 (~47,366 rpm)
 
 // Motor specs (dart). MOTOR_POLES = 14 (confirmed by the rpm_range sweep).
 // 3-blade prop, reversed spin. MAX_RPM is the full-throttle point of the
