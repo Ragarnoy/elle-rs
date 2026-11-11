@@ -268,6 +268,8 @@ fn draw_esc(f: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[1]);
+    // Inside each column's borders.
+    state.esc_page.set(cols[0].height.saturating_sub(2).max(1));
     for (i, name) in ["Left", "Right"].into_iter().enumerate() {
         let view = &state.esc[i];
         let mut lines: Vec<Line> = Vec::new();

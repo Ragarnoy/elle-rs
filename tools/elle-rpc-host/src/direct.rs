@@ -187,7 +187,7 @@ async fn run_esc(link: Link, action: EscAction) -> Result<Link> {
             if mode != want {
                 anyhow::bail!(
                     "the switch did not take: the flight controller is in {} \
-                     (the control loop refuses it while armed or with an engine commanded)",
+                     (refused while armed or with an engine commanded, or cancelled if the ULog file is still open 2 s later; event 171)",
                     mode_text(mode)
                 );
             }

@@ -184,7 +184,8 @@ pub(crate) const EVT_ESC_RIGHT_NO_EDT: u16 = 165;
 // ESC configuration (170–179), proposal 0002.
 /// Rebooting into ESC-config mode.
 pub const EVT_ESC_CONFIG_ENTER: u16 = 170;
-/// ESC-config mode refused: armed or an engine target not zero.
+/// ESC-config mode refused (armed or an engine target not zero), or cancelled
+/// (the ULog file still open after `ESC_REBOOT_SD_WAIT_MS`).
 pub const EVT_ESC_CONFIG_REFUSED: u16 = 171;
 /// Arming refused: this is an ESC-config boot (no engine output).
 pub const EVT_ARM_REFUSED_ESC_CONFIG: u16 = 172;

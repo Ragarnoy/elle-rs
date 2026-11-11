@@ -102,6 +102,9 @@ pub async fn run() -> Result<()> {
     let mut event_stream = crossterm::event::EventStream::new();
 
     let mut log_sub_closed = false;
+    // A retried ESC-mode query, run off the loop so an unanswered one never
+    // holds up polling or the UI.
+    let mut esc_mode_query: Option<tokio::task::JoinHandle<Option<EscBootMode>>> = None;
 
     let result = loop {
         tokio::select! {
@@ -183,13 +186,16 @@ pub async fn run() -> Result<()> {
                                         state.esc = Default::default();
                                         state.esc_scroll = 0;
                                         state.esc_mode_tries = 0;
+                                        if let Some(q) = esc_mode_query.take() {
+                                            q.abort();
+                                        }
                                         state.set_status_message(if mode == want {
                                             match mode {
                                                 EscBootMode::EscConfig => "ESC CONFIG: esc connect left|right".into(),
                                                 EscBootMode::Normal => "Normal boot".into(),
                                             }
                                         } else {
-                                            "ERROR: the switch did not take (armed, or an engine commanded?)".into()
+                                            "ERROR: the switch did not take (armed, an engine commanded, or the ULog file still closing?)".into()
                                         });
                                     }
                                 }
@@ -200,10 +206,10 @@ pub async fn run() -> Result<()> {
                             state.history_index = None;
                         }
                         (KeyCode::PageDown, _) if state.esc_config() => {
-                            state.esc_scroll = state.esc_scroll.saturating_add(10);
+                            state.esc_scroll = state.esc_scroll.saturating_add(state.esc_page.get());
                         }
                         (KeyCode::PageUp, _) if state.esc_config() => {
-                            state.esc_scroll = state.esc_scroll.saturating_sub(10);
+                            state.esc_scroll = state.esc_scroll.saturating_sub(state.esc_page.get());
                         }
                         (KeyCode::Tab, _) => {
                             state.command_input = commands::tab_complete(&state.command_input);
@@ -249,6 +255,17 @@ pub async fn run() -> Result<()> {
                     state.connected = last.elapsed() < Duration::from_secs(5);
                 }
 
+                // A retried ESC-mode query has finished.
+                if let Some(q) = &esc_mode_query
+                    && q.is_finished()
+                    && let Some(q) = esc_mode_query.take()
+                {
+                    match q.await {
+                        Ok(Some(m)) => state.esc_mode = Some(m),
+                        _ => state.esc_mode_tries += 1,
+                    }
+                }
+
                 // Poll background task for completion
                 if let Some(handle) = &mut state.background_task
                     && handle.is_finished()
@@ -283,11 +300,17 @@ pub async fn run() -> Result<()> {
                 // Mode unknown (the first query failed): retry a few times, at
                 // the status rate, so an ESC-config boot is still noticed. Firmware
                 // without the endpoint stops being asked after the last try.
-                if state.esc_mode.is_none() && (1..=ESC_MODE_TRIES).contains(&state.esc_mode_tries) {
-                    match tokio::time::timeout(Duration::from_millis(500), esc::mode(&client)).await {
-                        Ok(Ok(m)) => state.esc_mode = Some(m),
-                        _ => state.esc_mode_tries += 1,
-                    }
+                if state.esc_mode.is_none()
+                    && esc_mode_query.is_none()
+                    && (1..=ESC_MODE_TRIES).contains(&state.esc_mode_tries)
+                {
+                    let client = client.clone();
+                    esc_mode_query = Some(tokio::spawn(async move {
+                        tokio::time::timeout(Duration::from_millis(500), esc::mode(&client))
+                            .await
+                            .ok()
+                            .and_then(Result::ok)
+                    }));
                 }
                 if let Ok(Ok(info)) = tokio::time::timeout(
                     Duration::from_secs(1),

@@ -864,11 +864,7 @@ impl ElleMcp {
     /// has rebooted; this boot's mode.
     async fn reattach_after_reboot(&self) -> Result<EscBootMode, String> {
         self.shutdown().await;
-        // The reboot comes ESC_REBOOT_DELAY_MS after the answer.
-        tokio::time::sleep(Duration::from_millis(
-            elle_config::ESC_REBOOT_DELAY_MS + 800,
-        ))
-        .await;
+        tokio::time::sleep(crate::esc::REBOOT_WAIT).await;
         self.open_link(crate::esc::REATTACH_LIMIT)
             .await
             .map_err(|e| format!("rebooted, but could not reattach: {e}"))?;
@@ -1566,7 +1562,7 @@ impl ElleMcp {
         if mode != want {
             return Err(format!(
                 "the switch did not take: the FC is in {mode:?} mode (the control loop \
-                 refuses it while armed or with an engine commanded; see events 171)"
+                 refuses it while armed or with an engine commanded, and cancels it if the ULog file is still open 2 s later; event 171)"
             ));
         }
         to_text(&json!({

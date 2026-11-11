@@ -180,8 +180,10 @@ questions 1):
   repair, so erase) could overlap an ESC frame, and an accepted switch would sit
   queued for seconds. `enter` answers `ESC_MODE_BUSY` until then.
 - **ULog closed before the reboot.** The loop reboots once the SD writer has
-  written the session's queued chunks and closed the file (`SD_FILE_OPEN`), or
-  after `ESC_REBOOT_SD_WAIT_MS` (2 s) at most.
+  written the session's queued chunks and closed the file (`SD_FILE_OPEN`). A file
+  still open after `ESC_REBOOT_SD_WAIT_MS` (2 s) cancels the switch (171) rather
+  than reset in the middle of a FAT update; the host then reports that the switch
+  did not take.
 - **Host link in this mode.** The TUI pings every 100 ms. `direct` and `elle mcp`
   send nothing between calls, so the pure-RPC host failsafe raises its events
   (13/14/15) between them. Harmless here (disarmed, arming locked); the orange double
@@ -274,7 +276,7 @@ with its read-back is ~0.35 s on the wire.
 
 - **Events** (new block 170–179, "ESC configuration"; host labels and OPERATIONS.md rows):
   - 170 `EVT_ESC_CONFIG_ENTER`: rebooting into ESC-config mode
-  - 171 `EVT_ESC_CONFIG_REFUSED`: mode switch refused (armed or engine target ≠ 0)
+  - 171 `EVT_ESC_CONFIG_REFUSED`: mode switch refused (armed or engine target ≠ 0) or cancelled (ULog file still open after the wait)
   - 172 `EVT_ARM_REFUSED_ESC_CONFIG`: arming refused, this is an ESC-config boot
   - 173 / 174 `EVT_ESC_LEFT_CONNECTED` / `EVT_ESC_RIGHT_CONNECTED`: bootloader handshake answered
   - 175 / 176 `EVT_ESC_LEFT_WRITE_FAILED` / `EVT_ESC_RIGHT_WRITE_FAILED`: NACK, CRC, no reply or verify mismatch on a write
@@ -309,7 +311,7 @@ with its read-back is ~0.35 s on the wire.
 | Mode entered with engines running | Engines cut by the reboot | The switch is refused unless disarmed with both eRPM targets 0 (171); the check runs in the loop, which owns the state |
 | Stale flag reboots a later session into the mode | Unexpected silent engines on the bench | Flag cleared on read, valid only with the magic pair **and** a forced watchdog reset |
 | Engine spins during configuration | Injury | No DShot program is loaded in this boot; an AM32 bootloader does not drive the motor. Props off for every session regardless. |
-| Bad settings written (direction, timing, KV) | Engines misbehave, or the governor table no longer fits | Writes only through the host policy (bytes 5..48); read-back after every write; MCP writes need the flag, `esc_set` also a backup on the current link; boot-time direction assert still overrides direction; the governor-table backup compare |
+| Bad settings written (direction, timing, KV) | Engines misbehave, or the governor table no longer fits | Writes only through the host policy: an edit changes bytes 5..48 only; a restore writes 5..192 (melody and CAN settings included) from a backup, and only one of the same EEPROM layout version; read-back after every write; MCP writes need the flag, `esc_set` also a backup on the current link; boot-time direction assert still overrides direction; the governor-table backup compare |
 | ESC left in its bootloader at the next normal boot | Silent ESC | `exit` sends Run first. A plain reset should release it too (pads pulled low > 20 ms, REVAMP P1; bench step 8). Otherwise events 160/161 report the silent ESC. |
 | Frame split by a scheduling stall | Bootloader stuck in payload mode | Session on the interrupt executor; flash operations refused in this mode; one `Link::send` per frame (esc-session F10); `esc-session` resends the payload (F8); last resort a battery cycle, which also reboots the FC into a normal boot |
 | Battery unplugged during a session | FC and ESCs both reset; normal boot | Harmless for the FC. An ESC cut mid-write is the row below. |

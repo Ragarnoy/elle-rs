@@ -47,8 +47,8 @@ pub static SD_CMD_SIGNAL: Signal<CriticalSectionRawMutex, SdCommand> = Signal::n
 /// Check this before starting ULog recording to avoid writing into a dead channel.
 pub static SD_READY: AtomicBool = AtomicBool::new(false);
 
-/// A ULog file is open (recording, or closing after a Stop). A deliberate
-/// reboot waits for it to clear, so the file is flushed and closed first.
+/// A ULog file is being created, is open (recording) or is closing after a
+/// Stop. A deliberate reboot waits for it to clear, so the file is closed first.
 pub static SD_FILE_OPEN: AtomicBool = AtomicBool::new(false);
 
 static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, Spi<'static, Async>>> = StaticCell::new();
@@ -309,6 +309,9 @@ pub async fn sd_writer_task(
 
         start_pending = false;
 
+        // Busy from here: creating the file writes the directory and FAT too.
+        SD_FILE_OPEN.store(true, Ordering::Release);
+
         // Open a new log file
         let filename = next_log_name();
         let root = fs.root_dir();
@@ -316,6 +319,7 @@ pub async fn sd_writer_task(
         let mut file = match root.create_file(filename.as_str()).await {
             Ok(f) => f,
             Err(e) => {
+                SD_FILE_OPEN.store(false, Ordering::Release);
                 error!(
                     "SD: create {} failed: {}",
                     filename.as_str(),
@@ -325,7 +329,6 @@ pub async fn sd_writer_task(
             }
         };
 
-        SD_FILE_OPEN.store(true, Ordering::Release);
         info!("SD: recording to {}", filename.as_str());
         let mut bytes_written: u32 = 0;
         let mut last_flush = Instant::now();
@@ -346,9 +349,16 @@ pub async fn sd_writer_task(
                 embassy_futures::select::Either::First(cmd) => {
                     // Stop: the session's last chunks may still be queued (the
                     // logger flushed them just before). Write them out before
-                    // closing; a Start's queued data belongs to the next file.
+                    // closing, but only those queued now: the producer runs on
+                    // this core and enqueues only after a Start is signalled,
+                    // so a session started while these writes await stays out
+                    // of this file. A Start's queued data belongs to the next file.
                     if matches!(cmd, SdCommand::Stop) {
-                        while let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() {
+                        let queued = ULOG_WRITE_CHANNEL.len();
+                        for _ in 0..queued {
+                            let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() else {
+                                break;
+                            };
                             let elen = extra.len;
                             if file.write_all(&extra.data[..elen]).await.is_err() {
                                 break;

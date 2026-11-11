@@ -849,8 +849,12 @@ async fn cmd_esc(args: &[&str], client: &HostClient<WireError>) -> CommandResult
     let bad = match sub {
         "connect" | "show" | "run" | "enter" | "exit" => rest.first().copied(),
         "set" => rest.iter().copied().find(|a| !a.contains('=')),
-        "backup" => rest.first().copied().filter(|a| !looks_like_path(a)),
-        "restore" => rest.first().copied().filter(|a| !looks_like_path(a)),
+        // At most one file, and it must look like one.
+        "backup" | "restore" => match rest {
+            [] => None,
+            [file, extra @ ..] if looks_like_path(file) => extra.first().copied(),
+            [word, ..] => Some(*word),
+        },
         _ => None,
     };
     if let Some(a) = bad {

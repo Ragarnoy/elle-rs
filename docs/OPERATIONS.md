@@ -250,7 +250,7 @@ Nothing here has run on hardware yet (TEST_PLAN 6.11).
    `elle mcp` `esc_mode enter`. Event 170, the ULog file closes and the FC reboots
    into ESC-config mode; the host reattaches by itself (a few seconds). Armed or an
    engine commanded: refused, event 171, no reboot (the host says the switch did not
-   take).
+   take). The same if the SD card has not closed the ULog file within 2 s.
 2. **In ESC-config mode** the engine pins carry a one-wire UART instead of DShot. The
    LED double-blinks orange, the CRSF flight-mode text is `ESCCFG`, the TUI header
    shows `ESC CONFIG` and its flight panels give way to an ESC panel. Arming is
@@ -376,7 +376,7 @@ when built with `defmt-logging`.
 | 162 / 163 | Left / right ESC re-sent spin direction and extended telemetry: it reappeared (restart, late power), or it answers but sent no EDT |
 | 164 / 165 | Left / right ESC still sends no EDT after the retries: its spin direction is unconfirmed |
 | 170 | Rebooting into ESC-config mode |
-| 171 | ESC-config mode switch refused: armed, or an engine commanded |
+| 171 | ESC-config mode switch refused: armed, or an engine commanded; or cancelled: the ULog file was still open 2 s later |
 | 172 | Arming refused: this is an ESC-config boot (no engine output) |
 | 173 / 174 | Left / right ESC bootloader connected |
 | 175 / 176 | Left / right ESC settings write failed (NACK, CRC, no reply, or read-back mismatch) |

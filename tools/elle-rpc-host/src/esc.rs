@@ -119,16 +119,21 @@ pub async fn exit(client: &HostClient<WireError>) -> Result<()> {
     )
 }
 
+/// How long after an accepted [`enter`] / [`exit`] the old firmware may still
+/// be running: the reboot comes `ESC_REBOOT_DELAY_MS` after the answer, or up
+/// to `ESC_REBOOT_SD_WAIT_MS` later while the ULog file closes (a file still
+/// open then cancels the switch). Attaching earlier could catch the old
+/// firmware's RTT block on its way down.
+pub const REBOOT_WAIT: Duration = Duration::from_millis(
+    elle_config::ESC_REBOOT_DELAY_MS + elle_config::ESC_REBOOT_SD_WAIT_MS + 800,
+);
+
 /// After [`enter`] / [`exit`]: drop `old`, wait for the reboot, attach again
 /// and wait for the firmware's first reply. Blocking; run it off the runtime
 /// (`spawn_blocking`) or before one exists.
 pub fn reattach_blocking(old: Link) -> Result<Link> {
     old.close();
-    // The reboot comes ESC_REBOOT_DELAY_MS after the answer; don't catch the
-    // old firmware's RTT block on its way down.
-    std::thread::sleep(Duration::from_millis(
-        elle_config::ESC_REBOOT_DELAY_MS + 800,
-    ));
+    std::thread::sleep(REBOOT_WAIT);
     Link::connect_within(Some(REATTACH_LIMIT))
 }
 

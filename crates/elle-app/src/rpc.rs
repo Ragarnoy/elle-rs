@@ -975,20 +975,24 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
 
         // An accepted mode switch: still disarmed (nothing can arm in between
         // without a refusal above), the answer and event are out, and the SD
-        // writer has closed the ULog file (or had `ESC_REBOOT_SD_WAIT_MS`). Reboot.
+        // writer has closed the ULog file. A file still open after
+        // `ESC_REBOOT_SD_WAIT_MS` cancels the switch (171) rather than reset in
+        // the middle of a FAT update.
         if let Some((at, mode)) = reboot_at
             && Instant::now() >= at
         {
             let sd_busy = elle_hardware::sd_writer::SD_FILE_OPEN.load(Ordering::Acquire);
             if fc.is_armed() {
                 reboot_at = None;
-            } else if !sd_busy
-                || Instant::now() >= at + Duration::from_millis(ESC_REBOOT_SD_WAIT_MS)
-            {
-                if sd_busy {
-                    defmt::warn!("Reboot: ULog file still open after the wait");
-                }
+            } else if !sd_busy {
                 elle_hardware::watchdog::reboot_into(mode);
+            } else if Instant::now() >= at + Duration::from_millis(ESC_REBOOT_SD_WAIT_MS) {
+                reboot_at = None;
+                elle_hardware::elle_event!(
+                    warn,
+                    elle_hardware::event::EVT_ESC_CONFIG_REFUSED,
+                    "Mode switch cancelled: ULog file still open"
+                );
             }
         }
     }

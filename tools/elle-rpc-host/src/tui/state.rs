@@ -78,6 +78,8 @@ pub struct AppState {
     pub esc: [EscView; 2],
     /// ESC panel scroll offset, lines (PageUp / PageDown).
     pub esc_scroll: u16,
+    /// Lines the ESC panel showed in the last frame: one PageUp / PageDown step.
+    pub esc_page: std::cell::Cell<u16>,
     /// Failed ESC-mode queries so far (`esc_mode` unknown): retried a few times.
     pub esc_mode_tries: u8,
 }
@@ -117,6 +119,7 @@ impl AppState {
             esc_mode: None,
             esc: Default::default(),
             esc_scroll: 0,
+            esc_page: std::cell::Cell::new(10),
             esc_mode_tries: 0,
         }
     }
