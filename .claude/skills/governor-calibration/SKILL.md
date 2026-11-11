@@ -70,8 +70,14 @@ firmware, wrong pin). Don't write a table from that.
 
 ```sh
 python3 $S/parse_sweep.py $SCRATCH/dart.log
-python3 $S/parse_sweep.py $SCRATCH/eagle_left.log $SCRATCH/eagle_right.log
+python3 $S/parse_sweep.py --motor-poles 6 $SCRATCH/eagle_left.log $SCRATCH/eagle_right.log
 ```
+
+The sweep's "RPM" is eRPM / 7 whatever the motor: the `rpm_range` example
+hard-codes 14 poles, and the parser multiplies back by `--sweep-poles` (default
+14). Leave that alone. The eagle's motors are 6-pole (9N6P, measured
+2026-11-11), so its real rpm is eRPM / 3: `--motor-poles 6` only changes the
+printed rpm, never the table.
 
 It prints each engine's peak, a ready-made `GOVERNOR_FF_TABLE`, and the three
 constants. The rules it applies (see its docstring):
@@ -81,8 +87,8 @@ constants. The rules it applies (see its docstring):
   windup bug). A curve still rising at DShot 1998 has no peak, so the ceiling is
   the last step.
 - Rows every 100 DShot from 48, plus the ceiling; twin engines averaged.
-- The last row is pinned to `MAX_ERPM` = the slowest engine's RPM at the ceiling ×
-  pole pairs, so full stick targets what both engines can actually reach.
+- The last row is pinned to `MAX_ERPM` = the slowest engine's eRPM at the
+  ceiling, rounded down to 100 sweep-RPM, so full stick targets what both engines can actually reach.
 
 Before writing anything, sanity-check the numbers against the current table and
 show the user the comparison. A different prop moves the curve by roughly 10–30%.
@@ -96,10 +102,10 @@ pack voltage, "rpm_range sweep, 200 settle + 500 measured samples per step",
 where the ceiling came from (peak, or still rising at 1998). Remove any
 `STALE` note the new data replaces.
 
-In `crates/elle-config/src/lib.rs`, in this platform's cfg block, set `MAX_RPM`
-and `GOVERNOR_DSHOT_MAX` to the parsed values (`MAX_ERPM` is derived from
-`MAX_RPM`; just check its trailing `// = ...` comment). Rewrite the motor-spec
-comment above `MAX_RPM` and the `GOVERNOR_DSHOT_MAX` doc comment to match the
+In `crates/elle-config/src/lib.rs`, in this platform's cfg block, set the ceiling
+and `GOVERNOR_DSHOT_MAX` to the parsed values. Eagle: `MAX_ERPM` directly, in
+eRPM. Dart: `MAX_RPM` (`MAX_ERPM` is derived from it; check its trailing
+`// ...` comment). Rewrite the motor-spec comment above the ceiling and the `GOVERNOR_DSHOT_MAX` doc comment to match the
 new data. Any history they carry (prop, date, pack voltage, why the ceiling sits
 where it does) must describe the sweep you just ran.
 
