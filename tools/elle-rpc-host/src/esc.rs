@@ -18,6 +18,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use elle_rpc_icd::*;
 use esc_protocol::am32_config::{Am32Config, Am32ConfigData, Setting, apply_setting};
 use esc_protocol::policy;
+use esc_protocol::{MELODY_EMPTY, MELODY_OFFSET, MELODY_SIZE, Melody};
 use postcard_rpc::host_client::HostClient;
 use postcard_rpc::standard_icd::WireError;
 use serde_json::{Value, json};
@@ -393,6 +394,95 @@ pub async fn restore(
     Ok(diff(&current, &back))
 }
 
+/// The startup melody bytes (48..176), in the Bluejay format AM32 plays.
+pub type MelodyBytes = [u8; MELODY_SIZE];
+
+/// A melody argument: `clear` (erase: the ESC plays its default tones), a file
+/// (RTTTL text, or the 128-byte binary the esc-config-rs CLI downloads), or
+/// RTTTL text itself (`name:d=4,o=5,b=140:c,e,g,2c6`).
+pub fn melody_arg(arg: &str) -> Result<MelodyBytes> {
+    let arg = arg.trim();
+    if arg.eq_ignore_ascii_case("clear") {
+        return Ok(Melody::clear_bytes());
+    }
+    let path = std::path::Path::new(arg);
+    if path.is_file() {
+        let data = std::fs::read(path).with_context(|| arg.to_string())?;
+        return melody_from(&data).with_context(|| arg.to_string());
+    }
+    melody_from(arg.as_bytes())
+}
+
+/// RTTTL text (has a `:`), or exactly 128 bytes of Bluejay binary.
+pub fn melody_from(data: &[u8]) -> Result<MelodyBytes> {
+    if let Ok(text) = std::str::from_utf8(data) {
+        let text = text.trim();
+        if text.contains(':') {
+            let m = Melody::from_rtttl(text).map_err(|e| anyhow!("RTTTL: {e:?}"))?;
+            if m.is_empty() {
+                bail!("RTTTL has no notes");
+            }
+            return Ok(m.to_bytes());
+        }
+    }
+    data.try_into().map_err(|_| {
+        anyhow!(
+            "not RTTTL (name:d=4,o=5,b=120:notes) and not a {MELODY_SIZE}-byte melody ({} bytes)",
+            data.len()
+        )
+    })
+}
+
+/// The settings block with `melody` in place and nothing else changed.
+#[must_use]
+pub fn with_melody(block: &Block, melody: &MelodyBytes) -> Block {
+    let mut out = *block;
+    policy::merge_melody(&mut out, melody);
+    out
+}
+
+/// What melody a settings block holds, in one line.
+#[must_use]
+pub fn melody_summary(block: &Block) -> String {
+    let bytes = &block[MELODY_OFFSET..MELODY_OFFSET + MELODY_SIZE];
+    if bytes[0] == MELODY_EMPTY {
+        return "none (default tones)".to_string();
+    }
+    Melody::from_bytes(bytes).map_or_else(|| "unreadable".to_string(), |m| m.to_string())
+}
+
+/// Write `melody` (read, merge bytes 48..176 only, write verified by the
+/// firmware, read back). Returns the melody before and after, and how many
+/// bytes changed.
+pub async fn set_melody(
+    client: &HostClient<WireError>,
+    engine: EscEngine,
+    melody: &MelodyBytes,
+) -> Result<MelodyChange> {
+    let current = read(client, engine).await?;
+    let new = with_melody(&current, melody);
+    if new != current {
+        write(client, engine, &new).await?;
+    }
+    let back = read(client, engine).await?;
+    if back[MELODY_OFFSET..MELODY_OFFSET + MELODY_SIZE] != melody[..] {
+        bail!("read-back melody differs from the one written");
+    }
+    Ok(MelodyChange {
+        before: melody_summary(&current),
+        after: melody_summary(&back),
+        bytes_changed: current.iter().zip(&back).filter(|(a, b)| a != b).count(),
+    })
+}
+
+/// Result of [`set_melody`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MelodyChange {
+    pub before: String,
+    pub after: String,
+    pub bytes_changed: usize,
+}
+
 /// `EscInfo` and file name as JSON.
 #[must_use]
 pub fn info_json(c: &Connected) -> Value {
@@ -450,6 +540,40 @@ pub fn backup_name(engine: EscEngine, info: &EscInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn melody_from_rtttl_text() {
+        let m = melody_arg("test:d=4,o=5,b=140:c,e,g,2c6").unwrap();
+        assert_ne!(m[0], MELODY_EMPTY);
+        let s = melody_summary(&with_melody(&[0x11; policy::EEPROM_SIZE], &m));
+        assert!(s.contains("140bpm"), "{s}");
+    }
+
+    #[test]
+    fn melody_clear_and_binary() {
+        assert_eq!(melody_arg("clear").unwrap(), Melody::clear_bytes());
+        let bin = melody_arg("test:d=4,o=5,b=100:c").unwrap();
+        assert_eq!(melody_from(&bin).unwrap(), bin);
+        assert!(melody_from(b"not a melody").is_err());
+        assert!(melody_from(&[0u8; 100]).is_err());
+    }
+
+    #[test]
+    fn melody_write_touches_only_the_melody_bytes() {
+        let block: Block = core::array::from_fn(|i| i as u8);
+        let m = melody_arg("test:d=8,o=6,b=200:a,b").unwrap();
+        let out = with_melody(&block, &m);
+        assert_eq!(out[..MELODY_OFFSET], block[..MELODY_OFFSET]);
+        assert_eq!(out[MELODY_OFFSET..MELODY_OFFSET + MELODY_SIZE], m[..]);
+        assert_eq!(
+            out[MELODY_OFFSET + MELODY_SIZE..],
+            block[MELODY_OFFSET + MELODY_SIZE..]
+        );
+        assert_eq!(
+            melody_summary(&with_melody(&block, &Melody::clear_bytes())),
+            "none (default tones)"
+        );
+    }
 
     /// A fresh directory under the system temp dir, removed on drop (also when an
     /// assertion fails), named so no two runs or tests share one.

@@ -53,7 +53,7 @@ pub struct Options {
     pub max_armed: Duration,
     /// Highest throttle `set_throttle` accepts, percent.
     pub max_throttle_pct: u8,
-    /// `--dangerously-allow-esc-write`: `esc_set` and `esc_restore` work at all.
+    /// `--dangerously-allow-esc-write`: `esc_set`, `esc_melody` and `esc_restore` work at all.
     pub allow_esc_write: bool,
 }
 
@@ -532,6 +532,15 @@ pub struct EscFileReq {
     pub engine: EngineParam,
     /// A backup file (256 or 192 bytes, as `esc_backup` writes).
     pub path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EscMelodyReq {
+    pub engine: EngineParam,
+    /// RTTTL text (`name:d=4,o=5,b=140:c,e,g,2c6`, at most 62 notes and
+    /// pauses), a file path (RTTTL, or a 128-byte binary melody), or `clear`
+    /// (erase: the ESC plays its default tones).
+    pub melody: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1600,13 +1609,14 @@ impl ElleMcp {
         to_text(&json!({
             "esc": crate::esc::info_json(&c),
             "settings": crate::esc::decoded(&block),
+            "melody": crate::esc::melody_summary(&block),
             "raw_hex": hex,
         }))
     }
 
     #[tool(
         description = "Save one ESC's 256 bytes at the EEPROM base (the esc-config-rs backup \
-        format) to a file, default logs/esc/. Required before `esc_set` on that ESC."
+        format) to a file, default logs/esc/. Required before `esc_set` or `esc_melody` on that ESC."
     )]
     async fn esc_backup(&self, Parameters(r): Parameters<EscBackupReq>) -> ToolResult {
         let engine = r.engine.into();
@@ -1676,6 +1686,27 @@ impl ElleMcp {
             .await
             .map_err(|e| format!("{e:#}"))?;
         to_text(&json!({ "changes": changes }))
+    }
+
+    #[tool(
+        description = "Write an ESC's startup melody (ESC-config mode): EEPROM bytes 48..176 \
+        only, read back. AM32 plays it when its app starts: `esc_run` (or `esc_mode exit`) \
+        plays it. Refused unless the server runs with --dangerously-allow-esc-write and this \
+        server took an `esc_backup` of this ESC (restoring it puts the old melody back)."
+    )]
+    async fn esc_melody(&self, Parameters(r): Parameters<EscMelodyReq>) -> ToolResult {
+        self.esc_write_gate()?;
+        let engine = r.engine.into();
+        let bytes = crate::esc::melody_arg(&r.melody).map_err(|e| format!("{e:#}"))?;
+        let _write = self.inner.esc_write.lock().await;
+        let (client, c) = self.esc_connected(engine).await?;
+        if !self.esc_backed_up(engine, c.info.device_id) {
+            return Err("refused: take an esc_backup of this ESC first (this session)".to_string());
+        }
+        let change = crate::esc::set_melody(&client, engine, &bytes)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        to_text(&serde_json::to_value(change).map_err(|e| e.to_string())?)
     }
 
     #[tool(
@@ -1848,7 +1879,7 @@ impl ServerHandler for ElleMcp {
              ask the operator for physical actions (tilt, switches, TX off), then verify. \
              Engines are off limits unless link_status says motors_allowed; never spin engines \
              without the operator confirming props are off. ESC EEPROM writes (`esc_set`, \
-             `esc_restore`) are off limits unless link_status says esc_write_allowed; take an \
+             `esc_melody`, `esc_restore`) are off limits unless link_status says esc_write_allowed; take an \
              `esc_backup` first.",
             )
     }

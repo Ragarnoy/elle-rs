@@ -39,6 +39,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- ESC startup melody (host tool): `esc melody <l|r> <rtttl|file|clear>` in the TUI
+  and `elle direct`, and the gated MCP tool `esc_melody` (same gates as `esc_set`),
+  write AM32's startup tune (EEPROM bytes 48..176 only, verified by read-back) from
+  RTTTL text or a 128-byte binary; `esc show` / `esc_read` show the current one.
+  No firmware change.
 - AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
   into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each

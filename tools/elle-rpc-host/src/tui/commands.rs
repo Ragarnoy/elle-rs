@@ -59,7 +59,7 @@ const COMMANDS: &[CmdDef] = &[
         name: "esc",
         aliases: &[],
         subs: &[
-            "enter", "exit", "connect", "show", "set", "backup", "restore", "run",
+            "enter", "exit", "connect", "show", "set", "backup", "restore", "melody", "run",
         ],
     },
     CmdDef {
@@ -824,7 +824,8 @@ pub fn format_level_cal(cal: &LevelCalResp) -> String {
     )
 }
 
-const ESC_USAGE: &str = "esc [enter|exit|connect|show|set|backup|restore|run] [left|right] ...";
+const ESC_USAGE: &str =
+    "esc [enter|exit|connect|show|set|backup|restore|melody|run] [left|right] ...";
 
 /// `esc ...`: ESC configuration (proposal 0002). Every operation on one ESC
 /// starts with the bootloader handshake, which also identifies it.
@@ -941,6 +942,28 @@ async fn cmd_esc(args: &[&str], client: &HostClient<WireError>) -> CommandResult
                         settings: Some(block),
                     }),
                     format!("{name}: restored, {} field(s) changed", changes.len()),
+                )
+            }
+            "melody" => {
+                if rest.is_empty() {
+                    return Ok(CommandResult::Err(
+                        "Usage: esc melody <left|right> <rtttl|file|clear>".into(),
+                    ));
+                }
+                let bytes = esc::melody_arg(&rest.join(" "))?;
+                let c = esc::connect(client, engine).await?;
+                let change = esc::set_melody(client, engine, &bytes).await?;
+                let block = esc::read(client, engine).await?;
+                CommandResult::Esc(
+                    engine,
+                    Box::new(EscView {
+                        connected: Some(c),
+                        settings: Some(block),
+                    }),
+                    format!(
+                        "{name} melody: {} (was {}); esc run {name} plays it",
+                        change.after, change.before
+                    ),
                 )
             }
             "run" => {

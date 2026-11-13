@@ -73,9 +73,9 @@ and the connected firmware's build info) to `logs/test-runs/<date>.jsonl`;
 `test_report` gives the latest outcome per row.
 
 **ESC EEPROM writes are off limits by default too.** The `esc_*` tools read
-freely; `esc_set` and `esc_restore` refuse unless the server is started with
+freely; `esc_set`, `esc_melody` and `esc_restore` refuse unless the server is started with
 `--dangerously-allow-esc-write` (add it to `args` in `.mcp.json` yourself), and
-`esc_set` also needs an `esc_backup` of that ESC taken on the current link (forgotten on disconnect, reset or mode switch); `esc_set` and `esc_restore` run one at a time.
+`esc_set` and `esc_melody` also need an `esc_backup` of that ESC taken on the current link (forgotten on disconnect, reset or mode switch); ESC writes run one at a time.
 `link_status` reports `esc_write_allowed`.
 
 Tools:
@@ -88,7 +88,7 @@ Tools:
 | Engines (gated) | `arm`, `extend_armed`, `set_throttle`, `disarm`, `emergency_stop` |
 | Commands | `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`, `level_cal`, `ulog`, `autotune` |
 | Logs and results | `card_logs`, `copy_logs`, `analyse_log`, `replay`, `test_record`, `test_report` |
-| ESC configuration | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` (gated), `esc_restore` (gated), `esc_run` |
+| ESC configuration | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` (gated), `esc_melody` (gated), `esc_restore` (gated), `esc_run` |
 
 Tests (`tests/mcp.rs`) run the RPC tools against a fake flight controller on the
 real RPC client path; `src/analysis.rs` tests the card copy and the results file.
@@ -109,6 +109,7 @@ bootloader first. The engine is `left` (default) or `right` (eagle only).
 | `esc connect [l\|r]` | `esc connect -e l` | `esc_connect` | Bootloader handshake: id, layout, firmware name |
 | `esc show [l\|r]` | `esc show -e l` | `esc_read` | Decoded settings (`esc_read`: plus raw hex) |
 | `esc set [l\|r] k=v …` | `esc set -e l k=v …` | `esc_set` (gated) | Edit settings bytes 5..48, write, verify, print the changes |
+| `esc melody [l\|r] <rtttl\|file\|clear>` | `esc melody -e l <rtttl\|file\|clear>` | `esc_melody` (gated) | Write the startup melody (bytes 48..176 only), verify; AM32 plays it when its app starts (`esc run`) |
 | `esc backup [l\|r] [file]` | `esc backup -e l [-o file]` | `esc_backup` | Raw 256 bytes at the EEPROM base (relay CLI format), default `logs/esc/`; never overwrites a file |
 | — | — | `esc_compare` | Diff an ESC against a backup |
 | `esc restore [l\|r] <file>` | `esc restore -e l <file>` | `esc_restore` (gated) | Settings, melody, CAN from a backup; boot and version bytes kept |

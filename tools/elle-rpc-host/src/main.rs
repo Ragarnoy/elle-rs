@@ -36,7 +36,7 @@ enum Commands {
         /// Highest throttle the agent may set, percent.
         #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u8).range(0..=100))]
         max_throttle: u8,
-        /// Let the agent write ESC EEPROM settings (`esc_set`, `esc_restore`).
+        /// Let the agent write ESC EEPROM settings (`esc_set`, `esc_melody`, `esc_restore`).
         /// Without it, ESC tools only read.
         #[arg(long)]
         dangerously_allow_esc_write: bool,

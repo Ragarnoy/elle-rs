@@ -257,7 +257,7 @@ fn draw_esc(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(
         Paragraph::new(vec![
             muted_line(
-                "esc connect|show|set|backup|restore|run [left|right] ...   \
+                "esc connect|show|set|backup|restore|melody|run [left|right] ...   \
                  e.g. esc set left beep_volume=5",
             ),
             muted_line("esc exit: start the ESCs and reboot normally   PgUp/PgDn: scroll"),

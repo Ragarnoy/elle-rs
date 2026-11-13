@@ -144,6 +144,15 @@ pub enum EscAction {
         engine: EscEngine,
         file: std::path::PathBuf,
     },
+    /// Write the startup melody (bytes 48..176 only), read back. AM32 plays it
+    /// when its app starts: `esc run` or `esc exit` plays it
+    Melody {
+        #[arg(short, long, default_value = "left", value_parser = parse_engine)]
+        engine: EscEngine,
+        /// RTTTL text (name:d=4,o=5,b=140:c,e,g), a file (RTTTL, or the
+        /// 128-byte binary the esc-config-rs CLI saves), or `clear`
+        melody: String,
+    },
     /// Leave the bootloader and start the ESC's app
     Run {
         #[arg(short, long, default_value = "left", value_parser = parse_engine)]
@@ -214,6 +223,18 @@ async fn run_esc(link: Link, action: EscAction) -> Result<Link> {
                 c.name
             );
             println!("{}", esc::config(&block));
+            println!("melody: {}", esc::melody_summary(&block));
+        }
+        EscAction::Melody { engine, melody } => {
+            let bytes = esc::melody_arg(&melody)?;
+            esc::connect(client, engine).await?;
+            let c = esc::set_melody(client, engine, &bytes).await?;
+            println!("before: {}\nafter:  {}", c.before, c.after);
+            println!(
+                "{} byte(s) changed, read back identical. `esc run -e {}` plays it.",
+                c.bytes_changed,
+                esc::engine_name(engine)
+            );
         }
         EscAction::Set { engine, settings } => {
             let edits = esc::parse_edits(&settings)?;
