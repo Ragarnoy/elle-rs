@@ -257,7 +257,9 @@ pub struct SetPidGainsReq {
     pub roll_kp_x1000: i16,
     pub roll_ki_x1000: i16,
     pub roll_kd_x1000: i16,
-    /// Scale * 10000 (e.g. 150 = 0.0150)
+    /// Scale * 10000 (e.g. 150 = 0.0150). At most 3.2767: the firmware's
+    /// `PID_SCALE` (5.0) does not fit, and the host refuses it rather than send
+    /// a saturated value.
     pub scale_x10000: i16,
     /// I-limit * 10 (e.g. 250 = 25.0)
     pub i_limit_x10: i16,

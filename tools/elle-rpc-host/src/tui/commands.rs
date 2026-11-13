@@ -520,15 +520,18 @@ async fn cmd_set_pid_gains(
     scale: f32,
     ilimit: f32,
 ) -> CommandResult {
-    let req = SetPidGainsReq {
-        pitch_kp_x1000: (pkp * 1000.0) as i16,
-        pitch_ki_x1000: (pki * 1000.0) as i16,
-        pitch_kd_x1000: (pkd * 1000.0) as i16,
-        roll_kp_x1000: (rkp * 1000.0) as i16,
-        roll_ki_x1000: (rki * 1000.0) as i16,
-        roll_kd_x1000: (rkd * 1000.0) as i16,
-        scale_x10000: (scale * 10000.0) as i16,
-        i_limit_x10: (ilimit * 10.0) as i16,
+    let req = match elle_rpc_host::pid::set_pid_gains_req(&elle_rpc_host::pid::PidGains {
+        pitch_kp: pkp,
+        pitch_ki: pki,
+        pitch_kd: pkd,
+        roll_kp: rkp,
+        roll_ki: rki,
+        roll_kd: rkd,
+        scale,
+        i_limit: ilimit,
+    }) {
+        Ok(req) => req,
+        Err(e) => return CommandResult::Err(format!("PID gains refused: {e}")),
     };
     handle_ack(
         timeout(CMD_TIMEOUT, client.send_resp::<SetPidGainsEndpoint>(&req)).await,
