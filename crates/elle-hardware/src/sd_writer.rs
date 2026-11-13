@@ -8,6 +8,29 @@
 //!   Remove: sdspi, embedded-fatfs, block-device-adapters, embassy-embedded-hal, aligned
 //!   Add: embedded-sdmmc = "0.8"
 //!   See git tag `sd-blocking-fallback` for the blocking sd_writer.rs implementation.
+//!
+//! # Why writes are batched
+//!
+//! How a `write_all` reaches the card (embedded-fatfs rev `919e569f`):
+//! `File::write` cuts it at the cluster boundary and hands the rest to the disk
+//! in one call; `BufStream::write` passes it straight to the block device only
+//! if the disk position is on a sector boundary **and** the length is a whole
+//! number of sectors; `SdSpi::write` then sends more than one block as a single
+//! multi-block write (ACMD23 + CMD25). Anything else goes through `BufStream`'s
+//! one-sector cache: per sector, a read of the sector about to be filled
+//! (CMD17), a single-block write (CMD24), its busy wait and a status read
+//! (CMD13).
+//!
+//! The logger's chunks end in a partial one on every flush, so writing them as
+//! they came left the file position off the sector grid for the whole file and
+//! every 512 B paid that full cycle (LOG_0091: ~27 kB/s written of ~47 kB/s
+//! produced, 7924 dropouts; LOG_0090 at ~33 kB/s was at the edge). The
+//! recording loop therefore collects chunks in a [`WriteBatch`]
+//! (`SD_WRITE_BATCH_SIZE`) and writes **whole sectors only**;
+//! the tail, less than a sector, stays in RAM until more data completes it or
+//! the file closes. A batch goes out when it is full or the queue is empty, so
+//! at low rates data waits no longer than it did, and under backlog the writes
+//! grow to the full batch.
 
 use defmt::*;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
@@ -28,6 +51,9 @@ use block_device_adapters::BufStream;
 use sdspi::SdSpi;
 
 use core::sync::atomic::{AtomicBool, Ordering};
+
+use elle_config::profile::{SD_SECTOR_SIZE, SD_WRITE_BATCH_SIZE, ULOG_WRITE_CHUNK_SIZE};
+use elle_control::write_batch::WriteBatch;
 
 use crate::flash::ULOG_WRITE_CHANNEL;
 
@@ -50,6 +76,10 @@ pub static SD_READY: AtomicBool = AtomicBool::new(false);
 /// A ULog file is being created, is open (recording) or is closing after a
 /// Stop. A deliberate reboot waits for it to clear, so the file is closed first.
 pub static SD_FILE_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Backing store for the recording loop's [`WriteBatch`]: static, so it is not
+/// part of the task's future.
+static WRITE_BATCH_BUF: StaticCell<[u8; SD_WRITE_BATCH_SIZE]> = StaticCell::new();
 
 static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, Spi<'static, Async>>> = StaticCell::new();
 
@@ -179,6 +209,47 @@ fn drain_channel() {
     while ULOG_WRITE_CHANNEL.try_receive().is_ok() {}
 }
 
+/// Write the batch's whole sectors and keep its tail. Returns the bytes written.
+///
+/// The file position stays sector-aligned as long as every write goes through
+/// here, which is what makes each one a single multi-block card write (module
+/// docs). On an error the batch is discarded: how much of it reached the card
+/// is unknown, and a retry would duplicate records.
+async fn write_whole_sectors<W: Write>(
+    file: &mut W,
+    batch: &mut WriteBatch<'_>,
+) -> Result<u32, W::Error> {
+    let n = batch.whole_sectors().len();
+    if n == 0 {
+        return Ok(0);
+    }
+    match file.write_all(batch.whole_sectors()).await {
+        Ok(()) => {
+            batch.consume(n);
+            Ok(n as u32)
+        }
+        Err(e) => {
+            batch.clear();
+            Err(e)
+        }
+    }
+}
+
+/// Write everything in the batch, tail included: only when the file closes.
+/// The tail is a partial sector, so the file position is unaligned afterwards.
+async fn write_all_pending<W: Write>(
+    file: &mut W,
+    batch: &mut WriteBatch<'_>,
+) -> Result<u32, W::Error> {
+    // Two writes: one unaligned length would send every sector through the
+    // one-sector cache.
+    let mut written = write_whole_sectors(file, batch).await?;
+    let result = file.write_all(batch.pending()).await;
+    written += batch.len() as u32;
+    batch.clear();
+    result.map(|()| written)
+}
+
 /// SD card writer task — drains ULOG_WRITE_CHANNEL and writes to FAT32.
 ///
 /// Runs on Core0 alongside the flash manager. The flash manager handles only
@@ -240,7 +311,7 @@ pub async fn sd_writer_task(
     info!("SD: card initialized at 25MHz");
 
     // Wrap in buffered block stream for embedded-fatfs
-    let inner = BufStream::<_, 512>::new(sd);
+    let inner = BufStream::<_, SD_SECTOR_SIZE>::new(sd);
 
     // Mount FAT filesystem with wall-clock time provider
     let tp = AonTimeProvider { epoch_ms };
@@ -285,6 +356,13 @@ pub async fn sd_writer_task(
 
     SD_READY.store(true, Ordering::Release);
     info!("SD: FAT32 mounted, waiting for commands");
+
+    let mut batch = WriteBatch::new(
+        WRITE_BATCH_BUF
+            .init([0; SD_WRITE_BATCH_SIZE])
+            .as_mut_slice(),
+        SD_SECTOR_SIZE,
+    );
 
     // Main loop: wait for start/stop, write ULog data to files.
     // `start_pending`: a Start arrived while recording — rotate straight to a new
@@ -332,6 +410,7 @@ pub async fn sd_writer_task(
         info!("SD: recording to {}", filename.as_str());
         let mut bytes_written: u32 = 0;
         let mut last_flush = Instant::now();
+        batch.clear();
 
         // Recording loop
         'recording: loop {
@@ -353,20 +432,39 @@ pub async fn sd_writer_task(
                     // this core and enqueues only after a Start is signalled,
                     // so a session started while these writes await stays out
                     // of this file. A Start's queued data belongs to the next file.
-                    if matches!(cmd, SdCommand::Stop) {
-                        let queued = ULOG_WRITE_CHANNEL.len();
-                        for _ in 0..queued {
-                            let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() else {
-                                break;
-                            };
-                            let elen = extra.len;
-                            if let Err(e) = file.write_all(&extra.data[..elen]).await {
-                                warn!("SD: write error on close: {}", defmt::Debug2Format(&e));
-                                break;
+                    // The batch's tail was received before the command either
+                    // way, so it belongs to this file.
+                    let queued = if matches!(cmd, SdCommand::Stop) {
+                        ULOG_WRITE_CHANNEL.len()
+                    } else {
+                        0
+                    };
+                    let mut close_result = Ok(());
+                    for _ in 0..queued {
+                        let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive() else {
+                            break;
+                        };
+                        batch.push(&extra.data[..extra.len]);
+                        if batch.free() < ULOG_WRITE_CHUNK_SIZE {
+                            match write_whole_sectors(&mut file, &mut batch).await {
+                                Ok(n) => bytes_written += n,
+                                Err(e) => {
+                                    close_result = Err(e);
+                                    break;
+                                }
                             }
-                            bytes_written += elen as u32;
                         }
                     }
+                    if close_result.is_ok() {
+                        match write_all_pending(&mut file, &mut batch).await {
+                            Ok(n) => bytes_written += n,
+                            Err(e) => close_result = Err(e),
+                        }
+                    }
+                    if let Err(e) = close_result {
+                        warn!("SD: write error on close: {}", defmt::Debug2Format(&e));
+                    }
+                    batch.clear();
                     if let Err(e) = file.flush().await {
                         warn!("SD: flush error on close: {}", defmt::Debug2Format(&e));
                     }
@@ -383,28 +481,48 @@ pub async fn sd_writer_task(
                 embassy_futures::select::Either::Second(req) => req,
             };
 
-            // Write received chunk
-            let len = req.len;
-            let mut write_failed = false;
-            if let Err(e) = file.write_all(&req.data[..len]).await {
-                warn!("SD: write error: {}", defmt::Debug2Format(&e));
-                write_failed = true;
-            }
-            bytes_written += len as u32;
+            // A whole chunk always fits here: every pass below leaves less
+            // than a sector in the batch (or an empty one after an error).
+            batch.push(&req.data[..req.len]);
 
-            // Batch-drain additional pending messages — but not past a pending
-            // command: data queued after a Start belongs to the next file.
-            if !write_failed {
-                while !SD_CMD_SIGNAL.signaled()
+            let mut write_failed = false;
+            loop {
+                // Collect what else is queued, while a whole chunk still fits
+                // and not past a pending command: data queued after a Start
+                // belongs to the next file.
+                while batch.free() >= ULOG_WRITE_CHUNK_SIZE
+                    && !SD_CMD_SIGNAL.signaled()
                     && let Ok(extra) = ULOG_WRITE_CHANNEL.try_receive()
                 {
-                    let elen = extra.len;
-                    if let Err(e) = file.write_all(&extra.data[..elen]).await {
+                    batch.push(&extra.data[..extra.len]);
+                }
+
+                // The batch is full or the queue is empty: write its whole
+                // sectors as one multi-block write, keep the tail.
+                match write_whole_sectors(&mut file, &mut batch).await {
+                    Ok(n) => bytes_written += n,
+                    Err(e) => {
                         warn!("SD: write error: {}", defmt::Debug2Format(&e));
                         write_failed = true;
                         break;
                     }
-                    bytes_written += elen as u32;
+                }
+
+                // Periodic flush (~1s) to protect against power loss. Inside
+                // this loop, so a backlog that keeps it turning cannot put the
+                // flush off. The tail (< 1 sector) stays in RAM: writing it
+                // would take the file position off the sector grid.
+                if last_flush.elapsed().as_secs() >= 1 {
+                    if let Err(e) = file.flush().await {
+                        warn!("SD: flush error: {}", defmt::Debug2Format(&e));
+                    }
+                    last_flush = Instant::now();
+                }
+
+                // More arrived during the write: go round again. A pending
+                // command is handled by the select above.
+                if SD_CMD_SIGNAL.signaled() || ULOG_WRITE_CHANNEL.is_empty() {
+                    break;
                 }
             }
 
@@ -413,16 +531,9 @@ pub async fn sd_writer_task(
                 error!("SD: card ejected during recording!");
                 SD_READY.store(false, Ordering::Release);
                 SD_FILE_OPEN.store(false, Ordering::Release);
+                batch.clear();
                 drain_channel();
                 break 'recording;
-            }
-
-            // Periodic flush (~1s) to protect against power loss
-            if last_flush.elapsed().as_secs() >= 1 {
-                if let Err(e) = file.flush().await {
-                    warn!("SD: flush error: {}", defmt::Debug2Format(&e));
-                }
-                last_flush = Instant::now();
             }
         }
     }

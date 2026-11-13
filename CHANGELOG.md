@@ -72,6 +72,15 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight and was at the nose-up limit 43% of the time.
 
 ### Fixed
+- SD writes are batched into multi-block writes (ULog recording): the writer wrote
+  each queued chunk as it came, which left the file position off the sector grid, so
+  every 512 B cost a sector read, a single-block write and its busy wait. An
+  `imu-raw-log` build produced ~47 kB/s and got ~27 kB/s onto the card (LOG_0091:
+  7924 dropouts, every stream at ~57 % of its rate); a normal build at ~33 kB/s
+  ran at the edge (LOG_0090). Chunks are now collected up to `SD_WRITE_BATCH_SIZE`
+  (4 KB) and written as whole sectors in one card command; the tail of less than a
+  sector waits in RAM for the next write or the file close. The ~1 s flush now also
+  runs while the writer is working through a backlog. +4 KB static RAM.
 - A watchdog reset no longer leaves the FC dead (operator behaviour): the AON
   timer survives it, and the boot's `set_counter` on a running timer panicked
   into HardFault (no RTT, no DShot, no elevons) until a power cycle. Any watchdog
