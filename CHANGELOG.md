@@ -72,6 +72,12 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight and was at the nose-up limit 43% of the time.
 
 ### Fixed
+- TUI `pid` no longer sends a saturated value (operator behaviour, host only): every
+  `SetPidGainsReq` field is an `i16`, and a plain cast clamped silently, so
+  `pid … 5 0.5` sent scale 3.2767 (`savepid` kept it; every term ~35 % weak).
+  Values now round to the nearest step (0.35 had gone out as 0.349), and one that
+  doesn't fit is refused with nothing sent. The operating scale 5.0 cannot go over
+  RPC until the ICD widens the field: compile such gains in.
 - A watchdog reset no longer leaves the FC dead (operator behaviour): the AON
   timer survives it, and the boot's `set_counter` on a running timer panicked
   into HardFault (no RTT, no DShot, no elevons) until a power cycle. Any watchdog
