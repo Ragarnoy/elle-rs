@@ -78,9 +78,14 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   `imu-raw-log` build produced ~47 kB/s and got ~27 kB/s onto the card (LOG_0091:
   7924 dropouts, every stream at ~57 % of its rate); a normal build at ~33 kB/s
   ran at the edge (LOG_0090). Chunks are now collected up to `SD_WRITE_BATCH_SIZE`
-  (4 KB) and written as whole sectors in one card command; the tail of less than a
+  (16 KB) and written as whole sectors in one card command; the tail of less than a
   sector waits in RAM for the next write or the file close. The ~1 s flush now also
-  runs while the writer is working through a backlog. +4 KB static RAM.
+  runs while the writer is working through a backlog. +16 KB static RAM. Bench,
+  eagle, `imu-raw-log`, armed at 30-70 %: 4 KB still lost 2-8 % of records while
+  armed (LOG_0092); 16 KB lost none, and `elle-replay` reproduced the attitude
+  exactly (LOG_0093).
+- `elle-replay`: a ULog dropout stops the replay's sync until the next context,
+  since a lost mag change or context leaves no break in the sample indices.
 - A watchdog reset no longer leaves the FC dead (operator behaviour): the AON
   timer survives it, and the boot's `set_counter` on a running timer panicked
   into HardFault (no RTT, no DShot, no elevons) until a power cycle. Any watchdog
