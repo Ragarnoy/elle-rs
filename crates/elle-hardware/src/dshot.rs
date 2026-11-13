@@ -215,6 +215,15 @@ impl Reply {
 
     /// `Some(answered)` when telemetry was requested. A corrupt reply still
     /// proves the ESC is alive.
+    /// While the ESC plays a beep it does not answer: a missing reply then
+    /// counts as never requested, so the link and EDT checks ignore it.
+    const fn quiet_if(self, beeping: bool) -> Self {
+        match self {
+            Self::Missing if beeping => Self::NotRequested,
+            other => other,
+        }
+    }
+
     const fn answered(self) -> Option<bool> {
         match self {
             Self::Telemetry(_) | Self::Corrupt => Some(true),
@@ -551,6 +560,7 @@ const fn beep_command(tone: Tone) -> Command {
 struct Beeper {
     seq: BeepSequencer,
     zero_since: Option<Instant>,
+    last_beep: Option<Instant>,
 }
 
 impl Beeper {
@@ -558,6 +568,7 @@ impl Beeper {
         Self {
             seq: BeepSequencer::new(),
             zero_since: None,
+            last_beep: None,
         }
     }
 
@@ -580,9 +591,20 @@ impl Beeper {
         }
         let zero_for = self.zero_since.map(|t| (now - t).as_millis());
         let at_rest = engines.iter().all(|&e| engine_at_rest(e, zero_for));
-        self.seq
+        let cmd = self
+            .seq
             .next(now_ms, spin_commanded, at_rest)
-            .map(beep_command)
+            .map(beep_command);
+        if cmd.is_some() {
+            self.last_beep = Some(now);
+        }
+        cmd
+    }
+
+    /// Whether an ESC may still be playing a beep (`BEEP_ESC_QUIET_MS`).
+    fn sounding(&self) -> bool {
+        self.last_beep
+            .is_some_and(|t| t.elapsed().as_millis() < elle_config::BEEP_ESC_QUIET_MS)
     }
 }
 
@@ -656,7 +678,9 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1, 0>) {
         // protocol's minimum spin value, not a stop — cutting the ESC there loses
         // telemetry and leaves the loop with no way back up.
         let stopped = target_erpm == 0;
-        let reply = send_frame(&mut engine, dshot_val, state.bidir_enabled, stopped).await;
+        let reply = send_frame(&mut engine, dshot_val, state.bidir_enabled, stopped)
+            .await
+            .quiet_if(beeper.sounding());
 
         update_engine_unit(&mut reading.left, &mut state, reply, dshot_val, target_erpm);
         reconfigure_if_due(&mut engine, &mut state, &mut reading.left, reply, stopped).await;
@@ -739,6 +763,8 @@ pub async fn dshot_task(
             ),
         )
         .await;
+        let beeping = beeper.sounding();
+        let (l_reply, r_reply) = (l_reply.quiet_if(beeping), r_reply.quiet_if(beeping));
 
         update_engine_unit(
             &mut reading.left,
