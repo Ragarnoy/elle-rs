@@ -271,7 +271,7 @@ postcard-RPC over RTT (`elle-system/src/rpc.rs`):
 Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold ·
 safety: Arm, Disarm, EmergencyStop · query: GetStatus, GetAttitude, GetPerformance,
 ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels,
-GetControllerOutput, GetEngine, GetNav (navigator's last update), GetCore1Load (last ~1 s window, closed by the loop whether or not ULog records) · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,
+GetControllerOutput, GetEngine, GetNav (navigator's last update), GetCore1Load (last ~1 s window, closed by the loop whether or not ULog records) · bench: EngineBeep (DShot beep 1–5, disarmed, played at rest) · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,
 GetULogInfo · autotune: StartAutotune (axis `0xFF`/`0xFE` = save/erase PID), AbortAutotune · calibration: StartMagCal, ClearMagCal, GetMagCal, StartLevelCal,
 ClearLevelCal, GetLevelCal · system: Ping, GetVersion, GetTime, GetBuildInfo (platform, features, turn compensation, loop rate, `git describe` from `elle-app/build.rs`) · ESC config (`elle/esc/…`, types re-exported from `esc-config-icd` as `Esc*`): EscMode, EscEnter, EscExit, EscConnect, EscReadEeprom, EscWriteEeprom, EscName, EscRead, EscRun.
 One outgoing topic: `LogTopic` `(level: u8, code: u16)`.

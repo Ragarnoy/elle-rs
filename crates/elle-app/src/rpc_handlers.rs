@@ -43,6 +43,8 @@ pub(crate) enum RpcCommand {
     /// Reboot into this mode (proposal 0002); the loop refuses it unless
     /// disarmed with both engine targets at zero.
     SwitchBootMode(elle_hardware::boot_mode::BootMode),
+    /// Play DShot beep command 1-5 (bench); refused while armed.
+    Beep(u8),
 }
 
 /// Channel for RPC commands to flight controller

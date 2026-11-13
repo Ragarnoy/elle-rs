@@ -79,6 +79,12 @@ pub enum DirectCommand {
     Arm,
     /// Disarm motors
     Disarm,
+    /// DShot beep command 1-5 on the engines (disarmed; AM32: 1 and 5 sound
+    /// the same)
+    Beep {
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=5))]
+        tone: u8,
+    },
     /// Emergency stop
     Stop,
     /// Get performance statistics
@@ -384,6 +390,17 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                     "DISARMED"
                 } else {
                     "Failed to disarm"
+                }
+            );
+        }
+        DirectCommand::Beep { tone } => {
+            let ack = timeout(CMD_TIMEOUT, client.send_resp::<EngineBeepEndpoint>(&tone)).await??;
+            println!(
+                "{}",
+                if ack.success {
+                    "Beep sent (the firmware ignores it while armed)"
+                } else {
+                    "Beep refused"
                 }
             );
         }

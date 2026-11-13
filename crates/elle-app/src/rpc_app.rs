@@ -140,6 +140,18 @@ fn handle_set_heading_hold(
     )
 }
 
+/// `AckResp` error code: beep tone outside 1-5.
+pub const BEEP_BAD_TONE: u8 = 2;
+
+/// Play DShot beep command 1-5 on the engines (bench). The loop refuses it
+/// while armed; the DShot task plays it only with the engines at rest.
+fn handle_engine_beep(ctx: &mut RpcContext, _hdr: VarHeader, tone: u8) -> AckResp {
+    if !(1..=5).contains(&tone) {
+        return AckResp::error(BEEP_BAD_TONE);
+    }
+    send_cmd(ctx, RpcCommand::Beep(tone))
+}
+
 fn handle_arm(ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> AckResp {
     send_cmd(ctx, RpcCommand::Arm)
 }
@@ -677,6 +689,7 @@ postcard_rpc::define_dispatch! {
         | GetBuildInfoEndpoint      | blocking  | handle_get_build_info       |
         | GetNavEndpoint            | blocking  | handle_get_nav              |
         | GetCore1LoadEndpoint      | blocking  | handle_get_core1_load       |
+        | EngineBeepEndpoint        | blocking  | handle_engine_beep          |
         | EscModeEndpoint           | blocking  | handle_esc_mode             |
         | EscEnterEndpoint          | blocking  | handle_esc_enter            |
         | EscExitEndpoint           | async     | handle_esc_exit             |

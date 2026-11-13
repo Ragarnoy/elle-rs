@@ -46,6 +46,11 @@ const COMMANDS: &[CmdDef] = &[
         subs: &["pitch", "roll", "abort"],
     },
     CmdDef {
+        name: "beep",
+        aliases: &[],
+        subs: &["1", "2", "3", "4", "5"],
+    },
+    CmdDef {
         name: "disarm",
         aliases: &[],
         subs: &[],
@@ -217,6 +222,7 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
         Some("quit") => CommandResult::Quit,
         Some("arm") => cmd_arm(client).await,
         Some("esc") => cmd_esc(&parts[1..], client).await,
+        Some("beep") => cmd_beep(parts.get(1).copied(), client).await,
         Some("disarm") => cmd_disarm(client).await,
         Some("estop") => cmd_estop(client).await,
         Some("throttle") => {
@@ -410,6 +416,22 @@ async fn cmd_arm(client: &HostClient<WireError>) -> CommandResult {
         timeout(CMD_TIMEOUT, client.send_resp::<ArmEndpoint>(&())).await,
         "Arm",
         "ARMED".into(),
+    )
+}
+
+/// `beep <1-5>`: DShot beep command on the engines (disarmed; plays once
+/// they are at rest). AM32: 1 and 5 are the same tone.
+async fn cmd_beep(arg: Option<&str>, client: &HostClient<WireError>) -> CommandResult {
+    let Some(tone) = arg
+        .and_then(|a| a.parse::<u8>().ok())
+        .filter(|t| (1..=5).contains(t))
+    else {
+        return CommandResult::Err("Usage: beep <1-5>".into());
+    };
+    handle_ack(
+        timeout(CMD_TIMEOUT, client.send_resp::<EngineBeepEndpoint>(&tone)).await,
+        "Beep",
+        format!("Beep{tone} sent (refused while armed)"),
     )
 }
 

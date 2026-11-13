@@ -535,6 +535,13 @@ pub struct EscFileReq {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct BeepReq {
+    /// DShot beep command 1-5. AM32: 1 and 5 are its default tone, 2 the
+    /// "changed" tone, 3 and 4 two short tunes.
+    pub tone: u8,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct EscMelodyReq {
     pub engine: EngineParam,
     /// RTTTL text (`name:d=4,o=5,b=140:c,e,g,2c6`, at most 62 notes and
@@ -1414,6 +1421,19 @@ impl ElleMcp {
         }
         let client = self.client().await?;
         ack(req::<SetThrottleEndpoint>(&client, &SetThrottleReq { percent: r.percent }).await?)
+    }
+
+    #[tool(
+        description = "Play a DShot beep command (1-5) through the engines: sound only, no \
+        rotation. The firmware ignores it while armed (or in ESC-config mode) and plays it \
+        once the engines are at rest. Use `esc_run` (ESC-config mode) for the startup melody."
+    )]
+    async fn beep(&self, Parameters(r): Parameters<BeepReq>) -> ToolResult {
+        if !(1..=5).contains(&r.tone) {
+            return Err("tone must be 1-5".to_string());
+        }
+        let client = self.client().await?;
+        ack(req::<EngineBeepEndpoint>(&client, &r.tone).await?)
     }
 
     #[tool(description = "Throttle 0 and disarm. Always allowed.")]

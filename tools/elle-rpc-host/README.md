@@ -16,9 +16,9 @@ Two modes:
 
 - **`elle`** (no subcommand) — the TUI monitoring dashboard.
 - **`elle direct <cmd>`** — one RPC call and exit, for scripting.
-  `ping`, `version`, `status`, `attitude`, `throttle`, `elevon`, `arm`, `disarm`,
+  `ping`, `version`, `status`, `attitude`, `throttle`, `elevon`, `arm`, `disarm`, `beep`,
   `stop`, `perf`, `mag`, `gnss`, `engine`, `mag-cal {start|clear|status}`,
-  `level-cal {start|clear|status}`, `esc {mode|enter|exit|connect|show|set|backup|restore|run}`
+  `level-cal {start|clear|status}`, `esc {mode|enter|exit|connect|show|set|backup|restore|melody|run}`
   (see [ESC configuration](#esc-configuration)).
 
 Arming, calibration, autotune and the event codes shown in the Logs panel are explained
@@ -86,6 +86,7 @@ Tools:
 | Read | `read`, `sample`, `wait_for`, `events`, `wait_event` |
 | Firmware | `build_and_flash`, `reset_target`, `connect_defmt`, `log`, `wait_log` |
 | Engines (gated) | `arm`, `extend_armed`, `set_throttle`, `disarm`, `emergency_stop` |
+| Engine beeps | `beep` (DShot beep 1–5; sound only, ignored while armed) |
 | Commands | `set_elevons`, `set_mode`, `set_heading_hold`, `mag_cal`, `level_cal`, `ulog`, `autotune` |
 | Logs and results | `card_logs`, `copy_logs`, `analyse_log`, `replay`, `test_record`, `test_report` |
 | ESC configuration | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` (gated), `esc_melody` (gated), `esc_restore` (gated), `esc_run` |

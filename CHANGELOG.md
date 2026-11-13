@@ -39,6 +39,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- Engine beep on demand (RPC ICD, operator behaviour, bench): new endpoint
+  `elle/engine/beep` (`u8` 1-5 → `AckResp`), TUI and `elle direct` `beep <1-5>`, MCP
+  `beep`. RPC builds send that DShot beep command through the engines, disarmed only,
+  played once they are at rest (the 0008 sequencer); refused while armed or in an
+  ESC-config boot.
 - ESC startup melody (host tool): `esc melody <l|r> <rtttl|file|clear>` in the TUI
   and `elle direct`, and the gated MCP tool `esc_melody` (same gates as `esc_set`),
   write AM32's startup tune (EEPROM bytes 48..176 only, verified by read-back) from

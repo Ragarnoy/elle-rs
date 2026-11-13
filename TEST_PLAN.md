@@ -718,6 +718,7 @@ ESC first, and keep a relay backup of each ESC for rows 2–3. Procedure:
 | 12 | Normal boot, `ulog start`, ~10 s, then `esc enter` (SD card in) | 170, then the reboot within ~2 s; the host reattaches (about 3 s) and reports `ESC CONFIG`. On the card, that log file ends cleanly: its last seconds are present (`flight-logs` skill), and no later file starts with its data | [ ] |
 | 13 | AON timer across watchdog resets (fix d5e9af8): `esc enter`, `esc exit`, `esc enter`, `esc exit` back to back, no power cycle; `read time` before and after | Every reboot reattaches within ~20 s (before the fix the second boot hung in HardFault until a power cycle); the time keeps counting forward across the resets | [ ] |
 | 14 | After row 3: `esc melody left test:d=8,o=6,b=180:c,e,g,2c7`, then `esc run left`; then `esc restore left <row 3 file>` and `esc run left` (MCP: `esc_melody`, refused without the flag and before an `esc_backup`) | 177; the host prints the new melody; `esc_compare` against row 3 shows only melody bytes (48..176); `esc run` plays the new tune through the motor; after the restore, identical to row 3 and the old tune plays | [ ] |
+| 15 | Normal boot, disarmed: `beep 1` … `beep 5`; then armed: `beep 3` | Each plays once through both engines (1 and 5 the same tone), no rotation; armed: nothing plays | [ ] |
 
 ## Part 7: Attitude Estimation and Turn Compensation
 

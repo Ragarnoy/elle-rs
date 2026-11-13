@@ -101,3 +101,16 @@ fn rest_from_telemetry_or_from_time() {
     assert!(!engine_at_rest(None, Some(BEEP_SPINDOWN_FALLBACK_MS - 1)));
     assert!(engine_at_rest(None, Some(BEEP_SPINDOWN_FALLBACK_MS)));
 }
+
+#[test]
+fn a_single_command_beep_is_one_burst_and_waits_for_rest() {
+    assert_eq!(Tone::from_command(0), None);
+    assert_eq!(Tone::from_command(6), None);
+    let tone = Tone::from_command(4).unwrap();
+    let mut s = BeepSequencer::new();
+    s.request(Pattern::Single(tone), 0);
+    assert_eq!(s.next(0, false, false), None);
+    let out = run(&mut s, 1, 100, false, true);
+    assert_eq!(out.iter().flatten().count(), BURST_FRAMES as usize);
+    assert!(out.iter().flatten().all(|t| *t == Tone::Beep4));
+}

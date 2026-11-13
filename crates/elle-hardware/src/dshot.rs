@@ -30,6 +30,9 @@ pub enum BeepPattern {
     ArmBeep,
     /// Two short beeps (disarm confirmation)
     DisarmBeep,
+    /// One DShot beep command, 1-5 (bench, RPC `elle/engine/beep`). Anything
+    /// else is ignored.
+    Tone(u8),
 }
 
 /// Consecutive bidir telemetry failure threshold before falling back to fire-and-forget.
@@ -524,12 +527,11 @@ impl<'a> DshotEngines<'a> {
     }
 }
 
-impl From<BeepPattern> for Pattern {
-    fn from(p: BeepPattern) -> Self {
-        match p {
-            BeepPattern::ArmBeep => Self::Arm,
-            BeepPattern::DisarmBeep => Self::Disarm,
-        }
+fn beep_pattern(p: BeepPattern) -> Option<Pattern> {
+    match p {
+        BeepPattern::ArmBeep => Some(Pattern::Arm),
+        BeepPattern::DisarmBeep => Some(Pattern::Disarm),
+        BeepPattern::Tone(n) => Tone::from_command(n).map(Pattern::Single),
     }
 }
 
@@ -537,6 +539,9 @@ const fn beep_command(tone: Tone) -> Command {
     match tone {
         Tone::Beep1 => Command::Beep1,
         Tone::Beep2 => Command::Beep2,
+        Tone::Beep3 => Command::Beep3,
+        Tone::Beep4 => Command::Beep4,
+        Tone::Beep5 => Command::Beep5,
     }
 }
 
@@ -562,8 +567,8 @@ impl Beeper {
     fn slot(&mut self, spin_commanded: bool, engines: &[Option<u32>]) -> Option<Command> {
         let now = Instant::now();
         let now_ms = now.as_millis();
-        if let Some(p) = BEEP_SIGNAL.try_take() {
-            self.seq.request(p.into(), now_ms);
+        if let Some(p) = BEEP_SIGNAL.try_take().and_then(beep_pattern) {
+            self.seq.request(p, now_ms);
         }
         if spin_commanded {
             self.zero_since = None;

@@ -78,6 +78,12 @@ A disarm (any path: gesture, kill switch, failsafe, RPC) stops the engines on th
 DShot frame; the double beep follows once they have spun down, so after a run at power
 it comes a second or two late. Throttle up during the arm beep cuts it short. A beep
 that cannot play within 4 s (an engine never reads at rest) is dropped.
+
+On the bench (RPC builds), `beep <1-5>` in the TUI (`elle direct beep 3`, MCP `beep`)
+sends one DShot beep command through the engines, disarmed only, once they are at
+rest. AM32 plays 1 and 5 as its default tone, 2 as the "changed" tone, 3 and 4 as two
+short tunes; `beep_volume` sets the loudness. The startup melody is not one of them:
+AM32 plays it only when its app starts (`esc run` in ESC-config mode).
 Engine arming at power-up is a separate 2 s MotorStop burst (`ARM_DURATION_MS`) that
 the ESCs need before they accept throttle; it is not the flight-controller arm.
 
