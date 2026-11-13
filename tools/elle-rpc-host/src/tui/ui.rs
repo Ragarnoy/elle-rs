@@ -192,6 +192,16 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
         ),
         failsafe_span,
         autotune_span,
+        if state.esc_config() {
+            Span::styled(
+                " | ESC CONFIG",
+                Style::default()
+                    .fg(Color::Rgb(255, 140, 0))
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        },
         Span::raw(" |"),
         rec_span,
         Span::raw(" | "),
@@ -209,6 +219,15 @@ fn draw_header(f: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_main(f: &mut Frame, area: Rect, state: &AppState) {
+    if state.esc_config() {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+            .split(area);
+        draw_esc(f, chunks[0], state);
+        draw_logs(f, chunks[1], state);
+        return;
+    }
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -221,6 +240,66 @@ fn draw_main(f: &mut Frame, area: Rect, state: &AppState) {
     draw_telemetry(f, chunks[0], state);
     draw_rc_channels(f, chunks[1], state);
     draw_logs(f, chunks[2], state);
+}
+
+/// ESC-config boot: one column per engine, the decoded settings of each
+/// connected ESC (as `esc connect` / `show` / `set` last read them).
+fn draw_esc(f: &mut Frame, area: Rect, state: &AppState) {
+    let block = Block::default()
+        .title(" ESC configuration (no DShot this boot; arming locked) ")
+        .borders(Borders::ALL);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(inner);
+    f.render_widget(
+        Paragraph::new(vec![
+            muted_line(
+                "esc connect|show|set|backup|restore|run [left|right] ...   \
+                 e.g. esc set left beep_volume=5",
+            ),
+            muted_line("esc exit: start the ESCs and reboot normally   PgUp/PgDn: scroll"),
+        ]),
+        rows[0],
+    );
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[1]);
+    // Inside each column's borders.
+    state.esc_page.set(cols[0].height.saturating_sub(2).max(1));
+    for (i, name) in ["Left", "Right"].into_iter().enumerate() {
+        let view = &state.esc[i];
+        let mut lines: Vec<Line> = Vec::new();
+        match &view.connected {
+            Some(c) => {
+                lines.push(kv(
+                    "ESC ",
+                    format!("0x{:04X} {}", c.info.device_id, c.name),
+                    OK,
+                ));
+            }
+            None => lines.push(muted_line(&format!(
+                "not connected: esc connect {}",
+                name.to_lowercase()
+            ))),
+        }
+        if let Some(b) = &view.settings {
+            let text = elle_rpc_host::esc::config(b).to_string();
+            lines.extend(text.lines().map(|l| Line::from(l.to_string())));
+        }
+        let p = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(format!(" {name} "))
+                    .borders(Borders::ALL),
+            )
+            .wrap(Wrap { trim: false })
+            .scroll((state.esc_scroll, 0));
+        f.render_widget(p, cols[i]);
+    }
 }
 
 fn draw_telemetry(f: &mut Frame, area: Rect, state: &AppState) {

@@ -49,6 +49,19 @@ After the session (or when the operator pulls the card): `card_logs`, then
 cycles and resets each start a new file). Then `analyse_log` and `replay` as the row
 says. How to read the numbers: the `flight-logs` skill. Put the file names in `logs`.
 
+## ESC configuration (6.11)
+
+- `link_status`'s `esc_write_allowed` false → the `esc_set` / `esc_restore` rows are
+  `skip` ("server started without ESC writes"), except the refusal checks in row 6.
+  Never suggest adding `--dangerously-allow-esc-write` yourself.
+- `esc_mode enter` reboots and reattaches; check its `mode` is `EscConfig` (the
+  event alone does not pass row 1). Wait ~2 s before `esc_connect`; retry a
+  `NoReply` once or twice.
+- Take an `esc_backup` of each ESC before any write (and `esc_set` refuses without
+  one); put the backup paths in `logs`. Compare against the operator's relay
+  backups byte for byte (row 3) and with `esc_compare` after writes.
+- End the section with `esc_mode exit`, and check events 160–165 stay absent.
+
 ## Flight builds
 
 No RPC: after `build_and_flash` profile `flight`, verify with `log` / `wait_log` on the

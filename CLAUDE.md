@@ -25,6 +25,7 @@ behaviour changes.
 | [`.claude/skills/test-plan-runner/SKILL.md`](.claude/skills/test-plan-runner/SKILL.md) | Running TEST_PLAN.md rows through the `elle mcp` tools and recording results |
 | [`docs/VERSIONING.md`](docs/VERSIONING.md) | Semver for the workspace: compatibility surfaces, bump rules, release steps |
 | [`CHANGELOG.md`](CHANGELOG.md) | Released versions and `Unreleased` changes |
+| [`docs/changes/0002-esc-config-over-rpc.md`](docs/changes/0002-esc-config-over-rpc.md) | AM32 ESC configuration through the FC: ESC-config boot mode, endpoints, host policy, MCP gates |
 | [`docs/changes/`](docs/changes/README.md) | Change proposals for flight-safety and breaking changes (process + `TEMPLATE.md`) |
 | [`docs/archive/`](docs/archive/) | Superseded design specs (sensor drivers), kept for reference |
 
@@ -68,7 +69,7 @@ so the TUI shows no satellites and no GNSS log lines at all, which looks exactly
 a hardware or reception failure.
 
 Feature flags (both binaries; they forward to `elle-app`):
-- `rpc-control` — postcard-RPC server over RTT. **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`), enforced by `compile_error!` in each `main.rs`. Also enables `elle-hardware/ulog-flash-count`: the one-off legacy flash ULog count ~5 s after boot that `ulog info` reports. It holds Core 0 for ~26 ms, so flight builds don't run it.
+- `rpc-control` — postcard-RPC server over RTT. **Mutually exclusive with `defmt-logging`** (both define `_SEGGER_RTT`), enforced by `compile_error!` in each `main.rs`. Also enables `elle-hardware/esc-config` (the ESC-config boot mode, below). Also enables `elle-hardware/ulog-flash-count`: the one-off legacy flash ULog count ~5 s after boot that `ulog info` reports. It holds Core 0 for ~26 ms, so flight builds don't run it.
 - `rpc-rc` — in RPC mode, pilot commands come from the RC receiver (gesture arming, kill switch, RC failsafe) while the TUI monitors. **Requires `rpc-control`** (`compile_error!` in `elle-app`).
 - `defmt-logging` — defmt over RTT (default). The macros are always compiled; without this feature they are no-ops.
 - `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss` and the navigator (`elle-nav`, observation mode). `rpc-control` also enables `gnss-gsv` (satellites in view).
@@ -143,7 +144,7 @@ are free — the GNSS UART is interrupt-buffered because only `BufferedUart` imp
 ### Cores and tasks
 
 - **Core 0, thread executor:** control loop (`elle_app::boot::run` → `flight::run_flight` or `rpc::run_rpc`), flash manager, SD writer, LED, CRSF RX/TX, GNSS, supervisor, RPC server.
-- **Core 0, interrupt executor** (`EXECUTOR_DSHOT` on SWI_IRQ_0, priority P2, set up in each binary): the DShot task alone, so thread-executor stalls can't delay its frames. Flash operations still pause it (interrupts off), which is fine because they only happen disarmed. This makes `executor-interrupt` and the SIO FIFO masking load-bearing ([embassy-rp bug note](docs/embassy-rp-sio-irq-fifo-flash-bug.md)).
+- **Core 0, interrupt executor** (`EXECUTOR_DSHOT` on SWI_IRQ_0, priority P2, set up in each binary): the DShot task alone, so thread-executor stalls can't delay its frames. In an ESC-config boot it runs `esc_config_task` instead (below). Flash operations still pause it (interrupts off), which is fine because they only happen disarmed. This makes `executor-interrupt` and the SIO FIFO masking load-bearing ([embassy-rp bug note](docs/embassy-rp-sio-irq-fifo-flash-bug.md)).
 - **Core 1:** `imu_task` — ICM-42686 over **blocking** SPI0 (DMA IRQs are bound on Core 0's NVIC), Madgwick AHRS, level cal. `i2c_sensors_task` (spawned by it, `elle_hardware::imu::i2c_sensors`) — MMC5616WA + BMP390 on interrupt-driven I2C0 (`I2C0_IRQ` bound in `elle-app`, enabled on Core 1), shared through an async `I2cDevice`, mag calibration, vario. It publishes the offset-corrected field in `MAG_FIELD`; the IMU task applies the mount and fuses it.
 
 `boot::run` waits for the IMU and the supervisor barrier, loads PID / mag cal / level
@@ -229,6 +230,20 @@ They run in their own task, so bus transfers never hold up a 1 kHz sample, and e
 - A stopped engine gets `MotorStop` **with** a telemetry request (`command_with_extended_telemetry`), so EDT flows at idle. `elle_control::esc_link::EscLink` counts unanswered requests: `ESC_SILENT_FRAMES` in a row → event 160/161; when the ESC answers again (or answers for the first time after missing the boot configuration), it is re-sent spin direction + EDT once it has been stopped and answering for `ESC_RECONFIGURE_SETTLE_FRAMES` (162/163). An ESC answers with eRPM whether or not EDT is on, so `EdtWatch` also re-sends the configuration (while stopped) when `ESC_EDT_CONFIRM_FRAMES` answered frames bring no EDT frame, up to `ESC_EDT_MAX_RETRIES` times, then reports 164/165: on the eagle the boot configuration failed silently in about half the sessions. Reply, timeout, corrupt-reply, EDT-frame and re-configuration counts go to ULog `esc_health`.
 - Recalibrate with the `governor-calibration` skill. A sweep in the wrong spin direction peaks early and falls off.
 
+### ESC-config boot mode (`rpc-control` builds; proposal 0002)
+
+AM32 ESC settings are read and written through the FC, ESC leads plugged in. A
+second boot mode, entered only by a reboot the firmware forces itself:
+
+- `elle/esc/mode/enter` → handler refuses if armed (171, `ESC_MODE_REFUSED_ARMED`) → `RpcCommand::SwitchBootMode` → the RPC loop refuses if armed or an eRPM target ≠ 0 (171), else event 170, stops ULog, and `watchdog::reboot_into(EscConfig)` after `ESC_REBOOT_DELAY_MS`: magic pair (`ESC_CONFIG_MAGIC` + complement) in watchdog scratch 0/1, `trigger_reset`.
+- `main()` calls `elle_hardware::boot_mode::init(&mut watchdog)` first: it reads and **clears** the scratch pair and decides with `elle_control::boot_mode::decide` (pair valid **and** `ResetReason::Forced`; host-tested). `boot_mode::current()` / `is_esc_config()` for the rest of the boot. Any other reset is a normal boot.
+- ESC-config boot: the binaries put `esc_onewire_rp::OneWireUart` on PIO1 SM0/1 (`PIN_14`) and, eagle, PIO2 (`PIN_11`) instead of DShot, and spawn `elle_hardware::esc_config::esc_config_task` on `EXECUTOR_DSHOT` (a > ~230 µs gap inside a UART frame splits it). Nothing sends DShot, so each AM32 app resets itself after ~2 s and stays in its bootloader (line high). `boot::run` calls `fc.lock_arming()` (arming refused, 172); the loop refuses `writes_flash()`, level cal and ULog peeks (178); the flash manager skips the ULog count; LED double blink orange; CRSF `ESCCFG`.
+- The task runs **one whole `esc_session` operation per request** (`esc_config::request`, sequence-numbered, so a late reply never answers the next request) and keeps each connected ESC's `(ConnectResponse, Layout)` like the esc-config-rs relay. Writes are read back and compared (byte 2 excepted, `esc_write_mismatch`): `EscError::Verify`, events 175–177.
+- Handlers (`elle-app/src/rpc_esc.rs`) are **`async`** in `define_dispatch!` (the only ones): they wait up to `ESC_OP_TIMEOUT_MS` (4 s; host waits `ESC_HOST_TIMEOUT_MS`, 5 s) and stamp `HOST_LAST_RX_MS` every `ESC_HOST_STAMP_MS` meanwhile. Normal boot: ESC ops answer `NotConnected`; no reply in time: `NoReply`; dart `Right`: `Link`.
+- ESC operations and `enter` / `exit` wait for `flight_state::RPC_LOOP_RUNNING` (boot's flash loads done; `enter` answers `ESC_MODE_BUSY` before), so no boot-time flash access overlaps an ESC frame and an accepted switch reboots within a tick plus `ESC_REBOOT_DELAY_MS` (longer only while the SD writer closes the ULog file, `sd_writer::SD_FILE_OPEN`; still open after `ESC_REBOOT_SD_WAIT_MS` cancels the switch, 171). The host waits that long before reattaching (`esc::REBOOT_WAIT`).
+- `elle/esc/mode/exit` connects both ESCs, then sends Run to both back to back (best effort), then reboots normally.
+- The firmware never interprets AM32 bytes. Decoding and the host policy (edits bytes 5..48, restores 5..192 with the layout check) are `esc_protocol::am32_config` / `esc_protocol::policy`, used by `tools/elle-rpc-host/src/esc.rs`.
+
 ### Watchdog and supervisor
 
 - Hardware watchdog (`elle_hardware::watchdog`), `WATCHDOG_TIMEOUT_MS` = 500, fed every control tick. The flash manager feeds `FLASH_OP_WATCHDOG_MS` (6 s) before each flash request and before the idle ULog count.
@@ -269,14 +284,14 @@ safety: Arm, Disarm, EmergencyStop · query: GetStatus, GetAttitude, GetPerforma
 ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels,
 GetControllerOutput, GetEngine, GetNav (navigator's last update), GetCore1Load (last ~1 s window, closed by the loop whether or not ULog records) · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,
 GetULogInfo · autotune: StartAutotune (axis `0xFF`/`0xFE` = save/erase PID), AbortAutotune · calibration: StartMagCal, ClearMagCal, GetMagCal, StartLevelCal,
-ClearLevelCal, GetLevelCal · system: Ping, GetVersion, GetTime, GetBuildInfo (platform, features, turn compensation, loop rate, `git describe` from `elle-app/build.rs`).
+ClearLevelCal, GetLevelCal · system: Ping, GetVersion, GetTime, GetBuildInfo (platform, features, turn compensation, loop rate, `git describe` from `elle-app/build.rs`) · ESC config (`elle/esc/…`, types re-exported from `esc-config-icd` as `Esc*`): EscMode, EscEnter, EscExit, EscConnect, EscReadEeprom, EscWriteEeprom, EscName, EscRead, EscRun.
 One outgoing topic: `LogTopic` `(level: u8, code: u16)`.
 
 **Host `probe.rs` reads RTT up channel 1, not 0.**
 
 ### Host tool (`tools/elle-rpc-host/`)
 
-TUI dashboard (default) or `direct <cmd>`. `probe.rs` (probe-rs + RTT worker thread),
+TUI dashboard (default) or `direct <cmd>`. `esc.rs` (ESC configuration: settings, host policy, backups, reattach after the mode reboot; shared by the TUI `esc …` commands and ESC panel, `direct esc …` and the MCP `esc_*` tools, whose writes need `--dangerously-allow-esc-write`). `probe.rs` (probe-rs + RTT worker thread),
 `wire.rs` (tokio ↔ HostClient), `tui/` (event loop, state, ui, commands), `direct.rs`
 (one-shot commands; holds the link with 100 ms pings after commands that leave
 something moving). Event code labels: `src/events.rs` `label()` — add one for every
@@ -355,3 +370,4 @@ the binaries' SWI handler).
 | embedded-fatfs / sdspi (git `MabezDev/embedded-fatfs` rev `919e569f`) | yes | - | FAT32 on the SD card |
 | embedded-hal-bus 0.3 | yes | - | I2C/SPI bus sharing |
 | bmp390 (`drivers/bmp390`) | yes | - | Barometer, local fork patched over crates.io |
+| esc-session · esc-onewire-rp · esc-config-icd · esc-protocol (git `Ragarnoy/esc-config-rs` rev `1dcff3f`, branch `elle-integration`) | yes (`esc-config`) | esc-protocol (`std,serde`), esc-config-icd (`use-std`) | AM32 bootloader session, PIO one-wire UART, ESC RPC types, settings decoding and host policy. Switch to a tag once esc-config-rs releases; don't rebase or delete the branch until then. |

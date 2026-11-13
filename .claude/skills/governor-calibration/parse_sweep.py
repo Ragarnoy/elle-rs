@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """Turn `rpm_range` sweep logs into a GOVERNOR_FF_TABLE and its ceiling constants.
 
-Usage: parse_sweep.py [--poles 14] [--step 100] LOG [LOG ...]
+Usage: parse_sweep.py [--sweep-poles 14] [--motor-poles N] [--step 100] LOG [LOG ...]
+
+Two pole counts, not to be confused:
+  --sweep-poles  the MOTOR_POLES the rpm_range example divided eRPM by (14,
+                 hard-coded in dshot-pio's examples/src/rpm_range.rs). It turns
+                 the sweep's printed "RPM" back into eRPM, so it must match the
+                 example, not the motor. Getting it wrong scales every table entry.
+  --motor-poles  the motor's real pole count, for the printed mechanical rpm
+                 only (eagle 6, dart 14). Defaults to --sweep-poles.
 
 One log per engine (dart: one; eagle: left then right). Per engine the sweep's
 `T=<dshot>: avg=<rpm>` lines are read; steps the sweep marked unstable are
@@ -47,18 +55,24 @@ def load(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--poles", type=int, default=14)
+    ap.add_argument("--sweep-poles", "--poles", dest="sweep_poles", type=int, default=14,
+                    help="MOTOR_POLES in the rpm_range example (eRPM = sweep RPM × this/2)")
+    ap.add_argument("--motor-poles", type=int, default=None,
+                    help="the motor's real pole count (eagle 6, dart 14); printed rpm only")
     ap.add_argument("--step", type=int, default=100)
     ap.add_argument("logs", nargs="+")
     a = ap.parse_args()
-    pairs = a.poles // 2
+    pairs = a.sweep_poles // 2
+    motor_pairs = (a.motor_poles or a.sweep_poles) // 2
 
     engines = [load(p) for p in a.logs]
     for path, (steps, volt, temp) in zip(a.logs, engines):
         peak = max(steps, key=steps.get)
         last = max(steps)
         where = "still rising at end" if peak == last else f"falls above DShot {peak}"
-        print(f"# {path}: {len(steps)} stable steps, peak {steps[peak]} RPM @ DShot {peak} ({where}); "
+        peak_erpm = steps[peak] * pairs
+        print(f"# {path}: {len(steps)} stable steps, peak {peak_erpm:,} eRPM "
+              f"({peak_erpm // motor_pairs:,} rpm) @ DShot {peak} ({where}); "
               f"pack {volt or '?'}, ESC {temp or '?'}")
 
     ceiling = min(max(s, key=s.get) for s, _, _ in engines)
@@ -100,13 +114,16 @@ def main():
 
     print(f"\nconst GOVERNOR_FF_TABLE: [(u32, u16); {len(rows)}] = [")
     for erpm, d, rpms in rows:
-        what = f"avg({','.join(map(str, rpms))}) RPM × {pairs}" if len(rpms) > 1 else f"{rpms[0]:,} RPM"
+        what = (f"avg({','.join(map(str, rpms))}) RPM × {pairs}" if len(rpms) > 1
+                else f"{rpms[0] * pairs:,} eRPM")
         if d == ceiling:
             what = f"ceiling (MAX_ERPM); {what}"
         print(f"    ({erpm:_}, {d}),".ljust(22) + f" // {what}")
     print("];\n")
-    print(f"MAX_RPM            = {max_rpm:_}")
-    print(f"MAX_ERPM           = {max_erpm:_}   (MAX_RPM × {pairs})")
+    print(f"MAX_ERPM           = {max_erpm:_}   (~{max_erpm // motor_pairs:_} rpm at "
+          f"{motor_pairs * 2} motor poles)")
+    if motor_pairs == pairs:
+        print(f"MAX_RPM            = {max_rpm:_}   (MAX_ERPM = MAX_RPM × {pairs})")
     print(f"GOVERNOR_DSHOT_MAX = {ceiling:_}")
 
 

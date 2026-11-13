@@ -71,6 +71,24 @@ pub struct AppState {
 
     // Background task (e.g. ulog extract)
     pub background_task: Option<tokio::task::JoinHandle<String>>,
+
+    /// This boot's mode (`None`: firmware without ESC configuration).
+    pub esc_mode: Option<EscBootMode>,
+    /// The ESC panel, per engine (left, right).
+    pub esc: [EscView; 2],
+    /// ESC panel scroll offset, lines (PageUp / PageDown).
+    pub esc_scroll: u16,
+    /// Lines the ESC panel showed in the last frame: one PageUp / PageDown step.
+    pub esc_page: std::cell::Cell<u16>,
+    /// Failed ESC-mode queries so far (`esc_mode` unknown): retried a few times.
+    pub esc_mode_tries: u8,
+}
+
+/// What the ESC panel shows for one engine.
+#[derive(Default, Clone)]
+pub struct EscView {
+    pub connected: Option<elle_rpc_host::esc::Connected>,
+    pub settings: Option<elle_rpc_host::esc::Block>,
 }
 
 impl AppState {
@@ -98,6 +116,11 @@ impl AppState {
             history_index: None,
             status_message: None,
             background_task: None,
+            esc_mode: None,
+            esc: Default::default(),
+            esc_scroll: 0,
+            esc_page: std::cell::Cell::new(10),
+            esc_mode_tries: 0,
         }
     }
 
@@ -150,6 +173,11 @@ impl AppState {
         if self.logs.len() > LOG_HISTORY {
             self.logs.pop_front();
         }
+    }
+
+    /// An ESC-config boot: the flight panels and their polls give way to the ESC panel.
+    pub fn esc_config(&self) -> bool {
+        self.esc_mode == Some(EscBootMode::EscConfig)
     }
 
     pub fn mark_poll_success(&mut self) {

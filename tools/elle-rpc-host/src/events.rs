@@ -108,6 +108,16 @@ pub const fn label(code: u16) -> &'static str {
         163 => "ESC right: spin direction + EDT re-sent (reappeared, or no EDT)",
         164 => "ESC left: still no EDT after retries, spin direction unconfirmed",
         165 => "ESC right: still no EDT after retries, spin direction unconfirmed",
+        // ESC configuration (170–179, proposal 0002)
+        170 => "ESC config: rebooting into ESC-config mode",
+        171 => "ESC config: refused or cancelled (armed, engine commanded, or ULog still closing)",
+        172 => "Arm refused: ESC-config boot or mode switch pending",
+        173 => "ESC config: left ESC bootloader connected",
+        174 => "ESC config: right ESC bootloader connected",
+        175 => "ESC config: left ESC write failed",
+        176 => "ESC config: right ESC write failed",
+        177 => "ESC config: write committed and verified",
+        178 => "Flash: command refused in ESC-config mode (exit ESC config first)",
         _ => "unknown",
     }
 }

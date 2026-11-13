@@ -219,13 +219,25 @@ pub fn apply_differential_thrust_lut(base_thrust: u16, yaw_rc: u16) -> (u16, u16
 
 /// Measured eRPM→DShot mapping, averaged over both engines under EDF load, 4S at
 /// 16.25 V under load. `rpm_range` EDT sweep on 26 Sep 2026: 200 settle + 500
-/// measured samples per step, IQR-filtered, RPM × 7 (14-pole). Pairs are (eRPM,
-/// DShot), sorted by eRPM.
+/// measured samples per step, IQR-filtered. The sweep reports eRPM / 7 (it
+/// assumes 14 poles) and the eRPM here is that × 7, so the pairs are the measured
+/// eRPM. The eagle's motors are 6-pole: mechanical rpm = eRPM / 3. Pairs are
+/// (eRPM, DShot), sorted by eRPM.
 ///
-/// Ceiling at DShot 1498, the left engine's peak (21,389 RPM; it falls above).
-/// The right engine flattens out from ~1400 at ~20,340 RPM, so full stick is
-/// capped at what it can reach: the last row is pinned to `MAX_ERPM`, and the
-/// averaged 1448 row (145,050, beyond the right engine's reach) is left out.
+/// Ceiling at DShot 1498, the left engine's peak (~149,700 eRPM, ~49,900 rpm; it
+/// falls above). The right engine flattens out from ~1400 at ~142,400 eRPM
+/// (~47,460 rpm), so full stick is capped at what it can reach: the last row is
+/// pinned to `MAX_ERPM`, and the averaged 1448 row (145,050, beyond the right
+/// engine's reach) is left out.
+///
+/// ESC settings: no backup was taken at the sweep. The reference is the backup
+/// taken on 2026-11-13 (`docs/esc/eagle-left-20261113.bin`, `…-right-…`, the two
+/// byte-identical), on the assumption that nothing else changed since;
+/// `esc_compare` against it before trusting this table. It differs from the
+/// 2026-11-11 backup (`…-20261111.bin`, closer to the sweep) only in the motor
+/// poles setting, 14 → 6 to match the motor: the governor works in eRPM, which
+/// that setting doesn't touch. AM32 2.20, 6 poles, KV 5000, normal direction, 25 kHz variable PWM, timing byte 26 = 15° with
+/// auto-timing on (esc-config-rs before PR #2 shows that byte as 30°).
 #[cfg(not(feature = "platform-dart"))]
 const GOVERNOR_FF_TABLE: [(u32, u16); 15] = [
     (6_321, 48),     // avg(910,896) RPM × 7
@@ -242,7 +254,7 @@ const GOVERNOR_FF_TABLE: [(u32, u16); 15] = [
     (122_920, 1148), // avg(17657,17463) RPM × 7
     (131_134, 1248), // avg(18849,18618) RPM × 7
     (138_964, 1348), // avg(19941,19763) RPM × 7
-    (142_100, 1498), // ceiling, pinned to MAX_ERPM; measured L 21,389 / R 20,337 RPM
+    (142_100, 1498), // ceiling, pinned to MAX_ERPM; measured L 149,723 / R 142,359 eRPM
 ];
 
 /// Governor feedforward: estimate DShot output for a target eRPM using measured LUT.
@@ -283,7 +295,7 @@ pub fn governor_feedforward(target_erpm: u32) -> u16 {
 
 /// Measured eRPM→DShot mapping for dart, 3-blade prop (reversed spin), 3S pack at
 /// 11.5 V under load. `rpm_range` EDT sweep on 26 Sep 2026: 200 settle + 500 measured
-/// samples per step, IQR-filtered, RPM × 7 (14-pole). RPM rises all the way to full
+/// samples per step, IQR-filtered, RPM × 7 (14-pole, the dart's motor). RPM rises all the way to full
 /// throttle (no stall region), so the table and `GOVERNOR_DSHOT_MAX` go to DShot
 /// 1998. The last row is pinned to `MAX_ERPM`.
 #[cfg(feature = "platform-dart")]

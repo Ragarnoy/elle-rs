@@ -3,8 +3,10 @@
 pub mod arming;
 pub mod attitude;
 pub mod autotune;
+pub mod boot_mode;
 pub mod commands;
 pub mod dshot_pace;
+pub mod esc;
 pub mod esc_link;
 pub mod filter;
 pub mod flight_law;

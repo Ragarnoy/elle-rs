@@ -71,6 +71,10 @@ embedded-hal-async = "1.0"
 aligned = { version = "0.4", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
 block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.2.0", default-features = false }
+esc-session = { workspace = true, optional = true }
+esc-onewire-rp = { workspace = true, optional = true }
+esc-config-icd = { workspace = true, optional = true, features = ["session"] }
+esc-protocol = { workspace = true, optional = true }
 
 [features]
 gnss = []  # Enable GPS telemetry frames
@@ -90,6 +94,9 @@ imu-raw-log = ["elle-config/imu-raw-log"]
 # Count the legacy flash ULog queue ~5 s after boot, for the RPC `ulog info`
 # query. Holds Core 0 for ~26 ms, so flight builds leave it out.
 ulog-flash-count = []
+# ESC-config boot mode (proposal 0002): the one-wire UART task that runs the AM32
+# bootloader session. RPC builds only (elle-app/rpc-control).
+esc-config = ["dep:esc-session", "dep:esc-onewire-rp", "dep:esc-config-icd", "dep:esc-protocol"]
 single-engine = []  # Single-engine platform (dart) — uses dshot_single_task instead of dshot_task
 
 [lib]

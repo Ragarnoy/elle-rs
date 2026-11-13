@@ -212,7 +212,10 @@ macro_rules! apply {
                 CORE1_HEARTBEAT.reset();
             }
             Op::EnableSupervisor => fc.enable_supervisor_monitoring(),
-            Op::Arm => fc.arm(),
+            // Base `arm()` returns (), today's returns whether it armed.
+            Op::Arm => {
+                let _ = fc.arm();
+            }
             Op::Disarm => fc.disarm(),
             Op::Safe => fc.set_safe_positions(),
             Op::ClearOverride => fc.clear_setpoint_override(),

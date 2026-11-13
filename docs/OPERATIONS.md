@@ -18,6 +18,9 @@ named. If this page and the code disagree, the code is right — fix the page.
 | `rpc-control,gnss` | Host TUI / `direct` over the debug probe | RPC `arm` command only |
 | `rpc-control,rpc-rc,gnss` | CRSF receiver, host monitors | Throttle gesture (RPC `arm` also accepted) |
 
+Either RPC build can reboot into **ESC-config mode** for AM32 ESC settings (no
+DShot, arming locked): see [ESC configuration](#esc-configuration-bench).
+
 ## Arming and disarming
 
 ### Throttle gesture (RC)
@@ -237,6 +240,57 @@ dart.
 
 Going back to Stabilized after an abort does not resume the test; start a new run.
 
+## ESC configuration (bench)
+
+RPC builds only, **props off**. Reads and changes the AM32 ESCs' settings through
+the FC, with the ESC leads left plugged in ([proposal 0002](changes/0002-esc-config-over-rpc.md)).
+Nothing here has run on hardware yet (TEST_PLAN 6.11).
+
+1. **Enter.** Disarmed, throttle 0: TUI `esc enter`, `elle direct esc enter`, or
+   `elle mcp` `esc_mode enter`. Event 170, the ULog file closes and the FC reboots
+   into ESC-config mode; the host reattaches by itself (a few seconds). Armed or an
+   engine commanded: refused, event 171, no reboot (the host says the switch did not
+   take). The same if the SD card has not closed the ULog file within 2 s.
+2. **In ESC-config mode** the engine pins carry a one-wire UART instead of DShot. The
+   LED double-blinks orange, the CRSF flight-mode text is `ESCCFG`, the TUI header
+   shows `ESC CONFIG` and its flight panels give way to an ESC panel. Arming is
+   refused (event 172). Flash writes, level cal and ULog peeks are refused (event 178). Elevons
+   still move, as in any RPC build. The battery stays connected: the FC runs off the
+   ESCs' 5 V. With `direct` or `elle mcp` (nothing sent between commands) the host
+   failsafe events 13/14/15 appear between commands; expected here, the TUI pings.
+3. **Wait ~2 s.** An AM32 ESC without DShot resets itself and, with the line held
+   high, stays in its bootloader. A `NoReply` right after entering is the ESC still
+   timing out: try again.
+4. **Connect and read:** `esc connect left` (or `right`, eagle only) → event 173/174
+   and the ESC's id and firmware name; `esc show` prints the settings.
+5. **Back up before any change:** `esc backup left [file]` saves the 256 bytes at the
+   EEPROM base (default `logs/esc/left-<id>-<time>.bin`), the same format as the
+   esc-config-rs relay CLI's `backup`. An existing file is never overwritten.
+6. **Change:** `esc set left beep_volume=5 …` (names as `esc show` / `esc_read` print
+   them, or the CLI's short names). Only the settings bytes (5..48) change; the
+   firmware writes, reads back and compares (event 177; a failure is 175/176). The
+   host prints what changed.
+7. **Restore:** `esc restore left <file>`: settings, melody and CAN from the backup;
+   boot and version bytes from the ESC. A backup from another EEPROM layout version is
+   refused.
+8. **Exit:** `esc exit` connects each ESC, sends each Run and reboots normally.
+   This is best effort: an ESC that missed its Run stays in its bootloader although
+   the exit succeeded. Check that events 160–165 stay absent and the governor
+   behaves (TEST_PLAN 6.8) before flying. `esc run`
+   alone is transient: without DShot the app drops back into its bootloader ~2 s
+   later. A plain FC reset also gives a normal boot.
+
+After any change to timing, PWM frequency, motor KV, poles or direction, the
+governor table may no longer fit. Compare the ESC with the backup taken at the last
+sweep (`esc_compare`): if any of those fields differ, re-sweep (the
+`governor-calibration` skill) before flying. Only an identical comparison keeps the
+old table.
+
+`elle mcp` can read (`esc_connect`, `esc_read`, `esc_backup`, `esc_compare`) without
+any flag. `esc_set` and `esc_restore` need the server started with
+`--dangerously-allow-esc-write`, and `esc_set` a backup of that ESC taken by the same
+server on the current link (it forgets them on disconnect, reset or mode switch).
+
 ## Flight recording (ULog)
 
 Recordings go to the **SD card** as `.ulg` files (open with PlotJuggler, pyulog or
@@ -276,6 +330,7 @@ See [`crates/elle-ulog/README.md`](../crates/elle-ulog/README.md).
 | Failsafe (link lost) | Rapid flash orange | Rapid flash orange |
 | Mag cal collecting | Fast blink yellow | — |
 | Level cal collecting | Fast blink cyan | Fast blink cyan |
+| ESC-config boot | — | Double blink orange |
 
 Code: `led_pattern` logic in `crates/elle-app/src/flight.rs` and `rpc.rs`.
 
@@ -320,5 +375,12 @@ when built with `defmt-logging`.
 | 160 / 161 | Left / right ESC stopped replying to DShot telemetry (power loss or restart) |
 | 162 / 163 | Left / right ESC re-sent spin direction and extended telemetry: it reappeared (restart, late power), or it answers but sent no EDT |
 | 164 / 165 | Left / right ESC still sends no EDT after the retries: its spin direction is unconfirmed |
+| 170 | Rebooting into ESC-config mode |
+| 171 | ESC-config mode switch refused: armed, or an engine commanded; or cancelled: the ULog file was still open 2 s later |
+| 172 | Arming refused: this is an ESC-config boot (no engine output), or a mode switch is pending (accepted, rebooting) |
+| 173 / 174 | Left / right ESC bootloader connected |
+| 175 / 176 | Left / right ESC settings write failed (NACK, CRC, no reply, or read-back mismatch) |
+| 177 | ESC settings write committed and read back identical |
+| 178 | Flash command (PID save, calibration, ULog peek/erase) or level cal refused: this is an ESC-config boot (exit it first) |
 
 Codes 32, 60 and 82 are retired and never sent.

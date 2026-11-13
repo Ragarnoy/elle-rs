@@ -323,9 +323,29 @@ impl<'a> FlightController<'a> {
         self.law.set_explicit_arming(enabled);
     }
 
-    /// Manual arm (for RTT/debug control)
-    pub fn arm(&mut self) {
-        self.law.arm();
+    /// Manual arm (for RTT/debug control). Returns false when arming is locked
+    /// (ESC-config boot, or a mode switch pending); the caller reports it.
+    #[must_use]
+    pub fn arm(&mut self) -> bool {
+        self.law.arm()
+    }
+
+    /// Refuse every arm: for the rest of an ESC-config boot (no engine output
+    /// path), or while a boot-mode switch is pending. Covers the explicit arm
+    /// and the throttle gesture.
+    pub fn lock_arming(&mut self) {
+        self.law.lock_arming();
+    }
+
+    /// Undo [`lock_arming`](Self::lock_arming) after a cancelled boot-mode
+    /// switch (normal boots only).
+    pub fn unlock_arming(&mut self) {
+        self.law.unlock_arming();
+    }
+
+    /// True once after the throttle gesture was refused by [`lock_arming`](Self::lock_arming).
+    pub fn take_arm_refused(&mut self) -> bool {
+        self.law.take_arm_refused()
     }
 
     /// Manual disarm (for RTT/debug control)

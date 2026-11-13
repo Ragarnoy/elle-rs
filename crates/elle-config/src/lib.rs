@@ -295,6 +295,38 @@ pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
 pub const FLASH_OP_WATCHDOG_MS: u64 = 6_000;
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
 
+// ESC configuration mode (proposal 0002)
+/// Watchdog scratch 0 holds this, and scratch 1 its complement, across the
+/// reboot into ESC-config mode ("ESCC"). Scratch 4–7 are left to the bootrom.
+pub const ESC_CONFIG_MAGIC: u32 = 0x4553_4343;
+/// Longest one ESC operation may take before its RPC answers `NoReply`. A
+/// 192-byte write with its read-back takes ~0.35 s; with every esc-session retry
+/// spent (`Timing::default()`: 3 retries of each step) it reaches ~2.1 s. The
+/// host waits `ESC_HOST_TIMEOUT_MS` for the answer.
+pub const ESC_OP_TIMEOUT_MS: u64 = 4_000;
+/// How long the host waits for an ESC RPC (`elle-rpc-host`): above
+/// `ESC_OP_TIMEOUT_MS`, so the firmware's own `NoReply` arrives first.
+pub const ESC_HOST_TIMEOUT_MS: u64 = 5_000;
+/// While an ESC operation holds the RPC server, the handler stamps the host
+/// link this often, so the RPC failsafe (300 ms) does not trip on a host that
+/// is waiting for the answer.
+pub const ESC_HOST_STAMP_MS: u64 = 100;
+/// Delay between accepting a mode switch and the reboot, so the RPC answer and
+/// the event reach the host first.
+pub const ESC_REBOOT_DELAY_MS: u64 = 200;
+/// Bytes of the AM32 settings structure (asserted equal to esc-config-icd's
+/// and esc-protocol's where those are used).
+pub const ESC_EEPROM_SIZE: usize = 192;
+/// Settings byte the AM32 bootloader overwrites with its own version on every
+/// write at the EEPROM base; the write verify skips it.
+pub const ESC_BOOTLOADER_VERSION_OFFSET: usize = 2;
+const _: () = assert!(ESC_BOOTLOADER_VERSION_OFFSET < ESC_EEPROM_SIZE);
+/// After `ESC_REBOOT_DELAY_MS`, how much longer the mode-switch reboot waits
+/// for the SD writer to close the ULog file before resetting anyway.
+pub const ESC_REBOOT_SD_WAIT_MS: u64 = 2_000;
+const _: () = assert!(ESC_HOST_STAMP_MS < RC_WARNING_MS);
+const _: () = assert!(ESC_OP_TIMEOUT_MS < ESC_HOST_TIMEOUT_MS);
+
 // Eagle: was left 100 / right -50 (75 us nose-up, 25 us left roll). In level
 // Stabilized flight LOG_0082 held ~100 us nose-down and ~50 us left roll in
 // every phase, gliding included; this moves both neutrals there: 25 us
@@ -553,19 +585,25 @@ pub const SETPOINT_FILTER_ALPHA: f32 = setpoint_filter_alpha(CONTROL_LOOP_DT);
 /// initial jump on a stick step (several hundred °/s otherwise): full bank in 0.5 s.
 pub const MAX_SETPOINT_RATE_DEG_S: f32 = 90.0;
 
-// Motor specs (eagle): 5000KV, 14-pole, 3S/4S, rated 20A/500g/330W (manufacturer test prop)
+// Motor specs (eagle): XFly 1413 5000KV, 6-pole (9N6P, 18 cogging steps per turn,
+// measured 2026-11-11; agrees with a 59 Hz bench vibration line at eRPM/3 and with
+// the throttle/eRPM fit), so mechanical rpm = eRPM / 3. 3S/4S, rated
+// 20A/500g/330W (manufacturer test prop).
 // Actual setup: 12-blade EDF, draws ~10A at max thrust (well within motor limits)
 // rpm_range sweep 26 Sep 2026, 4S at 16.25 V under load: left engine peaks at
-// 21,389 RPM (DShot 1498) and falls above; right flattens out at ~20,340 RPM
-// from DShot ~1400. MAX_RPM is capped at the slower engine (right) to avoid
-// asymmetric thrust. The engines are ~5% apart at the top (the previous
-// sweep had them ~2% apart), so the right side lost more top-end.
+// ~149,700 eRPM (DShot 1498) and falls above; right flattens out at ~142,400 eRPM
+// from DShot ~1400. (The sweep printed these as 21,389 / 20,340 "RPM", eRPM/7 for
+// a 14-pole motor; the real mechanical rpm is ~49,900 / ~47,460.) The ceiling is
+// capped at the slower engine (right) to avoid asymmetric thrust. The engines are
+// ~5% apart at the top (the previous sweep had them ~2% apart), so the right side
+// lost more top-end.
+//
+// The ceiling is defined in eRPM, the measured quantity: 142,100 eRPM is
+// ~47,366 rpm, which is not a whole rpm at 3 pole pairs.
 #[cfg(not(feature = "platform-dart"))]
-const MOTOR_POLES: u8 = 14;
+const MOTOR_POLES: u8 = 6;
 #[cfg(not(feature = "platform-dart"))]
-const MAX_RPM: u32 = 20_300; // right engine plateau, rpm_range sweep 2026-09-26
-#[cfg(not(feature = "platform-dart"))]
-pub const MAX_ERPM: u32 = MAX_RPM * (MOTOR_POLES as u32 / 2); // = 142,100
+pub const MAX_ERPM: u32 = 142_100; // right engine plateau, rpm_range sweep 2026-09-26 (~47,366 rpm)
 
 // Motor specs (dart). MOTOR_POLES = 14 (confirmed by the rpm_range sweep).
 // 3-blade prop, reversed spin. MAX_RPM is the full-throttle point of the

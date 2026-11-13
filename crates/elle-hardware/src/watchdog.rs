@@ -30,3 +30,25 @@ pub fn feed(timeout: Duration) {
         }
     });
 }
+
+/// Reboot into `mode` now, through the installed watchdog (a forced reset).
+///
+/// For [`BootMode::EscConfig`](crate::boot_mode::BootMode) the request goes in
+/// watchdog scratch 0 and 1 first; `boot_mode::init` reads it back after the
+/// reset. Only call it disarmed: it cuts every output. Does nothing before
+/// [`install`].
+pub fn reboot_into(mode: crate::boot_mode::BootMode) {
+    WATCHDOG.lock(|w| {
+        if let Some(wd) = w.borrow_mut().as_mut() {
+            let (s0, s1) = match mode {
+                crate::boot_mode::BootMode::EscConfig => {
+                    elle_control::boot_mode::esc_config_words()
+                }
+                crate::boot_mode::BootMode::Normal => (0, 0),
+            };
+            wd.set_scratch(0, s0);
+            wd.set_scratch(1, s1);
+            wd.trigger_reset();
+        }
+    });
+}
