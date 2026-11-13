@@ -48,8 +48,11 @@ is the ordered bench session that covers them before the next flight.
 - [ ] **Turn compensation** (branch `imu-replay`, off by default, TEST_PLAN Part 7): vehicle test first (7.2: with compensation the variants stay level through curves; confirms the forward axis and signs on real sensors), then data flights and the decision (7.3–7.4). The simulated numbers in `docs/ATTITUDE.md` (firmware ~5–7° roll RMS in turns; `Centripetal` 0.1° calm but ~5–7° in 6 m/s wind; `GnssAccel` ~2° either way) are not measurements.
 - [ ] **`elle mcp`** (branch `mcp-headless`, TEST_PLAN Part 8): only tested against a fake flight controller. On the eagle, props off: flash and reattach, `read build` matches the checkout, the engine gates (refused without `--dangerously-allow-motors`, needs `props_off_confirmed`, throttle cap, armed timer disarms), disarm when the client closes, the firmware's host failsafe when the server is killed, defmt decoding on the flight build. The three new endpoints (`GetBuildInfo`, `GetNav`, `GetCore1Load`) are firmware changes too.
 - [ ] **I2C fault handling**: an I2C error drops both mag and baro (event 48) without stalling Core 1.
+- [ ] **Flight law move** (proposal [0007](docs/changes/0007-host-flight-law.md), branch `flight-law`): host-proven identical to the old controller. On one airframe, props off: TEST_PLAN 1.1–1.4 (elevon and thrust direction, Stabilized PID direction, arming gesture and kill switch), and `loop_stages` `Update` mean/max against a log from `3438ced` (the Manual fast path moved across a crate boundary). `controller.pwm_counter_us` may read a few µs later than before; nothing else should change.
 
 ## Near term
+
+- **Flight law regression test** (proposal 0007): before deleting the equivalence oracle (`crates/elle-control/tests/flight_law_equivalence*`), add `FlightLaw` golden outputs for `scripted.stream`, so the law keeps a host test once the old copy goes.
 
 **1. Pre-arm checks (~1 h)**
 - Attitude freshness: `ATTITUDE` age < 100 ms (proves Core 1 and the IMU are alive).

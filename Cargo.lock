@@ -1189,11 +1189,16 @@ name = "elle-control"
 version = "0.3.0"
 dependencies = [
  "bytemuck",
+ "critical-section",
  "defmt 1.1.1",
  "elle-config",
+ "embassy-executor",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
+ "embassy-sync",
  "embassy-time",
  "libm",
  "nalgebra",
+ "sha2",
  "uf-ahrs",
 ]
 
@@ -1544,6 +1549,7 @@ dependencies = [
  "defmt 1.1.1",
  "document-features",
  "embassy-time-driver",
+ "embassy-time-queue-utils",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",

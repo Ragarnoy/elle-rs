@@ -21,3 +21,14 @@ platform-dart = ["elle-config/platform-dart"]
 [lib]
 test = false
 bench = false
+
+# Proposal 0007 equivalence oracle: the pre- and post-refactor FlightController
+# build on the host against shims, on embassy-time's mock clock. Host-only, so
+# the firmware target never resolves them.
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+embassy-time = { workspace = true, features = ["mock-driver"] }
+embassy-sync = { workspace = true }
+embassy-executor = { workspace = true }
+embassy-futures = { workspace = true }
+critical-section = { version = "1.2", features = ["std"] }
+sha2 = "0.10"

@@ -52,4 +52,4 @@ doesn't apply gets "None", not padding.
 | [0003](0003-board-orientation.md) | Per-airframe board orientation | Implemented: eagle 0.1.2 passed; Part 1.3 on the eagle due |
 | [0004](0004-throttle-gain-schedule.md) | Throttle-scheduled attitude gains | Draft: waits on the dart's roll Kp 0.18 flight (gate 1) |
 | [0005](0005-dual-imu-cross-check.md) | Dual-IMU cross-check | Draft: hardware (Rev B second ICM-45686) ahead of this firmware proposal |
-| [0007](0007-host-flight-law.md) | Host-buildable flight law | Draft: refactor with an equivalence proof; recorded-stream source open |
+| [0007](0007-host-flight-law.md) | Host-buildable flight law | Accepted: implemented on `flight-law`; bench checks due |

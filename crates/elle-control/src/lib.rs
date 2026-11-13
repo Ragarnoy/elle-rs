@@ -9,6 +9,7 @@ pub mod dshot_pace;
 pub mod esc;
 pub mod esc_link;
 pub mod filter;
+pub mod flight_law;
 pub mod governor;
 pub mod gyro_bias;
 pub mod heading;

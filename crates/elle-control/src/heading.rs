@@ -69,6 +69,11 @@ impl HeadingController {
     /// Computes the next roll setpoint (degrees), clamped to `max_roll_deg` and
     /// slew-limited to `max_roll_rate_deg_s` per `CONTROL_LOOP_DT` tick.
     pub fn update(&mut self, target_rad: f32, current_rad: f32) -> f32 {
+        self.update_dt(target_rad, current_rad, CONTROL_LOOP_DT)
+    }
+
+    /// [`update`](Self::update) over a tick of `dt` seconds.
+    pub fn update_dt(&mut self, target_rad: f32, current_rad: f32, dt: f32) -> f32 {
         let error_deg = self.heading_error_deg(target_rad, current_rad);
 
         let i_limit = if self.i_limit_deg > 0.0 {
@@ -76,13 +81,13 @@ impl HeadingController {
         } else {
             0.0
         };
-        let sum = self.integral + error_deg * CONTROL_LOOP_DT;
+        let sum = self.integral + error_deg * dt;
         self.integral = sum.clamp(-i_limit, i_limit);
 
         let raw_deg = self.kp * error_deg + self.ki * self.integral;
         let clamped_deg = raw_deg.clamp(-self.max_roll_deg, self.max_roll_deg);
 
-        let max_step = self.max_roll_rate_deg_s * CONTROL_LOOP_DT;
+        let max_step = self.max_roll_rate_deg_s * dt;
         let delta = (clamped_deg - self.last_output_deg).clamp(-max_step, max_step);
         self.last_output_deg += delta;
         self.last_output_deg
