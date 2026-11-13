@@ -72,6 +72,12 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight and was at the nose-up limit 43% of the time.
 
 ### Fixed
+- Disarm stops the engines at once (operator behaviour, proposal 0008): the DShot
+  task played the disarm beep (with ~300 ms of sleeps) before reading the new target,
+  so after every disarm, kill switch and failsafe included, the engines kept their
+  last throttle for ~330 ms (bench LOG_0094). The target is now read first and
+  `MotorStop` goes out on the next frame; beeps play only with zero targets and the
+  engines at rest, and a throttle-up cancels one.
 - SD writes are batched into multi-block writes (ULog recording): the writer wrote
   each queued chunk as it came, which left the file position off the sector grid, so
   every 512 B cost a sector read, a single-block write and its busy wait. An

@@ -50,6 +50,21 @@ pub const DSHOT_LOOP_PERIOD_US: u64 = 1_000;
 /// splice as a beep command or a throttle pulse.
 pub const DSHOT_MIN_FRAME_GAP_US: u64 = 200;
 const _: () = assert!(DSHOT_MIN_FRAME_GAP_US < DSHOT_LOOP_PERIOD_US);
+/// Arm/disarm beeps (`elle_control::beep`). A beep is a burst of DShot beep
+/// commands, which take the frame slot a throttle or stop frame would have used,
+/// so one is only ever played with both targets at zero and both engines at rest,
+/// and is cancelled the moment a target goes non-zero. A disarm therefore sends
+/// MotorStop on the next frame and beeps once the engines have spun down.
+/// An engine is at rest below this eRPM (telemetry at MotorStop reads 0).
+pub const BEEP_AT_REST_ERPM: u32 = 2_000;
+/// Without valid telemetry, an engine counts as at rest this long after its target
+/// went to zero.
+pub const BEEP_SPINDOWN_FALLBACK_MS: u64 = 2_000;
+/// A requested beep not started within this long is dropped.
+pub const BEEP_MAX_WAIT_MS: u64 = 4_000;
+/// Gap between the disarm beep's two bursts.
+pub const BEEP_GAP_MS: u64 = 100;
+const _: () = assert!(BEEP_SPINDOWN_FALLBACK_MS < BEEP_MAX_WAIT_MS);
 /// Consecutive unanswered telemetry requests (~1 per ms) before an ESC counts as
 /// silent (lost power or restarted). When it answers again it is sent the boot
 /// configuration (spin direction, extended telemetry) again.
