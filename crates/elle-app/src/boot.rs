@@ -26,6 +26,12 @@ const FLASH_LOAD_TIMEOUT: Duration = Duration::from_secs(2);
 /// controller is constructed here and lives in this future only.
 pub async fn run(pwm: PwmOutputs<'static>, watchdog: Watchdog<'static>, epoch_ms: u64) -> ! {
     let mut fc = FlightController::new(pwm);
+    // ESC-config boot (proposal 0002): no DShot, so no engine output path.
+    // Lock arming before anything can arm, for the rest of this boot.
+    if elle_hardware::boot_mode::is_esc_config() {
+        fc.lock_arming();
+        info!("Core0: ESC-config boot, arming locked");
+    }
 
     // Wait for IMU to be ready
     info!("Core0: Waiting for IMU initialization...");

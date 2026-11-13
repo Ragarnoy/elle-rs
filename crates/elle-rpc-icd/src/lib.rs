@@ -469,6 +469,63 @@ pub struct LogMsg {
 }
 
 // ============================================================================
+// ESC configuration (proposal 0002)
+// ============================================================================
+//
+// The ESC operations reuse esc-config-icd's request and response types and its
+// `EscError`, with the engine added. They run only in an ESC-config boot; in a
+// normal boot they answer `EscError::NotConnected`.
+
+pub use esc_config_icd::{
+    AckResp as EscAckResp, Block as EscBlock, BlockResp as EscBlockResp,
+    ConnectResp as EscConnectResp, DeviceKind as EscDeviceKind, EEPROM_SIZE as ESC_EEPROM_SIZE,
+    Eeprom as EscEeprom, EepromResp as EscEepromResp, EscError, EscInfo,
+    LayoutInfo as EscLayoutInfo, MAX_BLOCK as ESC_MAX_BLOCK, ReadReq as EscReadReq,
+};
+
+/// Which engine's ESC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub enum EscEngine {
+    /// `PIN_14`; the dart's only engine.
+    Left,
+    /// `PIN_11`; eagle only (the dart answers `EscError::Link`).
+    Right,
+}
+
+/// This boot's mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub enum EscBootMode {
+    /// DShot on the engine pins.
+    Normal,
+    /// One-wire UART on the engine pins, arming locked.
+    EscConfig,
+}
+
+/// `elle/esc/eeprom/write` request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct EscWriteReq {
+    /// Which ESC.
+    pub engine: EscEngine,
+    /// The whole 192-byte settings structure.
+    pub data: EscEeprom,
+}
+
+/// `elle/esc/read` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
+pub struct EscRawReadReq {
+    /// Which ESC.
+    pub engine: EscEngine,
+    /// Address and length.
+    pub read: EscReadReq,
+}
+
+/// `AckResp::error_code` for an ESC-config switch refused while armed (or an
+/// engine still commanded).
+pub const ESC_MODE_REFUSED_ARMED: u8 = 1;
+/// `AckResp::error_code` when the control loop's command queue is full: try again.
+pub const ESC_MODE_BUSY: u8 = 2;
+
+// ============================================================================
 // Endpoint Definitions
 // ============================================================================
 
@@ -513,6 +570,15 @@ endpoints! {
     | GetBuildInfoEndpoint    | ()                | BuildInfoResp     | "elle/sys/build"        |
     | GetNavEndpoint          | ()                | NavResp           | "elle/query/nav"        |
     | GetCore1LoadEndpoint    | ()                | Core1LoadResp     | "elle/query/core1"      |
+    | EscModeEndpoint         | ()                | EscBootMode       | "elle/esc/mode"         |
+    | EscEnterEndpoint        | ()                | AckResp           | "elle/esc/mode/enter"   |
+    | EscExitEndpoint         | ()                | AckResp           | "elle/esc/mode/exit"    |
+    | EscConnectEndpoint      | EscEngine         | EscConnectResp    | "elle/esc/connect"      |
+    | EscReadEepromEndpoint   | EscEngine         | EscEepromResp     | "elle/esc/eeprom/read"  |
+    | EscWriteEepromEndpoint  | EscWriteReq       | EscAckResp        | "elle/esc/eeprom/write" |
+    | EscNameEndpoint         | EscEngine         | EscBlockResp      | "elle/esc/name"         |
+    | EscReadEndpoint         | EscRawReadReq     | EscBlockResp      | "elle/esc/read"         |
+    | EscRunEndpoint          | EscEngine         | EscAckResp        | "elle/esc/run"          |
 }
 
 // ============================================================================

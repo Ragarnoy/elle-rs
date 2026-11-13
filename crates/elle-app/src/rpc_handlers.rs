@@ -40,6 +40,9 @@ pub(crate) enum RpcCommand {
         enabled: bool,
         target_cdeg: i16,
     },
+    /// Reboot into this mode (proposal 0002); the loop refuses it unless
+    /// disarmed with both engine targets at zero.
+    SwitchBootMode(elle_hardware::boot_mode::BootMode),
 }
 
 /// Channel for RPC commands to flight controller

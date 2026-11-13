@@ -36,6 +36,10 @@ enum Commands {
         /// Highest throttle the agent may set, percent.
         #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u8).range(0..=100))]
         max_throttle: u8,
+        /// Let the agent write ESC EEPROM settings (`esc_set`, `esc_restore`).
+        /// Without it, ESC tools only read.
+        #[arg(long)]
+        dangerously_allow_esc_write: bool,
     },
 }
 
@@ -50,11 +54,13 @@ async fn main() -> Result<()> {
             dangerously_allow_motors,
             max_armed_s,
             max_throttle,
+            dangerously_allow_esc_write,
         }) => {
             elle_rpc_host::mcp::serve(elle_rpc_host::mcp::Options {
                 allow_motors: dangerously_allow_motors,
                 max_armed: std::time::Duration::from_secs(max_armed_s),
                 max_throttle_pct: max_throttle,
+                allow_esc_write: dangerously_allow_esc_write,
             })
             .await
         }

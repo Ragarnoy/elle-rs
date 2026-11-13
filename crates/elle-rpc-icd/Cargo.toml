@@ -6,7 +6,7 @@ description = "Interface Control Document for Elle RPC protocol"
 
 [features]
 default = []
-use-std = ["postcard/use-std", "postcard-rpc/use-std", "postcard-schema/use-std", "serde/std"]
+use-std = ["postcard/use-std", "postcard-rpc/use-std", "postcard-schema/use-std", "serde/std", "esc-config-icd/use-std"]
 
 [dependencies]
 postcard = { workspace = true }
@@ -14,6 +14,8 @@ postcard-rpc = { workspace = true }
 postcard-schema = { workspace = true }
 serde = { workspace = true }
 heapless = { workspace = true }
+# ESC configuration request/response types (proposal 0002).
+esc-config-icd = { workspace = true }
 
 [lib]
 test = false

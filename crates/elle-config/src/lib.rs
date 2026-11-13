@@ -295,6 +295,38 @@ pub const WATCHDOG_TIMEOUT_MS: u64 = 500; // Hardware watchdog timeout
 pub const FLASH_OP_WATCHDOG_MS: u64 = 6_000;
 pub const CORE1_HEALTH_TIMEOUT_MS: u64 = 2000; // Core 1 health check timeout
 
+// ESC configuration mode (proposal 0002)
+/// Watchdog scratch 0 holds this, and scratch 1 its complement, across the
+/// reboot into ESC-config mode ("ESCC"). Scratch 4–7 are left to the bootrom.
+pub const ESC_CONFIG_MAGIC: u32 = 0x4553_4343;
+/// Longest one ESC operation may take before its RPC answers `NoReply`. A
+/// 192-byte write with its read-back takes ~0.35 s; with every esc-session retry
+/// spent (`Timing::default()`: 3 retries of each step) it reaches ~2.1 s. The
+/// host waits `ESC_HOST_TIMEOUT_MS` for the answer.
+pub const ESC_OP_TIMEOUT_MS: u64 = 4_000;
+/// How long the host waits for an ESC RPC (`elle-rpc-host`): above
+/// `ESC_OP_TIMEOUT_MS`, so the firmware's own `NoReply` arrives first.
+pub const ESC_HOST_TIMEOUT_MS: u64 = 5_000;
+/// While an ESC operation holds the RPC server, the handler stamps the host
+/// link this often, so the RPC failsafe (300 ms) does not trip on a host that
+/// is waiting for the answer.
+pub const ESC_HOST_STAMP_MS: u64 = 100;
+/// Delay between accepting a mode switch and the reboot, so the RPC answer and
+/// the event reach the host first.
+pub const ESC_REBOOT_DELAY_MS: u64 = 200;
+/// Bytes of the AM32 settings structure (asserted equal to esc-config-icd's
+/// and esc-protocol's where those are used).
+pub const ESC_EEPROM_SIZE: usize = 192;
+/// Settings byte the AM32 bootloader overwrites with its own version on every
+/// write at the EEPROM base; the write verify skips it.
+pub const ESC_BOOTLOADER_VERSION_OFFSET: usize = 2;
+const _: () = assert!(ESC_BOOTLOADER_VERSION_OFFSET < ESC_EEPROM_SIZE);
+/// After `ESC_REBOOT_DELAY_MS`, how much longer the mode-switch reboot waits
+/// for the SD writer to close the ULog file before resetting anyway.
+pub const ESC_REBOOT_SD_WAIT_MS: u64 = 2_000;
+const _: () = assert!(ESC_HOST_STAMP_MS < RC_WARNING_MS);
+const _: () = assert!(ESC_OP_TIMEOUT_MS < ESC_HOST_TIMEOUT_MS);
+
 // Eagle: was left 100 / right -50 (75 us nose-up, 25 us left roll). In level
 // Stabilized flight LOG_0082 held ~100 us nose-down and ~50 us left roll in
 // every phase, gliding included; this moves both neutrals there: 25 us

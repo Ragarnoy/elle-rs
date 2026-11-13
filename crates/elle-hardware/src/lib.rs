@@ -1,7 +1,10 @@
 #![no_std]
 
+pub mod boot_mode;
 pub mod crsf;
 pub mod dshot;
+#[cfg(feature = "esc-config")]
+pub mod esc_config;
 pub mod event;
 pub mod flash;
 #[cfg(feature = "gnss")]

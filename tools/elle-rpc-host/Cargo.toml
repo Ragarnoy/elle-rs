@@ -13,6 +13,8 @@ elle-config = { workspace = true }
 elle-rpc-icd = { workspace = true, features = ["use-std"] }
 postcard-rpc = { workspace = true, features = ["use-std"] }
 cobs = { workspace = true }
+# AM32 settings decoding and host policy (proposal 0002).
+esc-protocol = { workspace = true, features = ["std", "serde"] }
 
 probe-rs = { version = "0.32", default-features = false, features = ["builtin-targets", "builtin-formats"] }
 clap = { version = "4", features = ["derive"] }

@@ -90,6 +90,11 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_rp::init(config);
 
+    // This boot's mode, first: it decides what drives the engine pins, and the
+    // flash manager reads it. Clears the request, so the next boot is normal.
+    let mut watchdog = Watchdog::new(p.WATCHDOG);
+    let boot_mode = elle_hardware::boot_mode::init(&mut watchdog);
+
     // Initialize AON timer with compile-time UNIX epoch for wall-clock reference
     let epoch_ms = compile_time::unix!() * 1000;
     let aon_config = AonConfig {
@@ -98,6 +103,12 @@ async fn main(spawner: Spawner) {
         alarm_wake_mode: AlarmWakeMode::Disabled,
     };
     let mut aon = AonTimer::new(p.POWMAN, Irqs, aon_config);
+    // POWMAN is in the always-on domain: the timer keeps running through a
+    // watchdog reset (ESC-config mode switch, watchdog timeout), and
+    // `set_counter` panics on a running timer. Stop it first.
+    if aon.is_running() {
+        aon.stop();
+    }
     aon.set_counter(epoch_ms);
     aon.start();
     info!("AON: seeded with epoch {}ms", epoch_ms);
@@ -151,25 +162,46 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(led_task(common, led_sm, p.DMA_CH2, Irqs, p.PIN_10).unwrap());
 
-    // Setup DShot300 single engine on PIO1 (PIN_14)
-    info!("Core0: Setting up DShot300 single engine");
-    // The program is only borrowed while the driver is built; the block's `Common`
-    // and unused state machines drop here, as they did inside the pre-0.5 constructor.
-    let Pio {
-        mut common, sm0, ..
-    } = Pio::new(p.PIO1, Irqs);
-    let prog = embassy_dshot::rp::BidirDshotProgram::new(&mut common);
-    let engine = embassy_dshot::rp::BidirDshotPio::new(
-        sm0,
-        &mut common,
-        p.PIN_14,
-        &prog,
-        embassy_dshot::rp::DshotSpeed::DShot300,
-    );
     // Priority must be set before start(), which unmasks the interrupt.
     interrupt::SWI_IRQ_0.set_priority(Priority::P2);
     let dshot_spawner = EXECUTOR_DSHOT.start(interrupt::SWI_IRQ_0);
-    dshot_spawner.spawn(dshot_single_task(engine).unwrap());
+
+    if boot_mode == elle_hardware::boot_mode::BootMode::EscConfig {
+        // ESC-config boot (RPC builds only, proposal 0002): a one-wire UART on
+        // the engine pin instead of DShot, and the AM32 bootloader session on
+        // the interrupt executor. No DShot program is ever loaded.
+        #[cfg(feature = "rpc-control")]
+        {
+            use elle_hardware::esc_config::{OneWireUart, esc_config_task};
+            info!("Core0: ESC-config boot, one-wire UART on the engine pin");
+            let Pio {
+                mut common,
+                sm0,
+                sm1,
+                ..
+            } = Pio::new(p.PIO1, Irqs);
+            let engine = OneWireUart::new(&mut common, sm0, sm1, p.PIN_14);
+            dshot_spawner.spawn(esc_config_task(engine, None).unwrap());
+        }
+    } else {
+        // DShot300 single engine on PIO1 (PIN_14).
+        info!("Core0: Setting up DShot300 single engine");
+        // The program is only borrowed while the driver is built; the block's
+        // `Common` and unused state machines drop here, as they did inside the
+        // pre-0.5 constructor.
+        let Pio {
+            mut common, sm0, ..
+        } = Pio::new(p.PIO1, Irqs);
+        let prog = embassy_dshot::rp::BidirDshotProgram::new(&mut common);
+        let engine = embassy_dshot::rp::BidirDshotPio::new(
+            sm0,
+            &mut common,
+            p.PIN_14,
+            &prog,
+            embassy_dshot::rp::DshotSpeed::DShot300,
+        );
+        dshot_spawner.spawn(dshot_single_task(engine).unwrap());
+    }
 
     #[cfg(feature = "rpc-control")]
     {
@@ -240,7 +272,7 @@ async fn main(spawner: Spawner) {
         );
         spawner.spawn(elle_hardware::gnss::gnss_task(gnss_uart).unwrap());
     }
-    elle_app::boot::run(pwm, Watchdog::new(p.WATCHDOG), epoch_ms).await
+    elle_app::boot::run(pwm, watchdog, epoch_ms).await
 }
 
 #[embassy_executor::task]

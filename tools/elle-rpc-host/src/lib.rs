@@ -3,6 +3,7 @@
 //! `direct` commands and the MCP server.
 
 pub mod analysis;
+pub mod esc;
 pub mod events;
 pub mod link;
 pub mod mcp;

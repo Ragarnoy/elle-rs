@@ -109,7 +109,10 @@ fn build_attitude_frame(buf: &mut [u8; 10], pitch: f32, roll: f32, yaw: f32) {
 /// Payload: null-terminated ASCII string.
 /// Returns total frame length (variable, max 14).
 fn build_flight_mode_frame(buf: &mut [u8; 14], mode: &CrsfFlightMode) -> usize {
-    let mode_str: &[u8] = if mode.failsafe {
+    let mode_str: &[u8] = if crate::boot_mode::is_esc_config() {
+        // ESC-config boot (proposal 0002): no engine output, cannot arm.
+        b"ESCCFG\0"
+    } else if mode.failsafe {
         b"!FS!\0"
     } else if !mode.armed {
         // Disarmed: say whether arming would lock a home (the navigator's,
