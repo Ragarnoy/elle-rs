@@ -716,6 +716,7 @@ ESC first, and keep a relay backup of each ESC for rows 2–3. Procedure:
 | 10 | In ESC-config mode: `mag cal clear`, `savepid`, `level cal`, `ulog extract` | Each refused, event 178 | [ ] |
 | 11 | `esc set` and `esc restore` (192-byte requests, the largest host-to-FC frames) | Both answer within ~1 s; no RPC timeouts while reads work | [ ] |
 | 12 | Normal boot, `ulog start`, ~10 s, then `esc enter` (SD card in) | 170, then the reboot within ~2 s; the host reattaches (about 3 s) and reports `ESC CONFIG`. On the card, that log file ends cleanly: its last seconds are present (`flight-logs` skill), and no later file starts with its data | [ ] |
+| 13 | AON timer across watchdog resets (fix d5e9af8): `esc enter`, `esc exit`, `esc enter`, `esc exit` back to back, no power cycle; `read time` before and after | Every reboot reattaches within ~20 s (before the fix the second boot hung in HardFault until a power cycle); the time keeps counting forward across the resets | [ ] |
 
 ## Part 7: Attitude Estimation and Turn Compensation
 

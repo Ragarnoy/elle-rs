@@ -371,14 +371,25 @@ calibration save in flight when the switch reboots is cut as by any reset, which
 
 ## Open questions
 
-1. **Bootloader entry by signal timeout** ([Bootloader entry](#bootloader-entry)) is
-   read from the AM32 source, not seen on hardware; bench step 2 settles it. Older
-   AM32 versions without the disarmed 2 s reset are **not supported**: on those,
-   `esc connect` keeps failing with `NoReply`.
-2. **Exit by FC reset**, also source-derived and bench-tested (step 8): after a plain
-   FC reset the pads pull low, and a bootloader waiting for a byte jumps to its app
-   after 20 ms of low line. `esc exit` does not depend on it: it sends Run to each ESC, connecting first one this
-   boot never connected (an ESC still in its app just fails the connect).
+Both are answered on the eagle (F4A_4IN1_F421, AM32 2.20), 2026-11-11, TEST_PLAN 6.11.
+The dart is still to run.
+
+1. **Bootloader entry by signal timeout** ([Bootloader entry](#bootloader-entry)):
+   **yes.** After `esc enter`, with no ESC power cycle, both ESCs answered the
+   bootloader handshake (173/174, row 2). Not timed with a logic analyser. Older
+   AM32 versions without the disarmed 2 s reset are still **not supported**: on
+   those, `esc connect` keeps failing with `NoReply`.
+2. **Exit by FC reset:** **yes.** With both ESCs connected in their bootloaders, a
+   plain probe reset (no `esc exit`) gave a normal boot with both ESCs sending
+   their app's telemetry and no events 160–165 within 15 s (row 8, which also passes
+   `esc exit` with one or both ESCs connected). `esc exit` still sends Run to each
+   ESC first, connecting one this boot never connected (an ESC still in its app
+   just fails the connect).
+
+The bench also found a fault that predates this proposal: the AON timer keeps
+running through a watchdog reset, and `set_counter` panicked on a running timer, so
+every watchdog reset (the mode switch included) ended in HardFault until a power
+cycle. Fixed in `d5e9af8` (stop the timer before reseeding it); TEST_PLAN 6.11 row 13.
 
 ## Rollback
 
