@@ -377,7 +377,7 @@ when built with `defmt-logging`.
 | 164 / 165 | Left / right ESC still sends no EDT after the retries: its spin direction is unconfirmed |
 | 170 | Rebooting into ESC-config mode |
 | 171 | ESC-config mode switch refused: armed, or an engine commanded; or cancelled: the ULog file was still open 2 s later |
-| 172 | Arming refused: this is an ESC-config boot (no engine output) |
+| 172 | Arming refused: this is an ESC-config boot (no engine output), or a mode switch is pending (accepted, rebooting) |
 | 173 / 174 | Left / right ESC bootloader connected |
 | 175 / 176 | Left / right ESC settings write failed (NACK, CRC, no reply, or read-back mismatch) |
 | 177 | ESC settings write committed and read back identical |

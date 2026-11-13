@@ -222,7 +222,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                         elle_hardware::elle_event!(
                             warn,
                             elle_hardware::event::EVT_ARM_REFUSED_ESC_CONFIG,
-                            "RPC: arm refused, ESC-config boot"
+                            "RPC: arm refused, ESC-config boot or mode switch pending"
                         );
                     }
                 }
@@ -494,6 +494,9 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                                 "Rebooting into ESC-config mode"
                             );
                         }
+                        // Nothing may arm before the reset (the RPC arm and the
+                        // rpc-rc gesture both answer 172 now).
+                        fc.lock_arming();
                         // Close the SD file before the reset.
                         if ULOG_ENABLED.load(Ordering::Acquire) {
                             ULOG_ENABLED.store(false, Ordering::Release);
@@ -649,7 +652,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             elle_hardware::elle_event!(
                 warn,
                 elle_hardware::event::EVT_ARM_REFUSED_ESC_CONFIG,
-                "Arming gesture refused, ESC-config boot"
+                "Arming gesture refused, ESC-config boot or mode switch pending"
             );
         }
 
@@ -973,21 +976,22 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
             drop(imu_status);
         }
 
-        // An accepted mode switch: still disarmed (nothing can arm in between
-        // without a refusal above), the answer and event are out, and the SD
-        // writer has closed the ULog file. A file still open after
-        // `ESC_REBOOT_SD_WAIT_MS` cancels the switch (171) rather than reset in
+        // An accepted mode switch: arming is locked since it was accepted, so
+        // still disarmed; the answer and event are out, and the SD writer has
+        // closed the ULog file. A file still open after `ESC_REBOOT_SD_WAIT_MS`
+        // cancels the switch (171, arming unlocked again) rather than reset in
         // the middle of a FAT update.
         if let Some((at, mode)) = reboot_at
             && Instant::now() >= at
         {
             let sd_busy = elle_hardware::sd_writer::SD_FILE_OPEN.load(Ordering::Acquire);
-            if fc.is_armed() {
-                reboot_at = None;
-            } else if !sd_busy {
+            if !sd_busy {
                 elle_hardware::watchdog::reboot_into(mode);
             } else if Instant::now() >= at + Duration::from_millis(ESC_REBOOT_SD_WAIT_MS) {
                 reboot_at = None;
+                if !esc_config {
+                    fc.unlock_arming();
+                }
                 elle_hardware::elle_event!(
                     warn,
                     elle_hardware::event::EVT_ESC_CONFIG_REFUSED,

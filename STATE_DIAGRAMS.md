@@ -36,7 +36,9 @@ stateDiagram-v2
 - Pure RPC mode has no gesture: `arm` / `disarm` / `stop` over RPC, and `arm` is refused
   while the commanded throttle is above zero (event 18).
 - In an ESC-config boot (below) arming is locked for the whole boot: the gesture and
-  RPC `arm` never leave Disarmed (event 172).
+  RPC `arm` never leave Disarmed (event 172). The same lock holds from an accepted
+  mode switch to its reboot; a switch cancelled because the ULog file stayed open
+  (171) releases it.
 
 ## Boot mode (RPC builds)
 

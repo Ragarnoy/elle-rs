@@ -806,10 +806,17 @@ impl<'a> FlightController<'a> {
         self.arming.arm()
     }
 
-    /// Refuse every arm for the rest of this boot: an ESC-config boot has no
-    /// engine output path. Covers the explicit arm and the throttle gesture.
+    /// Refuse every arm: for the rest of an ESC-config boot (no engine output
+    /// path), or while a boot-mode switch is pending. Covers the explicit arm
+    /// and the throttle gesture.
     pub fn lock_arming(&mut self) {
         self.arming.lock();
+    }
+
+    /// Undo [`lock_arming`](Self::lock_arming) after a cancelled boot-mode
+    /// switch (normal boots only).
+    pub fn unlock_arming(&mut self) {
+        self.arming.unlock();
     }
 
     /// True once after the throttle gesture was refused by [`lock_arming`](Self::lock_arming).

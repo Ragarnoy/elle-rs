@@ -38,11 +38,20 @@ impl ArmingState {
         }
     }
 
-    /// Refuse every arm from now on (ESC-config boot: no engine output path).
-    /// There is no unlock: the mode ends with a reboot.
+    /// Refuse every arm from now on: an ESC-config boot (no engine output
+    /// path), or a normal boot with a mode switch pending (the reboot must not
+    /// meet an armed aircraft). Only a cancelled switch unlocks.
     pub fn lock(&mut self) {
         self.locked = true;
         self.armed = false;
+    }
+
+    /// Undo [`lock`](Self::lock) after a cancelled mode switch. Never in an
+    /// ESC-config boot. A gesture refused while locked must be repeated.
+    pub fn unlock(&mut self) {
+        self.locked = false;
+        self.refused = false;
+        self.seen_throttle_high = false;
     }
 
     /// Whether arming is locked.

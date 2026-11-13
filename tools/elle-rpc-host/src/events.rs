@@ -111,7 +111,7 @@ pub const fn label(code: u16) -> &'static str {
         // ESC configuration (170–179, proposal 0002)
         170 => "ESC config: rebooting into ESC-config mode",
         171 => "ESC config: refused or cancelled (armed, engine commanded, or ULog still closing)",
-        172 => "Arm refused: ESC-config boot (no engine output)",
+        172 => "Arm refused: ESC-config boot or mode switch pending",
         173 => "ESC config: left ESC bootloader connected",
         174 => "ESC config: right ESC bootloader connected",
         175 => "ESC config: left ESC write failed",
