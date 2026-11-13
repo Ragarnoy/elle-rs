@@ -392,12 +392,16 @@ pub const ROLL_KI: f32 = 0.012;
 #[cfg(feature = "platform-dart")]
 pub const ROLL_KD: f32 = 0.04;
 
+// Eagle pitch, round A (2026-11-13): 0.45/0.020/0.16 (the dart's) flew a 3-4 Hz
+// pitch limit cycle in LOG_0082. The loop delay is ~55 ms (ESTIMATE, closed-loop
+// sim and the log), and D is the term that delay punishes, so kd 0.16 -> 0.02 and
+// kp 0.45 -> 0.35. Ki unchanged.
 #[cfg(not(feature = "platform-dart"))]
-pub const PITCH_KP: f32 = 0.45;
+pub const PITCH_KP: f32 = 0.35;
 #[cfg(not(feature = "platform-dart"))]
 pub const PITCH_KI: f32 = 0.020;
 #[cfg(not(feature = "platform-dart"))]
-pub const PITCH_KD: f32 = 0.16;
+pub const PITCH_KD: f32 = 0.02;
 
 // Dart: inverted from LOG_0026 / 0032 / 0035 holds (docs/DART_PID.md).
 // 0.25/0.125 flew but sagged; 0.50/0.40 punched / blew roll. I stays low.
