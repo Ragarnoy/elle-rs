@@ -76,11 +76,16 @@ impl ULogWriter {
     ///
     /// `epoch_ms` is the wall-clock time in ms since UNIX epoch at the start of recording.
     /// Written as `uint64_t sys_start_time_utc_ms` info message (PX4 convention).
+    ///
+    /// `ver_sw_git` is the build's `git describe` (with `-dirty` for an
+    /// uncommitted tree), written as `char[] ver_sw_git`: `ver_sw` alone is the
+    /// crate version, the same for every build of a release.
     pub fn write_definitions(
         &mut self,
         sys_name: &str,
         ver_hw: &str,
         ver_sw: &str,
+        ver_sw_git: &str,
         epoch_ms: u64,
     ) -> Result<(), WriteError> {
         if self.definitions_written {
@@ -155,6 +160,7 @@ impl ULogWriter {
         self.write_info("char[] sys_name", sys_name)?;
         self.write_info("char[] ver_hw", ver_hw)?;
         self.write_info("char[] ver_sw", ver_sw)?;
+        self.write_info("char[] ver_sw_git", ver_sw_git)?;
         self.write_info_u64("uint64_t sys_start_time_utc_ms", epoch_ms)?;
 
         self.definitions_written = true;

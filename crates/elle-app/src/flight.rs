@@ -549,7 +549,11 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
                     elle_hardware::sd_writer::SD_CMD_SIGNAL
                         .signal(elle_hardware::sd_writer::SdCommand::Start);
                     let wall_ms = epoch_ms + Instant::now().as_micros() / 1000;
-                    if ulog_logger.initialize(wall_ms).await.is_err() {
+                    if ulog_logger
+                        .initialize(wall_ms, env!("ELLE_GIT_DESCRIBE"))
+                        .await
+                        .is_err()
+                    {
                         elle_hardware::sd_writer::SD_CMD_SIGNAL
                             .signal(elle_hardware::sd_writer::SdCommand::Stop);
                     }

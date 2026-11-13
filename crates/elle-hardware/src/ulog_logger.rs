@@ -94,8 +94,9 @@ impl ULogLogger {
     /// it is not a one-time init.
     ///
     /// `epoch_ms` is the wall-clock time in ms since UNIX epoch, used for
-    /// the `sys_start_time_utc_ms` info message in the ULog header.
-    pub async fn initialize(&mut self, epoch_ms: u64) -> Result<(), ULogError> {
+    /// the `sys_start_time_utc_ms` info message in the ULog header. `git` is the
+    /// build's `git describe`, logged as `ver_sw_git`.
+    pub async fn initialize(&mut self, epoch_ms: u64, git: &str) -> Result<(), ULogError> {
         self.writer.reset();
         self.buffer.clear();
         self.initialized = false;
@@ -125,6 +126,7 @@ impl ULogLogger {
                 "ELLE-RS",
                 elle_config::PLATFORM_NAME,
                 env!("CARGO_PKG_VERSION"),
+                git,
                 epoch_ms,
             )
             .map_err(|_| ULogError::InitFailed)?;

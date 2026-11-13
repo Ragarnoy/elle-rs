@@ -17,8 +17,15 @@ fn header_with_every_subscription_fits() {
     let mut w = ULogWriter::new();
     w.initialize(Instant::from_micros(0)).unwrap();
     // The longest values the firmware passes (elle-hardware ULogLogger::initialize).
-    w.write_definitions("ELLE-RS", "RP2350-XFly-Eagle", "0.0.0-dev", u64::MAX)
-        .unwrap();
+    w.write_definitions(
+        "ELLE-RS",
+        "RP2350-XFly-Eagle",
+        "0.0.0-dev",
+        // A long `git describe`: tag, distance, 10-digit hash, dirty.
+        "v0.10.10-1234-g0123456789-dirty",
+        u64::MAX,
+    )
+    .unwrap();
     let names = [
         AttitudeMessage::NAME,
         CommandsMessage::NAME,

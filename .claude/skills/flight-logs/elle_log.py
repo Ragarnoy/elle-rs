@@ -147,6 +147,9 @@ def cmd_summary(logs, _args):
     labels = event_labels()
     for log in logs:
         print(f"== {log.name}  {log.duration:.0f}s  (t=0 is the first record, not boot: t0 = {log.t0 / 1e6:.2f}s after boot)")
+        info = log.ulog.msg_info_dict
+        print(f"  build: {info.get('ver_sw_git', '(no ver_sw_git: older firmware)')}  "
+              f"ver_sw {info.get('ver_sw', '?')}  {info.get('ver_hw', '?')}")
         print("  armed:", [(round(float(a), 1), round(float(b), 1)) for a, b in armed_intervals(log)] or "never")
         c = log.m["commands"]
         modes = Counter(int(x) for x in c["attitude_mode"])

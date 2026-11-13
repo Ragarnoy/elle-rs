@@ -196,7 +196,8 @@ impl Log {
         let mut w = ULogWriter::new();
         let e = |e| anyhow::anyhow!("ULog writer: {e:?}");
         w.initialize(Instant::from_micros(0)).map_err(e)?;
-        w.write_definitions("ELLE-SIM", "sim", "0", 0).map_err(e)?;
+        w.write_definitions("ELLE-SIM", "sim", "0", "sim", 0)
+            .map_err(e)?;
         let mut sub = |n| w.add_subscription(n).map_err(e);
         let (att, raw, mag, ctx, fix, gnss) = (
             sub(AttitudeMessage::NAME)?,

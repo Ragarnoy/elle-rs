@@ -68,7 +68,7 @@ field by editing the struct, its `FORMAT`, `SIZE` and `to_bytes()` together.
 
 ```
 Header (16 B)      "ULog" magic, version 1, start timestamp (µs)
-Definitions        flag bits 'B', formats 'F', info 'I' (sys_name, ver_hw, ver_sw, sys_start_time_utc_ms)
+Definitions        flag bits 'B', formats 'F', info 'I' (sys_name, ver_hw, ver_sw, ver_sw_git = the build's `git describe`, sys_start_time_utc_ms)
 Data               subscriptions 'A', then data 'D', dropouts 'O'
 ```
 

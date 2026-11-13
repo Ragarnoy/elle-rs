@@ -51,7 +51,8 @@ fn fly(corrupt_one: bool) -> Flown {
         w.clear_buffer();
     };
     w.initialize(Instant::from_micros(0)).unwrap();
-    w.write_definitions("ELLE-RS", "test", "0", 0).unwrap();
+    w.write_definitions("ELLE-RS", "test", "0", "test", 0)
+        .unwrap();
     let att_id = w.add_subscription(AttitudeMessage::NAME).unwrap();
     let raw_id = w.add_subscription(ImuRawMessage::NAME).unwrap();
     let mag_id = w.add_subscription(ImuRawMagMessage::NAME).unwrap();

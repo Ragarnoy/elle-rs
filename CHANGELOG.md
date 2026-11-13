@@ -49,6 +49,9 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- Build id in the ULog header (ULog, additive): an info record `ver_sw_git` holds
+  the build's `git describe`, `-dirty` when the tree had uncommitted changes
+  (now also caught for unstaged source edits). `ver_sw` is unchanged.
 - AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
   into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each

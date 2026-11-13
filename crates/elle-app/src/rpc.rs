@@ -281,7 +281,10 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                         elle_hardware::sd_writer::SD_CMD_SIGNAL
                             .signal(elle_hardware::sd_writer::SdCommand::Start);
                         let wall_ms = epoch_ms + Instant::now().as_micros() / 1000;
-                        ok = ulog_logger.initialize(wall_ms).await.is_ok();
+                        ok = ulog_logger
+                            .initialize(wall_ms, env!("ELLE_GIT_DESCRIBE"))
+                            .await
+                            .is_ok();
                         if !ok {
                             elle_hardware::sd_writer::SD_CMD_SIGNAL
                                 .signal(elle_hardware::sd_writer::SdCommand::Stop);
