@@ -40,9 +40,12 @@ heapless = { workspace = true }
 static_cell = { workspace = true }
 # MabezDev/embedded-fatfs, pinned to a git rev: crates.io only carries a 0.0.0
 # placeholder for `embedded-fatfs`, and published `block-device-adapters` 0.2.0
-# predates the fixes below. `919e569f` (2026-08-28) is upstream HEAD and moves us
-# past four bugs this airframe actually hits — no API change from the previous
-# `518528cc` pin:
+# predates the fixes below. `7961cd4e` (2026-10-23) is upstream HEAD. It adds
+# correctness fixes over `919e569f` (seek overflow/sign bugs in `BufStream` and
+# `StreamSlice`, which the ULog write path goes through; both BPB sector-count
+# fields accepted; rename/`..` fixes; a valid default timestamp), no API change
+# that we use. `919e569f` itself moved us past four bugs this airframe actually
+# hits — no API change from the earlier `518528cc` pin:
 #   - whole-sector writes went straight to DMA, so `write_zeros`' `const [0u8;
 #     512]` handed DMA a flash-resident buffer; now copied via a word-aligned
 #     stack buffer.
@@ -57,12 +60,12 @@ static_cell = { workspace = true }
 #   - `block-device-adapters` truncated u64→usize before `min`, so a remaining
 #     size that was an exact multiple of 4 GiB produced a zero-length write and a
 #     DMA panic.
-sdspi = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.1.0", default-features = false }
+sdspi = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "7961cd4e", version = "0.1.0", default-features = false }
 # `lfn` (long filenames) is required for lowercase log names: FAT 8.3 short
 # names are uppercase by definition, so `LOG_NNNN.ulg` only survives to the card
 # as a long-name entry. Costs ~4.2 KB flash and one extra 32-byte directory
 # entry per file. See `sd_writer::next_log_name`.
-embedded-fatfs = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.1.0", default-features = false, features = [
+embedded-fatfs = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "7961cd4e", version = "0.1.0", default-features = false, features = [
     "lfn",
 ] }
 embassy-embedded-hal = { workspace = true }
@@ -70,7 +73,7 @@ embassy-embedded-hal = { workspace = true }
 embedded-hal-async = "1.0"
 aligned = { version = "0.4", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
-block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "919e569f", version = "0.2.0", default-features = false }
+block-device-adapters = { git = "https://github.com/MabezDev/embedded-fatfs", rev = "7961cd4e", version = "0.2.0", default-features = false }
 esc-session = { workspace = true, optional = true }
 esc-onewire-rp = { workspace = true, optional = true }
 esc-config-icd = { workspace = true, optional = true, features = ["session"] }
