@@ -84,8 +84,8 @@ fn print_report(r: &Report) {
     }
     let c = &r.coverage;
     println!(
-        "  samples {} ({:.1} s), synced {} ({:.1}%), gaps {} ({} samples lost), ULog dropouts {}",
-        c.samples, c.seconds, c.synced, c.synced_pct, c.gaps, c.lost, c.dropouts
+        "  samples {} ({:.1} s), synced {} ({:.1}%), gaps {} ({} samples lost), ULog dropouts {} ({} broke sync)",
+        c.samples, c.seconds, c.synced, c.synced_pct, c.gaps, c.lost, c.dropouts, c.dropout_breaks
     );
     println!(
         "  contexts {}, mag changes {}, encode round-trip errors {}",

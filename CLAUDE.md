@@ -38,7 +38,7 @@ Cargo workspace:
 - **`crates/elle-app/`** — the application both binaries run: boot sequence, flight and RPC control loops, RPC dispatch, ULog per-tick logging, shared tasks. The binaries keep only pins, engine setup, `bind_interrupts!`, `led_task` and `main()` — **make behaviour changes here, once**, not in a binary.
 - **`crates/elle-system/`** — `FlightController` (the flight law plus PWM, watchdog, supervisor, RC link state, events) and the RPC transport
 - **`crates/elle-hardware/`** — drivers and tasks: `crsf`, `dshot`, `event`, `flash`, `gnss`, `imu`, `led`, `pwm`, `sd_writer`, `timing`, `watchdog`, the ULog logger
-- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `attitude`, `autotune`, `commands`, `filter`, `flight_law`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`
+- **`crates/elle-control/`** — pure algorithms, host-testable: `arming`, `attitude`, `autotune`, `commands`, `filter`, `flight_law`, `governor`, `gyro_bias`, `heading`, `level_cal`, `mixing`, `pid`, `write_batch`
 - **`crates/elle-config/`** — every tunable constant and per-platform value (`lib.rs`, `lut.rs`, `profile.rs`)
 - **`crates/elle-rpc-icd/`** — shared RPC Interface Control Document
 - **`crates/elle-ulog/`** — `no_std` ULog encoder
@@ -330,7 +330,7 @@ heading-hold roll setpoint. While disarmed the CRSF flight-mode text shows `WAIT
 
 Event codes are listed in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#event-codes); the
 constants and their ranges are in `elle-hardware/src/event.rs`. ULog goes
-`ULogLogger` (`elle-hardware`) → `ULOG_WRITE_CHANNEL` → `sd_writer_task` (its SPI device is wrapped in `YieldingSpi`: sdspi's busy-card poll otherwise never yields and stalls every thread-mode task for tens of ms); message set
+`ULogLogger` (`elle-hardware`) → `ULOG_WRITE_CHANNEL` → `sd_writer_task` (its SPI device is wrapped in `YieldingSpi`: sdspi's busy-card poll otherwise never yields and stalls every thread-mode task for tens of ms; it collects chunks in an `elle_control::write_batch::WriteBatch` of `SD_WRITE_BATCH_SIZE` and writes whole sectors only, so the file position stays sector-aligned and each write is one multi-block card write instead of a read plus a single-block write per sector, see the module docs); message set
 and sizes in [`crates/elle-ulog/README.md`](crates/elle-ulog/README.md). `commands`
 logs the pre-filter setpoint; `controller` logs what the PID used and did each tick
 (dt, attitude age, filtered setpoint, scaled P/I/D per axis, saturation bits, final

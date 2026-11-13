@@ -18,6 +18,7 @@ pub mod level_cal;
 pub mod mag;
 pub mod mixing;
 pub mod pid;
+pub mod write_batch;
 pub mod yaw_damper;
 
 // Re-export commonly used types

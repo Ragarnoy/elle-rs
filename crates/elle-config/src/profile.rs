@@ -23,6 +23,30 @@ pub const ULOG_WRITE_CHANNEL_DEPTH: usize = 64;
 #[cfg(feature = "imu-raw-log")]
 pub const ULOG_WRITE_CHANNEL_DEPTH: usize = 128;
 
+/// SD card sector size: the FAT layer's block size and the unit the SD writer
+/// keeps the file position aligned to.
+pub const SD_SECTOR_SIZE: usize = 512;
+
+/// Bytes the SD writer collects before a write: 8 sectors per card command.
+///
+/// A write reaches the card as one multi-block command (CMD25) only when the
+/// file position is sector-aligned and the length is a whole number of sectors;
+/// otherwise every sector is read back and written on its own (CMD17 + CMD24 +
+/// CMD13 and one program-busy wait each; LOG_0091 got ~27 kB/s onto the card
+/// that way, of ~47 kB/s produced). The writer batches queued chunks up to this
+/// size and writes whole sectors only (`elle_control::write_batch`). A batch
+/// only fills when chunks are waiting; with an empty queue it goes out as it
+/// is, so data waits no longer than before. The ~47 kB/s of an `imu-raw-log`
+/// build is under 3 full batches a second. Static RAM, 16 KB: 4 KB still lost
+/// records while armed (LOG_0092), larger multi-block writes cost the writer
+/// less Core 0 time per byte.
+pub const SD_WRITE_BATCH_SIZE: usize = 16384;
+
+// Whole sectors, and room for a chunk next to a kept tail (< 1 sector): the
+// writer takes a chunk off the queue only when a whole one still fits.
+const _: () = assert!(SD_WRITE_BATCH_SIZE.is_multiple_of(SD_SECTOR_SIZE));
+const _: () = assert!(SD_WRITE_BATCH_SIZE >= SD_SECTOR_SIZE + ULOG_WRITE_CHUNK_SIZE);
+
 /// An entry in the flash profile map (sequential-storage `MapStorage`). Each
 /// setting lives under its own key; clearing one removes only that key, and the
 /// boot loader falls back to firmware defaults when a key is absent.
