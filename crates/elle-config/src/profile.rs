@@ -37,8 +37,10 @@ pub const SD_SECTOR_SIZE: usize = 512;
 /// size and writes whole sectors only (`elle_control::write_batch`). A batch
 /// only fills when chunks are waiting; with an empty queue it goes out as it
 /// is, so data waits no longer than before. The ~47 kB/s of an `imu-raw-log`
-/// build is under 12 full batches a second. Static RAM, 4 KB.
-pub const SD_WRITE_BATCH_SIZE: usize = 4096;
+/// build is under 3 full batches a second. Static RAM, 16 KB: 4 KB still lost
+/// records while armed (LOG_0092), larger multi-block writes cost the writer
+/// less Core 0 time per byte.
+pub const SD_WRITE_BATCH_SIZE: usize = 16384;
 
 // Whole sectors, and room for a chunk next to a kept tail (< 1 sector): the
 // writer takes a chunk off the queue only when a whole one still fits.
