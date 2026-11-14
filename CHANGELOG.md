@@ -7,6 +7,10 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- Eagle elevon trims left +50 → +150 µs, right +100 → −100 µs, `MAX_TRIM_US`
+  100 → 150 (tuning, eagle only; round A): after linkage changes both elevons sat
+  low at their neutrals (right ~7 mm); the new values are flush on the bench. Upward
+  travel now stops at mixer 0.7 left and 0.8 right (`ELEVON_*_MIX_MAX`).
 - Eagle pitch gains 0.45 / 0.020 / 0.16 → 0.35 / 0.020 / 0.02 (tuning, eagle only;
   round A): LOG_0082 flew a 3–4 Hz pitch limit cycle, which a closed-loop sim puts
   on kd against the ~55 ms loop delay (estimate). A saved flash PID profile still

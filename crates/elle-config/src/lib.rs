@@ -344,12 +344,15 @@ const _: () = assert!(ESC_OP_TIMEOUT_MS < ESC_HOST_TIMEOUT_MS);
 
 // Eagle: was left 100 / right -50 (75 us nose-up, 25 us left roll). In level
 // Stabilized flight LOG_0082 held ~100 us nose-down and ~50 us left roll in
-// every phase, gliding included; this moves both neutrals there: 25 us
-// nose-down, 75 us left roll.
+// every phase, gliding included; that moved both neutrals there (left 50,
+// right 100). The linkages have since changed and both elevons sat low at
+// those neutrals (right ~7 mm). Both are now set flush by eye on the flight
+// build: left 150, right -100. An RPC-build sweep with `direct elevon` had
+// suggested ~-150 on the right. Round A checks the flown neutral again.
 #[cfg(not(feature = "platform-dart"))]
-pub const ELEVON_LEFT_TRIM_US: i32 = 50; // + raises left elevon
+pub const ELEVON_LEFT_TRIM_US: i32 = 150; // + raises left elevon
 #[cfg(not(feature = "platform-dart"))]
-pub const ELEVON_RIGHT_TRIM_US: i32 = 100; // + lowers right elevon
+pub const ELEVON_RIGHT_TRIM_US: i32 = -100; // + lowers right elevon
 
 // Dart: +95 us nose-up on both (left +, right - on the output pulse) on top of
 // the original 5 us left. LOG_0052 held ~257 us nose-up in calm Stabilized
@@ -364,7 +367,7 @@ pub const ELEVON_LEFT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_LEFT_TRI
 pub const ELEVON_RIGHT_CENTER_US: u32 = (SERVO_CENTER_US as i32 + ELEVON_RIGHT_TRIM_US) as u32;
 
 // Safety bounds for trim values
-pub const MAX_TRIM_US: i32 = 100; // Maximum trim adjustment
+pub const MAX_TRIM_US: i32 = 150; // Maximum trim adjustment
 
 /// Half the servo range: one unit of mixer output in µs.
 const SERVO_HALF_RANGE_US: f32 = (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US) as f32 / 2.0;
@@ -375,7 +378,7 @@ const SERVO_HALF_RANGE_US: f32 = (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US) as f3
 //   right pulse = 1500 - 500·m + right trim   (the right servo is inverted)
 // so a trim moves one end of the range inside ±1, where the pulse stops at its
 // clamp. The mixer limits and judges saturation here, so anti-windup sees the
-// stop where the servo actually reaches it (eagle: left 0.9, right -0.8).
+// stop where the servo actually reaches it (eagle: left 0.7, right 0.8).
 pub const ELEVON_LEFT_MIX_MAX: f32 =
     (1.0 - ELEVON_LEFT_TRIM_US as f32 / SERVO_HALF_RANGE_US).min(1.0);
 pub const ELEVON_LEFT_MIX_MIN: f32 =

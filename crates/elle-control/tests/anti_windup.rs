@@ -20,7 +20,8 @@ fn sat(pitch: f32, roll: f32) -> MixSaturation {
 
 #[test]
 fn unsaturated_mix_blocks_nothing() {
-    assert_eq!(sat(0.3, -0.4), MixSaturation::default());
+    // Elevons at 0.5 / -0.1: inside every trimmed stop (eagle left 0.7).
+    assert_eq!(sat(0.2, -0.3), MixSaturation::default());
 }
 
 #[test]
