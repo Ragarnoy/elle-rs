@@ -41,9 +41,16 @@ LOG_0109/0110: a skid was off the table, so roll sat at ≈ −2.9° (−1.4° o
 their roll figure is that static tilt, not the transient.
 
 So the leak depends on the field the filter sees, not only on the heading error,
-and a pilot cannot predict it. (The raw z swinging by ~80k counts between boots of a
-still aircraft is itself unexplained and worth its own look; it is not what this
-proposal fixes.)
+and a pilot cannot predict it.
+
+The raw field swinging between sessions had its own cause, found on 2026-11-14: a
+magnet in the eagle's hatch, 1–2 cm from the MMC5616WA, gave ~20 G at the sensor
+(16–24 G in every eagle log since LOG_0054; a SET/RESET measurement showed it is a
+real field, sensor offset ~0.4 G). It sat differently each time the hatch closed,
+so the stored hard-iron offsets never matched. It is removed and the mag
+recalibrated. **The transient stays without it:** LOG_0119 (magnet out, mag
+recalibrated, `imu-raw-log`, still for 87 s) holds pitch −17 to −18° for ~40 s and
+is back within 1° at ~54 s while the heading swings −4° → −164°.
 
 Roll moves too (up to ~17°). Once settled the attitude is good: LOG_0107 then holds
 pitch 0.0–0.1°, roll −1.4° for minutes.
@@ -71,12 +78,12 @@ heading has converged. A host run of `AttitudePipeline::with_board(board_rotatio
 | east / west | 11.6° | 0° (settled ~30 s) | 0° |
 | south | 18° | −14° pitch | 0° |
 
-The simulation reproduces the mechanism but not the size or timing: it peaks at 18°
-(logs 39–45°), never goes positive in pitch (logs: both signs), and at a south heading
-is still −14° off at 55 s (logs settle by ~45 s). The real field (residual hard iron,
-event 117 at boot in LOG_0105) is the obvious difference; it is **not yet shown** that
-a seed fixes the real case. That is the first verification step (replay below),
-before this goes to Accepted. The
+The size depends on the field's dip as well as the heading: a static host run
+(`elle-replay --example seed_static`, level, constant field) peaks at 44° from
+identity with a 20° dip and the field 164° from north, 20° at a 60° dip. The 20 G
+hatch magnet gave the eagle a field of its own dip, hence the spread between
+boots in the tables above. **Replay confirms a seed fixes the real case** (see
+Verification: worst tilt 19.3° as logged, 0.7° seeded, on LOG_0119). The
 board orientation is not the cause: the heading error at power-up is, so **the dart
 is affected the same way** (its logs are to be checked, Verification).
 
@@ -103,17 +110,24 @@ other divergence (a bad seed, a mag disturbance at boot, a Core 1 fault).
 
 ### A. Seed (`elle-control/src/attitude.rs`, `elle-hardware/src/imu/driver.rs`)
 
-- New pure function `elle_control::attitude::seed(accel, mag: Option<…>) ->
-  UnitQuaternion<f32>`, in the airframe frame the AHRS uses (after `mount`): roll
-  and pitch from the accel vector, heading from the mag vector projected on the
-  horizontal plane (TRIAD), in uf-ahrs' earth-frame convention. No mag: tilt only,
-  heading 0. Host-tested against the pipeline: a seeded pipeline fed the same still
-  sample stays within 0.1° from the first sample.
+- New pure function `elle_control::attitude::seed(accel, mag) ->
+  Option<UnitQuaternion<f32>>` (written, on this branch), in the airframe frame the
+  AHRS uses (after `mount`): roll and pitch from the accel vector, heading from the
+  mag vector projected on the horizontal plane (TRIAD), body to uf-ahrs' earth frame
+  (north, west, up). `None` for a zero or parallel pair. Still to add: a tilt-only
+  variant for the no-mag case (heading 0). Host check so far: with constant inputs
+  at dips −60…+75° and three headings, the seed is the filter's fixed point (no
+  drift over 120 s), and an identity start converges to the seed's heading.
 - The driver calls `pipeline.set_quat(seed(…))` once, when the gyro bias estimate
   completes (the aircraft has just been still for a second, so the averaged accel is
   gravity), using the bias estimator's mean accel and the latest `MAG_FIELD` with the
-  flash mag offsets already applied (they load before the IMU loop starts; to
-  confirm). It re-seeds, disarmed and still, whenever the mag offsets or the level
+  flash mag offsets already applied. **They are not applied from the first sample:**
+  boot sends them over `MAG_CALIBRATION_SIGNAL` once it has read flash, and in
+  LOG_0113 and LOG_0119 the first ~88 fused samples (3 mag readings) still carry
+  the raw field. With the 20 G magnet a seed from that first reading came out 150°
+  off in heading and the seeded run drifted 21° (replay). So the seed waits for
+  both: the bias done **and** a mag reading taken after the offsets arrived (or
+  after boot has said none are stored). It re-seeds, disarmed and still, whenever the mag offsets or the level
   mount change (mag cal, level cal, their clears), since each of those otherwise
   recreates the transient.
   `imu-raw-log` already records the AHRS quaternion in `imu_raw_ctx` on change, so a
@@ -181,14 +195,23 @@ Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
   error < 0.5° over 60 s still (the table above as a regression test, with and
   without the seed); `attitude_settled` true when still and level, false at a 10°
   disagreement, false while the accel magnitude is off 1 g.
-- **Replay, first (gates Accepted):** an `imu-raw-log` capture from power-up with
-  the aircraft still for 90 s, replayed with `elle-replay` as logged and then with
-  the seed applied at the bias-done sample: logged run shows the transient, seeded
-  run stays within 1.5° of the settled attitude. (LOG_0093 and LOG_0110 are
-  `imu-raw-log` captures but their first seconds are in a start-up dropout, and
-  LOG_0110's transient happened to be small (2.6°); a capture of a large one is
-  needed, or the seed applied at the first synced sample.)
-  Then: the seeded firmware's replay is still exact (ctx record).
+- **Replay (done 2026-11-14, `cargo run -p elle-replay --example seed -- LOG`;
+  `SEED_AT_S` starts every run that long after the first synced sample):** each
+  `imu-raw-log` boot capture of a still aircraft, run three ways on the logged
+  inputs: as logged (exact replay), restarted at identity (what a boot does) and
+  restarted at `seed`. Worst tilt error against the settled attitude:
+
+  | Log | Field | Logged | Identity | Seeded at 5 s | Seeded at 0.1 s |
+  |-----|-------|--------|----------|---------------|-----------------|
+  | LOG_0109 | magnet in | 1.6° | 3.1° | 0.2° | — |
+  | LOG_0113–0115 | magnet in, shifted | 6.6–7.4° | 9.3° | 0.1–0.2° | 0.2° (0113) |
+  | LOG_0119 | magnet out, recalibrated | 19.3° (> 1° until 47 s) | 19.4° | 0.7° (never > 1°) | 1.3° (> 1° until 3.2 s) |
+
+  The identity run reproduces the logged transient, so it stands in for a boot.
+  Seeded at the very first sample (before the offsets) LOG_0113–0115 got worse
+  (21°), which is the ordering requirement in Design A. LOG_0110 is 2.9° in all
+  three runs at 252 s (handling late in the log, not the boot).
+  Still to do: the seeded firmware's replay is exact (ctx record).
 - **Bench:** new TEST_PLAN 0.1 row 5: power up pointing south, still; `attitude_data`
   stays within 1.5° of the settled value from 3 s after boot. Arming within the first
   second (gesture) → refused, event 19; after → arms. Tilt the aircraft 20° by hand

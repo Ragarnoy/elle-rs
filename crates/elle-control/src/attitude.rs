@@ -306,6 +306,36 @@ impl AttitudePipeline {
     }
 }
 
+/// An attitude from one accelerometer and one magnetometer reading (TRIAD),
+/// both in the airframe frame: tilt from the accel (taken as gravity, so the
+/// aircraft must be still), heading from the mag's horizontal part. Returns
+/// the AHRS quaternion (body to the filter's earth frame: north, west, up), or
+/// `None` when either vector is zero or they are parallel.
+///
+/// Proposal 0009: starting the Madgwick filter here instead of at identity
+/// removes the boot transient (the heading converging from north drags pitch
+/// and roll with it).
+#[must_use]
+pub fn seed(accel: &Vector3<f32>, mag: &Vector3<f32>) -> Option<UnitQuaternion<f32>> {
+    // Still: the accelerometer reads +1 g along earth's up.
+    let up = accel.try_normalize(1e-6)?;
+    let north = (mag - up * mag.dot(&up)).try_normalize(1e-6)?;
+    let west = up.cross(&north);
+    // Rows: the earth axes in body coordinates, i.e. body to earth.
+    let m = nalgebra::Matrix3::from_rows(&[north.transpose(), west.transpose(), up.transpose()]);
+    Some(UnitQuaternion::from_rotation_matrix(
+        &nalgebra::Rotation3::from_matrix_unchecked(m),
+    ))
+}
+
+/// Euler angles of an AHRS quaternion in the firmware's convention (roll
+/// negated, as [`AttitudePipeline::fuse`] reports them): (pitch, roll, yaw).
+#[must_use]
+pub fn angles(q: &UnitQuaternion<f32>) -> (f32, f32, f32) {
+    let (roll, pitch, yaw) = q.euler_angles();
+    (pitch, -roll, yaw)
+}
+
 /// A GNSS solution as the pipeline received it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GnssFix {
