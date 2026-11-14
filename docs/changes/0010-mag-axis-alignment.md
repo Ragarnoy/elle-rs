@@ -2,7 +2,7 @@
 
 | | |
 |-|-|
-| Status | Draft |
+| Status | Draft, implemented on branch `mag-axes`: bench TEST_PLAN 0.1.5 due before Accepted |
 | Airframes | both (eagle first; dart after its own gate, below) |
 | Date | 2026-11-14 |
 | Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): a fix. No RPC type, flash entry, event code or ULog field changes meaning (`imu_raw_mag` stays "the vector as fed"); one ULog info entry is added |
@@ -102,9 +102,16 @@ machine changes.
   other change.
 - **Raw IMU replay:** `imu_raw_mag` records the vector as fed (after
   `mag_to_airframe`), so a log from the new build replays exactly as before. A new
-  ULog info entry, `elle_mag_axes_deg`, records the constant. For logs without it
-  (all existing logs), `elle-replay --mag-axes <deg>` runs a what-if: un-mount the
-  fed vector with the logged `imu_raw_ctx` mount, swap the axes, mount again.
+  ULog info entry, `elle_mag_axes_deg`, records the constant, written right after
+  the standard ones (`ULogWriter::write_info_i32`) so it stays in the definitions
+  section. `elle-replay --mag-axes <deg>` runs a what-if, relative to whatever the
+  log did (90 on every log so far): it un-mounts the fed vector with the logged
+  `imu_raw_ctx` mount, swaps the axes, and mounts it again. The what-if filter is
+  seeded at the heading the remapped field gives (`variants::reseat_heading`), so it
+  measures the mapping, not a 90° heading convergence. `--compare` adds a "against
+  the firmware replay" table (mean, RMS, max per axis for every variant).
+  `examples/mag_axes_still.rs` scores the what-if where the answer is known: tilt
+  against the accel at still rests, and the dip at each rest.
 - **Seed (proposal 0009):** `attitude::seed` takes the airframe-frame mag, so it gets
   the fix with no change.
 - **Timing:** a few sign flips per mag update on Core 1 (~10 Hz). Nothing
@@ -151,17 +158,46 @@ This proposal changes neither the sign nor the zero.
 
 ## Verification
 
-- **Host tests** (`crates/elle-control/tests/attitude.rs`, both platforms):
+Done so far (2026-11-14, branch `mag-axes`):
+
+- **Host:** `crates/elle-control/tests/mag_axes.rs` passes on both platforms. It
+  covers each quarter turn, the platform value, the bench sample (yaw 134°, dip
+  61.7°; today's mapping −136°), a full pipeline converging to that heading from
+  north, and 0 bit for bit. The `elle-control`, `elle-replay` and `elle-ulog` suites
+  pass, and the eagle and dart firmware pass clippy (flight and RPC + RC) and build
+  with `imu-raw-log`.
+- **Replay, what there is.** Every eagle raw capture before 2026-11-14 is from the
+  hatch-magnet era: LOG_0092, 0093 and 0109–0117 read 5–23 G, so they say nothing
+  about the mapping. That includes LOG_0092–0093, the only eagle captures with
+  engines. LOG_0118–0120 come after the magnet but with stale offsets (0.17 G); both
+  mappings show proposal 0009's 15–18° boot transient. LOG_0121 after its
+  calibration (61.6 s) has five rests, all level:
+
+  | | Firmware (today) | `--mag-axes 90` |
+  |---|---|---|
+  | Yaw | −135° … −144° | +131° … +143° |
+  | Tilt error vs accel | 0.10–0.32° | 0.12–0.37° |
+  | Dip | 66.3–71.6° | 65.0–71.9° |
+
+  +131…+143° is a nose at 37…49°, the phone's NE. Pitch and roll can't move at a
+  level rest. The tilted and turning cases this proposal expects to improve are not
+  in any log yet: TEST_PLAN 0.1.5 row c and the next flight.
+
+Still to do:
+
+- **Host tests** (as above; `crates/elle-control/tests/mag_axes.rs`):
   - `mag_axes` on each quarter turn; 0 is the identity bit for bit.
   - The bench sample above → nose 46°, dip 61.7° down, through
     `mag_to_airframe` with the eagle's board and mag rotations.
   - Dart pipeline fuses bit for bit as before (synthetic replay in `elle-replay`
     tests, as in 0003).
 - **Replay:**
-  - Gyro-consistency fit (identity, 48 maps) on `--mag-axes 90` output for LOG_0117
-    and LOG_0121: identity must be the best map.
-  - Eagle `imu-raw-log` flight logs with `--mag-axes 90 --compare`: tilt error
-    through turns against the gyro-only reference, before and after.
+  - Gyro-consistency fit (identity, 48 maps) on a capture from the new build:
+    identity must be the best map (the old logs pick (−my, +mx, +mz) by construction).
+  - The first eagle flight with `imu-raw-log` and a clean field: `--compare`
+    tilt error through turns against the gyro-only reference. On the new build the
+    firmware track is the aligned one; `--mag-axes -90` gives the old mapping for
+    comparison.
   - Proposal 0009's seed table, rerun with the remap. Its tilted rows used the wrong
     mapping.
 - **Bench** (new TEST_PLAN 0.1.5, flight build with `imu-raw-log`, SD card,
@@ -191,10 +227,10 @@ stored, so nothing is left behind.
 
 ## Doc updates
 
-- [ ] `docs/OPERATIONS.md`: mag calibration note (chip frame, swap before fusion)
-- [ ] `STATE_DIAGRAMS.md`: none
-- [ ] `TEST_PLAN.md`: 0.1.5
-- [ ] `CLAUDE.md`: IMU pipeline step 3 (mag axis swap before the mount)
-- [ ] `crates/elle-ulog/README.md`: `imu_raw_mag` meaning, `elle_mag_axes_deg`
-- [ ] `CHANGELOG.md`: `Unreleased`, operator behaviour (eagle heading), ULog
-- [ ] `docs/ATTITUDE.md`: mag axes, and the results of the replay above
+- [x] `docs/OPERATIONS.md`: mag calibration note (chip frame, swap before fusion)
+- [x] `STATE_DIAGRAMS.md`: none
+- [x] `TEST_PLAN.md`: 0.1.5
+- [x] `CLAUDE.md`: IMU pipeline step 3 (mag axis swap before the mount)
+- [x] `crates/elle-ulog/README.md`: `imu_raw_mag` meaning, `elle_mag_axes_deg`
+- [x] `CHANGELOG.md`: `Unreleased`, operator behaviour (eagle heading), ULog
+- [x] `docs/ATTITUDE.md`: mag axes, and the results of the replay above

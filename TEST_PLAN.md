@@ -124,6 +124,7 @@ PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
 | 2 | Tilt nose up, nose down, right wing down, left wing down, ~20° each, on **each airframe** | Pitch positive nose up, roll positive right wing down (CRSF attitude on the radio, then `attitude_data`). Eagle 2026-10-02 before proposal 0003: pitch and roll both reversed (board turned round) | | [ ] |
 | 3 | Part 1.3 in full (Stabilized, armed, in hand) | All seven rows as before: corrects against the tilt, D damps quick rotations | | [ ] |
 | 4 | Rotate 360° in yaw on the bench, slowly | Yaw follows and returns to within ~5° of the start; no jump when the mag reading updates | | [ ] |
+| 5 | Mag axes (proposal 0010), flight build with `imu-raw-log`, **no probe**, ~1 m from the bench, PSU and steel. a) mag cal tumble at the spot (113) first; b) level, rested 5 s, nose at phone-compass N, E, S, W; c) at one heading, rested 5 s each: level, nose up 30°, nose down 30°, each wing down 30° | a) gyro-consistency fit on the tumble picks identity, ≤ 0.01 G; b) yaw ≈ 180° − bearing (180, 90, 0, −90°) ± 10° (before proposal 0006); c) yaw within ± 5° of level, dip within ± 3° (`examples/mag_axes_still.rs` with `REST_TRACE=1`), tilt error vs accel ≤ 1° | | [ ] |
 
 ### 0.2 Timing and logging (normal flight build)
 

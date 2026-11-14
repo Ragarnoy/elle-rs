@@ -38,6 +38,17 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   75 µs nose-up. LOG_0082 held ~100 µs nose-down and ~50 µs left roll in level
   flight, gliding included.
 
+### Fixed
+- Eagle magnetometer axes (operator behaviour, ULog; proposal 0010): the MMC5616WA
+  sits a quarter turn round from the IMU on the rev A board, and its field was fused
+  as if their axes were parallel, so the eagle's heading read ~90° off and shifted
+  with tilt. The offset-corrected field is now turned onto the IMU's axes
+  (`MAG_AXES_YAW_DEG`, eagle 90°) before the mount. Stored mag calibrations stay
+  valid. Raw mag (TUI, `GetMagnetometer`, `magnetometer_data`) is unchanged. The dart
+  keeps 0° until its magnet is removed and a ground tumble confirms the mapping.
+  New ULog info entry `elle_mag_axes_deg`; `elle-replay --mag-axes DEG` replays
+  older logs with the alignment applied.
+
 ### Added
 - AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot

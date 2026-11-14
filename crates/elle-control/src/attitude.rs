@@ -45,6 +45,21 @@ pub fn board_rotation() -> UnitQuaternion<f32> {
     UnitQuaternion::from_axis_angle(&Vector3::z_axis(), elle_config::BOARD_YAW_DEG.to_radians())
 }
 
+/// The mag chip's axes onto the IMU's sensor axes: a rotation of `yaw_deg`
+/// (a quarter turn) about the vertical, done as an exact axis swap so 0 is the
+/// identity bit for bit. Proposal 0010; the firmware passes
+/// `elle_config::MAG_AXES_YAW_DEG`. Any multiple of 90 is accepted (a replay's
+/// what-if may be relative and negative); anything else is treated as 0.
+#[must_use]
+pub fn mag_axes(m: Vector3<f32>, yaw_deg: f32) -> Vector3<f32> {
+    match (yaw_deg as i32).rem_euclid(360) {
+        90 => Vector3::new(-m.y, m.x, m.z),
+        180 => Vector3::new(-m.x, -m.y, m.z),
+        270 => Vector3::new(m.y, -m.x, m.z),
+        _ => m,
+    }
+}
+
 pub struct AttitudePipeline {
     ahrs: Madgwick,
     rate_filter: GyroFilter,
@@ -57,6 +72,9 @@ pub struct AttitudePipeline {
     /// Board orientation (see [`board_rotation`]); identity unless built with
     /// [`Self::with_board`].
     board: UnitQuaternion<f32>,
+    /// Mag chip axes onto the IMU's ([`mag_axes`]); 0 unless built with
+    /// [`Self::with_mag_axes`].
+    mag_axes_deg: f32,
     /// Gyro zero-rate offset (sensor frame), subtracted before everything else.
     /// Zero until the boot-time estimate completes.
     pub gyro_bias: Vector3<f32>,
@@ -97,6 +115,19 @@ impl AttitudePipeline {
         p
     }
 
+    /// The mag chip sits `deg` round from the IMU (the firmware passes
+    /// `elle_config::MAG_AXES_YAW_DEG`); [`Self::mag_to_airframe`] swaps its axes.
+    #[must_use]
+    pub const fn with_mag_axes(mut self, deg: f32) -> Self {
+        self.mag_axes_deg = deg;
+        self
+    }
+
+    #[must_use]
+    pub const fn mag_axes_deg(&self) -> f32 {
+        self.mag_axes_deg
+    }
+
     /// Use smooth accel weighting instead of the hard gate (the build's
     /// `AHRS_ACCEL_GATE_SMOOTH` by default); for tests and comparisons.
     pub fn set_gate_smooth(&mut self, smooth: bool) {
@@ -127,6 +158,7 @@ impl AttitudePipeline {
             ),
             mount: UnitQuaternion::identity(),
             board: UnitQuaternion::identity(),
+            mag_axes_deg: 0.0,
             gyro_bias: Vector3::zeros(),
             mode,
             gate_g,
@@ -231,10 +263,11 @@ impl AttitudePipeline {
         gyro - self.gyro_bias
     }
 
-    /// A mag vector (offset-corrected, sensor frame) in the airframe frame.
+    /// A mag vector (offset-corrected, mag chip frame) in the airframe frame:
+    /// the chip's axes onto the IMU's, then the mount.
     #[must_use]
     pub fn mag_to_airframe(&self, mag: Vector3<f32>) -> Vector3<f32> {
-        self.mount * mag
+        self.mount * mag_axes(mag, self.mag_axes_deg)
     }
 
     /// Step the filters with one sample: `gyro` from [`Self::debias`] and the

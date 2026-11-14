@@ -19,6 +19,7 @@ fn header_with_every_subscription_fits() {
     // The longest values the firmware passes (elle-hardware ULogLogger::initialize).
     w.write_definitions("ELLE-RS", "RP2350-XFly-Eagle", "0.0.0-dev", u64::MAX)
         .unwrap();
+    w.write_info_i32("elle_mag_axes_deg", 270).unwrap();
     let names = [
         AttitudeMessage::NAME,
         CommandsMessage::NAME,

@@ -167,6 +167,10 @@ axis spans less than 5000 counts (too little rotation), or if the readings don't
 earth-sized sphere around the fitted centre (RMS radius outside 0.15–0.85 G: a magnet or
 moving part nearby, or the engines' field). Single-sample spikes are filtered out first. The offsets are subtracted before the AHRS; the TUI mag panel keeps
 showing **raw** counts, so check the result with `mag cal` and by watching yaw.
+Offsets and raw counts are in the magnetometer chip's own axes, which on the rev A
+board sit a quarter turn round from the IMU's. The AHRS turns the corrected field
+onto the IMU's axes (`MAG_AXES_YAW_DEG`, eagle 90°, dart 0° for now; proposal 0010).
+A heading worked out by hand from raw x/y is therefore 90° off on the eagle.
 
 - TUI: `mag cal start` · `mag cal clear` · `mag cal` (status)
 - Direct: `direct mag-cal start|clear|status`

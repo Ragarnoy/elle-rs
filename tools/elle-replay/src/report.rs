@@ -18,6 +18,9 @@ pub struct Options {
     pub gate_g: f32,
     /// Count turns by turn rate instead of bank (vehicle tests).
     pub score_by_rate: bool,
+    /// What-if mag axis alignment, degrees more than the log (proposal 0010):
+    /// adds the firmware filter with the remapped mag, and scores it.
+    pub mag_axes_deg: Option<f32>,
 }
 
 impl Default for Options {
@@ -26,6 +29,7 @@ impl Default for Options {
             compare: false,
             gate_g: crate::variants::DEFAULT_GATE_G,
             score_by_rate: false,
+            mag_axes_deg: None,
         }
     }
 }
@@ -119,6 +123,17 @@ pub struct Comparison {
     pub reference_vs_truth: Option<ScoreRow>,
     /// Variants that gated samples, and the share, %.
     pub gated_pct: Vec<(String, f32)>,
+    /// Each variant against the firmware replay: RMS and largest difference,
+    /// degrees, pitch/roll/yaw.
+    pub vs_firmware: Vec<DiffRow>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DiffRow {
+    pub name: String,
+    pub mean_deg: [f32; 3],
+    pub rms_deg: [f32; 3],
+    pub max_deg: [f32; 3],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -150,7 +165,7 @@ pub fn analyse(
     truth: Option<&[Truth]>,
 ) -> Result<(Report, Replay)> {
     let log = ULog::parse(data)?;
-    let specs: Vec<_> = if opts.compare {
+    let mut specs: Vec<_> = if opts.compare {
         crate::variants::default_specs()
             .into_iter()
             .map(|mut s| {
@@ -158,13 +173,22 @@ pub fn analyse(
                 s
             })
             .collect()
+    } else if opts.mag_axes_deg.is_some() {
+        // The firmware's filter as a variant, so the what-if has its baseline.
+        crate::variants::default_specs()
+            .into_iter()
+            .take(1)
+            .collect()
     } else {
         Vec::new()
     };
+    if let Some(deg) = opts.mag_axes_deg {
+        specs.push(crate::variants::mag_axes_spec(deg));
+    }
     let replay = crate::replay_with(&log, &specs)?;
     let f = crate::faithfulness(&log, &replay);
 
-    let comparison = opts.compare.then(|| {
+    let comparison = (opts.compare || opts.mag_axes_deg.is_some()).then(|| {
         let select = if opts.score_by_rate {
             Select::Rate
         } else {
@@ -196,6 +220,15 @@ pub fn analyse(
                 .iter()
                 .filter(|c| c.gated_share > 0.0)
                 .map(|c| (c.name.clone(), 100.0 * c.gated_share))
+                .collect(),
+            vs_firmware: crate::compare(&replay)
+                .into_iter()
+                .map(|c| DiffRow {
+                    name: c.name,
+                    mean_deg: c.mean_deg,
+                    rms_deg: c.rms_deg,
+                    max_deg: c.max_deg,
+                })
                 .collect(),
         }
     });
