@@ -1,0 +1,219 @@
+# 0009: Seed the attitude at boot, and refuse arming until it has settled
+
+| | |
+|-|-|
+| Status | Draft |
+| Airframes | both |
+| Date | 2026-11-14 |
+| Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): a fix plus one arming refusal and one event; no RPC, flash or ULog layout change |
+| Surfaces | operator behaviour (arming refused while the attitude settles), event codes (19 added) |
+
+## Motivation
+
+For about the first minute after every boot the attitude is wrong by tens of degrees
+while the aircraft sits still. Arming is allowed after the gyro bias is measured
+(~2 s), so Stabilized can be armed, and launched, holding a tilt that is not there.
+
+Evidence, eagle, every log checked, aircraft still on the bench (1 s means of
+`attitude_data`, from the first record):
+
+| Log | Build | Pitch after boot | Back within 1.5° |
+|-----|-------|------------------|------------------|
+| LOG_0082 (round-A reference flight) | v0.3.0 | 0 → **+39°** at 13 s | ~45 s |
+| LOG_0094 | round-a 2993f3b | 0 → **−44°** at 10 s | ~45 s |
+| LOG_0095 | round-a 7be55fb | 0 → **−45°** at 10 s | ~45 s |
+| LOG_0106 | round-a 642b9ae | 0 → **+41°** at 11 s | ~40 s |
+| LOG_0107 | round-a 5edd559 | 0 → **−42°** at 13 s | ~45 s |
+
+Its size varies from boot to boot on the same bench at the same heading (final yaw
+−155 to −166° every time), and so does the raw mag reading; the heading always
+swings from ~0° to there:
+
+| Log | Boot | Worst pitch / roll, first 60 s | Raw mag z, 1–10 s |
+|-----|------|-------------------------------|-------------------|
+| LOG_0094, LOG_0095 | flash reset | 44° / 12° | +55k, +57k |
+| LOG_0103–0105 | flash reset | 17–22° / 9° | +99k to +100k |
+| LOG_0106 | flash reset | 41° / 10° | +135k |
+| LOG_0109 | flash reset | 1.4° / 3.0° | +104k |
+| LOG_0110 | power cycle | 2.6° / 3.2° | +104k |
+
+LOG_0109/0110: a skid was off the table, so roll sat at ≈ −2.9° (−1.4° otherwise);
+their roll figure is that static tilt, not the transient.
+
+So the leak depends on the field the filter sees, not only on the heading error,
+and a pilot cannot predict it. (The raw z swinging by ~80k counts between boots of a
+still aircraft is itself unexplained and worth its own look; it is not what this
+proposal fixes.)
+
+Roll moves too (up to ~17°). Once settled the attitude is good: LOG_0107 then holds
+pitch 0.0–0.1°, roll −1.4° for minutes.
+
+In Stabilized the controller acts on it even disarmed: LOG_0107 switched to
+Stabilized ~22 s after boot and both elevons went to their stops (1999 / 1001 µs at
+25 s) against a phantom −34° nose-down, easing back as the attitude settled (1635 /
+1385 µs at 50 s). Armed, that is a full nose-up command at launch. (The 2026-11-14
+trim sessions, LOG_0096–0104, were in Manual: surfaces at the trim values
+throughout, so those trims are unaffected.)
+
+**Cause.** The heading converges at the same time: in LOG_0107 yaw goes from −7° to
+−155° over 50 s while pitch makes its excursion, and settles when pitch does; LOG_0089
+the same (−6° → −170°). The raw mag counts stay steady throughout (no offset or field
+change mid-transient), so the filter, not the sensor, is moving. The Madgwick filter starts from the identity quaternion, i.e. it assumes
+the airframe is level **and pointing north**. With a magnetometer reading (9-DOF) it
+turns towards the real heading at the rate `AHRS_BETA` (0.033) allows, and the
+gradient step leaks part of that heading correction into pitch and roll until the
+heading has converged. A host run of `AttitudePipeline::with_board(board_rotation())`
+(eagle), held perfectly level and still with a 63°-inclination field, for 60 s:
+
+| Real heading | 9-DOF worst pitch/roll | still off at 55 s | 6-DOF (no mag) |
+|--------------|------------------------|-------------------|----------------|
+| north | 0° | 0° | 0° |
+| east / west | 11.6° | 0° (settled ~30 s) | 0° |
+| south | 18° | −14° pitch | 0° |
+
+The simulation reproduces the mechanism but not the size or timing: it peaks at 18°
+(logs 39–45°), never goes positive in pitch (logs: both signs), and at a south heading
+is still −14° off at 55 s (logs settle by ~45 s). The real field (residual hard iron,
+event 117 at boot in LOG_0105) is the obvious difference; it is **not yet shown** that
+a seed fixes the real case. That is the first verification step (replay below),
+before this goes to Accepted. The
+board orientation is not the cause: the heading error at power-up is, so **the dart
+is affected the same way** (its logs are to be checked, Verification).
+
+Not new: LOG_0082 (v0.3.0, flown) shows it. A pilot who powers up and waits before
+arming never sees it, which is likely why it has not bitten yet.
+
+## Behaviour delta
+
+| Situation | Before | After |
+|-----------|--------|-------|
+| Boot, still | Attitude starts at 0/0/north and wanders up to ~45° in pitch over ~45 s | Attitude seeded from accel and mag once the gyro bias is done (~2 s after boot): correct from then on |
+| Boot, no mag (I2C failed, event 43/48) | 6-DOF from level, converges on tilt only | Seeded from accel (tilt); heading stays at the mag-less default, as now |
+| Arm (any path) while the AHRS tilt and the accel tilt disagree by > `ARM_ATTITUDE_MAX_ERR_DEG` | Arms | Refused, event 19, LED and CRSF as for the other arming refusals |
+| Arm with the aircraft moving (handling) | Arms | Arms if the tilts agree (the check uses a filtered accel and only runs disarmed); refused otherwise until it is held still |
+| Armed | — | Unchanged: the check never runs armed and never disarms |
+
+OPERATIONS.md "Arming and disarming": one more refusal reason and its event.
+STATE_DIAGRAMS.md arming diagram: the guard "attitude settled" on Disarmed → Armed.
+
+## Design
+
+Two parts. Part A removes the cause; Part B is the safety net that also catches any
+other divergence (a bad seed, a mag disturbance at boot, a Core 1 fault).
+
+### A. Seed (`elle-control/src/attitude.rs`, `elle-hardware/src/imu/driver.rs`)
+
+- New pure function `elle_control::attitude::seed(accel, mag: Option<…>) ->
+  UnitQuaternion<f32>`, in the airframe frame the AHRS uses (after `mount`): roll
+  and pitch from the accel vector, heading from the mag vector projected on the
+  horizontal plane (TRIAD), in uf-ahrs' earth-frame convention. No mag: tilt only,
+  heading 0. Host-tested against the pipeline: a seeded pipeline fed the same still
+  sample stays within 0.1° from the first sample.
+- The driver calls `pipeline.set_quat(seed(…))` once, when the gyro bias estimate
+  completes (the aircraft has just been still for a second, so the averaged accel is
+  gravity), using the bias estimator's mean accel and the latest `MAG_FIELD` with the
+  flash mag offsets already applied (they load before the IMU loop starts; to
+  confirm). It re-seeds, disarmed and still, whenever the mag offsets or the level
+  mount change (mag cal, level cal, their clears), since each of those otherwise
+  recreates the transient.
+  `imu-raw-log` already records the AHRS quaternion in `imu_raw_ctx` on change, so a
+  replay picks the seed up from the log and stays exact (to check: the seed must
+  land in a ctx record before the next sample).
+- Nothing changes after the seed: same filter, same `AHRS_BETA`, same 1 kHz step.
+
+### B. Arming guard (`elle-control/src/arming.rs`, `elle-system/src/system.rs`)
+
+- New pure check `attitude_settled(ahrs_pitch, ahrs_roll, accel_lp) -> bool`: the
+  tilt implied by a low-passed accel (time constant `ARM_ATTITUDE_ACCEL_TAU_S`, 0.5 s)
+  against the AHRS pitch and roll, each within `ARM_ATTITUDE_MAX_ERR_DEG` (5°). The
+  accel tilt is only meaningful when still, so the check refuses rather than passes
+  when the accel magnitude is off 1 g by more than 10 % (being handled).
+- **Latched once per boot.** The check gates arming only until it has passed once
+  since boot; from then on it never refuses. A re-arm after a failsafe or a kill
+  switch, which can happen in the air (round-A B6: a fresh gesture re-arms after RC
+  restore), is therefore never blocked: in a turn or glide the accel tilt differs
+  from the AHRS tilt and |a| is not 1 g, so an unlatched check would leave the pilot
+  without engines.
+- `FlightController::arm()` (every arm path: gesture, RPC `Arm`, `rpc-rc`) refuses
+  with event 19 while the latch is not set, the same way as
+  `EVT_ARM_REFUSED_THROTTLE`. Once armed the check is not evaluated.
+- Core 1 publishes the low-passed accel with the attitude (`AttitudeData` gains
+  `accel_tilt_pitch`, `accel_tilt_roll`, f32, computed on Core 1 at 1 kHz: a few
+  multiplies). Core 0 compares at arm time only.
+
+### Constants (`elle-config`)
+
+`ARM_ATTITUDE_MAX_ERR_DEG` 5.0, `ARM_ATTITUDE_ACCEL_TAU_S` 0.5,
+`ARM_ATTITUDE_ACCEL_G_TOL` 0.10; asserts: positive, error < the pitch setpoint limit.
+
+### Timing
+
+Seed: once, a few hundred float ops on Core 1. Guard: one low-pass per sample on
+Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
+
+## Interfaces
+
+- **Events:** 19 `EVT_ARM_REFUSED_ATTITUDE` ("Arming refused: attitude not settled"),
+  host label, OPERATIONS.md row. Optionally an info event when the seed is applied
+  (in the IMU block, 40–49 is full: next free code there to be chosen).
+- **RPC:** none. `GetAttitude` is unchanged; the accel tilt is internal.
+- **Flash:** none.
+- **ULog:** none required. (`attitude_data` could carry the accel tilt for
+  diagnosis; left out to keep the layout.)
+- **CRSF / LED:** the existing arming-refused pattern.
+
+## Flight-safety risks
+
+| Risk | Effect | Mitigation |
+|------|--------|------------|
+| Seed from a bad mag (disturbed field at boot) | Heading wrong; tilt leak as today, but from a smaller error | Part B refuses arming until the tilt agrees; the seed is never worse than identity in tilt (tilt comes from the accel) |
+| Seed taken while moving | Wrong tilt seed | Taken only when the bias estimator has accepted a still second; otherwise no seed (behaviour as today) and Part B holds arming |
+| Guard refuses a legitimate arm | Pilot cannot arm | 5° is well above the settled error (≤1.5° in the logs); refusal is visible (event, LED); holding the aircraft still clears it |
+| Guard false pass | Arms with a wrong attitude | Only possible if accel tilt and AHRS agree on a wrong value, i.e. the accel itself is wrong: no worse than today |
+| Hand launch: arm, then throw | — | The check runs at arm time only, never after: no effect on the launch |
+| Re-arm in the air after failsafe or kill switch | Pilot cannot restart engines | Latched once per boot (Design B): once it has passed on the ground it never refuses again |
+| **Reboot in the air** (watchdog, brown-out) | The new boot has no latch and no still second: no seed, and the guard would refuse every arm for the rest of the flight | **Open, the user's decision:** (a) skip the guard after a watchdog reset (`ResetReason::TimedOut`), (b) let it time out (e.g. pass after `ARM_ATTITUDE_LATCH_TIMEOUT_S`), or (c) accept it (an in-air reboot today also restarts with a wrong attitude). The seed itself is harmless here: without a still second it does not run |
+| Sensor loss, RC loss, Core 1 stall, flash write | — | Seed: only at boot (and on cal changes, disarmed). Guard: disarmed only, latched |
+
+## Verification
+
+- **Host tests:** `seed` at headings 0/90/180/270 and tilts ±20°: seeded pipeline
+  error < 0.5° over 60 s still (the table above as a regression test, with and
+  without the seed); `attitude_settled` true when still and level, false at a 10°
+  disagreement, false while the accel magnitude is off 1 g.
+- **Replay, first (gates Accepted):** an `imu-raw-log` capture from power-up with
+  the aircraft still for 90 s, replayed with `elle-replay` as logged and then with
+  the seed applied at the bias-done sample: logged run shows the transient, seeded
+  run stays within 1.5° of the settled attitude. (LOG_0093 and LOG_0110 are
+  `imu-raw-log` captures but their first seconds are in a start-up dropout, and
+  LOG_0110's transient happened to be small (2.6°); a capture of a large one is
+  needed, or the seed applied at the first synced sample.)
+  Then: the seeded firmware's replay is still exact (ctx record).
+- **Bench:** new TEST_PLAN 0.1 row 5: power up pointing south, still; `attitude_data`
+  stays within 1.5° of the settled value from 3 s after boot. Arming within the first
+  second (gesture) → refused, event 19; after → arms. Tilt the aircraft 20° by hand
+  and arm while holding it still → arms (tilts agree). Check one dart log for the
+  same boot transient first.
+- **Flight:** none beyond confirming the first 60 s of the next flight log.
+
+## Rollback
+
+Part B: `ARM_ATTITUDE_MAX_ERR_DEG` set to 180 disables the refusal. Part A: revert
+its commit (a constant `AHRS_SEED_AT_BOOT` could gate it if wanted). Nothing stored.
+
+## Until this lands
+
+Field card for every flight: **power up and leave the aircraft still until the
+radio's CRSF attitude reads level (pitch and roll within ~2° of the bench value),
+then arm.** In the logs that took 40–50 s; how long it takes depends on the heading,
+so watch the reading rather than a clock. Don't switch to Stabilized before then
+either: it drives the surfaces to their stops while disarmed.
+
+## Doc updates
+
+- [ ] `docs/OPERATIONS.md`: arming refusal and event 19; boot wait until merged
+- [ ] `STATE_DIAGRAMS.md`: arming guard
+- [ ] `TEST_PLAN.md`: 0.1 row 5
+- [ ] `CLAUDE.md`: IMU pipeline step (seed), arming
+- [ ] `crates/elle-ulog/README.md`: none
+- [ ] `CHANGELOG.md`: operator behaviour, event codes
