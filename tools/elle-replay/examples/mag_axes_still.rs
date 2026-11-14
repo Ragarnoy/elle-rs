@@ -1,7 +1,7 @@
 //! Proposal 0010: does the mag axis alignment help where the answer is known?
 //! `cargo run --release -p elle-replay --example mag_axes_still -- [--mag-axes DEG] LOG.ulg...`
 //!
-//! At every still rest (gyro below 2°/s for 2 s, sampled at its end) the accel
+//! At every still rest (gyro below 2°/s for 2 s by default, sampled at its end) the accel
 //! gives the true tilt. For the firmware filter and the what-if with the fed mag
 //! turned by DEG (default 90), prints the tilt error against the accel, and the
 //! dip (angle between the field and the horizontal) the two mappings give: with
@@ -12,8 +12,20 @@ use elle_control::attitude::mag_axes;
 use elle_replay::{replay_with, ulog::ULog, variants};
 use nalgebra::{UnitQuaternion, Vector3};
 
-const STILL_DPS: f32 = 2.0;
-const STILL_S: u64 = 2_000_000;
+/// Still: gyro below this (°/s) for `STILL_S`; env `STILL_DPS` / `STILL_S`
+/// override (hand-held poses rarely stay under 2°/s).
+fn still_params() -> (f32, u64) {
+    let env = |k: &str, d: f64| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
+    (
+        env("STILL_DPS", 2.0) as f32,
+        (env("STILL_S", 2.0) * 1e6) as u64,
+    )
+}
 
 fn up_error_deg(angles: [f32; 3], accel: &Vector3<f32>) -> f32 {
     let [pitch, roll, yaw] = angles;
@@ -35,6 +47,7 @@ fn stats(v: &[f32]) -> (f32, f32, f32) {
 }
 
 fn main() -> Result<()> {
+    let (still_dps, still_us) = still_params();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut deg = 90.0f32;
     if let Some(i) = args.iter().position(|a| a == "--mag-axes") {
@@ -57,13 +70,13 @@ fn main() -> Result<()> {
         let mut still_since: Option<u64> = None;
         let mut taken = false;
         for (k, (s, inp)) in rp.samples.iter().zip(&rp.inputs).enumerate() {
-            if inp.gyro.norm().to_degrees() > STILL_DPS {
+            if inp.gyro.norm().to_degrees() > still_dps {
                 still_since = None;
                 taken = false;
                 continue;
             }
             let since = *still_since.get_or_insert(s.t_us);
-            if taken || s.t_us < since + STILL_S {
+            if taken || s.t_us < since + still_us {
                 continue;
             }
             let (Some(fw), Some(new), Some(m)) =
