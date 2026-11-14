@@ -3,6 +3,7 @@
 pub mod arming;
 pub mod attitude;
 pub mod autotune;
+pub mod beep;
 pub mod boot_mode;
 pub mod commands;
 pub mod dshot_pace;
