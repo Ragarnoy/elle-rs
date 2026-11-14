@@ -2,10 +2,10 @@
 
 | | |
 |-|-|
-| Status | Implemented |
+| Status | Verified (2026-11-14) |
 | Airframes | both |
 | Date | 2026-11-13 |
-| Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): a fix; no RPC, flash, ULog or event change |
+| Version impact | patch ([rules](../../VERSIONING.md#bump-rules), 0.x): a fix; no RPC, flash, ULog or event change |
 | Surfaces | operator behaviour (when the arm and disarm beeps sound) |
 
 ## Motivation
@@ -26,8 +26,8 @@ held back ~210 ms. The bug dates from the beep's introduction (b8384e5 / 39d81a4
 
 ## Behaviour delta
 
-[`OPERATIONS.md`](../OPERATIONS.md#beeps) "Beeps"; the arming diagram in
-[`STATE_DIAGRAMS.md`](../../STATE_DIAGRAMS.md) keeps its transitions.
+[`OPERATIONS.md`](../../OPERATIONS.md#beeps) "Beeps"; the arming diagram in
+[`STATE_DIAGRAMS.md`](../../../STATE_DIAGRAMS.md) keeps its transitions.
 
 | Situation | Before | After |
 |-----------|--------|-------|
@@ -73,6 +73,12 @@ RC loss, failsafe, kill switch: all disarm paths now stop the engines on the nex
 frame, which is the point. Core 1 stall, flash write, reboot: unchanged.
 
 ## Verification
+
+Verified on the eagle, flight build: round-A B6 repeat (LOG_0095, 2026-11-13: after
+two kills at power the engine target is 0 within one engine_data record, 4–10 ms, and
+the eRPM falls at once; double beep after the spin-down), TEST_PLAN 1.4 beeps by ear,
+gesture disarm and throttle-up during the arm beep (operator, 2026-11-13).
+Results: `logs/test-runs/2026-11-13.jsonl`, `2026-11-14.jsonl`.
 
 - **Host tests:** `crates/elle-control/tests/beep.rs` (rest gating, burst counts and
   gap, cancel on a non-zero target mid-burst and while pending, drop after the
