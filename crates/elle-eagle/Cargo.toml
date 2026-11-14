@@ -34,6 +34,8 @@ rpc-control = ["elle-system/rpc-control", "elle-app/rpc-control"]
 gnss = ["elle-hardware/gnss", "elle-app/gnss"]
 # Raw IMU capture for host replay and vibration analysis (see elle-hardware).
 imu-raw-log = ["elle-hardware/imu-raw-log", "elle-app/imu-raw-log"]
+# The double-tap never starts a calibration (see elle-app).
+tap-cal-lock = ["elle-app/tap-cal-lock"]
 
 [[bin]]
 name = "eagle"

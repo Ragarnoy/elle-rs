@@ -156,7 +156,7 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
         // (deliberate service state; motors locked out) so handling bumps
         // can't start a calibration. Drain the signal every iteration so a
         // tap detected outside kill mode can't stay latched and fire later.
-        let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
+        let tapped = crate::support::take_cal_tap();
         if tapped
             && !fc.is_armed()
             && kill_active

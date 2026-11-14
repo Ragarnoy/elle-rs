@@ -206,6 +206,11 @@ Available in flight mode and with `rpc-rc`. Requires all of:
 Event 120 confirms the tap. CH7 selects which calibration starts. This cannot start an
 autotune: autotune only starts while armed, on an off→pitch/roll transition.
 
+Setting the aircraft down sharply can count as a double-tap, and with the LED out of
+sight a calibration can start (and save) unnoticed. Builds with the `tap-cal-lock`
+feature ignore the tap altogether (logged, nothing starts); calibrate those over RPC
+(`mag cal start`, `level cal start`), or flash a build without the feature.
+
 ## PID autotune
 
 A relay test: the controller swings the attitude setpoint ± the relay amplitude and

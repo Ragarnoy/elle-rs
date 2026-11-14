@@ -39,6 +39,11 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- `tap-cal-lock` build feature (operator behaviour, both airframes): the double-tap
+  never starts a mag or level calibration; it is logged ("Double-tap ignored: tap
+  calibration locked") and dropped. RPC `mag cal` / `level cal` still work. Without
+  the feature nothing changes. On the eagle a sharp set-down during a bench session
+  started a mag calibration unnoticed (no LED) and overwrote a good one (LOG_0117).
 - AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
   into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each

@@ -112,6 +112,19 @@ pub(crate) fn guard_autotune(
     true
 }
 
+/// Take a pending double-tap (always drained, so an old one can't fire later).
+/// In a `tap-cal-lock` build a tap never starts a calibration: it is logged
+/// and dropped, and the RPC `mag cal` / `level cal` commands are the only way.
+#[must_use]
+pub(crate) fn take_cal_tap() -> bool {
+    let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
+    if tapped && cfg!(feature = "tap-cal-lock") {
+        defmt::info!("Double-tap ignored: tap calibration locked (tap-cal-lock build)");
+        return false;
+    }
+    tapped
+}
+
 /// Gate for the double-tap mag-cal gesture: only start calibration when
 /// throttle is commanded low and the gyro is quiet, so motor vibration or
 /// handling can't trigger a spurious calibration.

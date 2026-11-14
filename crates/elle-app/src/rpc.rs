@@ -618,7 +618,7 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         // is active (rpc-rc builds; inert in pure RPC builds where kill_active
         // is always false — use `mag cal start` / `level cal start` there instead).
         // CH7 out of its off position selects level cal, as in flight mode.
-        let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
+        let tapped = crate::support::take_cal_tap();
         if tapped
             && !esc_config
             && !fc.is_armed()
