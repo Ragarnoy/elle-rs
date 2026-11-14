@@ -52,6 +52,13 @@ recalibrated. **The transient stays without it:** LOG_0119 (magnet out, mag
 recalibrated, `imu-raw-log`, still for 87 s) holds pitch −17 to −18° for ~40 s and
 is back within 1° at ~54 s while the heading swings −4° → −164°.
 
+**And with the magnetometer axes fixed** (proposal 0010, LOG_0126, 2026-11-14, eagle,
+clean field, fresh calibration): a handled boot rather than a still one, so it is
+not in the replay table below. Yaw read 2.9° at 4 s with the nose NE (134° expected),
+and the tilt error against the accelerometer was 12–19° at every rest in the first
+~30 s. The heading error fell −131° → −68° → −54° → −34° → −15° over 4–32 s while
+the aircraft was turned through N, W, S and E, and was −1° to −3° once settled.
+
 Roll moves too (up to ~17°). Once settled the attitude is good: LOG_0107 then holds
 pitch 0.0–0.1°, roll −1.4° for minutes.
 
@@ -211,7 +218,18 @@ Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
   Seeded at the very first sample (before the offsets) LOG_0113–0115 got worse
   (21°), which is the ordering requirement in Design A. LOG_0110 is 2.9° in all
   three runs at 252 s (handling late in the log, not the boot).
-  Still to do: the seeded firmware's replay is exact (ctx record).
+  Every log in this table predates proposal 0010: the mag is fused 90° off its true
+  axes. LOG_0109 and 0113–0115 also carry the hatch magnet, and LOG_0119's corrected
+  field reads 0.17 G, so its stored offsets did not fit the magnet-free board. For a
+  still, level boot that doesn't change the result: the filter sees one constant
+  vector, whatever its mapping, and the seed is its fixed point. For a tilted boot
+  it does: the mis-mapped field is inconsistent with gravity there (0010,
+  Motivation 5), so the tilted-arm bench row and the 5° threshold of Part B are to
+  be checked on a build with 0010.
+  Still to do: the seeded firmware's replay is exact (ctx record); rerun this table
+  with `elle-replay --mag-axes 90` once 0010 is merged (both branches add
+  `Input.mag` to `elle-replay` and a row to the proposals index: a trivial conflict
+  for whichever merges second).
 - **Bench:** new TEST_PLAN 0.1 row 5: power up pointing south, still; `attitude_data`
   stays within 1.5° of the settled value from 3 s after boot. Arming within the first
   second (gesture) → refused, event 19; after → arms. Tilt the aircraft 20° by hand
