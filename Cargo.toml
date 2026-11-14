@@ -47,7 +47,7 @@ embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev 
 
 # External dependencies - Hardware drivers
 icm426xx = { git = "https://github.com/ProfFan/icm426xx.git", rev = "7e22a5a", default-features = false, features = ["defmt"] }
-crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", default-features = false, features = ["defmt"] }
+crsf = { git = "https://github.com/tact1m4n3/crsf-rs.git", rev = "06fdca0", default-features = false, features = ["defmt"] }
 smart-leds = "0.4.0"
 
 # External dependencies - System libraries

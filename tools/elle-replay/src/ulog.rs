@@ -92,6 +92,8 @@ impl Format {
 pub struct Series {
     format: Format,
     pub records: Vec<Vec<u8>>,
+    /// Each record's position among the file's data and dropout records.
+    pub order: Vec<u64>,
 }
 
 impl Series {
@@ -164,6 +166,10 @@ pub struct ULog {
     pub series: HashMap<String, Series>,
     /// Dropout records: milliseconds lost in each.
     pub dropouts: Vec<u16>,
+    /// Each dropout's position among the file's data and dropout records
+    /// (the same count as [`Series::order`]): the records after it were
+    /// produced after the loss.
+    pub dropout_order: Vec<u64>,
     /// The file ended inside a record (common after a power cut).
     pub truncated: bool,
 }
@@ -177,6 +183,7 @@ impl ULog {
         let mut ids: HashMap<u16, String> = HashMap::new();
         let mut log = Self::default();
         let mut at = 16;
+        let mut order: u64 = 0;
         while at + 3 <= data.len() {
             let size = usize::from(u16::from_le_bytes([data[at], data[at + 1]]));
             let kind = data[at + 2];
@@ -200,6 +207,7 @@ impl ULog {
                     log.series.entry(name.clone()).or_insert(Series {
                         format,
                         records: Vec::new(),
+                        order: Vec::new(),
                     });
                     ids.insert(id, name);
                 }
@@ -209,10 +217,14 @@ impl ULog {
                         && body.len() - 2 >= s.format.size
                     {
                         s.records.push(body[2..].to_vec());
+                        s.order.push(order);
                     }
+                    order += 1;
                 }
                 b'O' if body.len() >= 2 => {
                     log.dropouts.push(u16::from_le_bytes([body[0], body[1]]));
+                    log.dropout_order.push(order);
+                    order += 1;
                 }
                 _ => {}
             }

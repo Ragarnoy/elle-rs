@@ -250,7 +250,7 @@ If D-term is inverted (accelerates rotation): the rate sign is wrong at the same
 | 2 | Throttle to ~50 %                        | Still disarmed, motors stay off                    | [ ]  |
 | 3 | Throttle back to zero                    | Arms: single beep, event 10                        | [ ]  |
 | 4 | Throttle up                              | Motors spin normally                               | [ ]  |
-| 5 | CH8 high (kill)                          | Motors stop, elevons centre, two beeps, event 16   | [ ]  |
+| 5 | CH8 high (kill)                          | Motors stop at once, elevons centre, event 16; two beeps after spin-down | [ ]  |
 | 6 | CH8 still high, throttle gesture         | Stays disarmed (kill blocks everything)            | [ ]  |
 | 7 | CH8 low (event 17), throttle at zero     | Stays disarmed: the old gesture was cleared        | [ ]  |
 | 8 | Throttle up, then zero                   | Re-arms, single beep                               | [ ]  |

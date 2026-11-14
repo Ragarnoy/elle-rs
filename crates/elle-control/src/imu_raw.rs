@@ -341,6 +341,14 @@ impl Replayer {
         self.synced = true;
     }
 
+    /// Stop output until the next context: the log lost records here (a ULog
+    /// dropout), so a mag change or context may be missing even though the
+    /// sample indices run on without a break.
+    pub fn desync(&mut self) {
+        self.synced = false;
+        self.next = None;
+    }
+
     /// A GNSS fix the recording pipeline was given. Applied whether or not the
     /// replay is synced, so the aid is right when it resumes.
     pub fn fix(&mut self, f: &GnssFix) {

@@ -1,5 +1,6 @@
 use core::cell::Cell;
 
+use elle_control::beep::{BeepSequencer, Pattern, Tone, engine_at_rest};
 use elle_control::dshot_pace::next_deadline_us;
 use elle_control::esc_link::{EdtAction, EdtWatch, EscLink, EscLinkEvent};
 use elle_control::governor::RpmGovernor;
@@ -17,7 +18,9 @@ use crate::{elle_event, event};
 /// Target eRPM per engine (left, right). Governor PI converts to DShot at 1kHz.
 pub static DSHOT_THROTTLE: Signal<CriticalSectionRawMutex, (u32, u32)> = Signal::new();
 
-/// Beep request signal. The DShot task checks this each tick and plays the beep sequence.
+/// Beep request signal. The DShot task queues it and plays it only once both
+/// targets are zero and the engines have spun down (`elle_control::beep`): a
+/// beep never holds back a stop or a throttle frame.
 pub static BEEP_SIGNAL: Signal<CriticalSectionRawMutex, BeepPattern> = Signal::new();
 
 /// Beep patterns available via DShot commands.
@@ -521,6 +524,72 @@ impl<'a> DshotEngines<'a> {
     }
 }
 
+impl From<BeepPattern> for Pattern {
+    fn from(p: BeepPattern) -> Self {
+        match p {
+            BeepPattern::ArmBeep => Self::Arm,
+            BeepPattern::DisarmBeep => Self::Disarm,
+        }
+    }
+}
+
+const fn beep_command(tone: Tone) -> Command {
+    match tone {
+        Tone::Beep1 => Command::Beep1,
+        Tone::Beep2 => Command::Beep2,
+    }
+}
+
+/// Beep bookkeeping shared by both DShot tasks: queues `BEEP_SIGNAL` and tracks
+/// how long the targets have been zero (the spin-down allowance without
+/// telemetry).
+struct Beeper {
+    seq: BeepSequencer,
+    zero_since: Option<Instant>,
+}
+
+impl Beeper {
+    const fn new() -> Self {
+        Self {
+            seq: BeepSequencer::new(),
+            zero_since: None,
+        }
+    }
+
+    /// Call after taking the new target. Returns the beep command to send in this
+    /// frame slot instead of the normal frame, if any. `engines` gives each
+    /// engine's eRPM when its telemetry is valid.
+    fn slot(&mut self, spin_commanded: bool, engines: &[Option<u32>]) -> Option<Command> {
+        let now = Instant::now();
+        let now_ms = now.as_millis();
+        if let Some(p) = BEEP_SIGNAL.try_take() {
+            self.seq.request(p.into(), now_ms);
+        }
+        if spin_commanded {
+            self.zero_since = None;
+        } else if self.zero_since.is_none() {
+            self.zero_since = Some(now);
+        }
+        if !self.seq.busy() {
+            return None;
+        }
+        let zero_for = self.zero_since.map(|t| (now - t).as_millis());
+        let at_rest = engines.iter().all(|&e| engine_at_rest(e, zero_for));
+        self.seq
+            .next(now_ms, spin_commanded, at_rest)
+            .map(beep_command)
+    }
+}
+
+/// eRPM to judge rest by, when the engine's telemetry is trustworthy.
+const fn rest_telemetry(state: &EngineState, unit: &EngineUnitReading) -> Option<u32> {
+    if state.bidir_enabled && unit.valid {
+        Some(unit.erpm)
+    } else {
+        None
+    }
+}
+
 /// MotorStop burst sent at startup so the ESCs arm (`elle_config::ARM_DURATION_MS`).
 const ARM_DURATION: Duration = Duration::from_millis(elle_config::ARM_DURATION_MS as u64);
 
@@ -557,35 +626,19 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1, 0>) {
     let mut target_erpm = 0u32;
     let mut deadline = Instant::now();
     let mut reading = EngineReading::default();
+    let mut beeper = Beeper::new();
 
     loop {
-        // Check for beep request (non-blocking)
-        if let Some(pattern) = BEEP_SIGNAL.try_take() {
-            match pattern {
-                BeepPattern::ArmBeep => {
-                    for _ in 0..10 {
-                        let _ = engine.send_command_async(Command::Beep1).await;
-                        Timer::after(Duration::from_millis(1)).await;
-                    }
-                    Timer::after(Duration::from_millis(200)).await;
-                }
-                BeepPattern::DisarmBeep => {
-                    for _ in 0..10 {
-                        let _ = engine.send_command_async(Command::Beep2).await;
-                        Timer::after(Duration::from_millis(1)).await;
-                    }
-                    Timer::after(Duration::from_millis(100)).await;
-                    for _ in 0..10 {
-                        let _ = engine.send_command_async(Command::Beep2).await;
-                        Timer::after(Duration::from_millis(1)).await;
-                    }
-                    Timer::after(Duration::from_millis(200)).await;
-                }
-            }
-        }
-
+        // Target first: a stop is never held back (proposal 0008).
         if let Some(t) = DSHOT_THROTTLE.try_take() {
             target_erpm = t.0; // single engine uses only the left/primary value
+        }
+
+        // A beep takes this frame slot only at rest with a zero target.
+        if let Some(cmd) = beeper.slot(target_erpm != 0, &[rest_telemetry(&state, &reading.left)]) {
+            let _ = engine.send_command_async(cmd).await;
+            pace(&mut deadline).await;
+            continue;
         }
 
         let dshot_val = state.governor.update(
@@ -627,40 +680,29 @@ pub async fn dshot_task(
     let mut target = (0u32, 0u32);
     let mut deadline = Instant::now();
     let mut reading = EngineReading::default();
+    let mut beeper = Beeper::new();
 
     loop {
-        // Check for beep request (non-blocking)
-        if let Some(pattern) = BEEP_SIGNAL.try_take() {
-            match pattern {
-                BeepPattern::ArmBeep => {
-                    // Single beep: Beep1 repeated 10x (DShot spec)
-                    for _ in 0..10 {
-                        let _ = engines.left.send_command_async(Command::Beep1).await;
-                        let _ = engines.right.send_command_async(Command::Beep1).await;
-                        Timer::after(Duration::from_millis(1)).await;
-                    }
-                    Timer::after(Duration::from_millis(200)).await;
-                }
-                BeepPattern::DisarmBeep => {
-                    // Two short beeps
-                    for _ in 0..10 {
-                        let _ = engines.left.send_command_async(Command::Beep2).await;
-                        let _ = engines.right.send_command_async(Command::Beep2).await;
-                        Timer::after(Duration::from_millis(1)).await;
-                    }
-                    Timer::after(Duration::from_millis(100)).await;
-                    for _ in 0..10 {
-                        let _ = engines.left.send_command_async(Command::Beep2).await;
-                        let _ = engines.right.send_command_async(Command::Beep2).await;
-                        Timer::after(Duration::from_millis(1)).await;
-                    }
-                    Timer::after(Duration::from_millis(200)).await;
-                }
-            }
-        }
-
+        // Target first: a stop is never held back (proposal 0008).
         if let Some(t) = DSHOT_THROTTLE.try_take() {
             target = t;
+        }
+
+        // A beep takes this frame slot only at rest with both targets zero.
+        if let Some(cmd) = beeper.slot(
+            target != (0, 0),
+            &[
+                rest_telemetry(&left_state, &reading.left),
+                rest_telemetry(&right_state, &reading.right),
+            ],
+        ) {
+            let _ = embassy_futures::join::join(
+                engines.left.send_command_async(cmd),
+                engines.right.send_command_async(cmd),
+            )
+            .await;
+            pace(&mut deadline).await;
+            continue;
         }
 
         // Governor PI converts eRPM targets to DShot values
