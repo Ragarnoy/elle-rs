@@ -5,8 +5,8 @@
 | Status | Draft |
 | Airframes | both (eagle first; dart after its own gate, below) |
 | Date | 2026-11-14 |
-| Version impact | patch ([rules](../VERSIONING.md#bump-rules)): corrects what the AHRS fuses; no type, layout or code changes |
-| Surfaces | operator behaviour (eagle yaw and heading, and pitch/roll wherever the mag pulls on them), ULog (`imu_raw_mag` meaning, one info entry added) |
+| Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): a fix. No RPC type, flash entry, event code or ULog field changes meaning (`imu_raw_mag` stays "the vector as fed"); one ULog info entry is added |
+| Surfaces | operator behaviour (eagle yaw and heading, and pitch/roll wherever the mag pulls on them), ULog (one info entry added) |
 
 ## Motivation
 
@@ -49,8 +49,10 @@ the mis-mapped field is no longer a rotated copy of the true one, so the angle
 between field and gravity changes with attitude. Live poses with today's mapping
 showed it: dip 62.5° level, 37.6° nose up, 38.5° nose down (bench, probe attached,
 so partly the bench's own distortion). Madgwick fuses the mag through the whole
-quaternion, so this inconsistency pulls pitch and roll, most in banked turns and
-tilted boots: the cases proposal 0009 and [`ATTITUDE.md`](../ATTITUDE.md) chase.
+quaternion, so this inconsistency can pull pitch and roll, most in banked turns and
+tilted boots: the cases proposal 0009 and [`ATTITUDE.md`](../ATTITUDE.md) chase. How
+much is not measured yet; in steady state a Madgwick mag term mostly constrains
+heading. The replay in Verification measures it.
 
 The eagle's mag readings before 2026-11-14 also carried a ~20 G hatch magnet,
 since removed. The dart carries a magnet too (operator, 2026-11-14), still to be
@@ -62,7 +64,7 @@ removed; see the dart gate.
 |-----------|--------|-------|
 | Eagle, yaw and heading (`attitude_data.yaw`, `GetAttitude`, CRSF attitude) | ~90° off magnetic, and moving as the aircraft tilts | Consistent with the field; still in the existing heading reference (below) |
 | Eagle, yaw while tilting at a fixed heading | Moves with the tilt | Stays within a few degrees |
-| Eagle, pitch/roll | Pulled by the inconsistent field when tilted or turning | Not pulled by it (size measured by replay, Verification) |
+| Eagle, pitch/roll | Can be pulled by the inconsistent field when tilted or turning | Not pulled by it (size to be measured by replay, Verification) |
 | Eagle, heading hold | Captures a heading on engage; works on differences | Same; a jump of ~90° in the absolute value at the first boot of the new build |
 | Eagle, mag calibration | — | Unchanged; the stored offsets (key 2) stay valid, no recalibration needed |
 | Raw mag (`MAG`, `GetMagnetometer`, ULog `magnetometer_data`, TUI and CRSF raw-mag heading) | Chip frame | Unchanged, chip frame |
@@ -83,9 +85,12 @@ machine changes.
   - `pub fn mag_axes(m: Vector3<f32>, yaw_deg: f32) -> Vector3<f32>`: an exact axis
     swap, no trigonometry: 0 → (x, y, z), 90 → (−y, x, z), 180 → (−x, −y, z),
     270 → (y, −x, z). Exact, so the dart (0) fuses bit for bit as before.
-  - `AttitudePipeline` gains a `mag_axes_deg` field: `with_board(board)` becomes
-    `with_board(board, mag_axes_deg)`; `new()` / `with_modes()` keep 0, so the host
-    tests and `elle-replay --simulate` (sensor frame = airframe) are unchanged.
+  - `AttitudePipeline` gains a `mag_axes_deg` field, set by a new
+    `with_mag_axes(self, deg) -> Self` builder; `with_board(board)` keeps its
+    signature, so its callers (`driver.rs`, `tests/board_orientation.rs`, and 0009's
+    `tests/attitude_seed.rs` on `attitude-boot-seed`) are untouched. `new()` /
+    `with_modes()` keep 0, so the host tests and `elle-replay --simulate` (sensor
+    frame = airframe) are unchanged.
   - `mag_to_airframe(mag)` becomes `mount × mag_axes(mag)`.
 - **After the offset, not on the raw reading.** `MAG_FIELD` is the offset-corrected
   field in the chip frame (`i2c_sensors.rs`). The swap happens where it is mounted,
@@ -93,7 +98,8 @@ machine changes.
   stored calibration stays valid. Calibration (sphere fit) and `MagHealth` (magnitude
   band, frozen check) don't depend on the axis order, so they are untouched.
 - **`elle-hardware/src/imu/driver.rs`:** builds the pipeline with
-  `with_board(board_rotation(), elle_config::MAG_AXES_YAW_DEG)`. No other change.
+  `with_board(board_rotation()).with_mag_axes(elle_config::MAG_AXES_YAW_DEG)`. No
+  other change.
 - **Raw IMU replay:** `imu_raw_mag` records the vector as fed (after
   `mag_to_airframe`), so a log from the new build replays exactly as before. A new
   ULog info entry, `elle_mag_axes_deg`, records the constant. For logs without it
@@ -110,11 +116,13 @@ machine changes.
 Together with the nose-up-positive and right-wing-down-positive results of TEST_PLAN
 0.1.2 on both airframes, that makes the firmware's airframe frame **x aft, y
 starboard, z up**. Yaw is therefore the bearing of the **tail**, counted
-anticlockwise from the AHRS's earth x axis. With this change, the eagle at the bench
-pose (nose 46°) should read yaw ≈ +134° (tail at 226°), if uf-ahrs's earth frame is
-north-west-up. Proposal 0006 (yaw sign; Draft, on branch `yaw-sign`, not yet on master) owns
+anticlockwise from the AHRS's earth x axis, and with a north-west-up earth frame
+yaw ≈ 180° − nose compass bearing. A check of that model: the bench sample above,
+through **today's** mapping into this frame, gives yaw −136°; the firmware reported
+−141° at that pose. With this change the same pose (nose 46°) should read
+yaw ≈ +134°. Proposal 0006 (yaw sign; Draft, on branch `yaw-sign`, not yet on master) owns
 the yaw sign and where yaw is zero. It already lists the zero as unchecked, and this
-finding answers that question. Heading hold and the yaw damper use differences only.
+finding gives the answer to check there. Heading hold and the yaw damper use differences only.
 This proposal changes neither the sign nor the zero.
 
 ## Interfaces
@@ -157,14 +165,16 @@ This proposal changes neither the sign nor the zero.
   - Proposal 0009's seed table, rerun with the remap. Its tilted rows used the wrong
     mapping.
 - **Bench** (new TEST_PLAN 0.1.5, flight build with `imu-raw-log`, SD card,
-  **no probe**, ~1 m from the bench, PSU and any steel):
-  1. Level, rested 5 s at each of four headings 90° apart by phone compass (nose):
-     yaw steps by 90° ± 10° in order; the yaw-to-compass offset is the same at all
-     four ± 10°.
-  2. At one heading, rested 5 s each: level, nose up 30°, nose down 30°, each wing
+  **no probe**, ~1 m from the bench, PSU and any steel). The cal comes first: the
+  stored offsets and the ones the gyro fit finds differ by ~400–500 counts
+  (~0.03 G), several degrees of heading, so rows 2–3 run on a fresh cal.
+  1. Mag-cal tumble at the test spot (event 113): the gyro-consistency fit on it
+     picks identity, residual ≤ 0.01 G.
+  2. Level, rested 5 s, nose at each of four phone-compass bearings (N, E, S, W):
+     yaw ≈ 180° − bearing (180°, 90°, 0°, −90°), each within ± 10°. A 270° mapping
+     gives the reverse order; before 0006 lands this is the expected sign.
+  3. At one heading, rested 5 s each: level, nose up 30°, nose down 30°, each wing
      down 30°: yaw within ± 5° of level, dip (from accel and mag) within ± 3°.
-  3. A mag-cal tumble in the same session: the gyro-consistency fit on it picks
-     identity, residual ≤ 0.01 G.
   4. 0.1.4 (slow 360° yaw) as before.
 - **Dart gate** (before its constant becomes 90): magnet removed; mag cal; a ground
   tumble with `imu-raw-log`; the gyro-consistency fit picks (−my, +mx, +mz) by a
