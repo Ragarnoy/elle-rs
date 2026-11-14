@@ -22,7 +22,7 @@ stateDiagram-v2
     D --> H: throttle ≥ ARM_THROTTLE_HIGH_RAW (~30 %)
     H --> A: throttle back to zero thrust\n(event 10, single beep)
     A --> D: RC failsafe (event 14)\ngesture cleared
-    A --> K: CH8 high (event 16)\ndouble beep
+    A --> K: CH8 high (event 16)\nengines stop at once, double beep after spin-down
     H --> K: CH8 high
     D --> K: CH8 high
     K --> D: CH8 low (event 17)\ngesture cleared

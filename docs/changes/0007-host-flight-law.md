@@ -298,6 +298,9 @@ golden file: a regression test that later changes update on purpose.
   (Stabilized PID direction) and 1.4 (arming gesture, kill switch) on one airframe.
   On the same airframe, compare `loop_stages` `Update` against a log from the base
   commit.
+  So far (eagle, `round-a` 5edd559, which contains this branch, 2026-11-14): 1.3
+  and 1.4 passed, and the round-A B4 checks covered 1.1 (elevon direction in
+  Manual and Stabilized). 1.2 and the `loop_stages` comparison are still to run.
 - **Flight:** none required by this change. The first flight after it reads the
   usual `controller` fields; nothing new to look for.
 

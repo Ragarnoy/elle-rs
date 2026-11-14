@@ -74,6 +74,10 @@ with `rpc-rc`.
 ### Beeps
 
 The ESCs beep through the motors: one beep sequence on arm, a double beep on disarm.
+A disarm (any path: gesture, kill switch, failsafe, RPC) stops the engines on the next
+DShot frame; the double beep follows once they have spun down, so after a run at power
+it comes a second or two late. Throttle up during the arm beep cuts it short. A beep
+that cannot play within 4 s (an engine never reads at rest) is dropped.
 Engine arming at power-up is a separate 2 s MotorStop burst (`ARM_DURATION_MS`) that
 the ESCs need before they accept throttle; it is not the flight-controller arm.
 

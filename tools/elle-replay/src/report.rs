@@ -42,6 +42,7 @@ pub struct CoverageReport {
     pub mag_changes: u64,
     pub roundtrip_errors: u32,
     pub dropouts: usize,
+    pub dropout_breaks: u64,
 }
 
 impl From<&Coverage> for CoverageReport {
@@ -57,6 +58,7 @@ impl From<&Coverage> for CoverageReport {
             mag_changes: c.mag_changes,
             roundtrip_errors: c.roundtrip_errors,
             dropouts: c.dropouts,
+            dropout_breaks: c.dropout_breaks,
         }
     }
 }

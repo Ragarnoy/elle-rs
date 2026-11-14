@@ -52,6 +52,10 @@ pub struct Coverage {
     pub roundtrip_errors: u32,
     /// ULog dropout records in the file.
     pub dropouts: usize,
+    /// Dropouts that stopped a synced replay: records were lost there, maybe
+    /// a mag change or context without any break in the sample indices, so
+    /// the replay waits for the next context.
+    pub dropout_breaks: u64,
 }
 
 /// One alternative filter's output, aligned with [`Replay::samples`].
@@ -118,6 +122,8 @@ enum Event {
         t_us: u64,
         gyro: [i32; 3],
         accel: [i32; 3],
+        /// First sample of the first batch written after a ULog dropout.
+        after_dropout: bool,
     },
 }
 
@@ -133,7 +139,14 @@ fn events(log: &ULog) -> Result<(Vec<Keyed>, Coverage)> {
         ..Coverage::default()
     };
     let mut ev = Vec::new();
-    for r in &raw.records {
+    // Each dropout marks the first imu_raw batch after it: anything lost in it
+    // (a mag change, a context) applies from that batch on at the latest.
+    let mut drops = log.dropout_order.iter().peekable();
+    for (r, &order) in raw.records.iter().zip(&raw.order) {
+        let mut after_dropout = false;
+        while drops.next_if(|&&d| d < order).is_some() {
+            after_dropout = true;
+        }
         let first = raw.u32(r, "first_index");
         let t0 = raw.u64(r, "timestamp");
         let count = usize::from(raw.u8(r, "count")).min(BATCH_SAMPLES);
@@ -147,6 +160,7 @@ fn events(log: &ULog) -> Result<(Vec<Keyed>, Coverage)> {
                     t_us: t0 + 1000 * k as u64,
                     gyro,
                     accel,
+                    after_dropout: after_dropout && k == 0,
                 },
             ));
         }
@@ -298,7 +312,16 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                 rp.fix(&f);
                 aid_src.on_fix(f);
             }
-            Event::Sample { t_us, gyro, accel } => {
+            Event::Sample {
+                t_us,
+                gyro,
+                accel,
+                after_dropout,
+            } => {
+                if after_dropout {
+                    coverage.dropout_breaks += u64::from(rp.synced());
+                    rp.desync();
+                }
                 if let Some(prev) = last
                     && index != prev.wrapping_add(1)
                 {
