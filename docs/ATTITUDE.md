@@ -25,7 +25,9 @@ adds more, and the navigation loiter (a constant turn) flies on a wrong attitude
 code, by every host replay:
 
 1. subtract the boot gyro bias; level-cal step (driver);
-2. rotate gyro and accel by the level-cal mount;
+2. rotate gyro and accel by the mount (board orientation × level cal); the mag is
+   first turned from its chip's axes onto the IMU's (`MAG_AXES_YAW_DEG`, proposal
+   0010), then mounted the same way;
 3. rate low-pass for the PID (30 Hz Butterworth);
 4. **turn compensation** (`AHRS_TURN_COMP`, off by default) and **accel gate**
    (`AHRS_ACCEL_GATE_G`, off by default);
@@ -78,6 +80,22 @@ any context on, in every mode (tests: `crates/elle-control/tests/imu_raw.rs`). L
 
 `elle-replay LOG` checks it on every log: each `attitude_data` must be reproduced
 exactly; any mismatch fails the run, and nothing else it reports is trusted.
+
+## Mag axes (proposal 0010)
+
+The MMC5616WA sits a quarter turn round from the ICM-42686 on the rev A board:
+imu = (−my, +mx, +mz). Until proposal 0010 the eagle fused it with parallel axes. A
+log from before then replays with the alignment through `elle-replay LOG
+--mag-axes 90`: the what-if variant is seeded at the heading the remapped field gives,
+so it measures the mapping, not a heading convergence.
+`examples/mag_axes_still.rs` scores it where the answer is known: at still rests, tilt
+against the accel, and the dip, which the right mapping keeps the same at every
+attitude. On the one post-magnet bench log with a fresh calibration (LOG_0121, after
+61.6 s; all rests level) it moves the heading from −135…−144° to +131…+143°, the
+phone compass's NE (yaw ≈ 180° − nose bearing in this frame), and changes tilt error
+and dip at those level rests by ≤ 0.15° and ≤ 1.3°. Before a calibration (LOG_0118–0120,
+0.17 G with stale offsets) both mappings show the boot transient of proposal 0009. The pitch and roll effect needs tilted rests or turns: TEST_PLAN 0.1.5
+and the next flight.
 
 ## Comparing filters: `elle-replay --compare`
 

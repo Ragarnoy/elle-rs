@@ -50,6 +50,9 @@ pub struct Spec {
     /// With a gate on a Madgwick filter: scale β down smoothly instead of
     /// skipping the accel.
     pub smooth: bool,
+    /// What-if mag axis alignment (proposal 0010): turn the fed mag's chip axes
+    /// by this much more than the log did, degrees (a quarter turn; 0 = as fed).
+    pub mag_axes_deg: f32,
 }
 
 /// Default gate threshold, g.
@@ -69,6 +72,7 @@ pub fn default_specs() -> Vec<Spec> {
         turn,
         gate_g,
         smooth: false,
+        mag_axes_deg: 0.0,
     };
     let weighted = Spec {
         smooth: true,
@@ -117,6 +121,44 @@ impl Filter {
             Self::Vqf(f) => f.orientation(),
         }
     }
+}
+
+/// The firmware's filter with the fed mag's axes turned by `deg` more than the
+/// log did (`--mag-axes`).
+#[must_use]
+pub fn mag_axes_spec(deg: f32) -> Spec {
+    Spec {
+        name: format!("madgwick-mag{deg:+}"),
+        kind: Kind::Madgwick {
+            beta: elle_config::AHRS_BETA,
+        },
+        turn: Turn::Off,
+        gate_g: None,
+        smooth: false,
+        mag_axes_deg: deg,
+    }
+}
+
+/// The fed mag (airframe frame, after `mount`) with the chip axes turned by
+/// `deg` more: un-mount, swap, mount again.
+#[must_use]
+pub fn remap_fed_mag(fed: &Vector3<f32>, mount: &UnitQuaternion<f32>, deg: f32) -> Vector3<f32> {
+    mount * elle_control::attitude::mag_axes(mount.inverse() * fed, deg)
+}
+
+/// `q` turned about the earth vertical so that `new_mag` lies where `old_mag`
+/// did: the same tilt, the heading the remapped field implies. Seeding a
+/// what-if with the firmware's quaternion unchanged would start it at the old
+/// heading and measure its convergence, not the mapping.
+#[must_use]
+pub fn reseat_heading(
+    q: UnitQuaternion<f32>,
+    old_mag: &Vector3<f32>,
+    new_mag: &Vector3<f32>,
+) -> UnitQuaternion<f32> {
+    let (o, n) = (q * old_mag, q * new_mag);
+    let d = o.y.atan2(o.x) - n.y.atan2(n.x);
+    UnitQuaternion::from_axis_angle(&Vector3::z_axis(), d) * q
 }
 
 /// One variant running alongside the replay.

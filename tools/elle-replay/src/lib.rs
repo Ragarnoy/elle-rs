@@ -79,6 +79,10 @@ pub struct Input {
     pub accel: Vector3<f32>,
     /// The GNSS aid available at this sample.
     pub aid: Aid,
+    /// The mag vector as fed (airframe frame), if any.
+    pub mag: Option<Vector3<f32>>,
+    /// The logged mount (sensor → airframe) at this sample.
+    pub mount: UnitQuaternion<f32>,
 }
 
 /// Every recorded sample (synced or not) plus coverage.
@@ -338,7 +342,18 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                     && !was_synced
                     && let Some(q) = seed
                 {
-                    runs.iter_mut().for_each(|r| r.seed(q));
+                    for r in &mut runs {
+                        let deg = r.spec.mag_axes_deg;
+                        let q = match mag {
+                            Some(m) if deg != 0.0 => variants::reseat_heading(
+                                q,
+                                &m,
+                                &variants::remap_fed_mag(&m, &mount, deg),
+                            ),
+                            _ => q,
+                        };
+                        r.seed(q);
+                    }
                 }
                 was_synced = synced;
                 let g = mount * (Vector3::from(gyro.map(|r| decode(r, GYRO_SCALE))) - bias);
@@ -348,9 +363,19 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                     gyro: g,
                     accel: a,
                     aid,
+                    mag,
+                    mount,
                 });
                 for (run, track) in runs.iter_mut().zip(&mut tracks) {
-                    let out = run.step(g, a, mag.as_ref(), mag_new, &aid);
+                    let deg = run.spec.mag_axes_deg;
+                    let m = mag.map(|m| {
+                        if deg == 0.0 {
+                            m
+                        } else {
+                            variants::remap_fed_mag(&m, &mount, deg)
+                        }
+                    });
+                    let out = run.step(g, a, m.as_ref(), mag_new, &aid);
                     track.angles.push(synced.then_some(out));
                     track.gated = run.gated;
                 }

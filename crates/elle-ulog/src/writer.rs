@@ -352,6 +352,21 @@ impl ULogWriter {
         self.write_message(MessageType::Info, &buf[..len])
     }
 
+    /// Write an `int32_t` info message. Call after [`Self::write_definitions`]
+    /// and before the first subscription, so it stays in the definitions section.
+    pub fn write_info_i32(&mut self, key: &str, value: i32) -> Result<(), WriteError> {
+        let mut buf = [0u8; 256];
+        let full = 8 + key.len(); // "int32_t " + name
+        if full + 1 + 4 > buf.len() {
+            return Err(WriteError::InvalidMessage);
+        }
+        buf[0] = full as u8;
+        buf[1..9].copy_from_slice(b"int32_t ");
+        buf[9..9 + key.len()].copy_from_slice(key.as_bytes());
+        buf[1 + full..1 + full + 4].copy_from_slice(&value.to_le_bytes());
+        self.write_message(MessageType::Info, &buf[..1 + full + 4])
+    }
+
     /// Write an info message with a binary u64 value (little-endian)
     fn write_info_u64(&mut self, key: &str, value: u64) -> Result<(), WriteError> {
         let key_len = key.len() as u8;

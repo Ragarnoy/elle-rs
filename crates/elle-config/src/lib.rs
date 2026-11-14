@@ -578,6 +578,26 @@ const _: () = assert!(
         || BOARD_YAW_DEG == 270.0
 );
 
+/// How the magnetometer chip sits on the board relative to the IMU: the
+/// rotation about the vertical, in degrees, that takes the MMC5616WA's axes onto
+/// the ICM-42686's sensor axes (proposal 0010). Applied to the offset-corrected
+/// field, before the board rotation and level cal, so the stored hard-iron
+/// offsets stay in the chip frame. Rev A: the chip is a quarter turn round,
+/// imu = (−my, +mx, +mz) (gyro-consistency fit, MMC5616WA datasheet p. 6, the
+/// rev A layout). The dart has the same board but stays at 0 until its magnet is
+/// removed and a ground tumble confirms it (proposal 0010, dart gate).
+#[cfg(not(feature = "platform-dart"))]
+pub const MAG_AXES_YAW_DEG: f32 = 90.0;
+#[cfg(feature = "platform-dart")]
+pub const MAG_AXES_YAW_DEG: f32 = 0.0;
+
+const _: () = assert!(
+    MAG_AXES_YAW_DEG == 0.0
+        || MAG_AXES_YAW_DEG == 90.0
+        || MAG_AXES_YAW_DEG == 180.0
+        || MAG_AXES_YAW_DEG == 270.0
+);
+
 // Gyro bias estimation at boot. Samples are at the 1 kHz IMU rate.
 /// Samples averaged into the bias once the board has been still for all of them (1 s).
 pub const GYRO_BIAS_SAMPLES: u32 = 1000;

@@ -130,6 +130,10 @@ impl ULogLogger {
                 epoch_ms,
             )
             .map_err(|_| ULogError::InitFailed)?;
+        // Proposal 0010: what the fed mag (`imu_raw_mag`) has been through.
+        self.writer
+            .write_info_i32("elle_mag_axes_deg", elle_config::MAG_AXES_YAW_DEG as i32)
+            .map_err(|_| ULogError::InitFailed)?;
 
         // Add subscriptions
         self.attitude_msg_id = Some(

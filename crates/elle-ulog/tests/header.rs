@@ -26,6 +26,7 @@ fn header_with_every_subscription_fits() {
         u64::MAX,
     )
     .unwrap();
+    w.write_info_i32("elle_mag_axes_deg", 270).unwrap();
     let names = [
         AttitudeMessage::NAME,
         CommandsMessage::NAME,

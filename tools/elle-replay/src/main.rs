@@ -1,4 +1,4 @@
-//! `elle-replay LOG_NNNN.ulg [--compare] [--csv out.csv] [--json]`
+//! `elle-replay LOG_NNNN.ulg [--compare] [--mag-axes DEG] [--csv out.csv] [--json]`
 //! `elle-replay --simulate out.ulg [--wind-north N --wind-east E] [--vibration A] [--compare]`
 //!
 //! Replays a raw IMU log (`imu-raw-log` build) through the firmware's attitude
@@ -52,6 +52,11 @@ struct Args {
     /// bank: for ground tests in a vehicle, which turns without banking.
     #[arg(long)]
     score_by_rate: bool,
+    /// What-if (proposal 0010): also run the firmware filter with the fed mag's
+    /// chip axes turned this many degrees more than the log did (90 on a log
+    /// from before the eagle's alignment), and score it.
+    #[arg(long, allow_hyphen_values = true)]
+    mag_axes: Option<f32>,
     /// Print the report as JSON instead of text.
     #[arg(long)]
     json: bool,
@@ -113,6 +118,19 @@ fn print_report(r: &Report) {
                 r.pitch_rms_deg[0].max(r.pitch_rms_deg[1])
             );
         }
+        println!(
+            "\n  against the firmware replay        mean p/r/y            RMS p/r/y             max p/r/y"
+        );
+        for d in &cmp.vs_firmware {
+            let f = |v: [f32; 3]| format!("{:+6.2} {:+6.2} {:+7.2}", v[0], v[1], v[2]);
+            println!(
+                "  {:<22} {}   {}   {}",
+                d.name,
+                f(d.mean_deg),
+                f(d.rms_deg),
+                f(d.max_deg)
+            );
+        }
         println!("\n  samples fused without the accelerometer (gate)");
         for (name, pct) in &cmp.gated_pct {
             println!("  {name:<22} {pct:5.1}%");
@@ -142,10 +160,16 @@ fn main() -> Result<()> {
 
     let data =
         std::fs::read(&args.log).with_context(|| format!("reading {}", args.log.display()))?;
+    if let Some(deg) = args.mag_axes
+        && deg % 90.0 != 0.0
+    {
+        bail!("--mag-axes {deg}: must be a multiple of 90");
+    }
     let opts = report::Options {
         compare: args.compare,
         gate_g: args.gate_g,
         score_by_rate: args.score_by_rate,
+        mag_axes_deg: args.mag_axes,
     };
     let (r, replay) = report::analyse(
         &args.log.display().to_string(),
