@@ -1,0 +1,190 @@
+# 0010: Magnetometer axis alignment
+
+| | |
+|-|-|
+| Status | Draft |
+| Airframes | both (eagle first; dart after its own gate, below) |
+| Date | 2026-11-14 |
+| Version impact | patch ([rules](../VERSIONING.md#bump-rules)): corrects what the AHRS fuses; no type, layout or code changes |
+| Surfaces | operator behaviour (eagle yaw and heading, and pitch/roll wherever the mag pulls on them), ULog (`imu_raw_mag` meaning, one info entry added) |
+
+## Motivation
+
+The firmware fuses the MMC5616WA's axes as if they were the ICM-42686's: one mount
+rotation (`AttitudePipeline::mount`, board × level cal) is applied to accel, gyro
+and mag alike. On the rev A board the two chips are a quarter turn apart about the
+vertical. Four independent pieces of evidence, all from the eagle, 2026-11-14:
+
+1. **Gyro consistency.** For a constant earth field, each mag sample must equal the
+   previous one rotated by the gyro in between. Over the 48 signed axis
+   permutations, with the hard-iron offset fitted jointly, on three mag-cal tumbles
+   (raw IMU capture, `imu-raw-log`):
+
+   | Log, window | Best map | Residual | Identity (today) | Next best |
+   |---|---|---|---|---|
+   | LOG_0121, 31–62 s | imu = (−my, +mx, +mz) | 0.005 G | 0.036 G | 0.031 G |
+   | LOG_0117, 440–470 s | same | 0.009 G | 0.055 G | 0.035 G |
+   | LOG_0117, 612–642 s | same | 0.005 G | 0.029 G | 0.020 G |
+
+   LOG_0121 again from `attitude_data` rates instead of the raw capture: same map,
+   0.005 G against 0.037 G. The fit cannot tell a map from its exact negative
+   (+my, −mx, −mz), a mirror; 2 and 3 settle it.
+2. **Datasheet.** MMC5616WA datasheet (MEMSIC, 5/2023), p. 6, "Marking
+   illustration": +X runs from ball A2 to A1, +Y from row A to row B, +Z out of the
+   top face. Right-handed, so not the mirror.
+3. **Layout.** elle-pcb rev A (`master` fbea092): IC1 on the top side, rotated 180°
+   from its footprint's default. Installed in the eagle, A1 is nose-port, A2
+   nose-starboard, B1 aft-port. So the chip's X points to port, Y aft, Z up. Item 1
+   then says the IMU's sensor axes point forward, port, up, and the eagle's 180°
+   board rotation (proposal [0003](0003-board-orientation.md)) turns them into the
+   firmware's airframe frame (see "Heading reference" below).
+4. **A compass.** Bench reading level, raw (3034, −803, −7189) counts, stored
+   offsets (1167.5, 984, −2386.5): corrected and mapped as above, the nose points
+   46° east of magnetic north with a dip of 61.7° down (France: ~60–62°). The
+   operator's phone compass read NE. With today's mapping the same reading gives a
+   heading 90° off.
+
+What a quarter-turn error does: when level it is a constant 90° heading error. Tilted,
+the mis-mapped field is no longer a rotated copy of the true one, so the angle
+between field and gravity changes with attitude. Live poses with today's mapping
+showed it: dip 62.5° level, 37.6° nose up, 38.5° nose down (bench, probe attached,
+so partly the bench's own distortion). Madgwick fuses the mag through the whole
+quaternion, so this inconsistency pulls pitch and roll, most in banked turns and
+tilted boots: the cases proposal 0009 and [`ATTITUDE.md`](../ATTITUDE.md) chase.
+
+The eagle's mag readings before 2026-11-14 also carried a ~20 G hatch magnet,
+since removed. The dart carries a magnet too (operator, 2026-11-14), still to be
+removed; see the dart gate.
+
+## Behaviour delta
+
+| Situation | Before | After |
+|-----------|--------|-------|
+| Eagle, yaw and heading (`attitude_data.yaw`, `GetAttitude`, CRSF attitude) | ~90° off magnetic, and moving as the aircraft tilts | Consistent with the field; still in the existing heading reference (below) |
+| Eagle, yaw while tilting at a fixed heading | Moves with the tilt | Stays within a few degrees |
+| Eagle, pitch/roll | Pulled by the inconsistent field when tilted or turning | Not pulled by it (size measured by replay, Verification) |
+| Eagle, heading hold | Captures a heading on engage; works on differences | Same; a jump of ~90° in the absolute value at the first boot of the new build |
+| Eagle, mag calibration | — | Unchanged; the stored offsets (key 2) stay valid, no recalibration needed |
+| Raw mag (`MAG`, `GetMagnetometer`, ULog `magnetometer_data`, TUI and CRSF raw-mag heading) | Chip frame | Unchanged, chip frame |
+| Dart | — | Unchanged, bit for bit, until its gate passes |
+
+OPERATIONS.md: one line under mag calibration that the chip frame is turned into
+the IMU's before fusion, and that raw mag values stay in the chip frame. No state
+machine changes.
+
+## Design
+
+- **`elle-config`:** `MAG_AXES_YAW_DEG: f32`, per platform: eagle `90.0`, dart
+  `0.0` (until its gate; then `90.0`, the same board). The rotation about the
+  vertical that takes the mag chip's axes onto the IMU's sensor axes. Same
+  quarter-turn assert as `BOARD_YAW_DEG`. It describes the chips on the PCB, so it
+  sits in front of the board rotation, never folded into it.
+- **`elle-control/src/attitude.rs`:**
+  - `pub fn mag_axes(m: Vector3<f32>, yaw_deg: f32) -> Vector3<f32>`: an exact axis
+    swap, no trigonometry: 0 → (x, y, z), 90 → (−y, x, z), 180 → (−x, −y, z),
+    270 → (y, −x, z). Exact, so the dart (0) fuses bit for bit as before.
+  - `AttitudePipeline` gains a `mag_axes_deg` field: `with_board(board)` becomes
+    `with_board(board, mag_axes_deg)`; `new()` / `with_modes()` keep 0, so the host
+    tests and `elle-replay --simulate` (sensor frame = airframe) are unchanged.
+  - `mag_to_airframe(mag)` becomes `mount × mag_axes(mag)`.
+- **After the offset, not on the raw reading.** `MAG_FIELD` is the offset-corrected
+  field in the chip frame (`i2c_sensors.rs`). The swap happens where it is mounted,
+  in the IMU task. The hard-iron offsets therefore stay in the chip frame, and the
+  stored calibration stays valid. Calibration (sphere fit) and `MagHealth` (magnitude
+  band, frozen check) don't depend on the axis order, so they are untouched.
+- **`elle-hardware/src/imu/driver.rs`:** builds the pipeline with
+  `with_board(board_rotation(), elle_config::MAG_AXES_YAW_DEG)`. No other change.
+- **Raw IMU replay:** `imu_raw_mag` records the vector as fed (after
+  `mag_to_airframe`), so a log from the new build replays exactly as before. A new
+  ULog info entry, `elle_mag_axes_deg`, records the constant. For logs without it
+  (all existing logs), `elle-replay --mag-axes <deg>` runs a what-if: un-mount the
+  fed vector with the logged `imu_raw_ctx` mount, swap the axes, mount again.
+- **Seed (proposal 0009):** `attitude::seed` takes the airframe-frame mag, so it gets
+  the fix with no change.
+- **Timing:** a few sign flips per mag update on Core 1 (~10 Hz). Nothing
+  measurable.
+
+### Heading reference (not changed here)
+
+`attitude::angles` reports unnegated Euler pitch as nose up and negates roll.
+Together with the nose-up-positive and right-wing-down-positive results of TEST_PLAN
+0.1.2 on both airframes, that makes the firmware's airframe frame **x aft, y
+starboard, z up**. Yaw is therefore the bearing of the **tail**, counted
+anticlockwise from the AHRS's earth x axis. With this change, the eagle at the bench
+pose (nose 46°) should read yaw ≈ +134° (tail at 226°), if uf-ahrs's earth frame is
+north-west-up. Proposal 0006 (yaw sign; Draft, on branch `yaw-sign`, not yet on master) owns
+the yaw sign and where yaw is zero. It already lists the zero as unchecked, and this
+finding answers that question. Heading hold and the yaw damper use differences only.
+This proposal changes neither the sign nor the zero.
+
+## Interfaces
+
+- **Events:** none
+- **RPC:** none. `GetAttitude` yaw changes value on the eagle (same type).
+- **Flash:** none. Mag offsets (key 2) keep their meaning (chip frame).
+- **ULog:** no layout change. `imu_raw_mag` documents "after the mag axis swap and the
+  mount"; info entry `elle_mag_axes_deg` added (header must still fit the 4 KB buffer).
+- **CRSF telemetry / LED:** CRSF attitude yaw changes on the eagle. The CRSF GPS-frame
+  heading (`crsf/telemetry.rs`, `atan2` of raw mag y and x) and the TUI's mag heading
+  are raw chip-frame values with no offset or tilt correction. They are wrong today
+  and stay wrong. A follow-up should replace them with the AHRS yaw once 0006 settles
+  the convention.
+
+## Flight-safety risks
+
+| Risk | Effect | Mitigation |
+|------|--------|------------|
+| Wrong direction (270 instead of 90) | Heading 180° off and the tilt inconsistency still there, worse than today | Host test on the real bench sample: (3034, −803, −7189) minus the stored offsets, eagle mapping → nose 46° ± 1°, dip 61.7° ± 1° down; the gyro-consistency fit rerun through the new pipeline must pick identity; bench rows below |
+| The dart gets the eagle's value before its magnet is gone | A remap on a field dominated by a magnet; nothing gained, results unreadable | Dart stays at 0 until its gate |
+| Pitch/roll change in flight on the eagle | The PID sees a different attitude in turns | Replay of eagle flight logs with `--mag-axes 90` and `--compare`, tilt error against the gyro-only reference through turns, before any flight; Part 1.3 and 0.1 on the bench |
+| Heading hold engaged across the update | — | It captures on engage; the new build's first boot starts from the new heading |
+| A magnet or bench steel near the chip | The field is still wrong, and now it looks correct | Bench rows run away from the bench, PSU and probe; `MagHealth` and the dip check catch a strong field |
+| Sensor loss, RC loss, Core 1 stall, flash write, reboot in the air | Unchanged: a constant swap on an existing path; nothing stored or timed | — |
+
+## Verification
+
+- **Host tests** (`crates/elle-control/tests/attitude.rs`, both platforms):
+  - `mag_axes` on each quarter turn; 0 is the identity bit for bit.
+  - The bench sample above → nose 46°, dip 61.7° down, through
+    `mag_to_airframe` with the eagle's board and mag rotations.
+  - Dart pipeline fuses bit for bit as before (synthetic replay in `elle-replay`
+    tests, as in 0003).
+- **Replay:**
+  - Gyro-consistency fit (identity, 48 maps) on `--mag-axes 90` output for LOG_0117
+    and LOG_0121: identity must be the best map.
+  - Eagle `imu-raw-log` flight logs with `--mag-axes 90 --compare`: tilt error
+    through turns against the gyro-only reference, before and after.
+  - Proposal 0009's seed table, rerun with the remap. Its tilted rows used the wrong
+    mapping.
+- **Bench** (new TEST_PLAN 0.1.5, flight build with `imu-raw-log`, SD card,
+  **no probe**, ~1 m from the bench, PSU and any steel):
+  1. Level, rested 5 s at each of four headings 90° apart by phone compass (nose):
+     yaw steps by 90° ± 10° in order; the yaw-to-compass offset is the same at all
+     four ± 10°.
+  2. At one heading, rested 5 s each: level, nose up 30°, nose down 30°, each wing
+     down 30°: yaw within ± 5° of level, dip (from accel and mag) within ± 3°.
+  3. A mag-cal tumble in the same session: the gyro-consistency fit on it picks
+     identity, residual ≤ 0.01 G.
+  4. 0.1.4 (slow 360° yaw) as before.
+- **Dart gate** (before its constant becomes 90): magnet removed; mag cal; a ground
+  tumble with `imu-raw-log`; the gyro-consistency fit picks (−my, +mx, +mz) by a
+  margin of at least 3× over identity. Its flight logs so far lean the same way
+  (3 of 4 logs) but don't settle it: 0.04–0.06 G residuals in flight, with a fitted
+  offset of ~1.2–1.6 G from the magnet.
+- **Flight:** the eagle's next flight logs `imu-raw-log`; check yaw against GNSS
+  track in straight legs, and roll in turns against the replay reference.
+
+## Rollback
+
+Set `MAG_AXES_YAW_DEG` to 0 for the platform: the old fusion, bit for bit. Nothing is
+stored, so nothing is left behind.
+
+## Doc updates
+
+- [ ] `docs/OPERATIONS.md`: mag calibration note (chip frame, swap before fusion)
+- [ ] `STATE_DIAGRAMS.md`: none
+- [ ] `TEST_PLAN.md`: 0.1.5
+- [ ] `CLAUDE.md`: IMU pipeline step 3 (mag axis swap before the mount)
+- [ ] `crates/elle-ulog/README.md`: `imu_raw_mag` meaning, `elle_mag_axes_deg`
+- [ ] `CHANGELOG.md`: `Unreleased`, operator behaviour (eagle heading), ULog
+- [ ] `docs/ATTITUDE.md`: mag axes, and the results of the replay above
