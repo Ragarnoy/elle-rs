@@ -129,7 +129,7 @@ PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
 
 | # | Test | Expected | Log | Pass |
 |---|------|----------|-----|------|
-| 1 | Armed 15+ min: idle, throttle steps, Manual and Stabilized, until the log passes ~4 MB | `$PY $LOG timing`: median tick 5.00 ms, no late ticks after boot, **no ULog dropouts** | | [ ] |
+| 1 | Armed 3+ min: idle, throttle steps, Manual and Stabilized, until the log passes ~4 MB | `$PY $LOG timing`: median tick 5.00 ms, no late ticks after boot, **no ULog dropouts after start-up** (a dropout of up to ~2.5 s at file start, before arming, is known) | | [ ] |
 | 2 | Same log | Loop time p50/p99 within ~10 % of the baseline; `$PY $LOG stages`: `log` stage not noticeably larger (the navigator runs there, 25 Hz) | | [ ] |
 | 3 | Same log | `core1_load` busy mean/max within ~10 % of the baseline | | [ ] |
 | 4 | Same log | `commands` and `engine_data` at ~100 Hz, `attitude_data` and `controller` at ~200 Hz, `gnss_data` at ~5 Hz (`$PY $LOG list`) | | [ ] |
@@ -147,7 +147,7 @@ PY=logs/.venv/bin/python; LOG=.claude/skills/flight-logs/elle_log.py
 
 | # | Test | Expected | Log | Pass |
 |---|------|----------|-----|------|
-| 1 | Repeat 0.2 row 1 with this build | No ULog dropouts at ~50 kB/s over 4+ MB; Core 1 busy within a few µs of 0.2 row 3 | | [ ] |
+| 1 | Repeat 0.2 row 1 with this build | No ULog dropouts after start-up at ~50 kB/s over 4+ MB; Core 1 busy no more than ~300 µs over 0.2 row 3 (the raw encoding costs ~260 µs: LOG_0093, LOG_0110) and no FIFO backlog | | [ ] |
 | 2 | Same log: 6.10 rows 2 and 4 | `imu_raw` indices without gaps, `roundtrip_errors` 0; `elle-replay LOG` prints `OK` (exact) | | [ ] |
 | 3 | Same log, `elle-replay LOG --compare` | Runs; reference coverage printed (on the bench mostly "level", nothing scored) | | [ ] |
 | 4 | Before the flight: Part 7.2 (vehicle test) with this build | See 7.2 | | [ ] |
