@@ -53,7 +53,7 @@ doesn't apply gets "None", not padding.
 | [0004](0004-throttle-gain-schedule.md) | Throttle-scheduled attitude gains | Draft: waits on the dart's roll Kp 0.18 flight (gate 1) |
 | [0005](0005-dual-imu-cross-check.md) | Dual-IMU cross-check | Draft: hardware (Rev B second ICM-45686) ahead of this firmware proposal |
 | [0007](0007-host-flight-law.md) | Host-buildable flight law | Draft: refactor with an equivalence proof; recorded-stream source open |
-| [0010](0010-mag-axis-alignment.md) | Magnetometer axis alignment | Draft, implemented on `mag-axes`: bench 0.1.5 a passed, tilted dip confirms the alignment; b (settled headings) to redo; dart after its magnet is removed |
+| [0010](0010-mag-axis-alignment.md) | Magnetometer axis alignment | Draft, implemented on `mag-axes`: bench 0.1.5 a passed, tilted dip confirms the alignment; b (settled headings) and c (tilted rests, missed its criteria) to redo; dart after its magnet is removed |
 
 ## Archived
 

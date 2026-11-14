@@ -94,8 +94,12 @@ attitude. On the one post-magnet bench log with a fresh calibration (LOG_0121, a
 61.6 s; all rests level) it moves the heading from −135…−144° to +131…+143°, the
 phone compass's NE (yaw ≈ 180° − nose bearing in this frame), and changes tilt error
 and dip at those level rests by ≤ 0.15° and ≤ 1.3°. Before a calibration (LOG_0118–0120,
-0.17 G with stale offsets) both mappings show the boot transient of proposal 0009. The pitch and roll effect needs tilted rests or turns: TEST_PLAN 0.1.5
-and the next flight.
+0.17 G with stale offsets) both mappings show the boot transient of proposal 0009.
+Tilted bench rests (LOG_0126, 57–69°) keep the dip at 59–66° aligned against −16°
+to +29° with the old mapping, but missed TEST_PLAN 0.1.5 c's yaw and tilt criteria
+and are to redo. At the level rest 10 s after them the old mapping replayed is still
+8.3° off in tilt (aligned 0.3°), a transient it has not yet recovered from. Turns
+need the next flight.
 
 ## Comparing filters: `elle-replay --compare`
 
