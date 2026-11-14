@@ -2,7 +2,7 @@
 
 | | |
 |-|-|
-| Status | Draft, implemented on branch `mag-axes`: bench 0.1.5 a passed, c shows the alignment (dip), b to redo settled; Accepted after b |
+| Status | Draft, implemented on branch `mag-axes`: bench 0.1.5 a passed; b and c to redo in one session (c shows the alignment in the dip but missed its yaw and tilt criteria); Accepted after both |
 | Airframes | both (eagle first; dart after its own gate, below) |
 | Date | 2026-11-14 |
 | Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): a fix. No RPC type, flash entry, event code or ULog field changes meaning (`imu_raw_mag` stays "the vector as fed"); one ULog info entry is added |
@@ -71,7 +71,7 @@ removed; see the dart gate.
 |-----------|--------|-------|
 | Eagle, yaw and heading (`attitude_data.yaw`, `GetAttitude`, CRSF attitude) | ~90° off magnetic, and moving as the aircraft tilts | Consistent with the field; still in the existing heading reference (below) |
 | Eagle, yaw while tilting at a fixed heading | Moves with the tilt | Stays within a few degrees |
-| Eagle, pitch/roll | Can be pulled by the inconsistent field when tilted or turning | Not pulled by it (not yet measured; TEST_PLAN 0.1.5 c and the next flight capture) |
+| Eagle, pitch/roll | Can be pulled by the inconsistent field when tilted or turning | Not pulled by it. Bench tilted rests (LOG_0126) lean that way but missed the 0.1.5 c criteria; to redo, then the next flight capture |
 | Eagle, heading hold | Captures a heading on engage; works on differences | Same; a jump of ~90° in the absolute value at the first boot of the new build |
 | Eagle, mag calibration | — | Unchanged; the stored offsets (key 2) stay valid, no recalibration needed |
 | Raw mag (`MAG`, `GetMagnetometer`, ULog `magnetometer_data`, TUI and CRSF raw-mag heading) | Chip frame | Unchanged, chip frame |
@@ -187,8 +187,8 @@ Done so far (2026-11-14, branch `mag-axes`):
   | Dip | 66.3–71.6° | 65.0–71.9° |
 
   +131…+143° is a nose at 37…49°, the phone's NE. Pitch and roll can't move at a
-  level rest. The tilted and turning cases this proposal expects to improve are not
-  in any log yet: TEST_PLAN 0.1.5 row c and the next flight.
+  level rest. Tilted rests came later, on the bench (0.1.5 c, LOG_0126, below);
+  turns are not in any log yet: the next flight.
 
 The heading result is a consistency check at the same pose as the compass reading
 in Motivation, not independent evidence.
@@ -208,7 +208,7 @@ in Motivation, not independent evidence.
     consistent with a correct heading, but the absolute heading at N, W, S and E is
     not measured. Redo with the aircraft settled (≥ 90 s after boot), each hold
     rested ~10 s.
-  - **c, inconclusive by its criteria; dip clearly right** (LOG_0126, holds tilted
+  - **c, to redo; missed all three criteria, dip clearly right** (LOG_0126, holds tilted
     57–69°, 2–4 s each, `STILL_DPS=6 STILL_S=1`):
 
     | Hold (s after boot) | 38.6 | 47.0 | 53.0 | 61.5 | 66.2 | level 76.0 |
@@ -225,6 +225,19 @@ in Motivation, not independent evidence.
     none checked: holds too short to settle; the table (0.35 G lying on it against
     0.41–0.44 G in the hand); the calibration, whose offsets differ from the gyro fit
     on the same tumble (891, 1296, −1995) by up to 433 counts (~0.026 G).
+    Against the row: yaw 4–10° from level (± 5°), tilt error 5° at holds 1–2 (≤ 1°),
+    dip −2.4° to +4.6° from level (± 3°). Redo in the same session as b, rested
+    ~10 s off the table at 30°.
+
+    The level rest at 76 s, 10 s after the last tilt, is the nearest thing yet to a
+    pitch/roll answer: the old mapping replayed is 8.3° off in tilt there, the
+    alignment 0.3°. It is a transient, not a steady state: the old-mapping filter's
+    yaw there (−175.5°) is still ~35° from where it settles at a level rest (−140°,
+    LOG_0125), so the inconsistent field during the tilts has dragged it and it has
+    not recovered; at a settled level rest both mappings agree within 0.4°
+    (LOG_0121, LOG_0125). The what-if starts from the same seed and sees the same
+    samples, so it is not an artefact of the replay; whether a turn drags the old
+    mapping as far is the flight question.
   - ULog: one start-up dropout per file (LOG_0125, LOG_0126), as before the merge.
 
 The gyro-consistency fit is `tools/elle-replay/scripts/mag_gyro_fit.py` (raw
