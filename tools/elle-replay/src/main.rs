@@ -160,6 +160,11 @@ fn main() -> Result<()> {
 
     let data =
         std::fs::read(&args.log).with_context(|| format!("reading {}", args.log.display()))?;
+    if let Some(deg) = args.mag_axes
+        && deg % 90.0 != 0.0
+    {
+        bail!("--mag-axes {deg}: must be a multiple of 90");
+    }
     let opts = report::Options {
         compare: args.compare,
         gate_g: args.gate_g,

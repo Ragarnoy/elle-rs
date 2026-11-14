@@ -52,7 +52,9 @@ so partly the bench's own distortion). Madgwick fuses the mag through the whole
 quaternion, so this inconsistency can pull pitch and roll, most in banked turns and
 tilted boots: the cases proposal 0009 and [`ATTITUDE.md`](../ATTITUDE.md) chase. How
 much is not measured yet; in steady state a Madgwick mag term mostly constrains
-heading. The replay in Verification measures it.
+heading. No log so far can measure it (Verification: every eagle capture with
+engines is from the hatch-magnet era); TEST_PLAN 0.1.5 row c and the next raw
+capture in flight will.
 
 The eagle's mag readings before 2026-11-14 also carried a ~20 G hatch magnet,
 since removed. The dart carries a magnet too (operator, 2026-11-14), still to be
@@ -64,7 +66,7 @@ removed; see the dart gate.
 |-----------|--------|-------|
 | Eagle, yaw and heading (`attitude_data.yaw`, `GetAttitude`, CRSF attitude) | ~90° off magnetic, and moving as the aircraft tilts | Consistent with the field; still in the existing heading reference (below) |
 | Eagle, yaw while tilting at a fixed heading | Moves with the tilt | Stays within a few degrees |
-| Eagle, pitch/roll | Can be pulled by the inconsistent field when tilted or turning | Not pulled by it (size to be measured by replay, Verification) |
+| Eagle, pitch/roll | Can be pulled by the inconsistent field when tilted or turning | Not pulled by it (not yet measured; TEST_PLAN 0.1.5 c and the next flight capture) |
 | Eagle, heading hold | Captures a heading on engage; works on differences | Same; a jump of ~90° in the absolute value at the first boot of the new build |
 | Eagle, mag calibration | — | Unchanged; the stored offsets (key 2) stay valid, no recalibration needed |
 | Raw mag (`MAG`, `GetMagnetometer`, ULog `magnetometer_data`, TUI and CRSF raw-mag heading) | Chip frame | Unchanged, chip frame |
@@ -149,9 +151,9 @@ This proposal changes neither the sign nor the zero.
 
 | Risk | Effect | Mitigation |
 |------|--------|------------|
-| Wrong direction (270 instead of 90) | Heading 180° off and the tilt inconsistency still there, worse than today | Host test on the real bench sample: (3034, −803, −7189) minus the stored offsets, eagle mapping → nose 46° ± 1°, dip 61.7° ± 1° down; the gyro-consistency fit rerun through the new pipeline must pick identity; bench rows below |
+| Wrong direction (270 instead of 90) | Heading 180° off and the tilt inconsistency still there, worse than today | Host test on the real bench sample: (3034, −803, −7189) minus the stored offsets, eagle mapping → yaw 134° ± 1° (nose 46°), dip 61.7° ± 1° down (`tests/mag_axes.rs`); bench 0.1.5 b reads the four headings in order |
 | The dart gets the eagle's value before its magnet is gone | A remap on a field dominated by a magnet; nothing gained, results unreadable | Dart stays at 0 until its gate |
-| Pitch/roll change in flight on the eagle | The PID sees a different attitude in turns | Replay of eagle flight logs with `--mag-axes 90` and `--compare`, tilt error against the gyro-only reference through turns, before any flight; Part 1.3 and 0.1 on the bench |
+| Pitch/roll change in flight on the eagle | The PID sees a different attitude in turns | No clean-field flight capture exists to replay. Gate instead: 0.1.5 c (tilted rests, tilt error against the accel ≤ 1°), then Part 1.3 and 0.1 on the bench, then a Manual flight with `imu-raw-log` (or the 7.2 vehicle test) replayed with `--compare` and `--mag-axes -90` before the eagle flies Stabilized on this build |
 | Heading hold engaged across the update | — | It captures on engage; the new build's first boot starts from the new heading |
 | A magnet or bench steel near the chip | The field is still wrong, and now it looks correct | Bench rows run away from the bench, PSU and probe; `MagHealth` and the dip check catch a strong field |
 | Sensor loss, RC loss, Core 1 stall, flash write, reboot in the air | Unchanged: a constant swap on an existing path; nothing stored or timed | — |
@@ -183,17 +185,17 @@ Done so far (2026-11-14, branch `mag-axes`):
   level rest. The tilted and turning cases this proposal expects to improve are not
   in any log yet: TEST_PLAN 0.1.5 row c and the next flight.
 
+The heading result is a consistency check at the same pose as the compass reading
+in Motivation, not independent evidence.
+
+The gyro-consistency fit is `tools/elle-replay/scripts/mag_gyro_fit.py` (raw
+`magnetometer_data` plus `attitude_data` rates, so any build). Raw mag stays in the
+chip frame on every build, so on the new build too it must pick the map matching
+`MAG_AXES_YAW_DEG`, (−my, +mx, +mz) on the eagle, not identity.
+
 Still to do:
 
-- **Host tests** (as above; `crates/elle-control/tests/mag_axes.rs`):
-  - `mag_axes` on each quarter turn; 0 is the identity bit for bit.
-  - The bench sample above → nose 46°, dip 61.7° down, through
-    `mag_to_airframe` with the eagle's board and mag rotations.
-  - Dart pipeline fuses bit for bit as before (synthetic replay in `elle-replay`
-    tests, as in 0003).
 - **Replay:**
-  - Gyro-consistency fit (identity, 48 maps) on a capture from the new build:
-    identity must be the best map (the old logs pick (−my, +mx, +mz) by construction).
   - The first eagle flight with `imu-raw-log` and a clean field: `--compare`
     tilt error through turns against the gyro-only reference. On the new build the
     firmware track is the aligned one; `--mag-axes -90` gives the old mapping for
@@ -204,13 +206,16 @@ Still to do:
   **no probe**, ~1 m from the bench, PSU and any steel). The cal comes first: the
   stored offsets and the ones the gyro fit finds differ by ~400–500 counts
   (~0.03 G), several degrees of heading, so rows 2–3 run on a fresh cal.
-  1. Mag-cal tumble at the test spot (event 113): the gyro-consistency fit on it
-     picks identity, residual ≤ 0.01 G.
+  1. Mag-cal tumble at the test spot (event 113): `mag_gyro_fit.py` on it picks
+     (−my, +mx, +mz) (or its mirror, which always ties), residual ≤ 0.01 G.
   2. Level, rested 5 s, nose at each of four phone-compass bearings (N, E, S, W):
      yaw ≈ 180° − bearing (180°, 90°, 0°, −90°), each within ± 10°. A 270° mapping
      gives the reverse order; before 0006 lands this is the expected sign.
   3. At one heading, rested 5 s each: level, nose up 30°, nose down 30°, each wing
-     down 30°: yaw within ± 5° of level, dip (from accel and mag) within ± 3°.
+     down 30°: yaw within ± 5° of level, dip (from accel and mag) within ± 3°,
+     tilt error against the accel ≤ 1° (`examples/mag_axes_still.rs`, `REST_TRACE=1`;
+     on a new-build log its firmware column is the aligned mapping and
+     `--mag-axes -90` gives the old one).
   4. 0.1.4 (slow 360° yaw) as before.
 - **Dart gate** (before its constant becomes 90): magnet removed; mag cal; a ground
   tumble with `imu-raw-log`; the gyro-consistency fit picks (−my, +mx, +mz) by a
