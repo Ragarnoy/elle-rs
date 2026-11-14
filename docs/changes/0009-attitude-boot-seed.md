@@ -48,8 +48,8 @@ magnet in the eagle's hatch, 1–2 cm from the MMC5616WA, gave ~20 G at the sens
 (16–24 G in every eagle log since LOG_0054; a SET/RESET measurement showed it is a
 real field, sensor offset ~0.4 G). It sat differently each time the hatch closed,
 so the stored hard-iron offsets never matched. It is removed and the mag
-recalibrated. **The transient stays without it:** LOG_0119 (magnet out, mag
-recalibrated, `imu-raw-log`, still for 87 s) holds pitch −17 to −18° for ~40 s and
+recalibrated. **The transient stays without it:** LOG_0119 (magnet out,
+`imu-raw-log`, still for 87 s; it loads the calibration saved at the end of LOG_0117) holds pitch −17 to −18° for ~40 s and
 is back within 1° at ~54 s while the heading swings −4° → −164°.
 
 **And with the magnetometer axes fixed** (proposal 0010, LOG_0126, 2026-11-14, eagle,
@@ -212,7 +212,7 @@ Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
   |-----|-------|--------|----------|---------------|-----------------|
   | LOG_0109 | magnet in | 1.6° | 3.1° | 0.2° | — |
   | LOG_0113–0115 | magnet in, shifted | 6.6–7.4° | 9.3° | 0.1–0.2° | 0.2° (0113) |
-  | LOG_0119 | magnet out, recalibrated | 19.3° (> 1° until 47 s) | 19.4° | 0.7° (never > 1°) | 1.3° (> 1° until 3.2 s) |
+  | LOG_0119 | magnet out, offsets from LOG_0117 | 19.3° (> 1° until 47 s) | 19.4° | 0.7° (never > 1°) | 1.3° (> 1° until 3.2 s) |
 
   The identity run reproduces the logged transient, so it stands in for a boot.
   Seeded at the very first sample (before the offsets) LOG_0113–0115 got worse
@@ -220,7 +220,10 @@ Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
   three runs at 252 s (handling late in the log, not the boot).
   Every log in this table predates proposal 0010: the mag is fused 90° off its true
   axes. LOG_0109 and 0113–0115 also carry the hatch magnet, and LOG_0119's corrected
-  field reads 0.17 G, so its stored offsets did not fit the magnet-free board. For a
+  field reads 0.17 G: it calibrates nothing itself (115 only) and loads the offsets
+saved at the end of LOG_0117 (113 at 644 s), which did not fit the magnet-free board
+(LOG_0121 reads ~0.16 G with them too, until its own calibration at 61.5 s). The
+clean-field case is LOG_0126 (above): fresh calibration, 0.43 G. For a
   still, level boot that doesn't change the result: the filter sees one constant
   vector, whatever its mapping, and the seed is its fixed point. For a tilted boot
   it does: the mis-mapped field is inconsistent with gravity there (0010,
