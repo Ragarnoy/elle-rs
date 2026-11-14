@@ -2,7 +2,7 @@
 
 | | |
 |-|-|
-| Status | Draft, implemented on branch `mag-axes`: bench TEST_PLAN 0.1.5 due before Accepted |
+| Status | Draft, implemented on branch `mag-axes`: bench 0.1.5 a passed, c shows the alignment (dip), b to redo settled; Accepted after b |
 | Airframes | both (eagle first; dart after its own gate, below) |
 | Date | 2026-11-14 |
 | Version impact | patch ([rules](../VERSIONING.md#bump-rules), 0.x): a fix. No RPC type, flash entry, event code or ULog field changes meaning (`imu_raw_mag` stays "the vector as fed"); one ULog info entry is added |
@@ -13,7 +13,7 @@
 The firmware fuses the MMC5616WA's axes as if they were the ICM-42686's: one mount
 rotation (`AttitudePipeline::mount`, board × level cal) is applied to accel, gyro
 and mag alike. On the rev A board the two chips are a quarter turn apart about the
-vertical. Four independent pieces of evidence, all from the eagle, 2026-11-14:
+vertical. Five independent pieces of evidence, all from the eagle, 2026-11-14:
 
 1. **Gyro consistency.** For a constant earth field, each mag sample must equal the
    previous one rotated by the gyro in between. Over the 48 signed axis
@@ -43,6 +43,11 @@ vertical. Four independent pieces of evidence, all from the eagle, 2026-11-14:
    46° east of magnetic north with a dip of 61.7° down (France: ~60–62°). The
    operator's phone compass read NE. With today's mapping the same reading gives a
    heading 90° off.
+5. **Dip through large tilts** (added after the bench, LOG_0126, build with the
+   alignment). The dip is the angle between the field and the horizontal: with the
+   right mapping it is the same at every attitude. At five hand-held holds tilted
+   57–69°, the aligned mapping gives 59.4–66.4° (61.8° level); the old mapping,
+   replayed on the same samples (`--mag-axes -90`), gives −16.5° to +28.9°.
 
 What a quarter-turn error does: when level it is a constant 90° heading error. Tilted,
 the mis-mapped field is no longer a rotated copy of the true one, so the angle
@@ -51,10 +56,10 @@ showed it: dip 62.5° level, 37.6° nose up, 38.5° nose down (bench, probe atta
 so partly the bench's own distortion). Madgwick fuses the mag through the whole
 quaternion, so this inconsistency can pull pitch and roll, most in banked turns and
 tilted boots: the cases proposal 0009 and [`ATTITUDE.md`](../ATTITUDE.md) chase. How
-much is not measured yet; in steady state a Madgwick mag term mostly constrains
-heading. No log so far can measure it (Verification: every eagle capture with
-engines is from the hatch-magnet era); TEST_PLAN 0.1.5 row c and the next raw
-capture in flight will.
+much is not settled; in steady state a Madgwick mag term mostly constrains heading.
+Static tilts on the bench (Verification, LOG_0126) lean towards the alignment; turns
+and flight are not measured yet: every eagle capture with engines is from the
+hatch-magnet era.
 
 The eagle's mag readings before 2026-11-14 also carried a ~20 G hatch magnet,
 since removed. The dart carries a magnet too (operator, 2026-11-14), still to be
@@ -188,6 +193,40 @@ Done so far (2026-11-14, branch `mag-axes`):
 The heading result is a consistency check at the same pose as the compass reading
 in Motivation, not independent evidence.
 
+- **Bench, TEST_PLAN 0.1.5** (flight build with `imu-raw-log`, `round-a` +
+  `mag-axes` at `dcde7c7`, no probe; `logs/test-runs/2026-11-14.jsonl`):
+  - **a, pass** (LOG_0125): mag cal tumble 123–153 s saved (113, offsets 772, 1011,
+    −2428); `mag_gyro_fit.py` on it picks (−my, +mx, +mz) at 0.0064 G, next 0.0265 G,
+    identity 0.0384 G: a fourth tumble agreeing. Settled level rest nose NE (phone):
+    yaw 134.0° ± 0.3° (expected 134°; the old mapping replayed reads −140°, nose
+    320°). The same spot and pose as Motivation 4.
+  - **b, to redo** (LOG_0126): holds at NE, N, W, S, E (anticlockwise) from 4 to
+    ~32 s after boot, hand-held. Yaw rose 104°, 110°, 109° per 90° turn. Those
+    steps come from the gyro and show only the direction. The error against
+    180° − bearing shrank at each hold (−131°, −68°, −54°, −34°, −15°) to −1° … −3°
+    at the settled NE rest at the end: the boot convergence (proposal 0009), and
+    consistent with a correct heading, but the absolute heading at N, W, S and E is
+    not measured. Redo with the aircraft settled (≥ 90 s after boot), each hold
+    rested ~10 s.
+  - **c, inconclusive by its criteria; dip clearly right** (LOG_0126, holds tilted
+    57–69°, 2–4 s each, `STILL_DPS=6 STILL_S=1`):
+
+    | Hold (s after boot) | 38.6 | 47.0 | 53.0 | 61.5 | 66.2 | level 76.0 |
+    |---|---|---|---|---|---|---|
+    | Dip, aligned | 66.4° | 61.4° | 59.4° | 63.3° | 65.8° | 61.8° |
+    | Dip, old mapping | −6.4° | 26.0° | −16.5° | 28.9° | −1.2° | 62.2° |
+    | Tilt error vs accel, aligned | 5.25° | 5.13° | 0.13° | 0.46° | 1.13° | 0.30° |
+    | Tilt error vs accel, old mapping | 1.55° | 8.13° | 1.75° | 5.77° | 4.23° | 8.34° |
+    | Yaw, aligned | 93.6° | 121.3° | 121.5° | 126.8° | 121.9° | 131.0° |
+
+    Holds 1–2 are 5° off in tilt with the alignment. Hold 1 may still be settling
+    after the heading holds; hold 2 is not explained (same yaw as the later ones).
+    Yaw at the tilts sits 4–10° from level, outside the ± 5° row. Candidate causes,
+    none checked: holds too short to settle; the table (0.35 G lying on it against
+    0.41–0.44 G in the hand); the calibration, whose offsets differ from the gyro fit
+    on the same tumble (891, 1296, −1995) by up to 433 counts (~0.026 G).
+  - ULog: one start-up dropout per file (LOG_0125, LOG_0126), as before the merge.
+
 The gyro-consistency fit is `tools/elle-replay/scripts/mag_gyro_fit.py` (raw
 `magnetometer_data` plus `attitude_data` rates, so any build). Raw mag stays in the
 chip frame on every build, so on the new build too it must pick the map matching
@@ -206,12 +245,14 @@ Still to do:
   **no probe**, ~1 m from the bench, PSU and any steel). The cal comes first: the
   stored offsets and the ones the gyro fit finds differ by ~400–500 counts
   (~0.03 G), several degrees of heading, so rows 2–3 run on a fresh cal.
-  1. Mag-cal tumble at the test spot (event 113): `mag_gyro_fit.py` on it picks
-     (−my, +mx, +mz) (or its mirror, which always ties), residual ≤ 0.01 G.
-  2. Level, rested 5 s, nose at each of four phone-compass bearings (N, E, S, W):
-     yaw ≈ 180° − bearing (180°, 90°, 0°, −90°), each within ± 10°. A 270° mapping
-     gives the reverse order; before 0006 lands this is the expected sign.
-  3. At one heading, rested 5 s each: level, nose up 30°, nose down 30°, each wing
+  1. Done (pass, above). Mag-cal tumble at the test spot (event 113):
+     `mag_gyro_fit.py` on it picks (−my, +mx, +mz) (or its mirror, which always
+     ties), residual ≤ 0.01 G.
+  2. At least 90 s after boot, level, rested ~10 s, nose at each of four
+     phone-compass bearings (N, E, S, W): yaw ≈ 180° − bearing (180°, 90°, 0°,
+     −90°), each within ± 10° (before 0006 lands). A 270° mapping reads 180° off at
+     every bearing.
+  3. At one heading, rested ~10 s each, off the table: level, nose up 30°, nose down 30°, each wing
      down 30°: yaw within ± 5° of level, dip (from accel and mag) within ± 3°,
      tilt error against the accel ≤ 1° (`examples/mag_axes_still.rs`, `REST_TRACE=1`;
      on a new-build log its firmware column is the aligned mapping and
