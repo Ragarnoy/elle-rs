@@ -7,6 +7,14 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- Control law moved into `elle_control::flight_law::FlightLaw` (internal, no
+  surface; proposal 0007): `FlightController::update()` is now one `FlightLaw::step`
+  plus the PWM write and events. Behaviour is unchanged, shown by running the old and
+  new controllers side by side on a scripted and a flight-derived input stream, bit
+  for bit on a mock clock. On target the PWM write and the attitude-age read move by
+  a few µs (`controller.pwm_counter_us`, `att_age_us`); on a tick where a held
+  attitude ages past its 20 ms limit within those µs, the old and new controllers can
+  disagree for that one tick on held attitude versus sticks.
 - Control tick phase-locked to the elevon PWM (timing): ticks start 1.5 ms
   (`CONTROL_PWM_LEAD_US`) before a PWM wrap, so a command reaches the servos ~1.3 ms
   after it is written on every boot, instead of anywhere from 0 to 5 ms (fixed per

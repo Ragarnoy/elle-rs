@@ -130,3 +130,13 @@ pub struct PwmPins<'a> {
     pub elevon_left: Peri<'a, PIN_13>,
     pub elevon_right: Peri<'a, PIN_12>,
 }
+
+impl elle_control::flight_law::ElevonOutput for PwmOutputs<'_> {
+    fn set_elevons_with_trim(&mut self, left_us: u32, right_us: u32) -> (u32, u32, u16) {
+        PwmOutputs::set_elevons_with_trim(self, left_us, right_us)
+    }
+
+    fn set_safe_positions(&mut self) -> u16 {
+        PwmOutputs::set_safe_positions(self)
+    }
+}

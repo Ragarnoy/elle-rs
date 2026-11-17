@@ -44,6 +44,7 @@ impl AxisPid {
     /// `block_pos`/`block_neg`: the mixer saturated in that output direction last
     /// tick, so the integral holds rather than grow further that way. It can
     /// always unwind. (Positive error drives positive output: gains are >= 0.)
+    #[allow(clippy::too_many_arguments)]
     fn compute(
         &mut self,
         error: f32,
@@ -52,6 +53,7 @@ impl AxisPid {
         reset_integral: bool,
         block_pos: bool,
         block_neg: bool,
+        dt: f32,
     ) -> AxisTerms {
         // Negative i_limit would invert the clamp bounds below; treat as zero.
         let i_limit = if i_limit > 0.0 { i_limit } else { 0.0 };
@@ -61,7 +63,7 @@ impl AxisPid {
         } else if blocked {
             self.integral
         } else {
-            let sum = self.integral + error * CONTROL_LOOP_DT;
+            let sum = self.integral + error * dt;
             if sum > i_limit {
                 i_limit
             } else if sum < -i_limit {
@@ -173,7 +175,7 @@ impl AttitudeController {
         self.initialized = false;
     }
 
-    /// Calculate attitude corrections.
+    /// Calculate attitude corrections over one `CONTROL_LOOP_DT` tick.
     ///
     /// `gyro_rates` is `(roll_rate, pitch_rate, yaw_rate)`, already sign-corrected
     /// by the caller so that each component equals d(error)/dt for that axis.
@@ -189,6 +191,31 @@ impl AttitudeController {
         gyro_rates: Option<(f32, f32, f32)>,
         low_throttle: bool,
         saturation: MixSaturation,
+    ) -> (AxisTerms, AxisTerms) {
+        self.update_dt(
+            desired_pitch,
+            desired_roll,
+            current_pitch,
+            current_roll,
+            gyro_rates,
+            low_throttle,
+            saturation,
+            CONTROL_LOOP_DT,
+        )
+    }
+
+    /// [`update`](Self::update) with the integration period `dt` (seconds) given.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_dt(
+        &mut self,
+        desired_pitch: f32,
+        desired_roll: f32,
+        current_pitch: f32,
+        current_roll: f32,
+        gyro_rates: Option<(f32, f32, f32)>,
+        low_throttle: bool,
+        saturation: MixSaturation,
+        dt: f32,
     ) -> (AxisTerms, AxisTerms) {
         if !self.enabled {
             return (AxisTerms::default(), AxisTerms::default());
@@ -218,6 +245,7 @@ impl AttitudeController {
                 low_throttle,
                 saturation.pitch_up,
                 saturation.pitch_down,
+                dt,
             )
             .scaled(self.config.scale);
         let roll_output = self
@@ -229,6 +257,7 @@ impl AttitudeController {
                 low_throttle,
                 saturation.roll_right,
                 saturation.roll_left,
+                dt,
             )
             .scaled(self.config.scale);
 

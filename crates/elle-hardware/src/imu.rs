@@ -12,31 +12,9 @@ use crate::signal_cache::SignalCache;
 // COMMON TYPES AND STATICS (available in both modes)
 // ============================================================================
 
-#[derive(Clone, Copy, Debug, Format)]
-pub struct AttitudeData {
-    pub pitch: f32,      // radians
-    pub roll: f32,       // radians
-    pub yaw: f32,        // radians
-    pub pitch_rate: f32, // rad/s
-    pub roll_rate: f32,  // rad/s
-    pub yaw_rate: f32,   // rad/s
-    pub timestamp: Instant,
-}
-
-impl AttitudeData {
-    #[must_use]
-    pub(crate) const fn zero() -> Self {
-        Self {
-            pitch: 0.0,
-            roll: 0.0,
-            yaw: 0.0,
-            pitch_rate: 0.0,
-            roll_rate: 0.0,
-            yaw_rate: 0.0,
-            timestamp: Instant::from_ticks(0),
-        }
-    }
-}
+/// AHRS attitude and filtered rates. The type is the flight law's own
+/// (`elle_control::flight_law::Attitude`), so the controller builds on the host.
+pub use elle_control::flight_law::Attitude as AttitudeData;
 
 #[derive(Clone, Copy, Debug, Format)]
 pub struct ImuStatus {
