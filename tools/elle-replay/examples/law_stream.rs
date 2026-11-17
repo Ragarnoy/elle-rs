@@ -103,7 +103,8 @@ fn main() -> Result<()> {
             if last != Some(a) {
                 println!(
                     "{:8.1} s  {}",
-                    (t - t0) as f64 / 1e6,
+                    // A status sample can precede the first command.
+                    (i128::from(t) - i128::from(t0)) as f64 / 1e6,
                     if a { "armed" } else { "disarmed" }
                 );
                 last = Some(a);

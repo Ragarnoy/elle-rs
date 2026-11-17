@@ -96,7 +96,7 @@ MUTATIONS = [
 def main():
     features = ["--features", "platform-dart"] if "--dart" in sys.argv else []
     originals = {f: open(f).read() for f in {m[0] for m in MUTATIONS}}
-    missed = []
+    missed, broken = [], []
     try:
         for path, name, old, new, equivalent in MUTATIONS:
             text = originals[path]
@@ -115,10 +115,20 @@ def main():
                 capture_output=True, text=True)
             out = r.stdout + r.stderr
             open(path, "w").write(text)
-            if "error[" in out:
+            # Caught only when the oracle ran and failed: a build error or any
+            # other cargo failure says nothing about the streams.
+            ran_and_failed = "test result: FAILED" in out and "panicked" in out
+            if "error[" in out or "could not compile" in out:
                 verdict = "BUILD ERROR"
-            elif r.returncode != 0:
+                broken.append(name)
+            elif r.returncode != 0 and ran_and_failed:
                 verdict = "caught"
+            elif r.returncode != 0:
+                verdict = "NOT RUN"
+                broken.append(name)
+            elif "test result: ok. 0 passed" in out or "test result: ok" not in out:
+                verdict = "NOT RUN"
+                broken.append(name)
             else:
                 verdict = "equivalent" if equivalent else "MISSED"
                 if not equivalent:
@@ -127,8 +137,13 @@ def main():
     finally:
         for path, text in originals.items():
             open(path, "w").write(text)
+    problems = []
     if missed:
-        sys.exit(f"missed: {missed}")
+        problems.append(f"missed: {missed}")
+    if broken:
+        problems.append(f"oracle did not run: {broken}")
+    if problems:
+        sys.exit("; ".join(problems))
 
 
 if __name__ == "__main__":

@@ -41,8 +41,12 @@ None.
 
 The only intended differences are two timing shifts of a few µs on target, described
 under Design → Clock: the clock read (ULog `controller.att_age_us`, the hold-expiry
-edge) and the moment of the PWM write (`controller.pwm_counter_us`). Neither reaches a
-control output. No section of `OPERATIONS.md` or `STATE_DIAGRAMS.md` changes.
+edge) and the moment of the PWM write (`controller.pwm_counter_us`). One of them can
+reach a control output, for one tick: when a held attitude's age crosses the 20 ms
+(`ATTITUDE_HOLD_MAX_MS`) limit between the old body's clock reads, the old controller
+may already fall back to the pilot's sticks where the law still flies the held
+attitude, or the reverse. The next tick agrees again. No section of `OPERATIONS.md` or
+`STATE_DIAGRAMS.md` changes.
 
 ## Design
 
@@ -168,6 +172,10 @@ stamp and again for `att_age_us`. `elapsed()` is called in `is_attitude_valid` (
 validity) and in the event text. After the move, `now` is read once and passed as
 `inputs.now`. On target, `att_age_us` and the 20 ms (`ATTITUDE_HOLD_MAX_MS`)
 hold-expiry edge can therefore shift by the few µs the old body took between reads.
+`att_age_us` is only logged. The edge is not: on a tick whose held attitude ages
+past 20 ms within those µs, one controller uses the held attitude and the other
+falls back to the sticks, so the elevon command for that one tick can differ.
+Either choice is one the old controller makes a tick later or earlier anyway.
 
 The PWM write also moves. The old body wrote the elevons right after mixing, then
 computed the thrust and the snapshot. Now the law computes all of that, the events
@@ -176,7 +184,8 @@ are emitted, and then `write` makes the PWM write. The write therefore lands a f
 at the frame wrap 1.5 ms later either way (`CONTROL_PWM_LEAD_US`), so they reach the
 servos at the same moment.
 
-These two are the only expected differences. The oracle runs on a mock clock that
+These two are the only expected differences, and the hold edge is the only one that
+can change an output. The oracle runs on a mock clock that
 doesn't advance within a tick, and its PWM stub returns counter 0, so it can't see
 either one; they are stated here instead.
 
