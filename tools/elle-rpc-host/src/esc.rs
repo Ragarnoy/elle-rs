@@ -413,16 +413,24 @@ pub fn melody_arg(arg: &str) -> Result<MelodyBytes> {
     melody_from(arg.as_bytes())
 }
 
-/// RTTTL text (has a `:`), or exactly 128 bytes of Bluejay binary.
+/// RTTTL text, or exactly 128 bytes of Bluejay binary.
+///
+/// Binary can be valid UTF-8 and contain a `:` (a pulse count of 58), so
+/// 128 bytes with a control byte (binary melodies are zero-padded) are always
+/// binary, and 128 bytes that fail to parse as RTTTL fall back to binary.
 pub fn melody_from(data: &[u8]) -> Result<MelodyBytes> {
-    if let Ok(text) = std::str::from_utf8(data) {
-        let text = text.trim();
-        if text.contains(':') {
-            let m = Melody::from_rtttl(text).map_err(|e| anyhow!("RTTTL: {e:?}"))?;
-            if m.is_empty() {
-                bail!("RTTTL has no notes");
-            }
-            return Ok(m.to_bytes());
+    let binary_len = data.len() == MELODY_SIZE;
+    let control = data
+        .iter()
+        .any(|&b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r'));
+    if !(binary_len && control)
+        && let Ok(text) = std::str::from_utf8(data)
+        && text.contains(':')
+    {
+        match rtttl_melody(text.trim()) {
+            Ok(m) => return Ok(m),
+            Err(e) if !binary_len => return Err(e),
+            Err(_) => {}
         }
     }
     data.try_into().map_err(|_| {
@@ -431,6 +439,28 @@ pub fn melody_from(data: &[u8]) -> Result<MelodyBytes> {
             data.len()
         )
     })
+}
+
+/// RTTTL text to melody bytes. Rejects `b=0` first: the converter divides by
+/// the tempo and would panic (esc-config-rs `rtttl-rs` at the pinned rev).
+fn rtttl_melody(text: &str) -> Result<MelodyBytes> {
+    let zero_bpm = text.split(':').nth(1).is_some_and(|defaults| {
+        defaults.split(',').any(|kv| {
+            let kv = kv.trim();
+            kv.strip_prefix("b=")
+                .or_else(|| kv.strip_prefix("B="))
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                == Some(0)
+        })
+    });
+    if zero_bpm {
+        bail!("RTTTL: tempo b=0");
+    }
+    let m = Melody::from_rtttl(text).map_err(|e| anyhow!("RTTTL: {e:?}"))?;
+    if m.is_empty() {
+        bail!("RTTTL has no notes");
+    }
+    Ok(m.to_bytes())
 }
 
 /// The settings block with `melody` in place and nothing else changed.
@@ -556,6 +586,21 @@ mod tests {
         assert_eq!(melody_from(&bin).unwrap(), bin);
         assert!(melody_from(b"not a melody").is_err());
         assert!(melody_from(&[0u8; 100]).is_err());
+    }
+
+    /// Binary whose bytes are all valid UTF-8 and include a `:` (pulse count 58).
+    #[test]
+    fn melody_binary_with_a_colon() {
+        let mut bin = [0u8; MELODY_SIZE];
+        bin[..6].copy_from_slice(&[0, 120, 5, 4, 58, 50]);
+        assert!(std::str::from_utf8(&bin).is_ok());
+        assert_eq!(melody_from(&bin).unwrap(), bin);
+    }
+
+    #[test]
+    fn melody_zero_bpm_is_an_error_not_a_panic() {
+        assert!(melody_arg("test:d=4,o=5,b=0:c").is_err());
+        assert!(melody_from(b"test:b=0,d=4:c").is_err());
     }
 
     #[test]

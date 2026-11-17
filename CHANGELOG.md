@@ -82,6 +82,12 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight and was at the nose-up limit 43% of the time.
 
 ### Fixed
+- DShot bidir telemetry comes back after a fallback (operator behaviour): a run of
+  corrupt replies while running could trip the fire-and-forget fallback with the ESC
+  link still up, and only a link `Appeared` re-enabled telemetry, so the engine
+  stayed without eRPM feedback until reboot. Any answered frame at a commanded stop
+  now re-enables it, and a missing reply while a beep may be sounding no longer
+  counts toward the fallback.
 - Disarm stops the engines at once (operator behaviour, proposal 0008): the DShot
   task played the disarm beep (with ~300 ms of sleeps) before reading the new target,
   so after every disarm, kill switch and failsafe included, the engines kept their

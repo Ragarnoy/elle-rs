@@ -197,6 +197,9 @@ enum Reply {
     Missing,
     /// Fire-and-forget frame (bidir fallback while running).
     NotRequested,
+    /// Requested, but nothing came back while the ESC may be playing a beep
+    /// (`BEEP_ESC_QUIET_MS`): neither a link miss nor a fallback failure.
+    Quiet,
 }
 
 impl Reply {
@@ -216,10 +219,10 @@ impl Reply {
     /// `Some(answered)` when telemetry was requested. A corrupt reply still
     /// proves the ESC is alive.
     /// While the ESC plays a beep it does not answer: a missing reply then
-    /// counts as never requested, so the link and EDT checks ignore it.
+    /// is `Quiet`, which the link, EDT and fallback checks all ignore.
     const fn quiet_if(self, beeping: bool) -> Self {
         match self {
-            Self::Missing if beeping => Self::NotRequested,
+            Self::Missing if beeping => Self::Quiet,
             other => other,
         }
     }
@@ -228,7 +231,7 @@ impl Reply {
         match self {
             Self::Telemetry(_) | Self::Corrupt => Some(true),
             Self::Missing => Some(false),
-            Self::NotRequested => None,
+            Self::NotRequested | Self::Quiet => None,
         }
     }
 }
@@ -295,16 +298,25 @@ impl EngineState {
             Some(EscLinkEvent::Appeared) => {
                 self.reconfigure_in = Some(elle_config::ESC_RECONFIGURE_SETTLE_FRAMES);
                 self.edt.reset();
-                if !self.bidir_enabled {
-                    self.bidir_enabled = true;
-                    self.fail_count = 0;
-                    defmt::info!(
-                        "DShot {}: ESC answering, bidir re-enabled",
-                        self.side.name()
-                    );
-                }
+                self.restore_bidir();
             }
             None => {}
+        }
+    }
+
+    /// Take telemetry back after a fallback: the ESC answers. Also called on
+    /// every answered frame at a commanded stop, since a fallback can happen
+    /// with the link still `Up` (corrupt replies count as answers for the link
+    /// but as failures here), and then no `Appeared` ever comes. Only at a stop:
+    /// a fallback resets the governor, so at most one cycle per throttle-up.
+    fn restore_bidir(&mut self) {
+        if !self.bidir_enabled {
+            self.bidir_enabled = true;
+            self.fail_count = 0;
+            defmt::info!(
+                "DShot {}: ESC answering, bidir re-enabled",
+                self.side.name()
+            );
         }
     }
 
@@ -354,6 +366,11 @@ fn update_engine_unit(
             unit.erpm = 0;
             unit.valid = true;
         }
+        // A beep, not a fault: the ESC is not answering, so no reading, but it
+        // must not push the engine into the fallback either.
+        Reply::Quiet => {
+            unit.valid = false;
+        }
         _ if state.bidir_enabled => {
             state.record_failure();
         }
@@ -370,10 +387,13 @@ fn update_engine_unit(
         }
         Reply::Corrupt => unit.bad_frames = unit.bad_frames.wrapping_add(1),
         Reply::Missing => unit.timeouts = unit.timeouts.wrapping_add(1),
-        Reply::NotRequested => {}
+        Reply::NotRequested | Reply::Quiet => {}
     }
     if let Some(answered) = reply.answered() {
         state.track_link(answered);
+        if answered && target == 0 {
+            state.restore_bidir();
+        }
     }
 }
 
