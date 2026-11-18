@@ -469,6 +469,9 @@ fn handle_get_build_info(_ctx: &mut RpcContext, _hdr: VarHeader, _req: ()) -> Bu
     if cfg!(feature = "performance-monitoring") {
         features |= BUILD_FEATURE_PERF_MON;
     }
+    if cfg!(feature = "tap-cal-lock") {
+        features |= BUILD_FEATURE_TAP_CAL_LOCK;
+    }
     BuildInfoResp {
         platform: ascii_field(elle_config::PLATFORM_NAME),
         features,
