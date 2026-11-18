@@ -1453,9 +1453,8 @@ impl ElleMcp {
     #[tool(description = "Engage or release heading hold (Stabilized only).")]
     async fn set_heading_hold(&self, Parameters(r): Parameters<HeadingHoldReq>) -> ToolResult {
         let client = self.client().await?;
-        // Centidegrees in an i16: ±180°, not 0..360° (327.67° is the i16 limit).
-        let wrapped = (r.heading_deg + 180.0).rem_euclid(360.0) - 180.0;
-        let heading_cdeg = (wrapped * 100.0).round() as i16;
+        let heading_cdeg = crate::pid::heading_cdeg(r.heading_deg as f32)
+            .ok_or("heading_deg must be a finite number")?;
         ack(req::<SetHeadingHoldEndpoint>(
             &client,
             &SetHeadingHoldReq {
