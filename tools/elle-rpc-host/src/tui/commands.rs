@@ -264,9 +264,13 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
             }
             match parts[1].to_lowercase().as_str() {
                 "hold" => match parts.get(2) {
-                    Some(deg_str) => match deg_str.parse::<f32>() {
-                        Ok(deg) => cmd_heading_hold(client, (deg * 100.0) as i16).await,
-                        Err(_) => CommandResult::Err("Heading degrees must be a number".into()),
+                    Some(deg_str) => match deg_str
+                        .parse::<f32>()
+                        .ok()
+                        .and_then(elle_rpc_host::pid::heading_cdeg)
+                    {
+                        Some(cdeg) => cmd_heading_hold(client, cdeg).await,
+                        None => CommandResult::Err("Heading degrees must be a number".into()),
                     },
                     None => cmd_heading_hold_current(client).await,
                 },
@@ -311,23 +315,20 @@ pub async fn execute(input: &str, client: &HostClient<WireError>) -> CommandResu
                     "Usage: pid <Pkp> <Pki> <Pkd> <Rkp> <Rki> <Rkd> <scale> <ilimit>".into(),
                 );
             }
-            #[allow(clippy::type_complexity)]
-            let parse = || -> Option<(f32, f32, f32, f32, f32, f32, f32, f32)> {
-                Some((
-                    parts[1].parse().ok()?,
-                    parts[2].parse().ok()?,
-                    parts[3].parse().ok()?,
-                    parts[4].parse().ok()?,
-                    parts[5].parse().ok()?,
-                    parts[6].parse().ok()?,
-                    parts[7].parse().ok()?,
-                    parts[8].parse().ok()?,
-                ))
+            let parse = || -> Option<elle_rpc_host::pid::PidGains> {
+                Some(elle_rpc_host::pid::PidGains {
+                    pitch_kp: parts[1].parse().ok()?,
+                    pitch_ki: parts[2].parse().ok()?,
+                    pitch_kd: parts[3].parse().ok()?,
+                    roll_kp: parts[4].parse().ok()?,
+                    roll_ki: parts[5].parse().ok()?,
+                    roll_kd: parts[6].parse().ok()?,
+                    scale: parts[7].parse().ok()?,
+                    i_limit: parts[8].parse().ok()?,
+                })
             };
             match parse() {
-                Some((pkp, pki, pkd, rkp, rki, rkd, scale, ilimit)) => {
-                    cmd_set_pid_gains(client, pkp, pki, pkd, rkp, rki, rkd, scale, ilimit).await
-                }
+                Some(gains) => cmd_set_pid_gains(client, &gains).await,
                 None => CommandResult::Err("All PID arguments must be valid floats".into()),
             }
         }
@@ -530,33 +531,30 @@ async fn cmd_heading_off(client: &HostClient<WireError>) -> CommandResult {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn cmd_set_pid_gains(
     client: &HostClient<WireError>,
-    pkp: f32,
-    pki: f32,
-    pkd: f32,
-    rkp: f32,
-    rki: f32,
-    rkd: f32,
-    scale: f32,
-    ilimit: f32,
+    g: &elle_rpc_host::pid::PidGains,
 ) -> CommandResult {
-    let req = SetPidGainsReq {
-        pitch_kp_x1000: (pkp * 1000.0) as i16,
-        pitch_ki_x1000: (pki * 1000.0) as i16,
-        pitch_kd_x1000: (pkd * 1000.0) as i16,
-        roll_kp_x1000: (rkp * 1000.0) as i16,
-        roll_ki_x1000: (rki * 1000.0) as i16,
-        roll_kd_x1000: (rkd * 1000.0) as i16,
-        scale_x10000: (scale * 10000.0) as i16,
-        i_limit_x10: (ilimit * 10.0) as i16,
-    };
-    handle_ack(
-        timeout(CMD_TIMEOUT, client.send_resp::<SetPidGainsEndpoint>(&req)).await,
-        "PID set",
-        format!("PID: P({pkp}/{pki}/{pkd}) R({rkp}/{rki}/{rkd}) scale={scale} ilim={ilimit}"),
-    )
+    use elle_rpc_host::pid::{Sent, send_gains};
+    match send_gains(client, g, CMD_TIMEOUT).await {
+        Ok(sent) => CommandResult::Ok(format!(
+            "PID: P({}/{}/{}) R({}/{}/{}) scale={} ilim={}{}",
+            g.pitch_kp,
+            g.pitch_ki,
+            g.pitch_kd,
+            g.roll_kp,
+            g.roll_ki,
+            g.roll_kd,
+            g.scale,
+            g.i_limit,
+            if sent == Sent::Fixed {
+                " (older firmware: fixed-point endpoint)"
+            } else {
+                ""
+            }
+        )),
+        Err(e) => CommandResult::Err(format!("PID gains not set: {e}")),
+    }
 }
 
 async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {

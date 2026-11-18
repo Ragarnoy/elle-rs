@@ -74,6 +74,7 @@ Feature flags (both binaries; they forward to `elle-app`):
 - `defmt-logging` — defmt over RTT (default). The macros are always compiled; without this feature they are no-ops.
 - `gnss` — SAM-M10Q task (default). Enables `elle-hardware/gnss` and the navigator (`elle-nav`, observation mode). `rpc-control` also enables `gnss-gsv` (satellites in view).
 - `performance-monitoring` — timing instrumentation (`TimingMeasurement` is a no-op stub without it).
+- `tap-cal-lock` — the double-tap never starts a calibration (mag or level): `elle-hardware` never enables the ICM-42686's tap detection (no event 120, no tap register reads on Core 1). Event 121 at boot and `BUILD_FEATURE_TAP_CAL_LOCK` in `GetBuildInfo` report it. RPC calibration commands are unaffected.
 - `imu-raw-log` — every 1 kHz IMU sample as the raw 20-bit FIFO integers (`imu_raw`, batches of 10) plus the mag as fed (`imu_raw_mag`) and the AHRS/bias/mount state (`imu_raw_ctx`, every 1000 samples and on change), ~20 kB/s: enough for a host replay to reproduce the attitude angles exactly (`elle_control::imu_raw`), and for sizing `GYRO_RATE_LPF_HZ`. `attitude_data` drops to 50 Hz and the ULog queue doubles to 128 slots (+~37 kB RAM). Bench and test flights.
 
 CRSF telemetry TX and ULog are always compiled in.
@@ -268,7 +269,7 @@ postcard-RPC over RTT (`elle-system/src/rpc.rs`):
 - `RttTx` (async mutex, so encoding never runs with interrupts masked; COBS into a worst-case-sized buffer and **one RTT write per frame, delimiter included**, so a full channel loses whole frames, never glues two together; an oversized message or a dropped frame is `WireTxErrorKind::Other`, non-fatal to the server), `RttRx` (frame reassembly, 100 µs poll; stamps `HOST_LAST_RX_MS`), `ElleWireSpawn` stub (all handlers blocking).
 - ICD in `crates/elle-rpc-icd/src/lib.rs` (`endpoints!` / `topics!`); dispatch via `define_dispatch!` in `elle-app/src/rpc_app.rs`; server loop in `elle-app/src/tasks.rs` `rpc_server_task()`.
 
-Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold ·
+Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGainsF32 (firmware units; both PID endpoints refuse gains `SavedGains::is_valid` rejects, event 104), SetPidGains (fixed-point, older hosts), SetHeadingHold ·
 safety: Arm, Disarm, EmergencyStop · query: GetStatus, GetAttitude, GetPerformance,
 ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels,
 GetControllerOutput, GetEngine, GetNav (navigator's last update), GetCore1Load (last ~1 s window, closed by the loop whether or not ULog records) · bench: EngineBeep (DShot beep 1–5, disarmed, played at rest) · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,

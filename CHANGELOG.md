@@ -49,6 +49,20 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   write AM32's startup tune (EEPROM bytes 48..176 only, verified by read-back) from
   RTTTL text or a 128-byte binary; `esc show` / `esc_read` show the current one.
   No firmware change.
+- PID gains in firmware units over RPC (RPC ICD, operator behaviour, event codes):
+  new endpoint `elle/ctrl/pid_f32` (`SetPidGainsF32Req`, eight `f32`), so the
+  operating `PID_SCALE` 5.0 can be set and saved without a reflash. The TUI `pid`
+  uses it and falls back to `elle/ctrl/pid` only when the firmware doesn't know the
+  endpoint (older builds), never on a timeout. Both endpoints now refuse gains the
+  flash loader would refuse (non-finite, kp/ki/kd/scale outside 0..=100, i_limit
+  outside 0..=1000, a negative scale included): `AckResp` error `PID_ERR_INVALID`
+  and event 104.
+- `tap-cal-lock` build feature (operator behaviour, event codes, RPC ICD, both
+  airframes): the IMU's double-tap detection is never enabled, so the tap starts
+  no mag or level calibration and event 120 never appears. Event 121 at boot and
+  the `BUILD_FEATURE_TAP_CAL_LOCK` bit in `GetBuildInfo` report the lock. RPC
+  `mag cal` / `level cal` still work. Without the feature nothing changes. On the eagle a sharp set-down during a bench session
+  started a mag calibration unnoticed (no LED) and overwrote a good one (LOG_0117).
 - AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
   into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each
@@ -88,6 +102,16 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   stayed without eRPM feedback until reboot. Any answered frame at a commanded stop
   now re-enables it, and a missing reply while a beep may be sounding no longer
   counts toward the fallback.
+- TUI `pid` no longer sends a saturated value (operator behaviour, host only): every
+  `SetPidGainsReq` field is an `i16`, and a plain cast clamped silently, so
+  `pid … 5 0.5` sent scale 3.2767 (`savepid` kept it; every term ~35 % weak).
+  Values now round to the nearest step (0.35 had gone out as 0.349). Refused, with
+  nothing sent: a value that doesn't fit its field, one the flash loader would
+  refuse (negative, non-finite, gains or scale above 100, i_limit above 1000), and
+  one the field's step would change by more than 1 % (a non-zero gain rounding to 0
+  included). The TUI `heading hold <deg>` now wraps to ±180° and rounds, like MCP
+  (`heading hold 400` had sent 327.67°). This fixed-point path is
+  now only the fallback for older firmware (the f32 endpoint below carries 5.0).
 - Disarm stops the engines at once (operator behaviour, proposal 0008): the DShot
   task played the disarm beep (with ~300 ms of sleeps) before reading the new target,
   so after every disarm, kill switch and failsafe included, the engines kept their

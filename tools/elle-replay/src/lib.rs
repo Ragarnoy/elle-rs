@@ -79,6 +79,8 @@ pub struct Input {
     pub accel: Vector3<f32>,
     /// The GNSS aid available at this sample.
     pub aid: Aid,
+    /// The mag vector as fed (airframe frame), if any.
+    pub mag: Option<Vector3<f32>>,
 }
 
 /// Every recorded sample (synced or not) plus coverage.
@@ -348,6 +350,7 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                     gyro: g,
                     accel: a,
                     aid,
+                    mag,
                 });
                 for (run, track) in runs.iter_mut().zip(&mut tracks) {
                     let out = run.step(g, a, mag.as_ref(), mag_new, &aid);

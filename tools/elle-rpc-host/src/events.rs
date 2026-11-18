@@ -74,6 +74,7 @@ pub const fn label(code: u16) -> &'static str {
         101 => "PID: save failed",
         102 => "PID: loaded from flash",
         103 => "PID: no saved profile",
+        104 => "PID: gains refused (out of range)",
         // Mag calibration (110–119)
         110 => "Mag cal: started",
         111 => "Mag cal: complete",
@@ -87,6 +88,7 @@ pub const fn label(code: u16) -> &'static str {
         119 => "Mag spikes rejected",
         // Tap detection (120–129)
         120 => "IMU: double-tap detected (calibration gesture)",
+        121 => "Tap calibration locked (tap-cal-lock build)",
         // Heading hold (130–139)
         130 => "Heading hold: engaged",
         131 => "Heading hold: disengaged",
