@@ -237,6 +237,29 @@ impl AttitudePipeline {
         self.mount * mag
     }
 
+    /// An accel vector (sensor frame, as [`Self::fuse`] takes it) in the
+    /// airframe frame, as the AHRS sees it: the input for
+    /// [`tilt_disagreement`].
+    #[must_use]
+    pub fn accel_to_airframe(&self, accel: Vector3<f32>) -> Vector3<f32> {
+        self.mount * accel
+    }
+
+    /// Seed the AHRS from one still sample (proposal 0009), taking exactly what
+    /// [`Self::fuse`] takes: `accel` raw in the sensor frame (the mount is
+    /// applied here), `mag` already through [`Self::mag_to_airframe`]. A driver
+    /// passes the same two vectors it would fuse, so nothing is mounted twice.
+    /// Returns the seed, or `None` (AHRS untouched) when [`seed`] refuses.
+    pub fn seed_from(
+        &mut self,
+        accel: Vector3<f32>,
+        mag: &Vector3<f32>,
+    ) -> Option<UnitQuaternion<f32>> {
+        let q = seed(&self.accel_to_airframe(accel), mag)?;
+        self.set_quat(q);
+        Some(q)
+    }
+
     /// Step the filters with one sample: `gyro` from [`Self::debias`] and the
     /// raw accel, both in the sensor frame; `mag` already in the airframe frame
     /// (9-DOF when given, else 6-DOF). A zero accel or mag vector falls back to
@@ -291,13 +314,11 @@ impl AttitudePipeline {
             (false, Some(mag)) => self.ahrs.update(gyro, accel, *mag),
             (false, None) => self.ahrs.update_imu(gyro, accel),
         };
-        let (roll, pitch, yaw) = q.euler_angles();
-
-        // Roll sign is inverted relative to the ICM-42686's raw frame on this PCB
-        // orientation — field-confirmed rolling the wrong way with identity mapping.
+        // Roll negated: see `angles`.
+        let (pitch, roll, yaw) = angles(&q);
         Attitude {
             pitch,
-            roll: -roll,
+            roll,
             yaw,
             pitch_rate: rates.y,
             roll_rate: -rates.x,
@@ -310,7 +331,10 @@ impl AttitudePipeline {
 /// both in the airframe frame: tilt from the accel (taken as gravity, so the
 /// aircraft must be still), heading from the mag's horizontal part. Returns
 /// the AHRS quaternion (body to the filter's earth frame: north, west, up), or
-/// `None` when either vector is zero or they are parallel.
+/// `None` when either vector is zero or the field is within ~6° of the
+/// vertical (`SEED_MIN_SIN`: its horizontal part is then too small to give a
+/// heading). The firmware calls it through [`AttitudePipeline::seed_from`],
+/// which puts both vectors in this frame.
 ///
 /// Proposal 0009: starting the Madgwick filter here instead of at identity
 /// removes the boot transient (the heading converging from north drags pitch
@@ -319,7 +343,13 @@ impl AttitudePipeline {
 pub fn seed(accel: &Vector3<f32>, mag: &Vector3<f32>) -> Option<UnitQuaternion<f32>> {
     // Still: the accelerometer reads +1 g along earth's up.
     let up = accel.try_normalize(1e-6)?;
-    let north = (mag - up * mag.dot(&up)).try_normalize(1e-6)?;
+    let m = mag.try_normalize(1e-6)?;
+    // Relative test on unit vectors: |up × m| is the sine of the angle between
+    // them, whatever the units of the mag.
+    if up.cross(&m).norm() < SEED_MIN_SIN {
+        return None;
+    }
+    let north = (m - up * m.dot(&up)).normalize();
     let west = up.cross(&north);
     // Rows: the earth axes in body coordinates, i.e. body to earth.
     let m = nalgebra::Matrix3::from_rows(&[north.transpose(), west.transpose(), up.transpose()]);
@@ -328,12 +358,32 @@ pub fn seed(accel: &Vector3<f32>, mag: &Vector3<f32>) -> Option<UnitQuaternion<f
     ))
 }
 
-/// Euler angles of an AHRS quaternion in the firmware's convention (roll
-/// negated, as [`AttitudePipeline::fuse`] reports them): (pitch, roll, yaw).
+/// Smallest sine of the angle between accel and mag that [`seed`] accepts
+/// (~6°): below it the field is nearly vertical, or nearly parallel to the
+/// accel, and the heading would be built from noise.
+pub const SEED_MIN_SIN: f32 = 0.1;
+
+/// Euler angles of an AHRS quaternion in the firmware's convention: (pitch,
+/// roll, yaw). Roll is negated: the sign is inverted relative to the
+/// ICM-42686's raw frame on this PCB orientation (field-confirmed rolling the
+/// wrong way with the identity mapping). The one place this convention lives;
+/// [`AttitudePipeline::fuse`] reports these.
 #[must_use]
 pub fn angles(q: &UnitQuaternion<f32>) -> (f32, f32, f32) {
     let (roll, pitch, yaw) = q.euler_angles();
     (pitch, -roll, yaw)
+}
+
+/// Angle (radians) between the AHRS's up direction in the body frame and an
+/// accel reading in the airframe frame ([`AttitudePipeline::accel_to_airframe`]):
+/// how far the filter's tilt is from the one gravity gives, when still. No
+/// Euler angles and no roll sign, so no convention to get wrong (proposal
+/// 0009, Part B). `None` for a zero accel.
+#[must_use]
+pub fn tilt_disagreement(q: &UnitQuaternion<f32>, accel_airframe: &Vector3<f32>) -> Option<f32> {
+    let a = accel_airframe.try_normalize(1e-6)?;
+    let body_up = q.inverse() * Vector3::z();
+    Some(libm::atan2f(body_up.cross(&a).norm(), body_up.dot(&a)))
 }
 
 /// A GNSS solution as the pipeline received it.

@@ -2,30 +2,25 @@
 //! transient? `cargo run -p elle-replay --example seed -- LOG.ulg`
 //!
 //! From the first synced sample of a still raw-IMU log, runs the firmware's
-//! Madgwick filter three ways on the same inputs: as logged (the exact
-//! replay), restarted at identity (what a boot does) and restarted at
-//! `elle_control::attitude::seed`. Prints the angles every 2 s and each run's
-//! worst tilt error against the attitude the log settles at.
+//! filter three ways on the same inputs: as logged (the exact replay),
+//! restarted at identity (what a boot does) and restarted at
+//! `elle_control::attitude::seed`. The restarted runs are the replay's own
+//! firmware variant (`variants::default_specs()[0]`, which `--compare` checks
+//! against the exact replay), so they follow the build's filter. Prints the
+//! angles every 2 s and each run's worst tilt error against the attitude the
+//! log settles at.
 
-use core::time::Duration;
-
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use elle_control::attitude::{angles, seed};
 use elle_replay::ulog::ULog;
+use elle_replay::variants::{Running, default_specs};
 use nalgebra::UnitQuaternion;
-use uf_ahrs::{Ahrs, Madgwick, MadgwickParams};
 
-const DT: Duration = Duration::from_micros(elle_config::AHRS_SAMPLE_PERIOD_US);
-
-fn filter(q: UnitQuaternion<f32>) -> Madgwick {
-    let mut f = Madgwick::new(
-        DT,
-        MadgwickParams {
-            beta: elle_config::AHRS_BETA,
-        },
-    );
-    f.set_orientation(q);
-    f
+/// The firmware's filter as a replay variant, started at `q`.
+fn filter(q: UnitQuaternion<f32>) -> Running {
+    let mut r = Running::new(default_specs().swap_remove(0));
+    r.seed(q);
+    r
 }
 
 fn main() -> Result<()> {
@@ -63,10 +58,18 @@ fn main() -> Result<()> {
         .filter(|s| s.t_us + 10_000_000 >= rp.samples[n - 1].t_us)
         .filter_map(|s| s.att)
         .collect();
+    if tail.is_empty() {
+        bail!("no synced attitude in the last 10 s: nothing to settle against");
+    }
     let mean = |f: fn(&elle_control::attitude::Attitude) -> f32| {
         tail.iter().map(f).sum::<f32>() / tail.len() as f32
     };
-    let (sp, sr, sy) = (mean(|a| a.pitch), mean(|a| a.roll), mean(|a| a.yaw));
+    // Yaw as a circular mean: a heading dithering across ±180° must not
+    // average to 0.
+    let sy = tail.iter().fold((0.0f32, 0.0f32), |(s, c), a| {
+        (s + a.yaw.sin(), c + a.yaw.cos())
+    });
+    let (sp, sr, sy) = (mean(|a| a.pitch), mean(|a| a.roll), sy.0.atan2(sy.1));
     let d = f32::to_degrees;
     println!(
         "{path}: from sample {} ({} samples); settled pitch {:+.1} roll {:+.1} yaw {:+.1}",
@@ -89,6 +92,7 @@ fn main() -> Result<()> {
     let mut worst = [0f32; 3];
     let mut last_bad = [0u64; 3];
     let mut next_print = 0u64;
+    let mut prev_mag = None;
     for k in k0..n {
         let s = &rp.samples[k];
         let inp = &rp.inputs[k];
@@ -96,12 +100,11 @@ fn main() -> Result<()> {
         if let Some(a) = s.att {
             out[0] = (a.pitch, a.roll, a.yaw);
         }
+        let mag_new = inp.mag != prev_mag;
+        prev_mag = inp.mag;
         for (i, f) in runs.iter_mut().enumerate() {
-            let q = match inp.mag {
-                Some(m) => f.update(inp.gyro, inp.accel, m),
-                None => f.update_imu(inp.gyro, inp.accel),
-            };
-            out[i + 1] = angles(&q);
+            let [p, r, y] = f.step(inp.gyro, inp.accel, inp.mag.as_ref(), mag_new, &inp.aid);
+            out[i + 1] = (p, r, y);
         }
         let t = s.t_us - t0;
         if std::env::var_os("SEED_TRACE").is_some()

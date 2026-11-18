@@ -121,14 +121,28 @@ other divergence (a bad seed, a mag disturbance at boot, a Core 1 fault).
   Option<UnitQuaternion<f32>>` (written, on this branch), in the airframe frame the
   AHRS uses (after `mount`): roll and pitch from the accel vector, heading from the
   mag vector projected on the horizontal plane (TRIAD), body to uf-ahrs' earth frame
-  (north, west, up). `None` for a zero or parallel pair. Still to add: a tilt-only
+  (north, west, up). `None` for a zero vector, or a field within ~6° of the vertical
+  or of the accel (`SEED_MIN_SIN`, a relative test on unit vectors, so the mag's
+  units don't matter). Still to add: a tilt-only
   variant for the no-mag case (heading 0). Host check so far: with constant inputs
   at dips −60…+75° and three headings, the seed is the filter's fixed point (no
   drift over 120 s), and an identity start converges to the seed's heading.
-- The driver calls `pipeline.set_quat(seed(…))` once, when the gyro bias estimate
-  completes (the aircraft has just been still for a second, so the averaged accel is
-  gravity), using the bias estimator's mean accel and the latest `MAG_FIELD` with the
-  flash mag offsets already applied. **They are not applied from the first sample:**
+- The driver calls `pipeline.seed_from(mean_accel, &mag)` once, when the gyro bias
+  estimate completes (the aircraft has just been still for a second, so the averaged
+  accel is gravity). `seed_from` takes exactly what `fuse` takes: the accel raw in the
+  sensor frame (it applies the mount itself) and the mag already through
+  `mag_to_airframe`, so a driver passing the vectors it fuses cannot mount one twice.
+  `seed` alone is the airframe-frame function underneath.
+  - **The mean accel is new state.** `GyroBias` takes gyro only and keeps no accel,
+    so the driver sums the raw accel over the same still window, reset with it, as
+    level cal averages its accel.
+  - **Stillness:** the bias window's gyro spread (`GYRO_BIAS_MAX_SPREAD_RAD_S`,
+    0.035 rad/s). Level cal's "moving" test is gyro-only too and looser
+    (`LEVEL_CAL_MAX_GYRO_RAD_S`, 0.1 rad/s), so it adds nothing. Neither looks at
+    the accel, so the seed adds one check: the window's mean |a| within 10 % of 1 g
+    (`ARM_ATTITUDE_ACCEL_G_TOL`, the same band as Part B's guard, no new constant). A board translated with a changing velocity
+    fails it; a constant velocity is gravity-equivalent and harmless.
+  - **The mag:** the latest `MAG_FIELD` with the flash mag offsets already applied. **They are not applied from the first sample:**
   boot sends them over `MAG_CALIBRATION_SIGNAL` once it has read flash, and in
   LOG_0113 and LOG_0119 the first ~88 fused samples (3 mag readings) still carry
   the raw field. With the 20 G magnet a seed from that first reading came out 150°
@@ -144,11 +158,16 @@ other divergence (a bad seed, a mag disturbance at boot, a Core 1 fault).
 
 ### B. Arming guard (`elle-control/src/arming.rs`, `elle-system/src/system.rs`)
 
-- New pure check `attitude_settled(ahrs_pitch, ahrs_roll, accel_lp) -> bool`: the
-  tilt implied by a low-passed accel (time constant `ARM_ATTITUDE_ACCEL_TAU_S`, 0.5 s)
-  against the AHRS pitch and roll, each within `ARM_ATTITUDE_MAX_ERR_DEG` (5°). The
-  accel tilt is only meaningful when still, so the check refuses rather than passes
-  when the accel magnitude is off 1 g by more than 10 % (being handled).
+- New pure check `attitude_settled(disagreement_rad, accel_lp_norm) -> bool`. The
+  disagreement is `attitude::tilt_disagreement(q, accel)`: the angle between the
+  AHRS's up direction in the body frame and a low-passed accel (time constant
+  `ARM_ATTITUDE_ACCEL_TAU_S`, 0.5 s) **in the airframe frame**
+  (`pipeline.accel_to_airframe`, the mount the AHRS sees). It must be within
+  `ARM_ATTITUDE_MAX_ERR_DEG` (5°). No Euler angles and no roll sign are involved, so
+  the level-cal tilt, the board's 180° yaw on the eagle and the roll negation of
+  `angles()` cannot enter as a false error. The accel tilt is only meaningful when
+  still, so the check refuses rather than passes when the accel magnitude is off
+  1 g by more than 10 % (being handled).
 - **Latched once per boot.** The check gates arming only until it has passed once
   since boot; from then on it never refuses. A re-arm after a failsafe or a kill
   switch, which can happen in the air (round-A B6: a fresh gesture re-arms after RC
@@ -158,9 +177,10 @@ other divergence (a bad seed, a mag disturbance at boot, a Core 1 fault).
 - `FlightController::arm()` (every arm path: gesture, RPC `Arm`, `rpc-rc`) refuses
   with event 19 while the latch is not set, the same way as
   `EVT_ARM_REFUSED_THROTTLE`. Once armed the check is not evaluated.
-- Core 1 publishes the low-passed accel with the attitude (`AttitudeData` gains
-  `accel_tilt_pitch`, `accel_tilt_roll`, f32, computed on Core 1 at 1 kHz: a few
-  multiplies). Core 0 compares at arm time only.
+- Core 1 computes the disagreement where the quaternion and the accel both are, and
+  publishes it with the attitude (`AttitudeData` gains `tilt_disagreement_rad` and
+  `accel_lp_norm`, f32; one low-pass, one mount rotation and one angle per sample).
+  Core 0 compares at arm time only.
 
 ### Constants (`elle-config`)
 
@@ -188,7 +208,7 @@ Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
 | Risk | Effect | Mitigation |
 |------|--------|------------|
 | Seed from a bad mag (disturbed field at boot) | Heading wrong; tilt leak as today, but from a smaller error | Part B refuses arming until the tilt agrees; the seed is never worse than identity in tilt (tilt comes from the accel) |
-| Seed taken while moving | Wrong tilt seed | Taken only when the bias estimator has accepted a still second; otherwise no seed (behaviour as today) and Part B holds arming |
+| Seed taken while moving | Wrong tilt seed | Taken only when the bias estimator has accepted a still second (gyro spread) and that window's mean \|a\| is within 10 % of 1 g; otherwise no seed (behaviour as today) and Part B holds arming |
 | Guard refuses a legitimate arm | Pilot cannot arm | 5° is well above the settled error (≤1.5° in the logs); refusal is visible (event, LED); holding the aircraft still clears it |
 | Guard false pass | Arms with a wrong attitude | Only possible if accel tilt and AHRS agree on a wrong value, i.e. the accel itself is wrong: no worse than today |
 | Hand launch: arm, then throw | — | The check runs at arm time only, never after: no effect on the launch |
@@ -201,7 +221,13 @@ Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
 - **Host tests:** `seed` at headings 0/90/180/270 and tilts ±20°: seeded pipeline
   error < 0.5° over 60 s still (the table above as a regression test, with and
   without the seed); `attitude_settled` true when still and level, false at a 10°
-  disagreement, false while the accel magnitude is off 1 g.
+  disagreement, false while the accel magnitude is off 1 g. Done so far
+  (`tests/attitude_seed.rs`): the seed holds over 60 s at four headings, four tilts
+  and three dips; `seed_from` in the firmware's frames (the platform's board
+  rotation, eagle 180° / dart 0°, plus a level-cal tilt) seeds the airframe
+  attitude, which holds within 0.5° in tilt and yaw over 60 s; `tilt_disagreement`
+  reads 0 for the seed, 7° for a 7° tilt, ignores heading; a near-vertical field is
+  refused whatever its units.
 - **Replay (done 2026-11-14, `cargo run -p elle-replay --example seed -- LOG`;
   `SEED_AT_S` starts every run that long after the first synced sample):** each
   `imu-raw-log` boot capture of a still aircraft, run three ways on the logged
@@ -221,9 +247,9 @@ Core 1 (~10 ops), one comparison per arm attempt on Core 0. Nothing per tick.
   Every log in this table predates proposal 0010: the mag is fused 90° off its true
   axes. LOG_0109 and 0113–0115 also carry the hatch magnet, and LOG_0119's corrected
   field reads 0.17 G: it calibrates nothing itself (115 only) and loads the offsets
-saved at the end of LOG_0117 (113 at 644 s), which did not fit the magnet-free board
-(LOG_0121 reads ~0.16 G with them too, until its own calibration at 61.5 s). The
-clean-field case is LOG_0126 (above): fresh calibration, 0.43 G. For a
+  saved at the end of LOG_0117 (113 at 644 s), which did not fit the magnet-free
+  board (LOG_0121 reads ~0.16 G with them too, until its own calibration at 61.5 s).
+  The clean-field case is LOG_0126 (above): fresh calibration, 0.43 G. For a
   still, level boot that doesn't change the result: the filter sees one constant
   vector, whatever its mapping, and the seed is its fixed point. For a tilted boot
   it does: the mis-mapped field is inconsistent with gravity there (0010,

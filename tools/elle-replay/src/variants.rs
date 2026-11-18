@@ -213,8 +213,8 @@ impl Running {
                 f.orientation()
             }
         };
-        let (roll, pitch, yaw) = q.euler_angles();
-        [pitch, -roll, yaw]
+        let (pitch, roll, yaw) = elle_control::attitude::angles(&q);
+        [pitch, roll, yaw]
     }
 }
 
