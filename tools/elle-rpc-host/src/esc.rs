@@ -441,21 +441,8 @@ pub fn melody_from(data: &[u8]) -> Result<MelodyBytes> {
     })
 }
 
-/// RTTTL text to melody bytes. Rejects `b=0` first: the converter divides by
-/// the tempo and would panic (esc-config-rs `rtttl-rs` at the pinned rev).
+/// RTTTL text to melody bytes (a `b=0` tempo is a parse error).
 fn rtttl_melody(text: &str) -> Result<MelodyBytes> {
-    let zero_bpm = text.split(':').nth(1).is_some_and(|defaults| {
-        defaults.split(',').any(|kv| {
-            let kv = kv.trim();
-            kv.strip_prefix("b=")
-                .or_else(|| kv.strip_prefix("B="))
-                .and_then(|v| v.trim().parse::<u32>().ok())
-                == Some(0)
-        })
-    });
-    if zero_bpm {
-        bail!("RTTTL: tempo b=0");
-    }
     let m = Melody::from_rtttl(text).map_err(|e| anyhow!("RTTTL: {e:?}"))?;
     if m.is_empty() {
         bail!("RTTTL has no notes");
