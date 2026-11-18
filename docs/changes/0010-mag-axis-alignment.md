@@ -112,7 +112,10 @@ machine changes.
   ULog info entry, `elle_mag_axes_deg`, records the constant, written right after
   the standard ones (`ULogWriter::write_info_i32`) so it stays in the definitions
   section. `elle-replay --mag-axes <deg>` runs a what-if, relative to whatever the
-  log did (90 on every log so far): it un-mounts the fed vector with the logged
+  log did: eagle captures before this change fused the chip axes as they are (0°,
+  no info entry), so `--mag-axes 90` there gives the aligned mapping (LOG_0121);
+  captures from the new build (`elle_mag_axes_deg` 90, LOG_0125 on) are already
+  aligned, and `--mag-axes -90` gives the old mapping. It un-mounts the fed vector with the logged
   `imu_raw_ctx` mount, swaps the axes, and mounts it again. The what-if filter is
   seeded at the heading the remapped field gives (`variants::reseat_heading`), so it
   measures the mapping, not a 90° heading convergence. `--compare` adds a "against

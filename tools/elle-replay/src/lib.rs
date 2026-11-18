@@ -299,6 +299,8 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
     let mut mag_new = false;
     let mut seed: Option<UnitQuaternion<f32>> = None;
     let mut was_synced = false;
+    // A what-if synced before the first mag reading: reseat it at that reading.
+    let mut reseat_pending = false;
     for (index, _, e) in ev {
         match e {
             Event::Ctx(c) => {
@@ -342,6 +344,7 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                     && !was_synced
                     && let Some(q) = seed
                 {
+                    reseat_pending = false;
                     for r in &mut runs {
                         let deg = r.spec.mag_axes_deg;
                         let q = match mag {
@@ -350,9 +353,21 @@ pub fn replay_with(log: &ULog, specs: &[variants::Spec]) -> Result<Replay> {
                                 &m,
                                 &variants::remap_fed_mag(&m, &mount, deg),
                             ),
+                            None if deg != 0.0 => {
+                                reseat_pending = true;
+                                q
+                            }
                             _ => q,
                         };
                         r.seed(q);
+                    }
+                }
+                // Until then the what-if fused no mag and ran like the firmware.
+                if reseat_pending && let Some(m) = mag {
+                    reseat_pending = false;
+                    for r in runs.iter_mut().filter(|r| r.spec.mag_axes_deg != 0.0) {
+                        let deg = r.spec.mag_axes_deg;
+                        r.reseat_mag(&m, &variants::remap_fed_mag(&m, &mount, deg));
                     }
                 }
                 was_synced = synced;

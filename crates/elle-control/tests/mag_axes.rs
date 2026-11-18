@@ -42,6 +42,11 @@ fn quarter_turns() {
     assert_eq!(mag_axes(m, 180.0), Vector3::new(-1.0, -2.0, 3.0));
     assert_eq!(mag_axes(m, 270.0), Vector3::new(2.0, -1.0, 3.0));
     assert_eq!(mag_axes(m, -90.0), mag_axes(m, 270.0));
+    assert_eq!(mag_axes(m, 450.0), mag_axes(m, 90.0));
+    // Not a quarter turn: identity, fractions near one included.
+    for deg in [90.5f32, -90.5, 89.9, 45.0, 0.5, f32::NAN, f32::INFINITY] {
+        assert_eq!(mag_axes(m, deg), m, "{deg}");
+    }
     // Each is the rotation it claims to be.
     for deg in [90.0f32, 180.0, 270.0] {
         let r = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), deg.to_radians());
