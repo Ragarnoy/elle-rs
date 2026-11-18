@@ -21,6 +21,7 @@ MAG_AXES_YAW_DEG 90), whatever the firmware does with it.
 """
 import argparse
 import itertools
+import sys
 
 import numpy as np
 from pyulog import ULog
@@ -80,6 +81,9 @@ def name(perm, sg, det):
 best = None
 for shift in (-40e3, -20e3, 0, 20e3, 40e3):
     pr = pairs(shift)
+    if not pr:
+        sys.exit(f"no mag pair in {a.t0}..{a.t1} s at shift {shift / 1e3:+.0f} ms rotates "
+                 "more than 3 degrees: widen T0 T1 or pick a tumble (event 110..113)")
     rows = []
     for perm in itertools.permutations(range(3)):
         for sg in itertools.product([1, -1], repeat=3):

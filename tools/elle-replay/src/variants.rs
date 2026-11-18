@@ -189,14 +189,26 @@ impl Running {
     /// Restart from the firmware's state (at a (re)synchronisation).
     pub fn seed(&mut self, q: UnitQuaternion<f32>) {
         self.filter = Filter::new(self.spec.kind);
+        self.set_orientation(q);
+        self.gate = AccelGate::new(self.spec.gate_g).smooth(self.spec.smooth);
+        self.turn = TurnComp::new();
+        self.earth_weight = TurnComp::new();
+    }
+
+    /// Turn the current attitude so `new_mag` lies where `old_mag` did
+    /// (`reseat_heading`), keeping the rest of the state: for a what-if whose
+    /// first mag reading came after the synchronisation.
+    pub fn reseat_mag(&mut self, old_mag: &Vector3<f32>, new_mag: &Vector3<f32>) {
+        let q = reseat_heading(self.filter.orientation(), old_mag, new_mag);
+        self.set_orientation(q);
+    }
+
+    fn set_orientation(&mut self, q: UnitQuaternion<f32>) {
         match &mut self.filter {
             Filter::Madgwick(f) => f.set_orientation(q),
             Filter::Mahony(f) => f.set_orientation(q),
             Filter::Vqf(f) => f.set_orientation(q),
         }
-        self.gate = AccelGate::new(self.spec.gate_g).smooth(self.spec.smooth);
-        self.turn = TurnComp::new();
-        self.earth_weight = TurnComp::new();
     }
 
     /// One sample in the filter frame (gyro debiased and mounted, accel

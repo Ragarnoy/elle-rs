@@ -48,15 +48,22 @@ pub fn board_rotation() -> UnitQuaternion<f32> {
 /// The mag chip's axes onto the IMU's sensor axes: a rotation of `yaw_deg`
 /// (a quarter turn) about the vertical, done as an exact axis swap so 0 is the
 /// identity bit for bit. Proposal 0010; the firmware passes
-/// `elle_config::MAG_AXES_YAW_DEG`. Any multiple of 90 is accepted (a replay's
-/// what-if may be relative and negative); anything else is treated as 0.
+/// `elle_config::MAG_AXES_YAW_DEG`. Any exact multiple of 90 is accepted (a
+/// replay's what-if may be relative and negative); anything else, a fraction
+/// such as 90.5 included, is treated as 0.
 #[must_use]
 pub fn mag_axes(m: Vector3<f32>, yaw_deg: f32) -> Vector3<f32> {
-    match (yaw_deg as i32).rem_euclid(360) {
-        90 => Vector3::new(-m.y, m.x, m.z),
-        180 => Vector3::new(-m.x, -m.y, m.z),
-        270 => Vector3::new(m.y, -m.x, m.z),
-        _ => m,
+    // Reduce the float itself: casting first would truncate 90.5 to 90.
+    let r = yaw_deg % 360.0;
+    let r = if r < 0.0 { r + 360.0 } else { r };
+    if r == 90.0 {
+        Vector3::new(-m.y, m.x, m.z)
+    } else if r == 180.0 {
+        Vector3::new(-m.x, -m.y, m.z)
+    } else if r == 270.0 {
+        Vector3::new(m.y, -m.x, m.z)
+    } else {
+        m
     }
 }
 
