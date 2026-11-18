@@ -10,7 +10,15 @@
 //! `PID_SCALE` (5.0) cannot go over RPC until the ICD widens the field: compile
 //! such gains in.
 
-use elle_rpc_icd::SetPidGainsReq;
+use std::time::Duration;
+
+use elle_rpc_icd::{
+    AckResp, PID_ERR_INVALID, SetPidGainsEndpoint, SetPidGainsF32Endpoint, SetPidGainsF32Req,
+    SetPidGainsReq,
+};
+use postcard_rpc::host_client::{HostClient, HostErr};
+use postcard_rpc::standard_icd::WireError;
+use tokio::time::timeout;
 
 /// Gains as typed by the operator, in firmware units.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,8 +76,10 @@ fn fixed(name: &str, value: f32, factor: f32) -> Result<i16, String> {
     Ok(scaled as i16)
 }
 
-/// The request for `gains`, or the first field that can't be sent as typed.
-pub fn set_pid_gains_req(g: &PidGains) -> Result<SetPidGainsReq, String> {
+/// The flash loader's range for every field, or the first one outside it.
+/// Both endpoints are checked against it before anything is sent; the firmware
+/// applies the same check (`PID_ERR_INVALID`, event 104).
+pub fn check_bounds(g: &PidGains) -> Result<(), String> {
     for (name, v) in [
         ("pitch kp", g.pitch_kp),
         ("pitch ki", g.pitch_ki),
@@ -81,7 +91,12 @@ pub fn set_pid_gains_req(g: &PidGains) -> Result<SetPidGainsReq, String> {
     ] {
         in_bounds(name, v, GAIN_MAX)?;
     }
-    in_bounds("i_limit", g.i_limit, I_LIMIT_MAX)?;
+    in_bounds("i_limit", g.i_limit, I_LIMIT_MAX)
+}
+
+/// The request for `gains`, or the first field that can't be sent as typed.
+pub fn set_pid_gains_req(g: &PidGains) -> Result<SetPidGainsReq, String> {
+    check_bounds(g)?;
     Ok(SetPidGainsReq {
         pitch_kp_x1000: fixed("pitch kp", g.pitch_kp, 1000.0)?,
         pitch_ki_x1000: fixed("pitch ki", g.pitch_ki, 1000.0)?,
@@ -92,6 +107,69 @@ pub fn set_pid_gains_req(g: &PidGains) -> Result<SetPidGainsReq, String> {
         scale_x10000: fixed("scale", g.scale, 10_000.0)?,
         i_limit_x10: fixed("i_limit", g.i_limit, 10.0)?,
     })
+}
+
+/// The request for the f32 endpoint: every value as typed.
+#[must_use]
+pub const fn set_pid_gains_f32_req(g: &PidGains) -> SetPidGainsF32Req {
+    SetPidGainsF32Req {
+        pitch_kp: g.pitch_kp,
+        pitch_ki: g.pitch_ki,
+        pitch_kd: g.pitch_kd,
+        roll_kp: g.roll_kp,
+        roll_ki: g.roll_ki,
+        roll_kd: g.roll_kd,
+        scale: g.scale,
+        i_limit: g.i_limit,
+    }
+}
+
+/// Which endpoint carried the gains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sent {
+    /// `elle/ctrl/pid_f32`: the values as typed.
+    F32,
+    /// `elle/ctrl/pid`: firmware without the f32 endpoint, fixed-point (and
+    /// refused when a value doesn't fit, e.g. scale 5.0).
+    Fixed,
+}
+
+/// Send `gains` through the f32 endpoint. Falls back to the fixed-point one
+/// only when the firmware answers that it doesn't know the f32 endpoint
+/// (`WireError::UnknownKey`, older firmware), never on a timeout or any other
+/// error: a slow link must not resend through a lossier path.
+pub async fn send_gains(
+    client: &HostClient<WireError>,
+    gains: &PidGains,
+    limit: Duration,
+) -> Result<Sent, String> {
+    check_bounds(gains)?;
+    let req = set_pid_gains_f32_req(gains);
+    match timeout(limit, client.send_resp::<SetPidGainsF32Endpoint>(&req)).await {
+        Ok(Ok(ack)) => ack_result(ack).map(|()| Sent::F32),
+        Ok(Err(HostErr::Wire(WireError::UnknownKey))) => {
+            let req = set_pid_gains_req(gains)?;
+            match timeout(limit, client.send_resp::<SetPidGainsEndpoint>(&req)).await {
+                Ok(Ok(ack)) => ack_result(ack).map(|()| Sent::Fixed),
+                Ok(Err(e)) => Err(format!("RPC error: {e:?}")),
+                Err(_) => Err("timeout".into()),
+            }
+        }
+        Ok(Err(e)) => Err(format!("RPC error: {e:?}")),
+        Err(_) => Err("timeout".into()),
+    }
+}
+
+fn ack_result(ack: AckResp) -> Result<(), String> {
+    match (ack.success, ack.error_code) {
+        (true, _) => Ok(()),
+        (false, PID_ERR_INVALID) => Err(
+            "the flight controller refused them: out of range (kp/ki/kd/scale 0..=100, \
+             i_limit 0..=1000), event 104"
+                .into(),
+        ),
+        (false, code) => Err(format!("error {code}")),
+    }
 }
 
 /// A heading for `SetHeadingHoldReq`: wrapped to ±180° (an `i16` of

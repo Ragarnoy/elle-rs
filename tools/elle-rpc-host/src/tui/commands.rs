@@ -513,18 +513,26 @@ async fn cmd_set_pid_gains(
     client: &HostClient<WireError>,
     g: &elle_rpc_host::pid::PidGains,
 ) -> CommandResult {
-    let req = match elle_rpc_host::pid::set_pid_gains_req(g) {
-        Ok(req) => req,
-        Err(e) => return CommandResult::Err(format!("PID gains refused: {e}")),
-    };
-    handle_ack(
-        timeout(CMD_TIMEOUT, client.send_resp::<SetPidGainsEndpoint>(&req)).await,
-        "PID set",
-        format!(
-            "PID: P({}/{}/{}) R({}/{}/{}) scale={} ilim={}",
-            g.pitch_kp, g.pitch_ki, g.pitch_kd, g.roll_kp, g.roll_ki, g.roll_kd, g.scale, g.i_limit
-        ),
-    )
+    use elle_rpc_host::pid::{Sent, send_gains};
+    match send_gains(client, g, CMD_TIMEOUT).await {
+        Ok(sent) => CommandResult::Ok(format!(
+            "PID: P({}/{}/{}) R({}/{}/{}) scale={} ilim={}{}",
+            g.pitch_kp,
+            g.pitch_ki,
+            g.pitch_kd,
+            g.roll_kp,
+            g.roll_ki,
+            g.roll_kd,
+            g.scale,
+            g.i_limit,
+            if sent == Sent::Fixed {
+                " (older firmware: fixed-point endpoint)"
+            } else {
+                ""
+            }
+        )),
+        Err(e) => CommandResult::Err(format!("PID gains not set: {e}")),
+    }
 }
 
 async fn cmd_ulog_info(client: &HostClient<WireError>) -> CommandResult {

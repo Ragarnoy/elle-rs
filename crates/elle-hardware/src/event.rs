@@ -136,6 +136,8 @@ pub const EVT_PID_SAVED: u16 = 100;
 pub const EVT_PID_SAVE_FAILED: u16 = 101;
 pub const EVT_PID_LOADED: u16 = 102;
 pub const EVT_PID_LOAD_EMPTY: u16 = 103;
+/// RPC PID gains refused: out of the range the flash loader accepts.
+pub const EVT_PID_GAINS_REFUSED: u16 = 104;
 
 // Magnetometer calibration and health (110–119)
 pub const EVT_MAG_CAL_STARTED: u16 = 110;

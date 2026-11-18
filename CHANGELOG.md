@@ -39,6 +39,14 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- PID gains in firmware units over RPC (RPC ICD, operator behaviour, event codes):
+  new endpoint `elle/ctrl/pid_f32` (`SetPidGainsF32Req`, eight `f32`), so the
+  operating `PID_SCALE` 5.0 can be set and saved without a reflash. The TUI `pid`
+  uses it and falls back to `elle/ctrl/pid` only when the firmware doesn't know the
+  endpoint (older builds), never on a timeout. Both endpoints now refuse gains the
+  flash loader would refuse (non-finite, kp/ki/kd/scale outside 0..=100, i_limit
+  outside 0..=1000, a negative scale included): `AckResp` error `PID_ERR_INVALID`
+  and event 104.
 - `tap-cal-lock` build feature (operator behaviour, event codes, RPC ICD, both
   airframes): the IMU's double-tap detection is never enabled, so the tap starts
   no mag or level calibration and event 120 never appears. Event 121 at boot and
@@ -86,8 +94,8 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   refuse (negative, non-finite, gains or scale above 100, i_limit above 1000), and
   one the field's step would change by more than 1 % (a non-zero gain rounding to 0
   included). The TUI `heading hold <deg>` now wraps to ±180° and rounds, like MCP
-  (`heading hold 400` had sent 327.67°). The operating scale 5.0 cannot go over RPC
-  until the ICD widens the field: compile such gains in.
+  (`heading hold 400` had sent 327.67°). This fixed-point path is
+  now only the fallback for older firmware (the f32 endpoint below carries 5.0).
 - Disarm stops the engines at once (operator behaviour, proposal 0008): the DShot
   task played the disarm beep (with ~300 ms of sleeps) before reading the new target,
   so after every disarm, kill switch and failsafe included, the engines kept their

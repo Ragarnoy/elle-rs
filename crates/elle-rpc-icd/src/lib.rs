@@ -259,11 +259,32 @@ pub struct SetPidGainsReq {
     pub roll_kd_x1000: i16,
     /// Scale * 10000: at most 3.2767 (i16), so the firmware's `PID_SCALE` (5.0)
     /// does not fit. Clients must refuse such a scale rather than cast it
-    /// (`elle_rpc_host::pid::set_pid_gains_req`).
+    /// (`elle_rpc_host::pid::set_pid_gains_req`). Use [`SetPidGainsF32Req`]; this
+    /// endpoint stays for firmware that predates it.
     pub scale_x10000: i16,
     /// I-limit * 10: a 0.1 step (e.g. 5 = 0.5)
     pub i_limit_x10: i16,
 }
+
+/// Set PID gains, in firmware units. Unlike [`SetPidGainsReq`] every value
+/// fits, the operating `PID_SCALE` included. The firmware refuses gains its
+/// flash loader would refuse (non-finite, kp/ki/kd/scale outside 0..=100,
+/// i_limit outside 0..=1000): `AckResp` error [`PID_ERR_INVALID`], event 104.
+/// Both PID endpoints apply that check.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
+pub struct SetPidGainsF32Req {
+    pub pitch_kp: f32,
+    pub pitch_ki: f32,
+    pub pitch_kd: f32,
+    pub roll_kp: f32,
+    pub roll_ki: f32,
+    pub roll_kd: f32,
+    pub scale: f32,
+    pub i_limit: f32,
+}
+
+/// `AckResp` error code of both PID endpoints: the gains are out of range.
+pub const PID_ERR_INVALID: u8 = 2;
 
 /// `StartAutotuneReq::axis`: tune pitch.
 pub const AUTOTUNE_AXIS_PITCH: u8 = 0;
@@ -562,6 +583,7 @@ endpoints! {
     | GetTimeEndpoint           | ()                | u64               | "elle/sys/time"       |
     | GetControllerOutputEndpoint | ()              | ControllerOutputResp | "elle/query/ctrl_out" |
     | SetPidGainsEndpoint       | SetPidGainsReq    | AckResp           | "elle/ctrl/pid"       |
+    | SetPidGainsF32Endpoint    | SetPidGainsF32Req | AckResp           | "elle/ctrl/pid_f32"   |
     | StartAutotuneEndpoint   | StartAutotuneReq  | AckResp           | "elle/ctrl/atune/start" |
     | AbortAutotuneEndpoint   | ()                | AckResp           | "elle/ctrl/atune/abort" |
     | StartMagCalEndpoint     | ()                | AckResp           | "elle/cal/mag/start"    |
