@@ -30,6 +30,9 @@ pub enum BeepPattern {
     ArmBeep,
     /// Two short beeps (disarm confirmation)
     DisarmBeep,
+    /// One DShot beep command, 1-5 (bench, RPC `elle/engine/beep`). Anything
+    /// else is ignored.
+    Tone(u8),
 }
 
 /// Consecutive bidir telemetry failure threshold before falling back to fire-and-forget.
@@ -194,6 +197,9 @@ enum Reply {
     Missing,
     /// Fire-and-forget frame (bidir fallback while running).
     NotRequested,
+    /// Requested, but nothing came back while the ESC may be playing a beep
+    /// (`BEEP_ESC_QUIET_MS`): neither a link miss nor a fallback failure.
+    Quiet,
 }
 
 impl Reply {
@@ -212,11 +218,20 @@ impl Reply {
 
     /// `Some(answered)` when telemetry was requested. A corrupt reply still
     /// proves the ESC is alive.
+    /// While the ESC plays a beep it does not answer: a missing reply then
+    /// is `Quiet`, which the link, EDT and fallback checks all ignore.
+    const fn quiet_if(self, beeping: bool) -> Self {
+        match self {
+            Self::Missing if beeping => Self::Quiet,
+            other => other,
+        }
+    }
+
     const fn answered(self) -> Option<bool> {
         match self {
             Self::Telemetry(_) | Self::Corrupt => Some(true),
             Self::Missing => Some(false),
-            Self::NotRequested => None,
+            Self::NotRequested | Self::Quiet => None,
         }
     }
 }
@@ -283,16 +298,25 @@ impl EngineState {
             Some(EscLinkEvent::Appeared) => {
                 self.reconfigure_in = Some(elle_config::ESC_RECONFIGURE_SETTLE_FRAMES);
                 self.edt.reset();
-                if !self.bidir_enabled {
-                    self.bidir_enabled = true;
-                    self.fail_count = 0;
-                    defmt::info!(
-                        "DShot {}: ESC answering, bidir re-enabled",
-                        self.side.name()
-                    );
-                }
+                self.restore_bidir();
             }
             None => {}
+        }
+    }
+
+    /// Take telemetry back after a fallback: the ESC answers. Also called on
+    /// every answered frame at a commanded stop, since a fallback can happen
+    /// with the link still `Up` (corrupt replies count as answers for the link
+    /// but as failures here), and then no `Appeared` ever comes. Only at a stop:
+    /// a fallback resets the governor, so at most one cycle per throttle-up.
+    fn restore_bidir(&mut self) {
+        if !self.bidir_enabled {
+            self.bidir_enabled = true;
+            self.fail_count = 0;
+            defmt::info!(
+                "DShot {}: ESC answering, bidir re-enabled",
+                self.side.name()
+            );
         }
     }
 
@@ -342,6 +366,11 @@ fn update_engine_unit(
             unit.erpm = 0;
             unit.valid = true;
         }
+        // A beep, not a fault: the ESC is not answering, so no reading, but it
+        // must not push the engine into the fallback either.
+        Reply::Quiet => {
+            unit.valid = false;
+        }
         _ if state.bidir_enabled => {
             state.record_failure();
         }
@@ -358,10 +387,13 @@ fn update_engine_unit(
         }
         Reply::Corrupt => unit.bad_frames = unit.bad_frames.wrapping_add(1),
         Reply::Missing => unit.timeouts = unit.timeouts.wrapping_add(1),
-        Reply::NotRequested => {}
+        Reply::NotRequested | Reply::Quiet => {}
     }
     if let Some(answered) = reply.answered() {
         state.track_link(answered);
+        if answered && target == 0 {
+            state.restore_bidir();
+        }
     }
 }
 
@@ -524,12 +556,11 @@ impl<'a> DshotEngines<'a> {
     }
 }
 
-impl From<BeepPattern> for Pattern {
-    fn from(p: BeepPattern) -> Self {
-        match p {
-            BeepPattern::ArmBeep => Self::Arm,
-            BeepPattern::DisarmBeep => Self::Disarm,
-        }
+fn beep_pattern(p: BeepPattern) -> Option<Pattern> {
+    match p {
+        BeepPattern::ArmBeep => Some(Pattern::Arm),
+        BeepPattern::DisarmBeep => Some(Pattern::Disarm),
+        BeepPattern::Tone(n) => Tone::from_command(n).map(Pattern::Single),
     }
 }
 
@@ -537,6 +568,9 @@ const fn beep_command(tone: Tone) -> Command {
     match tone {
         Tone::Beep1 => Command::Beep1,
         Tone::Beep2 => Command::Beep2,
+        Tone::Beep3 => Command::Beep3,
+        Tone::Beep4 => Command::Beep4,
+        Tone::Beep5 => Command::Beep5,
     }
 }
 
@@ -546,6 +580,7 @@ const fn beep_command(tone: Tone) -> Command {
 struct Beeper {
     seq: BeepSequencer,
     zero_since: Option<Instant>,
+    last_beep: Option<Instant>,
 }
 
 impl Beeper {
@@ -553,6 +588,7 @@ impl Beeper {
         Self {
             seq: BeepSequencer::new(),
             zero_since: None,
+            last_beep: None,
         }
     }
 
@@ -562,8 +598,8 @@ impl Beeper {
     fn slot(&mut self, spin_commanded: bool, engines: &[Option<u32>]) -> Option<Command> {
         let now = Instant::now();
         let now_ms = now.as_millis();
-        if let Some(p) = BEEP_SIGNAL.try_take() {
-            self.seq.request(p.into(), now_ms);
+        if let Some(p) = BEEP_SIGNAL.try_take().and_then(beep_pattern) {
+            self.seq.request(p, now_ms);
         }
         if spin_commanded {
             self.zero_since = None;
@@ -575,9 +611,20 @@ impl Beeper {
         }
         let zero_for = self.zero_since.map(|t| (now - t).as_millis());
         let at_rest = engines.iter().all(|&e| engine_at_rest(e, zero_for));
-        self.seq
+        let cmd = self
+            .seq
             .next(now_ms, spin_commanded, at_rest)
-            .map(beep_command)
+            .map(beep_command);
+        if cmd.is_some() {
+            self.last_beep = Some(now);
+        }
+        cmd
+    }
+
+    /// Whether an ESC may still be playing a beep (`BEEP_ESC_QUIET_MS`).
+    fn sounding(&self) -> bool {
+        self.last_beep
+            .is_some_and(|t| t.elapsed().as_millis() < elle_config::BEEP_ESC_QUIET_MS)
     }
 }
 
@@ -651,7 +698,9 @@ pub async fn dshot_single_task(engine: BidirDshotPio<'static, PIO1, 0>) {
         // protocol's minimum spin value, not a stop — cutting the ESC there loses
         // telemetry and leaves the loop with no way back up.
         let stopped = target_erpm == 0;
-        let reply = send_frame(&mut engine, dshot_val, state.bidir_enabled, stopped).await;
+        let reply = send_frame(&mut engine, dshot_val, state.bidir_enabled, stopped)
+            .await
+            .quiet_if(beeper.sounding());
 
         update_engine_unit(&mut reading.left, &mut state, reply, dshot_val, target_erpm);
         reconfigure_if_due(&mut engine, &mut state, &mut reading.left, reply, stopped).await;
@@ -734,6 +783,8 @@ pub async fn dshot_task(
             ),
         )
         .await;
+        let beeping = beeper.sounding();
+        let (l_reply, r_reply) = (l_reply.quiet_if(beeping), r_reply.quiet_if(beeping));
 
         update_engine_unit(
             &mut reading.left,

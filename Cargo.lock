@@ -1794,7 +1794,7 @@ dependencies = [
 [[package]]
 name = "esc-config-icd"
 version = "0.1.0"
-source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=1dcff3f#1dcff3f34ffca892c70fd2d897a47317c9bc73c3"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=822a8a4#822a8a432ff4967b6b36f35a2c6c2b034e157e62"
 dependencies = [
  "esc-protocol",
  "esc-session",
@@ -1808,7 +1808,7 @@ dependencies = [
 [[package]]
 name = "esc-onewire-rp"
 version = "0.1.0"
-source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=1dcff3f#1dcff3f34ffca892c70fd2d897a47317c9bc73c3"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=822a8a4#822a8a432ff4967b6b36f35a2c6c2b034e157e62"
 dependencies = [
  "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy.git?rev=340bf1de)",
  "embassy-rp",
@@ -1820,7 +1820,7 @@ dependencies = [
 [[package]]
 name = "esc-protocol"
 version = "0.1.0"
-source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=1dcff3f#1dcff3f34ffca892c70fd2d897a47317c9bc73c3"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=822a8a4#822a8a432ff4967b6b36f35a2c6c2b034e157e62"
 dependencies = [
  "rtttl-rs",
  "serde",
@@ -1829,7 +1829,7 @@ dependencies = [
 [[package]]
 name = "esc-session"
 version = "0.1.0"
-source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=1dcff3f#1dcff3f34ffca892c70fd2d897a47317c9bc73c3"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=822a8a4#822a8a432ff4967b6b36f35a2c6c2b034e157e62"
 dependencies = [
  "esc-protocol",
 ]
@@ -3760,7 +3760,7 @@ dependencies = [
 [[package]]
 name = "rtttl-rs"
 version = "0.1.0"
-source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=1dcff3f#1dcff3f34ffca892c70fd2d897a47317c9bc73c3"
+source = "git+https://github.com/Ragarnoy/esc-config-rs.git?rev=822a8a4#822a8a432ff4967b6b36f35a2c6c2b034e157e62"
 
 [[package]]
 name = "rustc_version"

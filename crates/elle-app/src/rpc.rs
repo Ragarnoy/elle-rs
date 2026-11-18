@@ -240,6 +240,16 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
                         "Motors DISARMED via RPC"
                     );
                 }
+                RpcCommand::Beep(tone) => {
+                    // Never while armed, and nothing sends DShot in an
+                    // ESC-config boot. The DShot task also waits for rest.
+                    if fc.is_armed() || esc_config {
+                        defmt::warn!("RPC: beep {} refused (armed or ESC config)", tone);
+                    } else {
+                        elle_hardware::dshot::BEEP_SIGNAL
+                            .signal(elle_hardware::dshot::BeepPattern::Tone(tone));
+                    }
+                }
                 RpcCommand::EmergencyStop => {
                     elle_hardware::elle_event!(
                         warn,

@@ -24,13 +24,34 @@ pub enum Pattern {
     Arm,
     /// Two bursts of `Beep2`, [`BEEP_GAP_MS`] apart.
     Disarm,
+    /// One burst of any DShot beep command (bench: RPC `elle/engine/beep`).
+    Single(Tone),
 }
 
-/// The DShot beep command to send in this frame slot.
+/// The DShot beep command to send in this frame slot (DShot commands 1-5;
+/// AM32 plays 1 and 5 as the same tone).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
     Beep1,
     Beep2,
+    Beep3,
+    Beep4,
+    Beep5,
+}
+
+impl Tone {
+    /// The tone for DShot command `n` (1-5).
+    #[must_use]
+    pub const fn from_command(n: u8) -> Option<Self> {
+        match n {
+            1 => Some(Self::Beep1),
+            2 => Some(Self::Beep2),
+            3 => Some(Self::Beep3),
+            4 => Some(Self::Beep4),
+            5 => Some(Self::Beep5),
+            _ => None,
+        }
+    }
 }
 
 /// Command frames per burst (the DShot convention the old task used: 10 × ~1 ms).
@@ -41,12 +62,13 @@ impl Pattern {
         match self {
             Self::Arm => Tone::Beep1,
             Self::Disarm => Tone::Beep2,
+            Self::Single(t) => t,
         }
     }
 
     const fn bursts(self) -> u8 {
         match self {
-            Self::Arm => 1,
+            Self::Arm | Self::Single(_) => 1,
             Self::Disarm => 2,
         }
     }

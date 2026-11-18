@@ -596,6 +596,7 @@ endpoints! {
     | GetBuildInfoEndpoint    | ()                | BuildInfoResp     | "elle/sys/build"        |
     | GetNavEndpoint          | ()                | NavResp           | "elle/query/nav"        |
     | GetCore1LoadEndpoint    | ()                | Core1LoadResp     | "elle/query/core1"      |
+    | EngineBeepEndpoint      | u8                | AckResp           | "elle/engine/beep"      |
     | EscModeEndpoint         | ()                | EscBootMode       | "elle/esc/mode"         |
     | EscEnterEndpoint        | ()                | AckResp           | "elle/esc/mode/enter"   |
     | EscExitEndpoint         | ()                | AckResp           | "elle/esc/mode/exit"    |

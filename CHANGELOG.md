@@ -39,6 +39,16 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- Engine beep on demand (RPC ICD, operator behaviour, bench): new endpoint
+  `elle/engine/beep` (`u8` 1-5 → `AckResp`), TUI and `elle direct` `beep <1-5>`, MCP
+  `beep`. RPC builds send that DShot beep command through the engines, disarmed only,
+  played once they are at rest (the 0008 sequencer); refused while armed or in an
+  ESC-config boot.
+- ESC startup melody (host tool): `esc melody <l|r> <rtttl|file|clear>` in the TUI
+  and `elle direct`, and the gated MCP tool `esc_melody` (same gates as `esc_set`),
+  write AM32's startup tune (EEPROM bytes 48..176 only, verified by read-back) from
+  RTTTL text or a 128-byte binary; `esc show` / `esc_read` show the current one.
+  No firmware change.
 - PID gains in firmware units over RPC (RPC ICD, operator behaviour, event codes):
   new endpoint `elle/ctrl/pid_f32` (`SetPidGainsF32Req`, eight `f32`), so the
   operating `PID_SCALE` 5.0 can be set and saved without a reflash. The TUI `pid`
@@ -86,6 +96,12 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight and was at the nose-up limit 43% of the time.
 
 ### Fixed
+- DShot bidir telemetry comes back after a fallback (operator behaviour): a run of
+  corrupt replies while running could trip the fire-and-forget fallback with the ESC
+  link still up, and only a link `Appeared` re-enabled telemetry, so the engine
+  stayed without eRPM feedback until reboot. Any answered frame at a commanded stop
+  now re-enables it, and a missing reply while a beep may be sounding no longer
+  counts toward the fallback.
 - TUI `pid` no longer sends a saturated value (operator behaviour, host only): every
   `SetPidGainsReq` field is an `i16`, and a plain cast clamped silently, so
   `pid … 5 0.5` sent scale 3.2767 (`savepid` kept it; every term ~35 % weak).

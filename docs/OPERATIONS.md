@@ -78,6 +78,12 @@ A disarm (any path: gesture, kill switch, failsafe, RPC) stops the engines on th
 DShot frame; the double beep follows once they have spun down, so after a run at power
 it comes a second or two late. Throttle up during the arm beep cuts it short. A beep
 that cannot play within 4 s (an engine never reads at rest) is dropped.
+
+On the bench (RPC builds), `beep <1-5>` in the TUI (`elle direct beep 3`, MCP `beep`)
+sends one DShot beep command through the engines, disarmed only, once they are at
+rest. AM32 plays 1 and 5 as its default tone, 2 as the "changed" tone, 3 and 4 as two
+short tunes; `beep_volume` sets the loudness. The startup melody is not one of them:
+AM32 plays it only when its app starts (`esc run` in ESC-config mode).
 Engine arming at power-up is a separate 2 s MotorStop burst (`ARM_DURATION_MS`) that
 the ESCs need before they accept throttle; it is not the flight-controller arm.
 
@@ -281,6 +287,12 @@ Nothing here has run on hardware yet (TEST_PLAN 6.11).
    them, or the CLI's short names). Only the settings bytes (5..48) change; the
    firmware writes, reads back and compares (event 177; a failure is 175/176). The
    host prints what changed.
+   **Startup melody:** `esc melody left <rtttl|file|clear>` writes the tune AM32
+   plays when its app starts (bytes 48..176 only, verified the same way). RTTTL text
+   (`name:d=4,o=5,b=140:c,e,g,2c6`, at most 62 notes and pauses), a file holding
+   RTTTL or the 128-byte binary the relay CLI downloads, or `clear` for the default
+   tones. `esc run left` plays it (the app starts, then drops back to the bootloader
+   ~2 s later); `esc show` prints the current one.
 7. **Restore:** `esc restore left <file>`: settings, melody and CAN from the backup;
    boot and version bytes from the ESC. A backup from another EEPROM layout version is
    refused.

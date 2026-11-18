@@ -79,6 +79,12 @@ pub enum DirectCommand {
     Arm,
     /// Disarm motors
     Disarm,
+    /// DShot beep command 1-5 on the engines (disarmed; AM32: 1 and 5 sound
+    /// the same)
+    Beep {
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=5))]
+        tone: u8,
+    },
     /// Emergency stop
     Stop,
     /// Get performance statistics
@@ -143,6 +149,15 @@ pub enum EscAction {
         #[arg(short, long, default_value = "left", value_parser = parse_engine)]
         engine: EscEngine,
         file: std::path::PathBuf,
+    },
+    /// Write the startup melody (bytes 48..176 only), read back. AM32 plays it
+    /// when its app starts: `esc run` or `esc exit` plays it
+    Melody {
+        #[arg(short, long, default_value = "left", value_parser = parse_engine)]
+        engine: EscEngine,
+        /// RTTTL text (name:d=4,o=5,b=140:c,e,g), a file (RTTTL, or the
+        /// 128-byte binary the esc-config-rs CLI saves), or `clear`
+        melody: String,
     },
     /// Leave the bootloader and start the ESC's app
     Run {
@@ -214,6 +229,18 @@ async fn run_esc(link: Link, action: EscAction) -> Result<Link> {
                 c.name
             );
             println!("{}", esc::config(&block));
+            println!("melody: {}", esc::melody_summary(&block));
+        }
+        EscAction::Melody { engine, melody } => {
+            let bytes = esc::melody_arg(&melody)?;
+            esc::connect(client, engine).await?;
+            let c = esc::set_melody(client, engine, &bytes).await?;
+            println!("before: {}\nafter:  {}", c.before, c.after);
+            println!(
+                "{} byte(s) changed, read back identical. `esc run -e {}` plays it.",
+                c.bytes_changed,
+                esc::engine_name(engine)
+            );
         }
         EscAction::Set { engine, settings } => {
             let edits = esc::parse_edits(&settings)?;
@@ -363,6 +390,17 @@ pub async fn run(cmd: DirectCommand) -> Result<()> {
                     "DISARMED"
                 } else {
                     "Failed to disarm"
+                }
+            );
+        }
+        DirectCommand::Beep { tone } => {
+            let ack = timeout(CMD_TIMEOUT, client.send_resp::<EngineBeepEndpoint>(&tone)).await??;
+            println!(
+                "{}",
+                if ack.success {
+                    "Beep sent (the firmware ignores it while armed)"
+                } else {
+                    "Beep refused"
                 }
             );
         }

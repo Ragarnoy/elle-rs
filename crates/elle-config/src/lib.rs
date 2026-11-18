@@ -65,6 +65,11 @@ pub const BEEP_MAX_WAIT_MS: u64 = 4_000;
 /// Gap between the disarm beep's two bursts.
 pub const BEEP_GAP_MS: u64 = 100;
 const _: () = assert!(BEEP_SPINDOWN_FALLBACK_MS < BEEP_MAX_WAIT_MS);
+/// After the last beep frame, an ESC that does not answer a telemetry request is
+/// not counted as silent for this long: AM32 does not reply while it plays a
+/// tone, and its DShot tunes 3 and 4 outlast `ESC_SILENT_FRAMES` (bench: false
+/// events 160/161, then a reconfigure 162/163, after each).
+pub const BEEP_ESC_QUIET_MS: u64 = 2_000;
 /// Consecutive unanswered telemetry requests (~1 per ms) before an ESC counts as
 /// silent (lost power or restarted). When it answers again it is sent the boot
 /// configuration (spin direction, extended telemetry) again.

@@ -53,7 +53,7 @@ pub struct Options {
     pub max_armed: Duration,
     /// Highest throttle `set_throttle` accepts, percent.
     pub max_throttle_pct: u8,
-    /// `--dangerously-allow-esc-write`: `esc_set` and `esc_restore` work at all.
+    /// `--dangerously-allow-esc-write`: `esc_set`, `esc_melody` and `esc_restore` work at all.
     pub allow_esc_write: bool,
 }
 
@@ -108,6 +108,10 @@ struct Inner {
     /// a device id names an ESC model, not one ESC, so a backup only counts
     /// for the session it was taken in.
     esc_backups: std::sync::Mutex<std::collections::HashSet<(u8, u16)>>,
+    /// Bumped (under the `esc_backups` lock) whenever the link ends. A backup
+    /// counts only if the link it started on is still the current one, so one
+    /// that finishes after a disconnect never authorizes writes on the next link.
+    link_gen: std::sync::atomic::AtomicU64,
     /// Held across a whole `esc_set` / `esc_restore` read-modify-write, so
     /// overlapping calls cannot overwrite each other's edits.
     esc_write: Mutex<()>,
@@ -535,6 +539,22 @@ pub struct EscFileReq {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct BeepReq {
+    /// DShot beep command 1-5. AM32: 1 and 5 are its default tone, 2 the
+    /// "changed" tone, 3 and 4 two short tunes.
+    pub tone: u8,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EscMelodyReq {
+    pub engine: EngineParam,
+    /// RTTTL text (`name:d=4,o=5,b=140:c,e,g,2c6`, at most 62 notes and
+    /// pauses), a file path (RTTTL, or a 128-byte binary melody), or `clear`
+    /// (erase: the ESC plays its default tones).
+    pub melody: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct EscSetReq {
     pub engine: EngineParam,
     /// Setting name → value, e.g. `{"beep_volume": 5}`. Names and numeric
@@ -720,6 +740,7 @@ impl ElleMcp {
                 defmt: Mutex::new(None),
                 last_build: Mutex::new(None),
                 esc_backups: std::sync::Mutex::default(),
+                link_gen: std::sync::atomic::AtomicU64::new(0),
                 esc_write: Mutex::new(()),
             }),
             tool_router: Self::tool_router(),
@@ -774,11 +795,7 @@ impl ElleMcp {
     /// Disarm (if this server armed) and release the probe. Called on exit.
     pub async fn shutdown(&self) {
         let _ = self.stop_engines().await;
-        self.inner
-            .esc_backups
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+        self.end_link_backups();
         if let Some(mut d) = self.inner.defmt.lock().await.take() {
             let _ = tokio::task::spawn_blocking(move || d.stop()).await;
         }
@@ -888,6 +905,40 @@ impl ElleMcp {
             .await
             .map_err(|e| format!("{e:#} (is the FC in ESC-config mode? esc_mode get)"))?;
         Ok((client, c))
+    }
+
+    /// The link ended: forget its backups and make any backup still in flight
+    /// on it count for nothing.
+    fn end_link_backups(&self) {
+        let mut set = self
+            .inner
+            .esc_backups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.inner
+            .link_gen
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        set.clear();
+    }
+
+    /// Record a backup taken on link generation `link`; false (nothing recorded)
+    /// when that link has ended since.
+    fn record_backup(&self, link: u64, engine: EscEngine, device_id: u16) -> bool {
+        let mut set = self
+            .inner
+            .esc_backups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self
+            .inner
+            .link_gen
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != link
+        {
+            return false;
+        }
+        set.insert((engine as u8, device_id));
+        true
     }
 
     fn esc_backed_up(&self, engine: EscEngine, device_id: u16) -> bool {
@@ -1408,6 +1459,19 @@ impl ElleMcp {
         ack(req::<SetThrottleEndpoint>(&client, &SetThrottleReq { percent: r.percent }).await?)
     }
 
+    #[tool(
+        description = "Play a DShot beep command (1-5) through the engines: sound only, no \
+        rotation. The firmware ignores it while armed (or in ESC-config mode) and plays it \
+        once the engines are at rest. Use `esc_run` (ESC-config mode) for the startup melody."
+    )]
+    async fn beep(&self, Parameters(r): Parameters<BeepReq>) -> ToolResult {
+        if !(1..=5).contains(&r.tone) {
+            return Err("tone must be 1-5".to_string());
+        }
+        let client = self.client().await?;
+        ack(req::<EngineBeepEndpoint>(&client, &r.tone).await?)
+    }
+
     #[tool(description = "Throttle 0 and disarm. Always allowed.")]
     async fn disarm(&self) -> ToolResult {
         self.stop_engines().await.map(|()| "disarmed".to_string())
@@ -1600,16 +1664,21 @@ impl ElleMcp {
         to_text(&json!({
             "esc": crate::esc::info_json(&c),
             "settings": crate::esc::decoded(&block),
+            "melody": crate::esc::melody_summary(&block),
             "raw_hex": hex,
         }))
     }
 
     #[tool(
         description = "Save one ESC's 256 bytes at the EEPROM base (the esc-config-rs backup \
-        format) to a file, default logs/esc/. Required before `esc_set` on that ESC."
+        format) to a file, default logs/esc/. Required before `esc_set` or `esc_melody` on that ESC."
     )]
     async fn esc_backup(&self, Parameters(r): Parameters<EscBackupReq>) -> ToolResult {
         let engine = r.engine.into();
+        let link = self
+            .inner
+            .link_gen
+            .load(std::sync::atomic::Ordering::SeqCst);
         let (client, c) = self.esc_connected(engine).await?;
         let data = crate::esc::read_backup(&client, engine, &c.info)
             .await
@@ -1623,11 +1692,13 @@ impl ElleMcp {
             }
         };
         crate::esc::save_backup(&path, &data).map_err(|e| format!("{e:#}"))?;
-        self.inner
-            .esc_backups
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert((engine as u8, c.info.device_id));
+        if !self.record_backup(link, engine, c.info.device_id) {
+            return Err(format!(
+                "backup saved to {}, but the link ended while it was taken: it does not \
+                 unlock writes; take a new backup on this link",
+                path.display()
+            ));
+        }
         to_text(&json!({ "path": path.display().to_string(), "bytes": data.len() }))
     }
 
@@ -1676,6 +1747,27 @@ impl ElleMcp {
             .await
             .map_err(|e| format!("{e:#}"))?;
         to_text(&json!({ "changes": changes }))
+    }
+
+    #[tool(
+        description = "Write an ESC's startup melody (ESC-config mode): EEPROM bytes 48..176 \
+        only, read back. AM32 plays it when its app starts: `esc_run` (or `esc_mode exit`) \
+        plays it. Refused unless the server runs with --dangerously-allow-esc-write and this \
+        server took an `esc_backup` of this ESC (restoring it puts the old melody back)."
+    )]
+    async fn esc_melody(&self, Parameters(r): Parameters<EscMelodyReq>) -> ToolResult {
+        self.esc_write_gate()?;
+        let engine = r.engine.into();
+        let bytes = crate::esc::melody_arg(&r.melody).map_err(|e| format!("{e:#}"))?;
+        let _write = self.inner.esc_write.lock().await;
+        let (client, c) = self.esc_connected(engine).await?;
+        if !self.esc_backed_up(engine, c.info.device_id) {
+            return Err("refused: take an esc_backup of this ESC first (this session)".to_string());
+        }
+        let change = crate::esc::set_melody(&client, engine, &bytes)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        to_text(&serde_json::to_value(change).map_err(|e| e.to_string())?)
     }
 
     #[tool(
@@ -1848,7 +1940,7 @@ impl ServerHandler for ElleMcp {
              ask the operator for physical actions (tilt, switches, TX off), then verify. \
              Engines are off limits unless link_status says motors_allowed; never spin engines \
              without the operator confirming props are off. ESC EEPROM writes (`esc_set`, \
-             `esc_restore`) are off limits unless link_status says esc_write_allowed; take an \
+             `esc_melody`, `esc_restore`) are off limits unless link_status says esc_write_allowed; take an \
              `esc_backup` first.",
             )
     }
@@ -1866,4 +1958,25 @@ pub async fn serve(opts: Options) -> anyhow::Result<()> {
     }
     server.shutdown().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_backup_outliving_its_link_does_not_count() {
+        let mcp = ElleMcp::new(Options::default());
+        let link = mcp.inner.link_gen.load(std::sync::atomic::Ordering::SeqCst);
+        // The backup's read is in flight when the link ends.
+        mcp.end_link_backups();
+        assert!(!mcp.record_backup(link, EscEngine::Left, 0x1F02));
+        assert!(!mcp.esc_backed_up(EscEngine::Left, 0x1F02));
+        // Taken and recorded on the current link, it counts until the link ends.
+        let link = mcp.inner.link_gen.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(mcp.record_backup(link, EscEngine::Left, 0x1F02));
+        assert!(mcp.esc_backed_up(EscEngine::Left, 0x1F02));
+        mcp.end_link_backups();
+        assert!(!mcp.esc_backed_up(EscEngine::Left, 0x1F02));
+    }
 }
