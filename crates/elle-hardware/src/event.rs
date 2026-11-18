@@ -156,7 +156,10 @@ pub const EVT_MAG_RESTORED: u16 = 118;
 pub const EVT_MAG_SPIKES: u16 = 119;
 
 // Tap detection (120–129)
-pub(crate) const EVT_DOUBLE_TAP: u16 = 120;
+pub const EVT_DOUBLE_TAP: u16 = 120;
+/// `tap-cal-lock` build: tap detection is off, the double-tap starts nothing
+/// (once, at boot).
+pub const EVT_TAP_CAL_LOCKED: u16 = 121;
 
 // Heading hold (130–139)
 pub const EVT_HEADING_HOLD_ENGAGED: u16 = 130;

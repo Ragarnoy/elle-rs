@@ -47,6 +47,12 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flash loader would refuse (non-finite, kp/ki/kd/scale outside 0..=100, i_limit
   outside 0..=1000, a negative scale included): `AckResp` error `PID_ERR_INVALID`
   and event 104.
+- `tap-cal-lock` build feature (operator behaviour, event codes, RPC ICD, both
+  airframes): the IMU's double-tap detection is never enabled, so the tap starts
+  no mag or level calibration and event 120 never appears. Event 121 at boot and
+  the `BUILD_FEATURE_TAP_CAL_LOCK` bit in `GetBuildInfo` report the lock. RPC
+  `mag cal` / `level cal` still work. Without the feature nothing changes. On the eagle a sharp set-down during a bench session
+  started a mag calibration unnoticed (no LED) and overwrote a good one (LOG_0117).
 - AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
   into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each

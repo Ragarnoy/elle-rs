@@ -443,6 +443,8 @@ pub const BUILD_FEATURE_GNSS: u16 = 1 << 1;
 pub const BUILD_FEATURE_IMU_RAW_LOG: u16 = 1 << 2;
 /// `BuildInfoResp::features`: timing instrumentation (`performance-monitoring`).
 pub const BUILD_FEATURE_PERF_MON: u16 = 1 << 3;
+/// `BuildInfoResp::features`: double-tap calibration locked (`tap-cal-lock`).
+pub const BUILD_FEATURE_TAP_CAL_LOCK: u16 = 1 << 4;
 
 /// The navigator's latest update (observation mode; see ULog `nav`).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]

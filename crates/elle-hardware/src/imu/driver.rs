@@ -181,16 +181,23 @@ impl<'a> Imu<'a> {
                 .map_err(|_| ImuError::InitializationFailed)?;
             info!("ICM-42686: INT1 configured for DATA_RDY (active-high, latched)");
 
-            // Enable APEX tap detection. dmp_power_save defaults to 1 (off), must be
-            // cleared or the DMP never runs and tap_enable has no effect.
-            // Tap sensitivity runs on chip defaults (jerk-based; APEX_CONFIG7,
-            // TAP_MIN_JERK_THR=17) — the ICM-42686-P has no amplitude threshold.
-            bank0
-                .apex_config0()
-                .modify(|_, w| w.tap_enable(1).dmp_power_save(0))
-                .map_err(|_| ImuError::InitializationFailed)?;
+            // A `tap-cal-lock` build never enables tap detection: no tap can
+            // start a calibration, and Core 1 skips the tap register reads.
+            #[cfg(not(feature = "tap-cal-lock"))]
+            {
+                // Enable APEX tap detection. dmp_power_save defaults to 1 (off), must be
+                // cleared or the DMP never runs and tap_enable has no effect.
+                // Tap sensitivity runs on chip defaults (jerk-based; APEX_CONFIG7,
+                // TAP_MIN_JERK_THR=17) — the ICM-42686-P has no amplitude threshold.
+                bank0
+                    .apex_config0()
+                    .modify(|_, w| w.tap_enable(1).dmp_power_save(0))
+                    .map_err(|_| ImuError::InitializationFailed)?;
 
-            info!("ICM-42686: APEX tap detection enabled (chip default sensitivity, DMP active)");
+                info!(
+                    "ICM-42686: APEX tap detection enabled (chip default sensitivity, DMP active)"
+                );
+            }
         }
 
         // Mark IMU as initialized. `calibrated` stays false until the gyro bias
@@ -225,6 +232,7 @@ impl<'a> Imu<'a> {
         }
 
         let mut consecutive_errors: u32 = 0;
+        #[cfg(not(feature = "tap-cal-lock"))]
         let mut tap_counter: u32 = 0;
         let mut last_catchup_event: Option<Instant> = None;
 
@@ -412,6 +420,7 @@ impl<'a> Imu<'a> {
                 }
             }
             // Housekeeping below runs on sensor time: advance by samples consumed.
+            #[cfg(not(feature = "tap-cal-lock"))]
             let ticks = drained.max(1);
 
             // Level calibration: loaded/cleared mount from Core0, or a start request
@@ -430,27 +439,31 @@ impl<'a> Imu<'a> {
             }
 
             // Poll APEX tap detection every TAP_POLL_INTERVAL samples (~50ms).
-            // INT_STATUS3.tap_det_int clears on read, so no separate clear needed.
-            const TAP_POLL_INTERVAL: u32 = 50;
-            tap_counter += ticks;
-            if tap_counter >= TAP_POLL_INTERVAL {
-                tap_counter = 0;
-                let mut bank0 = icm.ll().bank::<0>();
-                if let Ok(s) = bank0.int_status3().read()
-                    && s.tap_det_int() != 0
-                    && let Ok(d) = bank0.apex_data4().read()
-                {
-                    let num = d.tap_num();
-                    // num: 1=single, 2=double
-                    if num == 2 {
-                        crate::imu::TAP_SIGNAL.signal(());
-                        crate::elle_event!(
-                            info,
-                            crate::event::EVT_DOUBLE_TAP,
-                            "ICM-42686: double-tap detected"
-                        );
-                    } else if num == 1 {
-                        info!("ICM-42686: single tap (num={})", num);
+            // Not in a `tap-cal-lock` build: detection is never enabled there.
+            #[cfg(not(feature = "tap-cal-lock"))]
+            {
+                // INT_STATUS3.tap_det_int clears on read, so no separate clear needed.
+                const TAP_POLL_INTERVAL: u32 = 50;
+                tap_counter += ticks;
+                if tap_counter >= TAP_POLL_INTERVAL {
+                    tap_counter = 0;
+                    let mut bank0 = icm.ll().bank::<0>();
+                    if let Ok(s) = bank0.int_status3().read()
+                        && s.tap_det_int() != 0
+                        && let Ok(d) = bank0.apex_data4().read()
+                    {
+                        let num = d.tap_num();
+                        // num: 1=single, 2=double
+                        if num == 2 {
+                            crate::imu::TAP_SIGNAL.signal(());
+                            crate::elle_event!(
+                                info,
+                                crate::event::EVT_DOUBLE_TAP,
+                                "ICM-42686: double-tap detected"
+                            );
+                        } else if num == 1 {
+                            info!("ICM-42686: single tap (num={})", num);
+                        }
                     }
                 }
             }

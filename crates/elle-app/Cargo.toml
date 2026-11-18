@@ -38,6 +38,8 @@ rpc-rc = []
 gnss = ["elle-hardware/gnss", "elle-nav"]
 performance-monitoring = ["elle-system/performance-monitoring"]
 imu-raw-log = ["elle-hardware/imu-raw-log"]
+# The double-tap never starts a calibration (mag or level); RPC commands still do.
+tap-cal-lock = ["elle-hardware/tap-cal-lock"]
 
 [lib]
 test = false

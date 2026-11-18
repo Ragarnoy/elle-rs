@@ -88,6 +88,7 @@ pub const fn label(code: u16) -> &'static str {
         119 => "Mag spikes rejected",
         // Tap detection (120–129)
         120 => "IMU: double-tap detected (calibration gesture)",
+        121 => "Tap calibration locked (tap-cal-lock build)",
         // Heading hold (130–139)
         130 => "Heading hold: engaged",
         131 => "Heading hold: disengaged",

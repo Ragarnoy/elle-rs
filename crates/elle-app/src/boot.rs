@@ -198,6 +198,14 @@ pub async fn run(pwm: PwmOutputs<'static>, watchdog: Watchdog<'static>, epoch_ms
     // Boot-time level cal (IMU mounting offset) load from flash
     elle_hardware::imu::level_cal::load_from_flash().await;
 
+    // With the boot events, so every SD log of a locked build says so.
+    #[cfg(feature = "tap-cal-lock")]
+    elle_hardware::elle_event!(
+        info,
+        elle_hardware::event::EVT_TAP_CAL_LOCKED,
+        "Tap calibration locked (tap-cal-lock build)"
+    );
+
     info!("Core0: Starting main control loop");
 
     // Test timing precision (only when performance monitoring is enabled)
