@@ -129,3 +129,11 @@ async fn firmware_refusal_is_reported() {
     let (r, _) = run(Firmware::Current { refuse: true }, gains(2.5)).await;
     assert!(r.unwrap_err().contains("out of range"));
 }
+
+#[tokio::test]
+async fn out_of_range_is_refused_before_sending() {
+    let (r, seen) = run(Firmware::Current { refuse: false }, gains(-1.0)).await;
+    assert!(r.unwrap_err().starts_with("scale -1"));
+    let seen = seen.lock().unwrap();
+    assert!(seen.f32_req.is_none() && seen.fixed_req.is_none());
+}

@@ -257,12 +257,12 @@ pub struct SetPidGainsReq {
     pub roll_kp_x1000: i16,
     pub roll_ki_x1000: i16,
     pub roll_kd_x1000: i16,
-    /// Scale * 10000 (e.g. 150 = 0.0150). At most 3.2767: the firmware's
-    /// `PID_SCALE` (5.0) does not fit, and the host refuses it rather than send
-    /// a saturated value. Use [`SetPidGainsF32Req`]; this endpoint stays for
-    /// firmware that predates it.
+    /// Scale * 10000: at most 3.2767 (i16), so the firmware's `PID_SCALE` (5.0)
+    /// does not fit. Clients must refuse such a scale rather than cast it
+    /// (`elle_rpc_host::pid::set_pid_gains_req`). Use [`SetPidGainsF32Req`]; this
+    /// endpoint stays for firmware that predates it.
     pub scale_x10000: i16,
-    /// I-limit * 10 (e.g. 250 = 25.0)
+    /// I-limit * 10: a 0.1 step (e.g. 5 = 0.5)
     pub i_limit_x10: i16,
 }
 

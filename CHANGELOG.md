@@ -83,9 +83,13 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 - TUI `pid` no longer sends a saturated value (operator behaviour, host only): every
   `SetPidGainsReq` field is an `i16`, and a plain cast clamped silently, so
   `pid … 5 0.5` sent scale 3.2767 (`savepid` kept it; every term ~35 % weak).
-  Values now round to the nearest step (0.35 had gone out as 0.349), and one that
-  doesn't fit is refused with nothing sent. (Superseded for current firmware by
-  the f32 endpoint below; this path is only the fallback for older firmware.)
+  Values now round to the nearest step (0.35 had gone out as 0.349). Refused, with
+  nothing sent: a value that doesn't fit its field, one the flash loader would
+  refuse (negative, non-finite, gains or scale above 100, i_limit above 1000), and
+  one the field's step would change by more than 1 % (a non-zero gain rounding to 0
+  included). The TUI `heading hold <deg>` now wraps to ±180° and rounds, like MCP
+  (`heading hold 400` had sent 327.67°). This fixed-point path is
+  now only the fallback for older firmware (the f32 endpoint below carries 5.0).
 - Disarm stops the engines at once (operator behaviour, proposal 0008): the DShot
   task played the disarm beep (with ~300 ms of sleeps) before reading the new target,
   so after every disarm, kill switch and failsafe included, the engines kept their
