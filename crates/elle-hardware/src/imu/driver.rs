@@ -118,7 +118,8 @@ impl<'a> Imu<'a> {
         Self {
             icm: None,
             spi_dev: Some(spi_dev),
-            pipeline: AttitudePipeline::with_board(elle_control::attitude::board_rotation()),
+            pipeline: AttitudePipeline::with_board(elle_control::attitude::board_rotation())
+                .with_mag_axes(elle_config::MAG_AXES_YAW_DEG),
             #[cfg(feature = "gnss")]
             last_gnss_us: 0,
             #[cfg(feature = "imu-raw-log")]
