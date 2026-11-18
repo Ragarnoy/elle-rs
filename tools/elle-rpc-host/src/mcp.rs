@@ -108,6 +108,10 @@ struct Inner {
     /// a device id names an ESC model, not one ESC, so a backup only counts
     /// for the session it was taken in.
     esc_backups: std::sync::Mutex<std::collections::HashSet<(u8, u16)>>,
+    /// Bumped (under the `esc_backups` lock) whenever the link ends. A backup
+    /// counts only if the link it started on is still the current one, so one
+    /// that finishes after a disconnect never authorizes writes on the next link.
+    link_gen: std::sync::atomic::AtomicU64,
     /// Held across a whole `esc_set` / `esc_restore` read-modify-write, so
     /// overlapping calls cannot overwrite each other's edits.
     esc_write: Mutex<()>,
@@ -735,6 +739,7 @@ impl ElleMcp {
                 defmt: Mutex::new(None),
                 last_build: Mutex::new(None),
                 esc_backups: std::sync::Mutex::default(),
+                link_gen: std::sync::atomic::AtomicU64::new(0),
                 esc_write: Mutex::new(()),
             }),
             tool_router: Self::tool_router(),
@@ -789,11 +794,7 @@ impl ElleMcp {
     /// Disarm (if this server armed) and release the probe. Called on exit.
     pub async fn shutdown(&self) {
         let _ = self.stop_engines().await;
-        self.inner
-            .esc_backups
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+        self.end_link_backups();
         if let Some(mut d) = self.inner.defmt.lock().await.take() {
             let _ = tokio::task::spawn_blocking(move || d.stop()).await;
         }
@@ -903,6 +904,40 @@ impl ElleMcp {
             .await
             .map_err(|e| format!("{e:#} (is the FC in ESC-config mode? esc_mode get)"))?;
         Ok((client, c))
+    }
+
+    /// The link ended: forget its backups and make any backup still in flight
+    /// on it count for nothing.
+    fn end_link_backups(&self) {
+        let mut set = self
+            .inner
+            .esc_backups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.inner
+            .link_gen
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        set.clear();
+    }
+
+    /// Record a backup taken on link generation `link`; false (nothing recorded)
+    /// when that link has ended since.
+    fn record_backup(&self, link: u64, engine: EscEngine, device_id: u16) -> bool {
+        let mut set = self
+            .inner
+            .esc_backups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self
+            .inner
+            .link_gen
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != link
+        {
+            return false;
+        }
+        set.insert((engine as u8, device_id));
+        true
     }
 
     fn esc_backed_up(&self, engine: EscEngine, device_id: u16) -> bool {
@@ -1640,6 +1675,10 @@ impl ElleMcp {
     )]
     async fn esc_backup(&self, Parameters(r): Parameters<EscBackupReq>) -> ToolResult {
         let engine = r.engine.into();
+        let link = self
+            .inner
+            .link_gen
+            .load(std::sync::atomic::Ordering::SeqCst);
         let (client, c) = self.esc_connected(engine).await?;
         let data = crate::esc::read_backup(&client, engine, &c.info)
             .await
@@ -1653,11 +1692,13 @@ impl ElleMcp {
             }
         };
         crate::esc::save_backup(&path, &data).map_err(|e| format!("{e:#}"))?;
-        self.inner
-            .esc_backups
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert((engine as u8, c.info.device_id));
+        if !self.record_backup(link, engine, c.info.device_id) {
+            return Err(format!(
+                "backup saved to {}, but the link ended while it was taken: it does not \
+                 unlock writes; take a new backup on this link",
+                path.display()
+            ));
+        }
         to_text(&json!({ "path": path.display().to_string(), "bytes": data.len() }))
     }
 
@@ -1917,4 +1958,25 @@ pub async fn serve(opts: Options) -> anyhow::Result<()> {
     }
     server.shutdown().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_backup_outliving_its_link_does_not_count() {
+        let mcp = ElleMcp::new(Options::default());
+        let link = mcp.inner.link_gen.load(std::sync::atomic::Ordering::SeqCst);
+        // The backup's read is in flight when the link ends.
+        mcp.end_link_backups();
+        assert!(!mcp.record_backup(link, EscEngine::Left, 0x1F02));
+        assert!(!mcp.esc_backed_up(EscEngine::Left, 0x1F02));
+        // Taken and recorded on the current link, it counts until the link ends.
+        let link = mcp.inner.link_gen.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(mcp.record_backup(link, EscEngine::Left, 0x1F02));
+        assert!(mcp.esc_backed_up(EscEngine::Left, 0x1F02));
+        mcp.end_link_backups();
+        assert!(!mcp.esc_backed_up(EscEngine::Left, 0x1F02));
+    }
 }
