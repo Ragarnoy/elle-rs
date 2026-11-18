@@ -676,6 +676,7 @@ async fn read_source(client: &HostClient<WireError>, what: Source) -> Result<Val
                         (BUILD_FEATURE_GNSS, "gnss"),
                         (BUILD_FEATURE_IMU_RAW_LOG, "imu-raw-log"),
                         (BUILD_FEATURE_PERF_MON, "performance-monitoring"),
+                        (BUILD_FEATURE_TAP_CAL_LOCK, "tap-cal-lock"),
                     ]
                     .into_iter()
                     .filter(|(bit, _)| b.features & bit != 0)

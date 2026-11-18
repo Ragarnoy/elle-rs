@@ -112,24 +112,47 @@ pub(crate) fn guard_autotune(
     true
 }
 
-/// Take a pending double-tap (always drained, so an old one can't fire later).
-/// In a `tap-cal-lock` build a tap never starts a calibration: it is logged
-/// and dropped, and the RPC `mag cal` / `level cal` commands are the only way.
+/// The double-tap calibration gesture, for both control loops. Always drains
+/// the tap, so one detected while not `eligible` can't stay latched and fire
+/// later. With a tap and `eligible` (the caller's state: disarmed, kill switch
+/// on, no calibration collecting), starts the calibration CH7 selects, if
+/// throttle is low and the gyro quiet (`tap_cal_allowed`). Returns true when it
+/// started a mag calibration, so the caller can mark it collecting.
+///
+/// A `tap-cal-lock` build never enables tap detection (`elle-hardware`), so no
+/// tap ever arrives here; RPC `mag cal` / `level cal` are the only way.
 #[must_use]
-pub(crate) fn take_cal_tap() -> bool {
+pub(crate) fn handle_cal_tap(
+    eligible: bool,
+    commands: Option<&elle_control::commands::PilotCommands>,
+    attitude: Option<&AttitudeData>,
+) -> bool {
     let tapped = elle_hardware::imu::TAP_SIGNAL.try_take().is_some();
-    if tapped && cfg!(feature = "tap-cal-lock") {
-        defmt::info!("Double-tap ignored: tap calibration locked (tap-cal-lock build)");
+    if !tapped || !eligible {
         return false;
     }
-    tapped
+    if !tap_cal_allowed(commands, attitude) {
+        defmt::info!("Double-tap ignored: throttle not low or gyro not quiet");
+        return false;
+    }
+    if tap_selects_level_cal(commands) {
+        elle_hardware::imu::level_cal::start();
+        return false;
+    }
+    elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
+    elle_hardware::elle_event!(
+        info,
+        elle_hardware::event::EVT_MAG_CAL_STARTED,
+        "Double-tap: mag calibration started"
+    );
+    true
 }
 
 /// Gate for the double-tap mag-cal gesture: only start calibration when
 /// throttle is commanded low and the gyro is quiet, so motor vibration or
 /// handling can't trigger a spurious calibration.
 #[must_use]
-pub(crate) fn tap_cal_allowed(
+fn tap_cal_allowed(
     commands: Option<&elle_control::commands::PilotCommands>,
     attitude: Option<&AttitudeData>,
 ) -> bool {
@@ -152,9 +175,7 @@ pub(crate) fn tap_cal_allowed(
 /// autotune switch is out of its off position. Safe to reuse because autotune only
 /// starts while armed, and only on an off → on transition.
 #[must_use]
-pub(crate) fn tap_selects_level_cal(
-    commands: Option<&elle_control::commands::PilotCommands>,
-) -> bool {
+fn tap_selects_level_cal(commands: Option<&elle_control::commands::PilotCommands>) -> bool {
     commands.is_some_and(|cmd| match cmd {
         elle_control::commands::PilotCommands::Raw(raw) => {
             raw.channels[elle_config::AUTOTUNE_CH] >= elle_config::AUTOTUNE_OFF_THRESHOLD

@@ -208,8 +208,10 @@ autotune: autotune only starts while armed, on an off→pitch/roll transition.
 
 Setting the aircraft down sharply can count as a double-tap, and with the LED out of
 sight a calibration can start (and save) unnoticed. Builds with the `tap-cal-lock`
-feature ignore the tap altogether (logged, nothing starts); calibrate those over RPC
-(`mag cal start`, `level cal start`), or flash a build without the feature.
+feature never enable tap detection: no event 120, nothing starts. They log event 121
+once at boot (in the SD log; it fires before a host attaches), and `elle mcp`'s build
+info lists `tap-cal-lock`. Calibrate those over RPC (`mag cal start`, `level cal
+start`), or flash a build without the feature.
 
 ## PID autotune
 
@@ -378,6 +380,7 @@ when built with `defmt-logging`.
 | 117 / 118 | Mag field implausible (corrected magnitude outside 0.15–0.85 G) for 0.5 s, or the raw reading frozen for 2 s and still frozen 0.5 s later / fit again for 5 s. Reported only: the AHRS keeps fusing it (`MAG_GATE_ENFORCED` off) |
 | 119 | Mag spikes rejected (median-of-3; at most one event per 10 s) |
 | 120 | Double-tap detected |
+| 121 | Tap calibration locked: a `tap-cal-lock` build, at boot; tap detection is off, so 120 never appears |
 | 130 / 131 / 132 | Heading hold engaged / disengaged / target set |
 | 140 / 141 | GNSS configuration timeout / partially accepted |
 | 150–158 | Level cal started, complete, failed moving (or refused armed), failed tilted, saved, save failed, cleared, loaded, nothing saved |

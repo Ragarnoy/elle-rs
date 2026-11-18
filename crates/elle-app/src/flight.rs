@@ -5,8 +5,7 @@ use crate::logging::log_flight_data;
 use crate::stages::{Stage, StageClock, StageWindow};
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, RC_DEBUG_LOG_DIVISOR,
-    align_ticker_to_pwm, guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed,
-    tap_selects_level_cal, validate_attitude,
+    align_ticker_to_pwm, guard_autotune, resync_after_stall, save_pid_to_flash, validate_attitude,
 };
 
 use defmt::{debug, info};
@@ -156,26 +155,12 @@ pub(crate) async fn run_flight(fc: &mut FlightController<'static>, epoch_ms: u64
         // (deliberate service state; motors locked out) so handling bumps
         // can't start a calibration. Drain the signal every iteration so a
         // tap detected outside kill mode can't stay latched and fire later.
-        let tapped = crate::support::take_cal_tap();
-        if tapped
-            && !fc.is_armed()
+        let eligible = !fc.is_armed()
             && kill_active
             && !mag_cal_collecting
-            && !elle_hardware::imu::level_cal::is_collecting()
-        {
-            if !tap_cal_allowed(last_commands.as_ref(), attitude.as_ref()) {
-                info!("Double-tap ignored: throttle not low or gyro not quiet");
-            } else if tap_selects_level_cal(last_commands.as_ref()) {
-                elle_hardware::imu::level_cal::start();
-            } else {
-                elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
-                mag_cal_collecting = true;
-                elle_hardware::elle_event!(
-                    info,
-                    elle_hardware::event::EVT_MAG_CAL_STARTED,
-                    "Double-tap: mag calibration started"
-                );
-            }
+            && !elle_hardware::imu::level_cal::is_collecting();
+        if crate::support::handle_cal_tap(eligible, last_commands.as_ref(), attitude.as_ref()) {
+            mag_cal_collecting = true;
         }
 
         // Poll level calibration result from IMU task (tap-triggered collection)

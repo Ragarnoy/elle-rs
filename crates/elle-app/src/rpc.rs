@@ -8,8 +8,7 @@ use crate::logging::log_flight_data;
 use crate::support::RC_DEBUG_LOG_DIVISOR;
 use crate::support::{
     AUTOTUNE_DISPLAY_DURATION, FLASH_WRITE_TIMEOUT, RAD_TO_DEG, align_ticker_to_pwm,
-    clear_pid_from_flash, guard_autotune, resync_after_stall, save_pid_to_flash, tap_cal_allowed,
-    tap_selects_level_cal, validate_attitude,
+    clear_pid_from_flash, guard_autotune, resync_after_stall, save_pid_to_flash, validate_attitude,
 };
 use crate::{flight_state, rc_signal, rpc_app, rpc_handlers};
 
@@ -618,27 +617,13 @@ pub(crate) async fn run_rpc(fc: &mut FlightController<'static>, epoch_ms: u64) -
         // is active (rpc-rc builds; inert in pure RPC builds where kill_active
         // is always false — use `mag cal start` / `level cal start` there instead).
         // CH7 out of its off position selects level cal, as in flight mode.
-        let tapped = crate::support::take_cal_tap();
-        if tapped
-            && !esc_config
+        let eligible = !esc_config
             && !fc.is_armed()
             && kill_active
             && rpc_app::MAG_CAL_STATUS.load(Ordering::Relaxed) != rpc_app::MAG_CAL_COLLECTING
-            && !elle_hardware::imu::level_cal::is_collecting()
-        {
-            if !tap_cal_allowed(commands.as_ref(), attitude.as_ref()) {
-                info!("Double-tap ignored: throttle not low or gyro not quiet");
-            } else if tap_selects_level_cal(commands.as_ref()) {
-                elle_hardware::imu::level_cal::start();
-            } else {
-                elle_hardware::imu::MAG_CAL_START_SIGNAL.signal(());
-                rpc_app::MAG_CAL_STATUS.store(rpc_app::MAG_CAL_COLLECTING, Ordering::Relaxed);
-                elle_hardware::elle_event!(
-                    info,
-                    elle_hardware::event::EVT_MAG_CAL_STARTED,
-                    "Double-tap: mag calibration started"
-                );
-            }
+            && !elle_hardware::imu::level_cal::is_collecting();
+        if crate::support::handle_cal_tap(eligible, commands.as_ref(), attitude.as_ref()) {
+            rpc_app::MAG_CAL_STATUS.store(rpc_app::MAG_CAL_COLLECTING, Ordering::Relaxed);
         }
 
         // Update flight controller
