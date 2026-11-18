@@ -268,7 +268,7 @@ postcard-RPC over RTT (`elle-system/src/rpc.rs`):
 - `RttTx` (async mutex, so encoding never runs with interrupts masked; COBS into a worst-case-sized buffer and **one RTT write per frame, delimiter included**, so a full channel loses whole frames, never glues two together; an oversized message or a dropped frame is `WireTxErrorKind::Other`, non-fatal to the server), `RttRx` (frame reassembly, 100 µs poll; stamps `HOST_LAST_RX_MS`), `ElleWireSpawn` stub (all handlers blocking).
 - ICD in `crates/elle-rpc-icd/src/lib.rs` (`endpoints!` / `topics!`); dispatch via `define_dispatch!` in `elle-app/src/rpc_app.rs`; server loop in `elle-app/src/tasks.rs` `rpc_server_task()`.
 
-Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGains, SetHeadingHold ·
+Endpoints — control: SetThrottle, SetElevons, SetControlMode, SetPidGainsF32 (firmware units; both PID endpoints refuse gains `SavedGains::is_valid` rejects, event 104), SetPidGains (fixed-point, older hosts), SetHeadingHold ·
 safety: Arm, Disarm, EmergencyStop · query: GetStatus, GetAttitude, GetPerformance,
 ResetPerformance, GetMagnetometer, GetBarometer, GetGnss, GetRcChannels,
 GetControllerOutput, GetEngine, GetNav (navigator's last update), GetCore1Load (last ~1 s window, closed by the loop whether or not ULog records) · ULog: StartULog, StopULog, ReadULogChunk, EraseULog,

@@ -39,6 +39,14 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   flight, gliding included.
 
 ### Added
+- PID gains in firmware units over RPC (RPC ICD, operator behaviour, event codes):
+  new endpoint `elle/ctrl/pid_f32` (`SetPidGainsF32Req`, eight `f32`), so the
+  operating `PID_SCALE` 5.0 can be set and saved without a reflash. The TUI `pid`
+  uses it and falls back to `elle/ctrl/pid` only when the firmware doesn't know the
+  endpoint (older builds), never on a timeout. Both endpoints now refuse gains the
+  flash loader would refuse (non-finite, kp/ki/kd/scale outside 0..=100, i_limit
+  outside 0..=1000, a negative scale included): `AckResp` error `PID_ERR_INVALID`
+  and event 104.
 - AM32 ESC configuration from the TUI, `elle direct esc …` and `elle mcp`
   (operator behaviour, RPC ICD, event codes; proposal 0002). RPC builds can reboot
   into an ESC-config mode: no DShot, the engine pins carry a one-wire UART to each
@@ -76,8 +84,8 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
   `SetPidGainsReq` field is an `i16`, and a plain cast clamped silently, so
   `pid … 5 0.5` sent scale 3.2767 (`savepid` kept it; every term ~35 % weak).
   Values now round to the nearest step (0.35 had gone out as 0.349), and one that
-  doesn't fit is refused with nothing sent. The operating scale 5.0 cannot go over
-  RPC until the ICD widens the field: compile such gains in.
+  doesn't fit is refused with nothing sent. (Superseded for current firmware by
+  the f32 endpoint below; this path is only the fallback for older firmware.)
 - Disarm stops the engines at once (operator behaviour, proposal 0008): the DShot
   task played the disarm beep (with ~300 ms of sleeps) before reading the new target,
   so after every disarm, kill switch and failsafe included, the engines kept their

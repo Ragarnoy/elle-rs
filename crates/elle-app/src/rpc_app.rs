@@ -394,21 +394,53 @@ fn handle_get_controller_output(
     }
 }
 
+/// Both PID endpoints: refuse gains the flash loader would refuse
+/// (`SavedGains::is_valid`), so no client can apply, or `savepid` keep, gains
+/// that the next boot would throw away (or a negative scale).
+fn set_pid_gains(ctx: &mut RpcContext, config: elle_control::PidConfig) -> AckResp {
+    if !elle_control::SavedGains::from(config).is_valid() {
+        elle_hardware::elle_event!(
+            warn,
+            elle_hardware::event::EVT_PID_GAINS_REFUSED,
+            "PID gains refused: out of range"
+        );
+        return AckResp::error(PID_ERR_INVALID);
+    }
+    send_cmd(ctx, RpcCommand::SetPidGains { config })
+}
+
 fn handle_set_pid_gains(ctx: &mut RpcContext, _hdr: VarHeader, req: SetPidGainsReq) -> AckResp {
-    use elle_control::PidConfig;
-    send_cmd(
+    set_pid_gains(
         ctx,
-        RpcCommand::SetPidGains {
-            config: PidConfig {
-                kp_pitch: req.pitch_kp_x1000 as f32 / 1000.0,
-                ki_pitch: req.pitch_ki_x1000 as f32 / 1000.0,
-                kd_pitch: req.pitch_kd_x1000 as f32 / 1000.0,
-                kp_roll: req.roll_kp_x1000 as f32 / 1000.0,
-                ki_roll: req.roll_ki_x1000 as f32 / 1000.0,
-                kd_roll: req.roll_kd_x1000 as f32 / 1000.0,
-                scale: req.scale_x10000 as f32 / 10000.0,
-                i_limit: req.i_limit_x10 as f32 / 10.0,
-            },
+        elle_control::PidConfig {
+            kp_pitch: req.pitch_kp_x1000 as f32 / 1000.0,
+            ki_pitch: req.pitch_ki_x1000 as f32 / 1000.0,
+            kd_pitch: req.pitch_kd_x1000 as f32 / 1000.0,
+            kp_roll: req.roll_kp_x1000 as f32 / 1000.0,
+            ki_roll: req.roll_ki_x1000 as f32 / 1000.0,
+            kd_roll: req.roll_kd_x1000 as f32 / 1000.0,
+            scale: req.scale_x10000 as f32 / 10000.0,
+            i_limit: req.i_limit_x10 as f32 / 10.0,
+        },
+    )
+}
+
+fn handle_set_pid_gains_f32(
+    ctx: &mut RpcContext,
+    _hdr: VarHeader,
+    req: SetPidGainsF32Req,
+) -> AckResp {
+    set_pid_gains(
+        ctx,
+        elle_control::PidConfig {
+            kp_pitch: req.pitch_kp,
+            ki_pitch: req.pitch_ki,
+            kd_pitch: req.pitch_kd,
+            kp_roll: req.roll_kp,
+            ki_roll: req.roll_ki,
+            kd_roll: req.roll_kd,
+            scale: req.scale,
+            i_limit: req.i_limit,
         },
     )
 }
@@ -665,6 +697,7 @@ postcard_rpc::define_dispatch! {
         | GetTimeEndpoint           | blocking  | handle_get_time           |
         | GetControllerOutputEndpoint | blocking | handle_get_controller_output |
         | SetPidGainsEndpoint       | blocking  | handle_set_pid_gains      |
+        | SetPidGainsF32Endpoint    | blocking  | handle_set_pid_gains_f32  |
         | StartAutotuneEndpoint     | blocking  | handle_start_autotune       |
         | AbortAutotuneEndpoint     | blocking  | handle_abort_autotune       |
         | StartMagCalEndpoint       | blocking  | handle_start_mag_cal        |

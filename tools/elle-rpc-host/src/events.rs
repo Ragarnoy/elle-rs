@@ -74,6 +74,7 @@ pub const fn label(code: u16) -> &'static str {
         101 => "PID: save failed",
         102 => "PID: loaded from flash",
         103 => "PID: no saved profile",
+        104 => "PID: gains refused (out of range)",
         // Mag calibration (110–119)
         110 => "Mag cal: started",
         111 => "Mag cal: complete",

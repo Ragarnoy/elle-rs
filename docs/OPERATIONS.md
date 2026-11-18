@@ -231,7 +231,7 @@ dart.
   within 3× (up or down) of the gains flown before the run. Ki is not ratio-limited —
   the flown Ki is deliberately far below what the tuning rules give. A failed check
   restores the previous gains and fires event 94 (*rejected*). To move gains further
-  than 3×, set them by hand (`pid`) or tune again from the new result.
+  than 3×, set them by hand (`pid`; any gain the flash loader accepts, scale 5.0 included, event 104 if not) or tune again from the new result.
 - Safety abort, event 93, gains restored and setpoint override cleared:
   - timeout (60 s, or 10 s after settling with no oscillation);
   - pitch or roll beyond ±20° (or non-finite) at any point, settling included;
@@ -369,6 +369,7 @@ when built with `defmt-logging`.
 | 83 | Attitude held: no new IMU sample for 2 control ticks; the controller flies on the last one for up to 20 ms |
 | 90–94 | Autotune started / complete / aborted / safety abort / rejected |
 | 100–103 | PID saved / save failed / loaded / nothing saved |
+| 104 | PID gains refused over RPC: out of the range the flash loader accepts (kp/ki/kd/scale 0–100, i_limit 0–1000) |
 | 110–116 | Mag cal started, complete, failed, saved, cleared, loaded, nothing saved |
 | 117 / 118 | Mag field implausible (corrected magnitude outside 0.15–0.85 G) for 0.5 s, or the raw reading frozen for 2 s and still frozen 0.5 s later / fit again for 5 s. Reported only: the AHRS keeps fusing it (`MAG_GATE_ENFORCED` off) |
 | 119 | Mag spikes rejected (median-of-3; at most one event per 10 s) |
