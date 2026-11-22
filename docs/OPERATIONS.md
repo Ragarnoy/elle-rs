@@ -199,6 +199,16 @@ are in the airframe's frame.
 - Field: double-tap with CH7 in **pitch or roll**.
 - LED fast-blinks cyan while collecting. Events 150–158.
 
+### Elevon neutral (servo trim)
+
+Not stored in flash: `ELEVON_LEFT_TRIM_US` / `ELEVON_RIGHT_TRIM_US` in `elle-config`
+are build constants (at most ±`MAX_TRIM_US`, 150 µs). Pulse = 1500 µs + trim at
+neutral, and the trim costs the same amount of throw on one side. Set them on the bench
+with the `servo-zeroing` skill (`.claude/skills/servo-zeroing/`, through `elle mcp` on
+an `rpc-control,gnss` build, disarmed). It does a re-zero after a linkage change, or a
+brand-new zero (servo at a true 1500 µs, horn and pushrod set from there). Then it
+reflashes and checks the throws. Flash the flight build again before flying.
+
 ### Field double-tap
 
 Available in flight mode and with `rpc-rc`. Requires all of:

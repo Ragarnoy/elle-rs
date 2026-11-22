@@ -7,6 +7,9 @@ the surface they break: operator behaviour, RPC ICD, flash profile, ULog or even
 ## [Unreleased]
 
 ### Changed
+- `elle mcp` `set_elevons` takes `hold_s` (host tool): it keeps the position up to
+  120 s by pinging. Without it, while disarmed, the surfaces still return to center
+  ~0.3 s after the call. Used by the new `servo-zeroing` skill.
 - Eagle elevon trims left +50 → +150 µs, right +100 → −100 µs, `MAX_TRIM_US`
   100 → 150 (tuning, eagle only; round A): after linkage changes both elevons sat
   low at their neutrals (right ~7 mm); the new values are flush on the bench. Upward

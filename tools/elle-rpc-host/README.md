@@ -90,6 +90,11 @@ Tools:
 | Logs and results | `card_logs`, `copy_logs`, `analyse_log`, `replay`, `test_record`, `test_report` |
 | ESC configuration | `esc_mode`, `esc_connect`, `esc_read`, `esc_backup`, `esc_compare`, `esc_set` (gated), `esc_restore` (gated), `esc_run` |
 
+`set_elevons` takes `hold_s` (at most 120 s). While disarmed, a pure RPC build
+fails safe to center ~0.3 s after the host goes quiet. The hold pings every 100 ms so
+the position stays long enough to judge (the `servo-zeroing` skill). A new
+`set_elevons`, `disarm`, `emergency_stop`, `arm` or any link teardown ends the hold.
+
 Tests (`tests/mcp.rs`) run the RPC tools against a fake flight controller on the
 real RPC client path; `src/analysis.rs` tests the card copy and the results file.
 
