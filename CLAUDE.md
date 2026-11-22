@@ -23,6 +23,7 @@ behaviour changes.
 | [`.claude/skills/governor-calibration/SKILL.md`](.claude/skills/governor-calibration/SKILL.md) | Re-sweeping the RPM governor table |
 | [`.claude/skills/flight-logs/SKILL.md`](.claude/skills/flight-logs/SKILL.md) | Reading ULog flight logs: finding files, timing, ESC health, sensor rates, build comparisons (`elle_log.py`) |
 | [`.claude/skills/test-plan-runner/SKILL.md`](.claude/skills/test-plan-runner/SKILL.md) | Running TEST_PLAN.md rows through the `elle mcp` tools and recording results |
+| [`.claude/skills/servo-zeroing/SKILL.md`](.claude/skills/servo-zeroing/SKILL.md) | Zeroing the elevons on the bench through `elle mcp` (re-zero or brand-new install): flush search, throw check, `ELEVON_*_TRIM_US`, reflash and verify |
 | [`docs/VERSIONING.md`](docs/VERSIONING.md) | Semver for the workspace: compatibility surfaces, bump rules, release steps |
 | [`CHANGELOG.md`](CHANGELOG.md) | Released versions and `Unreleased` changes |
 | [`docs/changes/0002-esc-config-over-rpc.md`](docs/changes/0002-esc-config-over-rpc.md) | AM32 ESC configuration through the FC: ESC-config boot mode, endpoints, host policy, MCP gates |

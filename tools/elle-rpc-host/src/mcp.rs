@@ -35,6 +35,8 @@ use crate::link::Link;
 const REQ_TIMEOUT: Duration = Duration::from_secs(2);
 /// Keepalive while armed: well inside the firmware's 300 ms host failsafe.
 const KEEPALIVE: Duration = Duration::from_millis(100);
+/// Longest `hold_s` a `set_elevons` call may ask for.
+const ELEVON_HOLD_MAX: Duration = Duration::from_secs(120);
 /// Events kept for `events` / `wait_event`.
 const EVENT_LOG_LEN: usize = 4000;
 /// How long a connection may take by default: the probe attach, the RTT scan
@@ -99,6 +101,8 @@ struct Inner {
     events: std::sync::Mutex<EventLog>,
     /// The armed timer and keepalive, while the server has armed the engines.
     armed: Mutex<Option<ArmedGuard>>,
+    /// The keepalive holding a `set_elevons` position (`hold_s`), disarmed.
+    elevon_hold: Mutex<Option<JoinHandle<()>>>,
     /// The flight build's defmt log, when attached to one.
     defmt: Mutex<Option<crate::target::DefmtReader>>,
     /// The last build flashed (its ELF decodes the defmt log).
@@ -277,6 +281,11 @@ pub struct ElevonsReq {
     pub left: i8,
     /// -100..=100
     pub right: i8,
+    /// Keep the position this many seconds (at most 120) by pinging the
+    /// firmware. Without it, disarmed, the surfaces return to center ~0.3 s
+    /// after the call (host failsafe).
+    #[serde(default)]
+    pub hold_s: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
@@ -716,6 +725,7 @@ impl ElleMcp {
                 conn: Mutex::new(None),
                 events: std::sync::Mutex::new(EventLog::default()),
                 armed: Mutex::new(None),
+                elevon_hold: Mutex::new(None),
                 defmt: Mutex::new(None),
                 last_build: Mutex::new(None),
                 esc_backups: std::sync::Mutex::default(),
@@ -909,8 +919,18 @@ impl ElleMcp {
         }
     }
 
-    /// Throttle 0 and disarm, cancelling the armed timer.
+    /// Stop holding an elevon position: the firmware fails safe to center
+    /// ~0.3 s later unless something else keeps the link up.
+    async fn cancel_elevon_hold(&self) {
+        if let Some(t) = self.inner.elevon_hold.lock().await.take() {
+            t.abort();
+        }
+    }
+
+    /// Throttle 0 and disarm, cancelling the armed timer and any elevon hold.
+    /// Every link teardown (`shutdown`) goes through here.
     async fn stop_engines(&self) -> Result<(), String> {
+        self.cancel_elevon_hold().await;
         if let Some(g) = self.inner.armed.lock().await.take() {
             g.task.abort();
         }
@@ -1337,6 +1357,8 @@ impl ElleMcp {
                 "refused: confirm the propellers are removed (props_off_confirmed)".to_string(),
             );
         }
+        // The armed keepalive takes over from an elevon hold.
+        self.cancel_elevon_hold().await;
         // Re-arming replaces the timer: an old one left running would disarm early.
         if let Some(g) = self.inner.armed.lock().await.take() {
             g.task.abort();
@@ -1414,6 +1436,7 @@ impl ElleMcp {
 
     #[tool(description = "Emergency stop: engines off immediately. Always allowed.")]
     async fn emergency_stop(&self) -> ToolResult {
+        self.cancel_elevon_hold().await;
         if let Some(g) = self.inner.armed.lock().await.take() {
             g.task.abort();
         }
@@ -1424,19 +1447,37 @@ impl ElleMcp {
     // --- Surfaces, modes, calibration, logging -------------------------------------
 
     #[tool(
-        description = "Elevon positions -100..=100 (pure RPC builds; ignored with rpc-rc). \
-        Works disarmed: surface checks."
+        description = "Elevon positions -100..=100, 1 unit = 5 us (pure RPC builds; ignored \
+        with rpc-rc). Works disarmed: surface checks. Disarmed, the surfaces return to center \
+        ~0.3 s after the call (host failsafe) unless `hold_s` keeps the link up that many \
+        seconds (max 120). A new call, disarm, emergency_stop, arm or losing the link ends the \
+        hold. `read controller` gives the pulses actually written."
     )]
     async fn set_elevons(&self, Parameters(r): Parameters<ElevonsReq>) -> ToolResult {
+        self.cancel_elevon_hold().await;
         let client = self.client().await?;
-        ack(req::<SetElevonsEndpoint>(
+        let resp = ack(req::<SetElevonsEndpoint>(
             &client,
             &SetElevonsReq {
                 left: r.left,
                 right: r.right,
             },
         )
-        .await?)
+        .await?)?;
+        let Some(hold_s) = r.hold_s.filter(|s| *s > 0.0) else {
+            return Ok(resp);
+        };
+        let hold = Duration::from_secs_f64(hold_s.min(ELEVON_HOLD_MAX.as_secs_f64()));
+        let task = tokio::spawn(async move {
+            let until = Instant::now() + hold;
+            let mut tick = tokio::time::interval(KEEPALIVE);
+            while Instant::now() < until {
+                tick.tick().await;
+                let _ = req::<PingEndpoint>(&client, &()).await;
+            }
+        });
+        *self.inner.elevon_hold.lock().await = Some(task);
+        Ok(format!("{resp}; held {:.0} s", hold.as_secs_f64()))
     }
 
     #[tool(description = "Control mode (pure RPC builds; with rpc-rc the CH6 switch decides).")]
